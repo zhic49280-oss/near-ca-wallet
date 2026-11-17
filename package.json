@@ -1,0 +1,14 @@
+{
+  "name": "near-ca-wallet",
+  "version": "1.0.0",
+  "description": "NEAR Account-Centric Chain Abstraction Self-Custody Wallet (NEAR Intents NEP-413 + MPC v1.signer + Multi-Chain Smart Contracts)",
+  "main": "server.js",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node server.js",
+    "build": "node scripts/sync-assets.js",
+    "sync": "node scripts/sync-assets.js"
+  },
+  "type": "commonjs",
+  "license": "ISC"
+}

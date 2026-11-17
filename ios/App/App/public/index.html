@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#06080F" />
+  <title>NEAR Chain Abstraction Wallet</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="style.css?v=2.1" />
+</head>
+<body>
+  <div class="ambient-bg" aria-hidden="true"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <div class="app-shell">
+    <!-- Top Header -->
+    <header class="app-header">
+      <button type="button" id="header-account-pill" class="header-account-pill" onclick="openWalletSwitcherSheet()">
+        <span class="header-account-dot"></span>
+        <span id="header-account-label" class="header-account-label">--</span>
+        <span class="ca-badge" data-i18n="header.caBadge">NEAR CA</span>
+      </button>
+
+      <div class="header-actions">
+        <button type="button" id="header-mpc-btn" class="header-chip-btn mpc-pill" onclick="focusMpcInspector()">
+          <span>v1.signer</span>
+        </button>
+        <button type="button" id="header-wc-btn" class="header-chip-btn" onclick="openWalletConnectSheet()">
+          <span id="header-wc-dot" class="wc-dot"></span>
+          <span data-i18n="header.wcBtn">WC</span>
+        </button>
+        <button type="button" id="header-lang-btn" class="header-chip-btn" onclick="toggleLanguage()">
+          <span data-i18n="header.langToggle">EN</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- ==================== Onboarding View ==================== -->
+      <section id="view-onboarding" class="view-section hidden">
+        <div class="ios-glass-card hero-card" style="padding: 24px 18px; text-align: center;">
+          <div style="width: 56px; height: 56px; margin: 0 auto 14px; border-radius: 18px; background: linear-gradient(135deg, rgba(0,236,151,0.22), rgba(56,189,248,0.22)); border: 1px solid rgba(0,236,151,0.4); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 20px; color: #00EC97;">
+            N
+          </div>
+          <span class="ca-badge" data-i18n="onboard.badge">NEAR 链抽象自托管账户</span>
+          <h1 style="margin: 12px 0 8px; font-size: 21px; font-weight: 800; color: #fff;" data-i18n="onboard.title">一个 NEAR 账户，畅通全链资产</h1>
+          <p style="margin: 0 0 20px; font-size: 12.5px; color: var(--text-secondary);" data-i18n="onboard.subtitle">支持 NEAR Intents 0-Gas 跨链闪兑、MPC v1.signer 与多链合约直连</p>
+
+          <div id="onboard-choice-panel" class="flex flex-col gap-2">
+            <button type="button" class="btn-primary" onclick="openCreateWalletFlow()" data-i18n="onboard.createBtn">创建 NEAR 链抽象钱包</button>
+            <button type="button" class="btn-secondary" onclick="openImportWalletFlow()" data-i18n="onboard.importBtn">导入 12 / 24 词助记词</button>
+          </div>
+
+          <div id="onboard-create-panel" class="hidden flex flex-col gap-3" style="text-align: left; margin-top: 10px;">
+            <div style="font-weight: 700; font-size: 14px;" data-i18n="onboard.createTitle">备份您的助记词</div>
+            <div style="font-size: 12px; color: var(--text-secondary);" data-i18n="onboard.createHint">请妥善离线保存以下 12 个单词，它是恢复所有链上资产的唯一凭证</div>
+            <div id="onboard-seed-grid" class="seed-grid"></div>
+            <button type="button" class="btn-ghost-sm" style="align-self: flex-start;" onclick="copyPendingMnemonic()" data-i18n="onboard.copySeedBtn">复制助记词</button>
+            <input id="onboard-create-name" type="text" class="input-field" data-i18n-placeholder="onboard.walletNamePlaceholder" placeholder="钱包名称（可选）" />
+            <input id="onboard-create-pin" type="password" inputmode="numeric" maxlength="6" class="input-field" data-i18n-placeholder="onboard.pinPlaceholder" placeholder="设置 6 位交易密码（可选）" />
+            <div class="flex gap-2">
+              <button type="button" class="btn-secondary" onclick="cancelOnboardSubPanel()" data-i18n="onboard.cancelBtn">返回</button>
+              <button type="button" class="btn-primary" onclick="confirmCreateWallet()" data-i18n="onboard.confirmCreateBtn">已备份，进入钱包</button>
+            </div>
+          </div>
+
+          <div id="onboard-import-panel" class="hidden flex flex-col gap-3" style="text-align: left; margin-top: 10px;">
+            <div style="font-weight: 700; font-size: 14px;" data-i18n="onboard.importTitle">导入恢复助记词</div>
+            <textarea id="onboard-import-phrase" class="input-field mono" data-i18n-placeholder="onboard.importPlaceholder" placeholder="输入 12 或 24 个英文助记词，使用空格分隔" oninput="validateOnboardImportLive()"></textarea>
+            <div id="onboard-import-status" style="font-size: 11.5px; color: var(--text-secondary);"></div>
+            <input id="onboard-import-name" type="text" class="input-field" data-i18n-placeholder="onboard.walletNamePlaceholder" placeholder="钱包名称（可选）" />
+            <div class="flex gap-2">
+              <button type="button" class="btn-secondary" onclick="cancelOnboardSubPanel()" data-i18n="onboard.cancelBtn">返回</button>
+              <button type="button" class="btn-primary" onclick="confirmImportWallet()" data-i18n="onboard.confirmImportBtn">派生全链账户并导入</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== Tab 1: Assets (#view-wallet) ==================== -->
+      <section id="view-wallet" class="view-section hidden">
+        <div class="ios-glass-card hero-card">
+          <div class="hero-top-row">
+            <span class="hero-caption" data-i18n="home.totalBalance">统一资产总览 (USD)</span>
+            <button type="button" id="btn-refresh-balances" class="btn-ghost-sm" onclick="refreshAllBalancesAsync(true)">↻</button>
+          </div>
+          <div id="hero-total-usd" class="hero-balance">--</div>
+
+          <div class="hero-id-row">
+            <div class="hero-id-meta">
+              <span class="hero-id-label" data-i18n="home.masterAccount">NEAR 主账户</span>
+              <span id="hero-near-id" class="hero-id-value">--</span>
+            </div>
+            <div class="hero-id-btns">
+              <button type="button" class="mini-action-btn" onclick="copyActiveNearId()" data-i18n="common.copy">复制</button>
+              <button type="button" id="btn-hero-register-near" class="mini-action-btn primary" onclick="jumpToNearDomainManager()" data-i18n="home.registerNear">注册 .near</button>
+            </div>
+          </div>
+
+          <div class="hero-actions-grid">
+            <button type="button" class="quick-action-btn" onclick="openSendSheet()">
+              <span class="quick-action-icon">↑</span>
+              <span data-i18n="home.send">转账</span>
+            </button>
+            <button type="button" class="quick-action-btn" onclick="openReceiveSheet()">
+              <span class="quick-action-icon">↓</span>
+              <span data-i18n="home.receive">收款</span>
+            </button>
+            <button type="button" class="quick-action-btn" onclick="switchTab('swap')">
+              <span class="quick-action-icon">⇄</span>
+              <span data-i18n="home.swap">闪兑</span>
+            </button>
+            <button type="button" class="quick-action-btn" onclick="switchTab('earn')">
+              <span class="quick-action-icon">◈</span>
+              <span data-i18n="home.earn">质押</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="section-header-row">
+          <h2 class="section-title" data-i18n="home.assetsTitle">聚合资产列表</h2>
+          <span id="home-sync-status" class="section-sub" data-i18n="home.syncIdle">点击刷新链上余额</span>
+        </div>
+
+        <div id="home-unified-asset-list" class="asset-list"></div>
+      </section>
+
+      <!-- ==================== Tab 2: Swap (#view-swap) ==================== -->
+      <section id="view-swap" class="view-section hidden">
+        <div class="section-header" style="margin-bottom: 2px;">
+          <span class="section-title" data-i18n="swap.title">全链统一闪兑</span>
+          <span class="ca-badge">v1.signer</span>
+        </div>
+
+        <!-- Swap Main Card -->
+        <div class="ios-glass-card flex flex-col gap-3">
+          <!-- From Box -->
+          <div class="swap-box">
+            <div class="swap-box-top">
+              <span data-i18n="swap.fromLabel">支付</span>
+              <div class="flex items-center gap-2">
+                <span><span data-i18n="swap.balanceLabel">可用</span>: <span id="swap-from-balance" class="mono">--</span></span>
+                <button type="button" class="mini-action-btn primary" onclick="setSwapMaxAmount()" data-i18n="swap.maxBtn">全部</button>
+              </div>
+            </div>
+            <div class="swap-box-main">
+              <button type="button" id="swap-from-token-btn" class="token-select-btn" onclick="openTokenPicker('from')"></button>
+              <input id="swap-amount-in" type="number" step="any" min="0" class="amount-input-lg" placeholder="0.00" oninput="handleSwapAmountInput()" />
+            </div>
+            <div class="swap-box-top">
+              <span id="swap-from-net-label">--</span>
+              <span id="swap-usd-in">--</span>
+            </div>
+          </div>
+
+          <!-- Flip Button -->
+          <div class="swap-flip-wrap">
+            <button type="button" class="swap-flip-btn" onclick="flipSwapTokens()" aria-label="Flip">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg>
+            </button>
+          </div>
+
+          <!-- To Box -->
+          <div class="swap-box">
+            <div class="swap-box-top">
+              <span data-i18n="swap.toLabel">获得</span>
+              <span><span data-i18n="swap.balanceLabel">可用</span>: <span id="swap-to-balance" class="mono">--</span></span>
+            </div>
+            <div class="swap-box-main">
+              <button type="button" id="swap-to-token-btn" class="token-select-btn" onclick="openTokenPicker('to')"></button>
+              <input id="swap-amount-out" type="text" readonly class="amount-input-lg" placeholder="--" />
+            </div>
+            <div class="swap-box-top">
+              <span id="swap-to-net-label">--</span>
+              <span id="swap-usd-out">--</span>
+            </div>
+          </div>
+
+          <!-- Auto Route & Recipient -->
+          <div class="meta-row" style="font-size: 12px;">
+            <span class="meta-key" data-i18n="swap.autoRouteLabel">智能路由</span>
+            <span id="swap-auto-route-badge" class="ca-badge">--</span>
+          </div>
+          <div class="flex flex-col gap-1">
+            <div class="flex items-center justify-between">
+              <span style="font-size: 11.5px; color: var(--text-secondary);" data-i18n="swap.recipientLabel">目标链收款地址</span>
+              <button type="button" class="btn-ghost-sm" onclick="openContactsPicker('swap')" data-i18n="common.contacts">地址簿</button>
+            </div>
+            <input id="swap-recipient-input" type="text" class="input-field mono" data-i18n-placeholder="swap.recipientPlaceholder" placeholder="自动匹配当前主账户对应链地址" oninput="handleSwapRecipientInput()" />
+          </div>
+
+          <!-- Quote Meta -->
+          <div id="swap-quote-meta" class="meta-list">
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="swap.rateLabel">参考汇率</span>
+              <span id="swap-quote-rate" class="meta-val">--</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="swap.routeLabel">执行路由</span>
+              <span id="swap-quote-route" class="meta-val">--</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="swap.slippageLabel">滑点容差</span>
+              <div class="flex gap-1">
+                <button type="button" class="filter-pill" data-bps="50" onclick="setSwapSlippage(50)">0.5%</button>
+                <button type="button" class="filter-pill active" data-bps="100" onclick="setSwapSlippage(100)">1%</button>
+                <button type="button" class="filter-pill" data-bps="300" onclick="setSwapSlippage(300)">3%</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="swap-error-banner" class="hidden" style="font-size: 12px; color: var(--rose-alert); padding: 6px 10px; border-radius: 10px; background: rgba(251,113,133,0.1); border: 1px solid rgba(251,113,133,0.25);"></div>
+
+          <button type="button" id="btn-execute-swap" class="btn-primary" onclick="executeActiveSwap()" data-i18n="swap.executeBtn">确认闪兑</button>
+        </div>
+
+        <!-- Active 1Click Order Status Card -->
+        <div id="swap-order-card" class="ios-glass-card hidden flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <span style="font-weight: 700; font-size: 14px;" data-i18n="swap.orderTitle">跨链订单跟踪</span>
+            <button type="button" class="btn-ghost-sm" onclick="clearActiveSwapOrder()" data-i18n="swap.orderDoneBtn">完成</button>
+          </div>
+          <div id="swap-order-qr" class="qr-frame hidden"></div>
+          <div class="meta-list">
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="swap.orderDepositAddr">充值地址</span>
+              <button type="button" class="btn-ghost-sm" onclick="copySwapOrderDeposit()" data-i18n="common.copy">复制</button>
+            </div>
+            <div id="swap-order-deposit-addr" class="mono" style="font-size: 11px; word-break: break-all; color: var(--near-emerald);">--</div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="swap.orderStatus">订单状态</span>
+              <span id="swap-order-status" class="meta-val">--</span>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <input id="swap-order-txhash-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="swap.orderSubmitHashPlaceholder" placeholder="粘贴外部转账 TxHash 加速确认" />
+            <button type="button" class="btn-secondary" onclick="submitSwapOrderTxHash()" data-i18n="swap.orderSubmitHashBtn">提交凭证</button>
+          </div>
+          <button type="button" class="btn-secondary" onclick="refreshActiveSwapOrderStatus()" data-i18n="swap.orderRefresh">刷新状态</button>
+        </div>
+      </section>
+
+      <!-- ==================== Tab 3: Earn / Liquid Staking (#view-earn) ==================== -->
+      <section id="view-earn" class="view-section hidden">
+        <div class="section-header-row">
+          <h2 class="section-title" data-i18n="earn.title">链上流动性质押</h2>
+          <button type="button" class="btn-ghost-sm" onclick="refreshStakingMetrics(true)" data-i18n="earn.refreshBtn">刷新利率</button>
+        </div>
+
+        <input id="earn-pool-search" type="text" class="input-field" data-i18n-placeholder="earnSearchPlaceholder" placeholder="搜索质押代币、协议或合约 (如 RHEA, JUP, NEAR, SOL, USDC)..." oninput="handleEarnPoolSearch(this.value)" />
+
+        <div id="earn-pool-filters" class="pill-scroll">
+          <button type="button" class="filter-pill active" data-filter="featured" onclick="setEarnPoolFilter('featured')" data-i18n="earn.filterFeatured">🔥 热门大池</button>
+          <button type="button" class="filter-pill" data-filter="all" onclick="setEarnPoolFilter('all')" data-i18n="earn.filterAll">全部质押池 (16)</button>
+          <button type="button" class="filter-pill" data-filter="near" onclick="setEarnPoolFilter('near')" data-i18n="earn.filterNear">NEAR &amp; Rhea</button>
+          <button type="button" class="filter-pill" data-filter="sol" onclick="setEarnPoolFilter('sol')" data-i18n="earn.filterSol">Solana &amp; JUP</button>
+          <button type="button" class="filter-pill" data-filter="evm" onclick="setEarnPoolFilter('evm')" data-i18n="earn.filterEvm">EVM &amp; Arc</button>
+        </div>
+
+        <div id="staking-pools-list" class="staking-pools-grid" style="max-height: 44vh; overflow-y: auto;"></div>
+
+        <div class="ios-glass-card flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <span id="earn-selected-title" style="font-weight: 700; font-size: 14px;">--</span>
+            <span style="font-size: 12px; color: var(--text-secondary);">
+              <span data-i18n="swap.balanceLabel">可用</span>: <span id="earn-avail-balance" class="mono">--</span>
+            </span>
+          </div>
+
+          <div class="swap-box">
+            <div class="swap-box-top">
+              <span data-i18n="earn.amountLabel">质押数量</span>
+              <button type="button" class="mini-action-btn primary" onclick="setEarnMaxAmount()" data-i18n="swap.maxBtn">全部</button>
+            </div>
+            <div class="swap-box-main">
+              <span id="earn-in-symbol" style="font-weight: 700; font-size: 15px;">NEAR</span>
+              <input id="earn-amount-in" type="number" step="any" min="0" class="amount-input-lg" placeholder="0.00" oninput="updateEarnEstimatedOut()" />
+            </div>
+          </div>
+
+          <div id="earn-lock-row" class="hidden flex flex-col gap-2">
+            <span class="meta-key" style="font-size: 12px;" data-i18n="earn.lockLabel">锁仓周期</span>
+            <div id="earn-lock-tiers" class="pill-scroll"></div>
+          </div>
+
+          <div class="meta-list">
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="earn.apyLabel">实时年化</span>
+              <span id="earn-live-apy" class="meta-val text-emerald">--</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="earn.tvlLabel">总质押量 (TVL)</span>
+              <span id="earn-tvl-val" class="meta-val">--</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="earn.stakersLabel">质押人数</span>
+              <span id="earn-stakers-val" class="meta-val">--</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="earn.rateLabel">兑换比例</span>
+              <span id="earn-live-rate" class="meta-val">--</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="earn.estReceive">预计获得</span>
+              <span id="earn-est-out" class="meta-val">--</span>
+            </div>
+          </div>
+
+          <button type="button" id="btn-execute-stake" class="btn-primary" onclick="executeSelectedStake()" data-i18n="earn.stakeBtn">确认链上质押</button>
+
+          <div id="earn-tx-receipt" class="hidden meta-list" style="border-color: rgba(0,236,151,0.3);"></div>
+        </div>
+      </section>
+
+      <!-- ==================== Tab 4: Hub & Settings (#view-hub) ==================== -->
+      <section id="view-hub" class="view-section hidden">
+        <!-- 1. NEAR Named Account (.near) Registration & Binding -->
+        <div id="hub-near-domain-card" class="ios-glass-card flex flex-col gap-3">
+          <div style="font-weight: 700; font-size: 14px;" data-i18n="hub.nearDomainTitle">NEAR .near 账户注册与绑定</div>
+          <div class="meta-row" style="font-size: 12px;">
+            <span class="meta-key" data-i18n="hub.nearDomainCurrent">当前主账户</span>
+            <span id="hub-near-current-id" class="mono text-emerald" style="font-size: 11.5px; max-width: 210px; overflow: hidden; text-overflow: ellipsis;">--</span>
+          </div>
+          <input id="hub-near-domain-input" type="text" class="input-field mono" data-i18n-placeholder="hub.nearDomainPlaceholder" placeholder="输入期望域名，如 alice.near" />
+          <div class="flex gap-2">
+            <button type="button" class="btn-primary flex-1" onclick="registerNearDomainFromHub()" data-i18n="hub.nearDomainRegisterBtn">链上注册 (0.1 NEAR)</button>
+            <button type="button" class="btn-secondary" onclick="bindNearDomainFromHub()" data-i18n="hub.nearDomainBindBtn">绑定已有账号</button>
+          </div>
+        </div>
+
+        <!-- 2. NEAR MPC Chain Signatures (v1.signer) Inspector -->
+        <div id="hub-mpc-card" class="ios-glass-card flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <span style="font-weight: 700; font-size: 14px;" data-i18n="hub.mpcTitle">NEAR MPC 链签名 (v1.signer)</span>
+            <span class="ca-badge">v1.signer</span>
+          </div>
+          <div class="meta-list">
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="hub.mpcPathLabel">派生路径</span>
+              <input id="hub-mpc-path-input" type="text" class="input-field mono" value="ethereum-1" style="width: 145px; padding: 5px 8px; font-size: 11.5px;" oninput="recomputeHubMpcAddress()" />
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="hub.mpcDerivedAddr">MPC 派生 EVM 地址</span>
+              <button type="button" class="btn-ghost-sm" onclick="copyHubMpcAddress()" data-i18n="common.copy">复制</button>
+            </div>
+            <div id="hub-mpc-evm-address" class="mono text-cyan" style="font-size: 11.5px; word-break: break-all;">--</div>
+          </div>
+          <input id="hub-mpc-payload-input" type="text" class="input-field mono" data-i18n-placeholder="hub.mpcPayloadPlaceholder" placeholder="输入消息或 32 字节 Hex 哈希进行 MPC 签名" />
+          <button type="button" class="btn-secondary" onclick="executeHubMpcSign()" data-i18n="hub.mpcSignBtn">调用 v1.signer 签名</button>
+          <div id="hub-mpc-receipt" class="hidden meta-list" style="border-color: rgba(56,189,248,0.35);"></div>
+        </div>
+
+        <!-- 3. Deep Mining Telemetry Entry Card -->
+        <div class="ios-glass-card flex flex-col gap-2" style="border-color: rgba(56,189,248,0.22);">
+          <div style="font-weight: 700; font-size: 14px;" data-i18n="hub.miningTitle">⛏️ Pearl 矿工深度遥测与归集</div>
+          <div style="font-size: 12px; color: var(--text-secondary);" data-i18n="hub.miningSubtitle">多矿池算力追踪、单机状态监控与 PRL 一键桥接至 .near</div>
+          <button type="button" class="btn-secondary" onclick="openMiningProSheet()" data-i18n="hub.miningOpenBtn">打开专业矿工面板</button>
+        </div>
+
+        <!-- 4. NEAR Master & MPC Addresses & Wallet Management -->
+        <div class="ios-glass-card flex flex-col gap-3">
+          <div style="font-weight: 700; font-size: 14px;" data-i18n="hub.keysTitle">NEAR 主账户与 MPC 全链地址</div>
+          <div id="hub-addresses-list" class="meta-list"></div>
+          <div class="flex gap-2">
+            <button type="button" class="btn-secondary flex-1" onclick="openWalletSwitcherSheet()" data-i18n="hub.manageWalletsBtn">切换 / 新增钱包</button>
+            <button type="button" class="btn-secondary flex-1" onclick="openBackupKeysSheet()" data-i18n="hub.backupKeysBtn">导出助记词与 NEAR 主密钥</button>
+          </div>
+        </div>
+
+        <!-- 5. Biometric & Device Security (Apple Face ID / Android Fingerprint·Face) -->
+        <div id="hub-security-bio-card" class="ios-glass-card flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <span style="font-weight: 700; font-size: 14px;" data-i18n="hub.bioCardTitle">生物识别与设备安全 (Face ID / 指纹·人脸)</span>
+            <span id="hub-bio-status-badge" class="ca-badge">--</span>
+          </div>
+          <div class="meta-list">
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="hub.bioDeviceLabel">识别设备型号</span>
+              <span id="hub-bio-device-model" class="meta-val" style="font-size: 12px;">--</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="hub.bioMethodsLabel">支持验证通道</span>
+              <span id="hub-bio-methods" class="meta-val text-cyan" style="font-size: 11.5px; text-align: right;">--</span>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <button type="button" class="btn-secondary flex-1" onclick="toggleBiometricProtection()" data-i18n="hub.bioToggleBtn">开启 / 关闭 生物识别验证</button>
+            <button type="button" class="btn-primary flex-1" onclick="testBiometricAuthNow()" data-i18n="hub.bioTestBtn">立即验证 Face ID / 指纹 / 人脸</button>
+          </div>
+          <button type="button" class="btn-ghost-sm" onclick="openSetWalletPinPrompt()" data-i18n="hub.bioSetPinBtn">设置 6 位安全 PIN</button>
+        </div>
+
+        <!-- 6. Contacts & WalletConnect & Security -->
+        <div class="ios-glass-card flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <span style="font-weight: 700; font-size: 13.5px;" data-i18n="hub.contactsTitle">常用地址簿</span>
+            <button type="button" class="btn-secondary" onclick="openContactsSheet()" data-i18n="hub.contactsOpenBtn">管理联系人</button>
+          </div>
+          <div class="flex items-center justify-between">
+            <span style="font-weight: 700; font-size: 13.5px;" data-i18n="hub.wcTitle">WalletConnect v2 授权</span>
+            <button type="button" class="btn-secondary" onclick="openWalletConnectSheet()" data-i18n="hub.wcOpenBtn">管理 DApp 连接</button>
+          </div>
+          <div class="flex items-center justify-between">
+            <span style="font-weight: 700; font-size: 13.5px;" data-i18n="hub.securityTitle">安全与偏好设置</span>
+            <div class="flex gap-2">
+              <button type="button" class="btn-ghost-sm" onclick="openPinSheet()" data-i18n="hub.pinBtn">设置 / 修改 PIN 密码</button>
+              <button type="button" class="btn-ghost-sm" onclick="toggleLanguage()" data-i18n="hub.langBtn">切换语言 (中/EN)</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Bottom Navigation -->
+    <nav id="bottom-nav" class="bottom-nav hidden" aria-label="Main Navigation">
+      <button type="button" class="nav-item active" data-tab="wallet" onclick="switchTab('wallet')">
+        <span class="nav-icon">◈</span>
+        <span data-i18n="nav.wallet">资产</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="swap" onclick="switchTab('swap')">
+        <span class="nav-icon">⇄</span>
+        <span data-i18n="nav.swap">闪兑</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="earn" onclick="switchTab('earn')">
+        <span class="nav-icon">✦</span>
+        <span data-i18n="nav.earn">质押</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="hub" onclick="switchTab('hub')">
+        <span class="nav-icon">⌘</span>
+        <span data-i18n="nav.hub">枢纽</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ==================== Sheet Backdrop ==================== -->
+  <div id="sheet-backdrop" class="sheet-backdrop" onclick="closeAllSheets()"></div>
+
+  <!-- ==================== Sheet: Unified Send ==================== -->
+  <div id="sheet-send" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.sendTitle">统一跨链转账</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div class="flex flex-col gap-1">
+        <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="sheet.sendAssetLabel">选择资产</span>
+        <select id="send-asset-select" class="input-field" onchange="handleSendAssetChange()"></select>
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="sheet.sendSourceLabel">扣除来源</span>
+        <select id="send-source-select" class="input-field" onchange="updateSendAvailabilityUI()"></select>
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <div class="flex items-center justify-between">
+          <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="sheet.sendToLabel">收款地址（自动识别链类型）</span>
+          <div class="flex gap-1">
+            <button type="button" class="btn-ghost-sm" onclick="pasteToSendAddress()" data-i18n="common.paste">粘贴</button>
+            <button type="button" class="btn-ghost-sm" onclick="openContactsPicker('send')" data-i18n="common.contacts">地址簿</button>
+          </div>
+        </div>
+        <input id="send-recipient-input" type="text" class="input-field mono" data-i18n-placeholder="sheet.sendToPlaceholder" placeholder="输入 .near / 0x / Solana / prl1p 地址" oninput="handleSendRecipientInput()" />
+        <div id="send-detected-net" style="font-size: 11px; color: var(--cyan-glow);"></div>
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <div class="flex items-center justify-between">
+          <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="sheet.sendAmountLabel">转账数量</span>
+          <div class="flex items-center gap-2">
+            <span style="font-size: 11.5px; color: var(--text-secondary);">
+              <span data-i18n="swap.balanceLabel">可用</span>: <span id="send-available-bal" class="mono">--</span>
+            </span>
+            <button type="button" class="mini-action-btn primary" onclick="setSendMaxAmount()" data-i18n="swap.maxBtn">全部</button>
+          </div>
+        </div>
+        <input id="send-amount-input" type="number" step="any" min="0" class="input-field mono" placeholder="0.00" />
+      </div>
+
+      <div id="send-route-preview" class="meta-list hidden"></div>
+      <button type="button" id="btn-confirm-send" class="btn-primary" onclick="executeUnifiedSend()" data-i18n="sheet.sendConfirmBtn">签名并广播</button>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: Unified Receive ==================== -->
+  <div id="sheet-receive" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.receiveTitle">多链统一收款</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body" style="text-align: center;">
+      <div id="receive-network-pills" class="pill-scroll"></div>
+      <div id="receive-qr-container" class="qr-frame"></div>
+      <div id="receive-addr-label" style="font-size: 12px; font-weight: 700; color: var(--text-secondary);">--</div>
+      <div id="receive-addr-value" class="input-field mono" style="word-break: break-all; font-size: 11.5px; text-align: center;">--</div>
+      <button type="button" class="btn-primary" onclick="copyReceiveAddress()" data-i18n="sheet.receiveCopyBtn">复制收款地址</button>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: Token Picker ==================== -->
+  <div id="sheet-token-picker" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.tokenPickerTitle">选择代币</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <input id="token-picker-search" type="text" class="input-field" data-i18n-placeholder="sheet.tokenPickerSearch" placeholder="搜索币种名称或合约" oninput="renderTokenPickerList()" />
+      <div id="token-picker-favorites" class="pill-scroll"></div>
+      <div id="token-picker-chains" class="pill-scroll"></div>
+      <div id="token-picker-list" class="flex flex-col gap-2" style="max-height: 46vh; overflow-y: auto;"></div>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: Deep Mining Pro ==================== -->
+  <div id="sheet-mining-pro" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.miningTitle">Pearl 矿工深度遥测</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <!-- Address Input & Watchlist -->
+      <div class="flex gap-2">
+        <input id="mining-address-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="sheet.miningAddrPlaceholder" placeholder="输入 prl1p... 矿工地址" />
+        <button type="button" class="btn-secondary" onclick="runMiningDeepQuery()" data-i18n="sheet.miningQueryBtn">查询</button>
+        <button type="button" class="btn-ghost-sm" onclick="saveCurrentMinerAddress()" data-i18n="sheet.miningSaveBtn">收藏</button>
+      </div>
+      <div id="mining-watchlist" class="pill-scroll"></div>
+
+      <!-- Pool Selector -->
+      <div class="segmented-control">
+        <button type="button" class="segmented-btn active" data-pool="auto" onclick="setMiningPoolKey('auto')">Auto</button>
+        <button type="button" class="segmented-btn" data-pool="kryptex" onclick="setMiningPoolKey('kryptex')">Kryptex</button>
+        <button type="button" class="segmented-btn" data-pool="herominers" onclick="setMiningPoolKey('herominers')">HeroMiners</button>
+        <button type="button" class="segmented-btn" data-pool="onchain" onclick="setMiningPoolKey('onchain')">On-Chain</button>
+      </div>
+
+      <!-- Network Telemetry Bar -->
+      <div id="mining-network-bar" class="meta-list"></div>
+
+      <!-- 30m / 3h / 24h Hashrate KPIs -->
+      <div class="kpi-grid-3">
+        <div class="kpi-box">
+          <span class="kpi-label" data-i18n="sheet.miningHash30m">30m 算力</span>
+          <span id="mining-kpi-30m" class="kpi-value">--</span>
+        </div>
+        <div class="kpi-box">
+          <span class="kpi-label" data-i18n="sheet.miningHash3h">3h 均值</span>
+          <span id="mining-kpi-3h" class="kpi-value">--</span>
+        </div>
+        <div class="kpi-box">
+          <span class="kpi-label" data-i18n="sheet.miningHash24h">24h 均值</span>
+          <span id="mining-kpi-24h" class="kpi-value">--</span>
+        </div>
+      </div>
+
+      <!-- Unpaid Balance & Payout Progress + Share Rate -->
+      <div class="kpi-grid-2">
+        <div class="kpi-box">
+          <span class="kpi-label" data-i18n="sheet.miningUnpaid">待结算 PRL</span>
+          <span id="mining-kpi-unpaid" class="kpi-value text-emerald">--</span>
+          <div class="progress-track" style="margin-top: 4px;">
+            <div id="mining-payout-progress" class="progress-fill" style="width: 0%;"></div>
+          </div>
+          <span id="mining-threshold-label" style="font-size: 10px; color: var(--text-muted);">--</span>
+        </div>
+        <div class="kpi-box">
+          <span class="kpi-label" data-i18n="sheet.miningShareRate">份额接受率</span>
+          <span id="mining-kpi-share-rate" class="kpi-value text-cyan">--</span>
+          <span id="mining-kpi-share-counts" style="font-size: 10px; color: var(--text-muted);">--</span>
+        </div>
+      </div>
+
+      <!-- Per-Worker Rig Status Table -->
+      <div class="flex flex-col gap-1">
+        <span style="font-size: 12px; font-weight: 700;" data-i18n="sheet.miningWorkersTitle">矿机在线状态</span>
+        <div class="rig-table-wrap">
+          <table class="rig-table">
+            <thead>
+              <tr>
+                <th>Rig</th>
+                <th>Status</th>
+                <th>30m</th>
+                <th>24h</th>
+                <th>Shares</th>
+              </tr>
+            </thead>
+            <tbody id="mining-workers-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Payout History List -->
+      <div class="flex flex-col gap-1">
+        <span style="font-size: 12px; font-weight: 700;" data-i18n="sheet.miningPayoutsTitle">近期打款记录</span>
+        <div id="mining-payouts-list" class="flex flex-col gap-1"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: WalletConnect v2 ==================== -->
+  <div id="sheet-walletconnect" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <div class="flex items-center gap-2">
+        <h3 class="sheet-title" data-i18n="sheet.wcTitle">WalletConnect v2</h3>
+        <span id="wc-status-pill" class="filter-pill">--</span>
+      </div>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div class="flex gap-2">
+        <input id="wc-project-id-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="sheet.wcProjectIdPlaceholder" placeholder="输入 Reown / WalletConnect Project ID" />
+        <button type="button" class="btn-secondary" onclick="saveWalletConnectProjectId()" data-i18n="sheet.wcSaveIdBtn">保存 ID</button>
+      </div>
+
+      <div class="flex gap-2">
+        <input id="wc-uri-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="sheet.wcUriPlaceholder" placeholder="粘贴 wc: 配对链接" />
+        <button type="button" class="btn-ghost-sm" onclick="pasteToWcUri()" data-i18n="common.paste">粘贴</button>
+        <button type="button" class="btn-primary" style="width: auto; padding: 10px 14px;" onclick="pairWalletConnectUri()" data-i18n="sheet.wcPairBtn">配对连接</button>
+      </div>
+
+      <!-- Pending Proposal -->
+      <div id="wc-proposal-card" class="hidden ios-glass-card flex flex-col gap-2" style="padding: 12px; border-color: rgba(56,189,248,0.4);">
+        <div id="wc-proposal-name" style="font-weight: 700;">--</div>
+        <div id="wc-proposal-url" style="font-size: 11px; color: var(--text-secondary);">--</div>
+        <div id="wc-proposal-chains" class="mono" style="font-size: 11px; color: var(--cyan-glow);">--</div>
+        <div class="flex gap-2">
+          <button type="button" class="btn-secondary flex-1" onclick="rejectWcProposal()" data-i18n="sheet.wcRejectBtn">拒绝</button>
+          <button type="button" class="btn-primary flex-1" onclick="approveWcProposal()" data-i18n="sheet.wcApproveBtn">批准</button>
+        </div>
+      </div>
+
+      <!-- Pending Request -->
+      <div id="wc-request-card" class="hidden ios-glass-card flex flex-col gap-2" style="padding: 12px; border-color: rgba(0,236,151,0.4);">
+        <div id="wc-request-method" class="mono text-emerald" style="font-weight: 700;">--</div>
+        <div id="wc-request-dapp" style="font-size: 11px; color: var(--text-secondary);">--</div>
+        <pre id="wc-request-payload" class="mono" style="margin: 0; font-size: 10.5px; max-height: 120px; overflow: auto; background: rgba(0,0,0,0.35); padding: 8px; border-radius: 8px;"></pre>
+        <div class="flex gap-2">
+          <button type="button" class="btn-secondary flex-1" onclick="rejectWcRequest()" data-i18n="sheet.wcRejectBtn">拒绝</button>
+          <button type="button" class="btn-primary flex-1" onclick="approveWcRequest()" data-i18n="sheet.wcApproveBtn">批准</button>
+        </div>
+      </div>
+
+      <div style="font-size: 12px; font-weight: 700;" data-i18n="sheet.wcSessionsTitle">已连接应用</div>
+      <div id="wc-sessions-list" class="flex flex-col gap-2"></div>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: Address Book (Contacts) ==================== -->
+  <div id="sheet-contacts" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.contactsTitle">地址簿管理</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <input id="contact-name-input" type="text" class="input-field" data-i18n-placeholder="sheet.contactsNamePlaceholder" placeholder="备注名称" />
+      <input id="contact-addr-input" type="text" class="input-field mono" data-i18n-placeholder="sheet.contactsAddrPlaceholder" placeholder="钱包地址 (.near / 0x / Solana / prl1p)" />
+      <button type="button" class="btn-primary" onclick="addContactFromSheet()" data-i18n="sheet.contactsAddBtn">添加联系人</button>
+      <div id="contacts-list" class="flex flex-col gap-2"></div>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: Multi-Wallet Switcher ==================== -->
+  <div id="sheet-wallets" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.walletsTitle">多钱包管理</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div id="wallets-switcher-list" class="flex flex-col gap-2"></div>
+      <div class="flex gap-2">
+        <button type="button" class="btn-primary flex-1" onclick="startAdditionalWalletCreate()" data-i18n="sheet.walletsCreateBtn">新建钱包</button>
+        <button type="button" class="btn-secondary flex-1" onclick="startAdditionalWalletImport()" data-i18n="sheet.walletsImportBtn">导入助记词</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: Backup Seed & NEAR Master Key ==================== -->
+  <div id="sheet-backup" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.backupTitle">助记词与 NEAR 主密钥备份</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div id="backup-keys-content" class="flex flex-col gap-2"></div>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: Security PIN ==================== -->
+  <div id="sheet-pin" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.pinTitle">安全密码设置</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <input id="pin-input" type="password" inputmode="numeric" maxlength="6" class="input-field mono" data-i18n-placeholder="sheet.pinPlaceholder" placeholder="输入 4-6 位数字密码" />
+      <button type="button" class="btn-primary" onclick="saveWalletPin()" data-i18n="sheet.pinSaveBtn">保存密码</button>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: Biometric & PIN Security Auth ==================== -->
+  <div id="sheet-security-auth" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.authTitle">生物识别安全验证</h3>
+      <button type="button" class="btn-ghost-sm" onclick="cancelSecurityAuthModal()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div class="flex items-center justify-between gap-2">
+        <span id="security-auth-device-badge" class="ca-badge">--</span>
+        <span id="security-auth-reason" style="font-size: 12px; color: var(--text-secondary); text-align: right;">--</span>
+      </div>
+      <button type="button" id="btn-security-biometric" class="btn-primary" onclick="triggerSecurityBiometricNow()" data-i18n="sheet.authBiometricBtn">👤 使用 Face ID / 指纹 / 人脸验证</button>
+      <div id="security-pin-section" class="flex flex-col gap-2">
+        <div class="text-center" style="font-size: 12px; color: var(--text-secondary);" data-i18n="sheet.authPinHint">或输入安全 PIN 密码</div>
+        <div id="security-pin-dots" class="bio-pin-dots">
+          <span class="bio-pin-dot"></span>
+          <span class="bio-pin-dot"></span>
+          <span class="bio-pin-dot"></span>
+          <span class="bio-pin-dot"></span>
+          <span class="bio-pin-dot"></span>
+          <span class="bio-pin-dot"></span>
+        </div>
+        <div class="bio-keypad">
+          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('1')">1</button>
+          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('2')">2</button>
+          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('3')">3</button>
+          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('4')">4</button>
+          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('5')">5</button>
+          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('6')">6</button>
+          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('7')">7</button>
+          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('8')">8</button>
+          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('9')">9</button>
+          <button type="button" class="bio-key bio-key-muted" onclick="clearSecurityPin()">C</button>
+          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('0')">0</button>
+          <button type="button" class="bio-key bio-key-muted" onclick="backspaceSecurityPin()">⌫</button>
+        </div>
+      </div>
+      <button type="button" class="btn-ghost-sm" onclick="cancelSecurityAuthModal()" data-i18n="sheet.authCancelBtn">取消验证</button>
+    </div>
+  </div>
+
+  <!-- Scripts in Exact Required Order -->
+  <script src="bip39-wordlist.js"></script>
+  <script src="qrcode.min.js"></script>
+  <script src="ethers.umd.min.js"></script>
+  <script src="walletconnect.umd.min.js"></script>
+  <script src="src/crypto-engine.js?v=2.1"></script>
+  <script src="src/token-registry.js?v=2.1"></script>
+  <script src="src/near-intents.js?v=2.1"></script>
+  <script src="src/chain-contracts.js?v=2.1"></script>
+  <script src="src/mining-pro.js?v=2.1"></script>
+  <script src="src/state.js?v=2.1"></script>
+  <script src="src/ui-controller.js?v=2.1"></script>
+</body>
+</html>

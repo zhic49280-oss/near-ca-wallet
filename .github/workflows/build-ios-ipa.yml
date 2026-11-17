@@ -1,0 +1,83 @@
+name: Build Unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build assets and run tests
+        run: |
+          npm run build
+          npm test
+
+      - name: Generate Capacitor iOS project with custom NativeSecurityPlugin
+        run: |
+          mkdir -p /tmp/ios-custom
+          cp ios/App/App/Info.plist /tmp/ios-custom/Info.plist
+          cp ios/App/App/NativeSecurityPlugin.swift /tmp/ios-custom/NativeSecurityPlugin.swift
+
+          rm -rf ios
+          npm install --no-save @capacitor/core@^6.1.0 @capacitor/cli@^6.1.0 @capacitor/ios@^6.1.0
+          npx cap add ios
+
+          cp /tmp/ios-custom/Info.plist ios/App/App/Info.plist
+          cp /tmp/ios-custom/NativeSecurityPlugin.swift ios/App/App/NativeSecurityPlugin.swift
+
+          ruby -e '
+            require "xcodeproj"
+            proj_path = "ios/App/App.xcodeproj"
+            project = Xcodeproj::Project.open(proj_path)
+            target = project.targets.find { |t| t.name == "App" }
+            app_group = project.main_group.find_subpath("App/App", false) || project.main_group.find_subpath("App", false)
+            file_ref = app_group.files.find { |f| f.path == "NativeSecurityPlugin.swift" } || app_group.new_file("NativeSecurityPlugin.swift")
+            unless target.source_build_phase.files_references.include?(file_ref)
+              target.source_build_phase.add_file_reference(file_ref)
+            end
+            project.save
+          '
+
+          npx cap sync ios
+
+      - name: Build unsigned xcarchive
+        run: |
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/App.xcarchive \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p build/ipa/Payload
+          cp -r build/App.xcarchive/Products/Applications/App.app build/ipa/Payload/
+          cd build/ipa
+          zip -qr ../NEAR-CA-Wallet-unsigned.ipa Payload
+          ls -lh ../NEAR-CA-Wallet-unsigned.ipa
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEAR-CA-Wallet-unsigned-ipa
+          path: build/NEAR-CA-Wallet-unsigned.ipa
+          retention-days: 30

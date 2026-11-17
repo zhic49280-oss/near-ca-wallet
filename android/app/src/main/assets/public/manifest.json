@@ -1,0 +1,9 @@
+{
+  "name": "NEAR Chain Abstraction Wallet",
+  "short_name": "NEAR Wallet",
+  "description": "NEAR Account-Centric Chain Abstraction Self-Custody Wallet",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#06080F",
+  "theme_color": "#06080F"
+}

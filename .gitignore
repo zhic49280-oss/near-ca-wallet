@@ -1,0 +1,6 @@
+node_modules/
+build/
+.DS_Store
+*.ipa
+*.xcarchive
+npm-debug.log*
