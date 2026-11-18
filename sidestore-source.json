@@ -17,18 +17,18 @@
       "iconURL": "https://assets.coingecko.com/coins/images/10365/large/near.jpg",
       "tintColor": "#10B981",
       "category": "utilities",
-      "version": "2.7.6",
-      "versionDate": "2026-11-18T07:52:15Z",
-      "versionDescription": "Auto-built from commit 0518c4b",
-      "downloadURL": "https://github.com/zhic49280-oss/near-ca-wallet/releases/download/v2.7.6/NEAR-CA-Wallet-unsigned.ipa",
-      "size": 1439153,
+      "version": "2.7.7",
+      "versionDate": "2026-11-18T09:18:46Z",
+      "versionDescription": "Auto-built from commit d1754e5",
+      "downloadURL": "https://github.com/zhic49280-oss/near-ca-wallet/releases/download/v2.7.7/NEAR-CA-Wallet-unsigned.ipa",
+      "size": 1468719,
       "versions": [
         {
-          "version": "2.7.6",
-          "date": "2026-11-18T07:52:15Z",
-          "localizedDescription": "Auto-built from commit 0518c4b",
-          "downloadURL": "https://github.com/zhic49280-oss/near-ca-wallet/releases/download/v2.7.6/NEAR-CA-Wallet-unsigned.ipa",
-          "size": 1439153,
+          "version": "2.7.7",
+          "date": "2026-11-18T09:18:46Z",
+          "localizedDescription": "Auto-built from commit d1754e5",
+          "downloadURL": "https://github.com/zhic49280-oss/near-ca-wallet/releases/download/v2.7.7/NEAR-CA-Wallet-unsigned.ipa",
+          "size": 1468719,
           "minOSVersion": "14.0"
         }
       ],
