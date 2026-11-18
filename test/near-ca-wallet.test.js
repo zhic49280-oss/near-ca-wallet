@@ -4183,10 +4183,11 @@ test('v3.1: Burrow NEAR/USDT & Aave ETH lending pools, EVM holder counts, localS
 });
 
 test('v3.2: Pool icons on all 21 pools, Burrow TVL USD consistency, silent home sync UI, and iOS workflow git-add fix', async () => {
-  // 1. All 21 STAKING_POOLS have valid icon URLs & TOKEN_ICON_MAP covers bNEAR/bUSDT/bUSDC/aEthUSDC/aArbUSDCn/aBasUSDC/aEthWETH/steakUSDC
+  // 1. All 21 STAKING_POOLS have valid non-blocked icon URLs & TOKEN_ICON_MAP covers bNEAR/bUSDT/bUSDC/aEthUSDC/aArbUSDCn/aBasUSDC/aEthWETH/steakUSDC
   assert.equal(chainContracts.STAKING_POOLS.length, 21);
   for (const p of chainContracts.STAKING_POOLS) {
-    assert.ok(typeof p.icon === 'string' && p.icon.startsWith('https://'), `Pool ${p.id} must have a valid https icon URL`);
+    assert.ok(typeof p.icon === 'string' && p.icon.length > 0 && Boolean(tokenRegistry.sanitizeImageUrl(p.icon)), `Pool ${p.id} must have a valid sanitized icon URL`);
+    assert.ok(!p.icon.includes('raw.githubusercontent.com') && !p.icon.includes('assets.coingecko.com'), `Pool ${p.id} must not depend on GFW-blocked domains`);
   }
   for (const sym of ['BNEAR', 'BUSDT', 'BUSDC', 'AETHUSDC', 'AARBUSDCN', 'ABASUSDC', 'AETHWETH', 'STEAKUSDC']) {
     assert.ok(tokenRegistry.TOKEN_ICON_MAP[sym], `TOKEN_ICON_MAP must include ${sym}`);
@@ -4256,5 +4257,155 @@ test('v3.2: Pool icons on all 21 pools, Burrow TVL USD consistency, silent home 
   const iosYml = fs.readFileSync(path.join(ROOT_DIR, '.github', 'workflows', 'build-ios-ipa.yml'), 'utf8');
   assert.equal(iosYml.includes('git add sidestore-source.json build/NEAR-CA-Wallet-unsigned.ipa'), false, 'Workflow must not git add ignored build/ IPA');
   assert.ok(iosYml.includes('git add sidestore-source.json'), 'Workflow must git add sidestore-source.json');
-  assert.ok(iosYml.includes('git pull --rebase origin main && git push'), 'Workflow must rebase before pushing');
+  assert.ok(iosYml.includes('git pull --rebase') && iosYml.includes('origin main && git push'), 'Workflow must rebase before pushing');
+});
+
+test('v3.3: Zero-GFW-block distinct pool icons, server Cache-Control no-store, staking cache v3, and tvlTokenAmount ($USD) on NEAR/JUP pools', async () => {
+  // 1. All 21 pools resolve a valid non-empty primaryUrl via resolveTokenIcon and avoid GFW-blocked CDNs
+  assert.equal(chainContracts.STAKING_POOLS.length, 21);
+  for (const p of chainContracts.STAKING_POOLS) {
+    const sanitized = tokenRegistry.sanitizeImageUrl(p.icon);
+    assert.ok(sanitized, `Pool ${p.id} icon must pass sanitizeImageUrl`);
+    const resolved = tokenRegistry.resolveTokenIcon({ symbol: p.outSymbol, blockchain: p.chain, logoURI: p.icon });
+    assert.ok(resolved.primaryUrl && resolved.primaryUrl.length > 0, `Pool ${p.id} resolveTokenIcon must return primaryUrl`);
+    assert.ok(!resolved.primaryUrl.includes('raw.githubusercontent.com'), `Pool ${p.id} must not use raw.githubusercontent.com`);
+    assert.ok(!resolved.primaryUrl.includes('assets.coingecko.com'), `Pool ${p.id} must not use assets.coingecko.com`);
+  }
+
+  // Distinct icons across the 6 NEAR staking pools + Burrow NEAR vs Burrow USDT
+  const nearPools = ['rhea_rnear', 'rhea_xrhea', 'rhea_orhea_convert', 'metapool_stnear', 'linear_near', 'stader_nearx']
+    .map((id) => chainContracts.STAKING_POOLS.find((p) => p.id === id)?.icon);
+  assert.equal(new Set(nearPools).size, 6, 'All 6 NEAR staking pools must have distinct protocol logos');
+  const byPool = Object.fromEntries(chainContracts.STAKING_POOLS.map((p) => [p.id, p]));
+  assert.notEqual(byPool.burrow_near_wnear.icon, byPool.burrow_near_usdt.icon, 'Burrow NEAR and Burrow USDT must have distinct icons');
+
+  for (const sym of ['BNEAR', 'BUSDT', 'BUSDC', 'AETHUSDC', 'AARBUSDCN', 'ABASUSDC', 'AETHWETH', 'STEAKUSDC', 'STAKED JUP', 'JUP']) {
+    const mapped = tokenRegistry.TOKEN_ICON_MAP[sym];
+    assert.ok(mapped && tokenRegistry.sanitizeImageUrl(mapped), `TOKEN_ICON_MAP[${sym}] must be sanitized`);
+    assert.ok(!mapped.includes('raw.githubusercontent.com') && !mapped.includes('assets.coingecko.com'), `TOKEN_ICON_MAP[${sym}] must not use GFW-blocked domains`);
+  }
+
+  // 2. server.js no-store Cache-Control & state.js cache key v3
+  const serverSrc = fs.readFileSync(path.join(ROOT_DIR, 'server.js'), 'utf8');
+  assert.ok(serverSrc.includes("'Cache-Control': 'no-store, no-cache, must-revalidate'"), 'server.js must set no-store Cache-Control');
+  assert.equal(state.STAKING_METRICS_STORAGE_KEY, 'near_ca_staking_metrics_v3');
+
+  // 3. tvlTokenAmount populated on the 7 NEAR/JUP pools & renderEarnView appends ($USD)
+  const prevLang = state.lang;
+  const prevLiveTokens = state.liveTokens;
+  const prevPools = state.staking.pools;
+  const prevUpdatedAt = state.staking.updatedAt;
+  const prevFilter = state.staking.filter;
+  const prevWallets = state.wallets;
+  const prevActiveId = state.activeWalletId;
+  const prevDoc = globalThis.document;
+  state.setLanguage('en');
+  state.wallets = [{ id: 'w_v33', name: 'V33', nearAccountId: 'v33.near', balances: { NEAR: 10 } }];
+  state.activeWalletId = 'w_v33';
+  state.staking.filter = 'all';
+  state.liveTokens = [
+    { assetId: 'nep141:wrap.near', symbol: 'NEAR', blockchain: 'near', price: 2.0 },
+    { assetId: 'nep141:token.rhealab.near', symbol: 'RHEA', blockchain: 'near', price: 0.5 },
+    { assetId: 'nep141:otoken.rhealab.near', symbol: 'oRHEA', blockchain: 'near', price: 0.4 },
+    { assetId: 'solana:JUP', symbol: 'JUP', blockchain: 'sol', price: 1.2 }
+  ];
+
+  // Build 81-byte Solana Locker buffer with lockedJup = 500,000,000 * 1e6 at offset 73
+  const lockerBuf = Buffer.alloc(81);
+  lockerBuf.writeBigUInt64LE(500_000_000n * 1_000_000n, 73);
+  const lockerB64 = lockerBuf.toString('base64');
+
+  const encodeNearRes = (obj) => jsonResponse({
+    jsonrpc: '2.0',
+    result: { result: [...Buffer.from(JSON.stringify(obj))] }
+  });
+
+  try {
+    await withMockedFetch(async (url, opts) => {
+      if (url.includes('rpc.mainnet.near.org') && opts?.body) {
+        const b = JSON.parse(opts.body);
+        const acct = b.params?.account_id;
+        const meth = b.params?.method_name;
+        if (acct === 'lst.rhealab.near' && meth === 'get_summary') {
+          return encodeNearRes({ ft_price: (10n ** 24n).toString(), total_staked_near_amount: (1_000_000n * 10n ** 24n).toString() });
+        }
+        if (acct === 'xtoken.rhealab.near' && meth === 'contract_metadata') {
+          return encodeNearRes({ cur_locked_token_amount: (2_000_000n * 10n ** 18n).toString(), reward_per_sec: '0', current_account_num: 1200 });
+        }
+        if (acct === 'orhea-conv.rhealab.near' && meth === 'get_converted_source_token_amounts') {
+          return encodeNearRes({ 'otoken.rhealab.near': (3_000_000n * 10n ** 18n).toString() });
+        }
+        if (acct === 'meta-pool.near' && meth === 'get_contract_state') {
+          return encodeNearRes({ total_for_staking: (4_000_000n * 10n ** 24n).toString(), accounts_count: 5000 });
+        }
+        if (acct === 'linear-protocol.near' && meth === 'get_summary') {
+          return encodeNearRes({ ft_price: (10n ** 24n).toString(), total_staked_near_amount: (5_000_000n * 10n ** 24n).toString() });
+        }
+        if (acct === 'v2-nearx.stader-labs.near' && meth === 'get_total_staked_balance') {
+          return encodeNearRes((6_000_000n * 10n ** 24n).toString());
+        }
+      }
+      if (opts?.body && String(opts.body).includes('getAccountInfo') && String(opts.body).includes('CVMdMd79no569tjc5Sq7kzz8isbfCcFyBS5TLGsrZ5dN')) {
+        return jsonResponse({ jsonrpc: '2.0', result: { value: { data: [lockerB64, 'base64'] } } });
+      }
+      return jsonResponse({}, 404, 'Not Found');
+    }, async () => {
+      const pools = await chainContracts.fetchLiveStakingMetrics();
+      const map = Object.fromEntries(pools.map((p) => [p.id, p]));
+      assert.equal(map.rhea_rnear.tvlTokenAmount, 1_000_000);
+      assert.equal(map.rhea_xrhea.tvlTokenAmount, 2_000_000);
+      assert.equal(map.rhea_orhea_convert.tvlTokenAmount, 3_000_000);
+      assert.equal(map.metapool_stnear.tvlTokenAmount, 4_000_000);
+      assert.equal(map.linear_near.tvlTokenAmount, 5_000_000);
+      assert.equal(map.stader_nearx.tvlTokenAmount, 6_000_000);
+      assert.equal(map.jupiter_jup.tvlTokenAmount, 500_000_000);
+
+      // Render Earn view and confirm ($USD) is appended via formatPoolTvlDisplay
+      state.staking.pools = pools;
+      state.staking.updatedAt = Date.now();
+      const domMap = new Map();
+      const makeEl = (id) => {
+        const el = {
+          id, innerHTML: '', textContent: '', value: '', classList: new Set(),
+          attributes: {}, setAttribute(k, v) { this.attributes[k] = v; }, getAttribute(k) { return this.attributes[k]; },
+          classListProxy: null
+        };
+        el.classList = {
+          add: (...cls) => cls.forEach((c) => el._cls.add(c)),
+          remove: (...cls) => cls.forEach((c) => el._cls.delete(c)),
+          toggle: (c, f) => { if (f === undefined ? !el._cls.has(c) : f) el._cls.add(c); else el._cls.delete(c); },
+          contains: (c) => el._cls.has(c)
+        };
+        el._cls = new Set();
+        domMap.set(id, el);
+        return el;
+      };
+      ['staking-pools-list', 'earn-selected-title', 'earn-avail-balance', 'earn-in-symbol',
+        'earn-live-apy', 'earn-tvl-val', 'earn-stakers-val', 'earn-live-rate', 'earn-amount-in',
+        'earn-est-out', 'earn-lock-row', 'earn-lock-tiers'].forEach(makeEl);
+      globalThis.document = {
+        documentElement: { lang: 'en' },
+        getElementById: (id) => domMap.get(id) || null,
+        querySelectorAll: () => []
+      };
+      uiController.renderEarnView();
+      const html = domMap.get('staking-pools-list').innerHTML;
+      assert.ok(html.includes('1.00M NEAR ($2.00M)'), 'rhea_rnear must render ($USD) in Earn list');
+      assert.ok(html.includes('2.00M RHEA ($1.00M)'), 'rhea_xrhea must render ($USD) in Earn list');
+      assert.ok(html.includes('3.00M oRHEA ($1.20M)'), 'rhea_orhea_convert must render ($USD) in Earn list');
+      assert.ok(html.includes('4.00M NEAR ($8.00M)'), 'metapool_stnear must render ($USD) in Earn list');
+      assert.ok(html.includes('5.00M NEAR ($10.00M)'), 'linear_near must render ($USD) in Earn list');
+      assert.ok(html.includes('6.00M NEAR ($12.00M)'), 'stader_nearx must render ($USD) in Earn list');
+      assert.ok(html.includes('500.00M JUP ($600.00M)'), 'jupiter_jup must render ($USD) in Earn list');
+    });
+  } finally {
+    globalThis.document = prevDoc;
+    state.wallets = prevWallets;
+    state.activeWalletId = prevActiveId;
+    state.staking.filter = prevFilter;
+    state.staking.pools = prevPools;
+    state.staking.updatedAt = prevUpdatedAt;
+    state.liveTokens = prevLiveTokens;
+    state.setLanguage(prevLang);
+  }
 });

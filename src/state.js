@@ -14,7 +14,7 @@
   const LANG_STORAGE_KEY = 'near_ca_lang_v1';
   const FAV_TOKENS_STORAGE_KEY = 'near_ca_fav_tokens_v1';
   const LIVE_TOKENS_STORAGE_KEY = 'near_ca_live_tokens_v1';
-  const STAKING_METRICS_STORAGE_KEY = 'near_ca_staking_metrics_v1';
+  const STAKING_METRICS_STORAGE_KEY = 'near_ca_staking_metrics_v3';
   const WC_PROJECT_ID_STORAGE_KEY = 'near_ca_wc_project_id';
   const LEGACY_WC_PROJECT_ID_KEY = 'pearl_wc_project_id';
 
