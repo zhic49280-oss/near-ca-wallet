@@ -1528,16 +1528,19 @@
 
     // 3. Solana SPL & EVM ERC-20 DEX Tokens
     const dexByChain = tokens.DEX_CHAIN_TOKENS || {};
+    const nativeL1Symbols = new Set(['SOL', 'BTC', 'NEAR', 'PRL']);
     for (const [chainKey, list] of Object.entries(dexByChain)) {
       if (chainKey === 'near') continue;
+      const chainNativeLoaded = Boolean(
+        wallet.nativeBalances &&
+        typeof wallet.nativeBalances[chainKey] === 'number' &&
+        Number.isFinite(wallet.nativeBalances[chainKey])
+      );
       for (const dt of list) {
         const isNativeSentinel = !dt.contractAddress ||
           dt.contractAddress === 'So11111111111111111111111111111111111111112' ||
           dt.contractAddress.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
         if (isNativeSentinel) continue;
-
-        const grp = ensureGroup(dt.symbol);
-        if (!grp.primaryToken) grp.primaryToken = dt;
 
         let bal = null;
         if (chainKey === 'sol') {
@@ -1545,8 +1548,21 @@
           if (typeof splVal === 'number' && Number.isFinite(splVal)) bal = splVal;
         } else {
           const ercVal = st.getWalletErc20Balance(wallet, chainKey, dt.contractAddress);
-          if (typeof ercVal === 'number' && Number.isFinite(ercVal)) bal = ercVal;
+          if (typeof ercVal === 'number' && Number.isFinite(ercVal)) {
+            bal = ercVal;
+          } else if (chainNativeLoaded) {
+            bal = 0;
+          }
         }
+
+        // Do not merge wrapped/bridged ERC-20/SPL tokens for native L1 symbols (SOL/BTC/NEAR/PRL) unless holding > 0
+        const symUpper = String(dt.symbol || '').toUpperCase();
+        if (nativeL1Symbols.has(symUpper) && !(typeof bal === 'number' && bal > 0)) {
+          continue;
+        }
+
+        const grp = ensureGroup(dt.symbol);
+        if (!grp.primaryToken) grp.primaryToken = dt;
 
         const matchedCore = (tokens.UNIFIED_CORE_TOKENS || []).find(
           (c) => c.blockchain === chainKey && String(c.symbol).toUpperCase() === String(dt.symbol).toUpperCase()
@@ -2076,6 +2092,14 @@
     if ($('token-detail-usd')) $('token-detail-usd').textContent = displayUsd !== null ? formatUsd(displayUsd) : '--';
 
     const recvAddr = getWalletDefaultRecipientForChain(wallet, activeChain) || '';
+    const addrRowEl = $('token-detail-addr-row');
+    if (addrRowEl) {
+      if (chainFilter === 'all') {
+        addrRowEl.classList.add('hidden');
+      } else {
+        addrRowEl.classList.remove('hidden');
+      }
+    }
     if ($('token-detail-addr')) $('token-detail-addr').textContent = recvAddr || '--';
 
     const explorerEl = $('token-detail-explorer-link');
@@ -2128,23 +2152,20 @@
     const earnList = $('token-detail-earn-list');
     if (earnCard && earnList) {
       const allPools = (st.staking && st.staking.pools) || (contracts && contracts.STAKING_POOLS) || [];
-      const matchedPools = allPools
-        .filter((p) => p && (
-          String(p.inSymbol || '').toUpperCase() === symKey ||
-          String(p.outSymbol || '').toUpperCase() === symKey
-        ))
-        .sort((a, b) => {
-          if (chainFilter !== 'all') {
-            const aMatch = String(a.chain || '').toLowerCase() === chainFilter ? 1 : 0;
-            const bMatch = String(b.chain || '').toLowerCase() === chainFilter ? 1 : 0;
-            if (bMatch !== aMatch) return bMatch - aMatch;
-          }
-          return 0;
-        });
+      const matchedPools = allPools.filter((p) => {
+        if (!p) return false;
+        const symMatch = String(p.inSymbol || '').toUpperCase() === symKey || String(p.outSymbol || '').toUpperCase() === symKey;
+        if (!symMatch) return false;
+        if (chainFilter !== 'all' && String(p.chain || '').toLowerCase() !== chainFilter) return false;
+        return true;
+      });
 
       if (matchedPools.length > 0) {
         earnCard.classList.remove('hidden');
-        earnList.innerHTML = matchedPools.map((p) => `
+        const stakingPools = matchedPools.filter((p) => !p.isErc4626 && !p.isAaveV3 && !p.isLockConvert);
+        const earnLendingPools = matchedPools.filter((p) => p.isErc4626 || p.isAaveV3 || p.isLockConvert);
+
+        const renderPoolRows = (poolList) => poolList.map((p) => `
           <button type="button" class="detail-row-item detail-row-clickable" onclick="openTokenDetailPool('${escapeHtml(p.id)}')">
             <div class="flex items-center gap-2" style="min-width:0;flex:1;">
               ${tokens.renderTokenIconWithBadge({ symbol: p.outSymbol, blockchain: p.chain }, 26, true)}
@@ -2156,6 +2177,21 @@
             <span class="mono text-emerald" style="font-weight:800;font-size:13px;flex-shrink:0;">${escapeHtml(formatPoolApyText(p))}</span>
           </button>
         `).join('');
+
+        const sections = [];
+        if (stakingPools.length > 0) {
+          sections.push(`
+            <div class="detail-earn-subheader">${escapeHtml(t('链上质押 (Liquid / DAO Staking)', 'Liquid & DAO Staking'))}</div>
+            ${renderPoolRows(stakingPools)}
+          `);
+        }
+        if (earnLendingPools.length > 0) {
+          sections.push(`
+            <div class="detail-earn-subheader">${escapeHtml(t('赚币 · 借贷生息 (Earn & Lending)', 'Earn & Lending Vaults'))}</div>
+            ${renderPoolRows(earnLendingPools)}
+          `);
+        }
+        earnList.innerHTML = sections.join('');
       } else {
         earnCard.classList.add('hidden');
         earnList.innerHTML = '';
@@ -5222,10 +5258,23 @@
     }
     const f = String(filterKey || 'featured').toLowerCase();
     if (f === 'all') return list;
+    if (f === 'lending') return list.filter((p) => p.category === 'lending' || p.isAaveV3 || p.isErc4626 || p.isLockConvert);
+    if (f === 'staking') return list.filter((p) => p.category === 'staking' || (!p.isAaveV3 && !p.isErc4626 && !p.isLockConvert));
     if (f === 'near') return list.filter((p) => p.chain === 'near');
     if (f === 'sol') return list.filter((p) => p.chain === 'sol');
     if (f === 'evm') return list.filter((p) => p.chain !== 'near' && p.chain !== 'sol');
     return list.filter((p) => Boolean(p.featured));
+  }
+
+  function getPoolCategoryMeta(pool) {
+    if (!pool) return { label: '', cls: 'cat-staking' };
+    if (pool.isAaveV3) {
+      return { label: t('借贷 Lending', 'Lending'), cls: 'cat-lending' };
+    }
+    if (pool.isErc4626 || pool.isLockConvert || pool.category === 'lending') {
+      return { label: t('金库 Vault', 'Vault'), cls: 'cat-vault' };
+    }
+    return { label: t('质押 Staking', 'Staking'), cls: 'cat-staking' };
   }
 
   function getEffectivePoolRate(pool) {
@@ -5434,12 +5483,16 @@
           const stakersStr = typeof p.stakersCount === 'number' && Number.isFinite(p.stakersCount) && p.stakersCount > 0
             ? p.stakersCount.toLocaleString('en-US')
             : '--';
+          const catMeta = getPoolCategoryMeta(p);
           return `
             <div class="staking-pool-card ${selected ? 'selected' : ''}" onclick="selectStakingPool('${escapeHtml(p.id)}')">
               <div class="flex items-center gap-3">
                 ${tokens.renderTokenIconWithBadge({ symbol: p.outSymbol, blockchain: p.chain }, 36, true)}
                 <div class="flex flex-col">
-                  <span style="font-weight:700;color:#fff;">${escapeHtml(p.name)}</span>
+                  <div class="flex items-center gap-1" style="flex-wrap:wrap;">
+                    <span style="font-weight:700;color:#fff;">${escapeHtml(p.name)}</span>
+                    <span class="pool-cat-badge ${catMeta.cls}">${escapeHtml(catMeta.label)}</span>
+                  </div>
                   <span style="font-size:11.5px;color:var(--text-secondary);">${escapeHtml(p.inSymbol)} ➔ ${escapeHtml(p.outSymbol)} · ${escapeHtml(p.chainLabel)}</span>
                   <span style="font-size:10.5px;color:var(--text-muted);margin-top:2px;">🔒 ${escapeHtml(t('总质押', 'TVL'))}: ${escapeHtml(tvlStr)} · 👥 ${escapeHtml(t('人数', 'Stakers'))}: ${escapeHtml(stakersStr)}</span>
                 </div>
@@ -6525,6 +6578,7 @@
     cancelSecurityAuthModal,
     refreshAllBalancesAsync,
     startAutoPriceAndBalanceSync,
+    buildAllOnChainAssetGroups,
     buildAggregatedAssetGroups,
     renderUnifiedAssetList,
     toggleAssetExpand,

@@ -108,6 +108,7 @@
       id: 'rhea_rnear',
       name: 'Rhea Liquid Staking',
       protocol: 'Rhea Liquid Staking',
+      category: 'staking',
       chain: 'near',
       chainLabel: 'NEAR',
       inSymbol: 'NEAR',
@@ -125,6 +126,7 @@
       id: 'rhea_xrhea',
       name: 'Rhea xRHEA Staking',
       protocol: 'Rhea xRHEA Staking',
+      category: 'staking',
       chain: 'near',
       chainLabel: 'NEAR',
       inSymbol: 'RHEA',
@@ -144,6 +146,7 @@
       id: 'rhea_orhea_convert',
       name: 'Rhea oRHEA Convert',
       protocol: 'Rhea oRHEA Convert',
+      category: 'lending',
       chain: 'near',
       chainLabel: 'NEAR',
       inSymbol: 'oRHEA',
@@ -166,6 +169,7 @@
       legacyIds: ['near'],
       name: 'Meta Pool',
       protocol: 'Meta Pool',
+      category: 'staking',
       chain: 'near',
       chainLabel: 'NEAR',
       inSymbol: 'NEAR',
@@ -183,6 +187,7 @@
       id: 'linear_near',
       name: 'LiNEAR Protocol',
       protocol: 'LiNEAR Protocol',
+      category: 'staking',
       chain: 'near',
       chainLabel: 'NEAR',
       inSymbol: 'NEAR',
@@ -200,6 +205,7 @@
       id: 'stader_nearx',
       name: 'Stader NearX',
       protocol: 'Stader NearX',
+      category: 'staking',
       chain: 'near',
       chainLabel: 'NEAR',
       inSymbol: 'NEAR',
@@ -218,6 +224,7 @@
       legacyIds: ['jito'],
       name: 'Jito Liquid Staking',
       protocol: 'Jito',
+      category: 'staking',
       chain: 'sol',
       chainLabel: 'Solana',
       inSymbol: 'SOL',
@@ -235,6 +242,7 @@
       id: 'jupiter_jup',
       name: 'Jupiter DAO Staking',
       protocol: 'Jupiter DAO (ASR)',
+      category: 'staking',
       chain: 'sol',
       chainLabel: 'Solana',
       inSymbol: 'JUP',
@@ -256,6 +264,7 @@
       id: 'jupiter_sol',
       name: 'Jupiter Staked SOL',
       protocol: 'Jupiter Liquid Staking',
+      category: 'staking',
       chain: 'sol',
       chainLabel: 'Solana',
       inSymbol: 'SOL',
@@ -273,6 +282,7 @@
       id: 'marinade_msol',
       name: 'Marinade Finance',
       protocol: 'Marinade',
+      category: 'staking',
       chain: 'sol',
       chainLabel: 'Solana',
       inSymbol: 'SOL',
@@ -290,6 +300,7 @@
       id: 'sanctum_inf',
       name: 'Sanctum Infinity',
       protocol: 'Sanctum',
+      category: 'staking',
       chain: 'sol',
       chainLabel: 'Solana',
       inSymbol: 'SOL',
@@ -308,6 +319,7 @@
       legacyIds: ['lido'],
       name: 'Lido Liquid Staking',
       protocol: 'Lido',
+      category: 'staking',
       chain: 'eth',
       chainLabel: 'Ethereum',
       inSymbol: 'ETH',
@@ -325,6 +337,7 @@
       id: 'arc_steak_usdc',
       name: 'Steakhouse Prime (Arc)',
       protocol: 'Steakhouse Morpho',
+      category: 'lending',
       chain: 'arc',
       chainLabel: 'Arc Mainnet',
       inSymbol: 'USDC',
@@ -346,6 +359,7 @@
       id: 'aave_base_usdc',
       name: 'Aave V3 Base USDC',
       protocol: 'Aave V3',
+      category: 'lending',
       chain: 'base',
       chainLabel: 'Base',
       inSymbol: 'USDC',
@@ -364,9 +378,54 @@
       featured: false
     },
     {
+      id: 'aave_eth_usdc',
+      name: 'Aave V3 Ethereum USDC',
+      protocol: 'Aave V3',
+      category: 'lending',
+      chain: 'eth',
+      chainLabel: 'Ethereum',
+      inSymbol: 'USDC',
+      outSymbol: 'aEthUSDC',
+      decimals: 6,
+      outDecimals: 6,
+      isTokenStake: true,
+      isAaveV3: true,
+      tokenContract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+      apy: null,
+      rate: null,
+      tvlText: null,
+      stakersCount: null,
+      contract: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2',
+      method: 'supply(address,uint256,address,uint16)',
+      featured: false
+    },
+    {
+      id: 'aave_arb_usdc',
+      name: 'Aave V3 Arbitrum USDC',
+      protocol: 'Aave V3',
+      category: 'lending',
+      chain: 'arb',
+      chainLabel: 'Arbitrum',
+      inSymbol: 'USDC',
+      outSymbol: 'aArbUSDCn',
+      decimals: 6,
+      outDecimals: 6,
+      isTokenStake: true,
+      isAaveV3: true,
+      tokenContract: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+      apy: null,
+      rate: null,
+      tvlText: null,
+      stakersCount: null,
+      contract: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
+      method: 'supply(address,uint256,address,uint16)',
+      featured: false
+    },
+    {
       id: 'ethena_susde',
       name: 'Ethena Staked USDe',
       protocol: 'Ethena',
+      category: 'lending',
       chain: 'eth',
       chainLabel: 'Ethereum',
       inSymbol: 'USDe',
@@ -388,6 +447,7 @@
       id: 'hyper_khype',
       name: 'Kinetiq kHYPE',
       protocol: 'Kinetiq',
+      category: 'staking',
       chain: 'hype',
       chainLabel: 'HyperEVM',
       inSymbol: 'HYPE',
@@ -1246,7 +1306,7 @@
     try {
       const requests = [
         callSolanaRpc('getBalance', [addr]),
-        callSolanaRpc('getTokenAccountsByOwner', [addr, { programId: SPL_TOKEN_PROGRAM_ID }, { encoding: 'jsonParsed' }])
+        callSolanaRpc('getTokenAccountsByOwner', [addr, { programId: SPL_TOKEN_PROGRAM_ID }, { encoding: 'jsonParsed' }]).catch(() => null)
       ];
       const [balRes, splRes] = await Promise.all(requests);
 
@@ -3594,6 +3654,24 @@
           if (tvlText) setPool('aave_base_usdc', { tvlText });
         }
       } catch (_) {}
+    }
+
+    // 14b. Aave V3 Ethereum USDC
+    const ethAaveApy = findLlamaApy((p) => p.chain === 'Ethereum' && p.project === 'aave-v3' && p.symbol === 'USDC');
+    if (ethAaveApy !== null) setPool('aave_eth_usdc', { apy: ethAaveApy, rate: 1.0 });
+    const ethAaveUsd = findLlamaTvlUsd((p) => p.chain === 'Ethereum' && p.project === 'aave-v3' && p.symbol === 'USDC');
+    if (ethAaveUsd > 0) {
+      const tvlText = formatTvlToken(ethAaveUsd, 'USDC', ethAaveUsd);
+      if (tvlText) setPool('aave_eth_usdc', { tvlText });
+    }
+
+    // 14c. Aave V3 Arbitrum USDC
+    const arbAaveApy = findLlamaApy((p) => p.chain === 'Arbitrum' && p.project === 'aave-v3' && p.symbol === 'USDC');
+    if (arbAaveApy !== null) setPool('aave_arb_usdc', { apy: arbAaveApy, rate: 1.0 });
+    const arbAaveUsd = findLlamaTvlUsd((p) => p.chain === 'Arbitrum' && p.project === 'aave-v3' && p.symbol === 'USDC');
+    if (arbAaveUsd > 0) {
+      const tvlText = formatTvlToken(arbAaveUsd, 'USDC', arbAaveUsd);
+      if (tvlText) setPool('aave_arb_usdc', { tvlText });
     }
 
     // 15. Ethena sUSDe (ETH ERC-4626)

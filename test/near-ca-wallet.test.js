@@ -647,13 +647,14 @@ test('Module 3: signAndPublishNep413Intent signs NEP-413 payload & posts publish
 // ==================== Module 4: src/chain-contracts.js ====================
 
 test('Module 4: STAKING_POOLS have initial apy: null, rate: null (zero fake APYs)', () => {
-  assert.equal(INITIAL_STAKING_SNAPSHOT.length, 16);
+  assert.equal(INITIAL_STAKING_SNAPSHOT.length, 18);
   const byId = Object.fromEntries(INITIAL_STAKING_SNAPSHOT.map((p) => [p.id, p]));
   const expectedIds = [
     'rhea_rnear', 'rhea_xrhea', 'rhea_orhea_convert', 'metapool_stnear',
     'linear_near', 'stader_nearx',
     'jito_sol', 'jupiter_jup', 'jupiter_sol', 'marinade_msol', 'sanctum_inf',
-    'lido_steth', 'arc_steak_usdc', 'aave_base_usdc', 'ethena_susde', 'hyper_khype'
+    'lido_steth', 'arc_steak_usdc', 'aave_base_usdc', 'aave_eth_usdc', 'aave_arb_usdc',
+    'ethena_susde', 'hyper_khype'
   ];
   for (const id of expectedIds) {
     assert.ok(byId[id], `STAKING_POOLS must include ${id}`);
@@ -2584,7 +2585,7 @@ test('v1.9 Requirement #6: Rhea 3 pools + 16-pool Staking Hub live rates, tx sig
     return jsonResponse({}, 404, 'Not Found');
   }, async () => {
     const pools = await chainContracts.fetchAllStakingRates();
-    assert.equal(pools.length, 16);
+    assert.equal(pools.length, 18);
     const byId = Object.fromEntries(pools.map((p) => [p.id, p]));
     assert.equal(byId.rhea_rnear.apy, 4.49);
     assert.ok(Math.abs(byId.rhea_rnear.rate - 1 / 1.069637) < 0.001);
@@ -2716,7 +2717,7 @@ test('v1.9 Requirement #6: Rhea 3 pools + 16-pool Staking Hub live rates, tx sig
         assert.equal(domNodes['earn-stakers-val'].textContent, '836,170');
 
         uiController.setEarnPoolFilter('all');
-        assert.equal((domNodes['staking-pools-list'].innerHTML.match(/staking-pool-card/g) || []).length, 16, 'All Pools pill must render all 16 pools');
+        assert.equal((domNodes['staking-pools-list'].innerHTML.match(/staking-pool-card/g) || []).length, 18, 'All Pools pill must render all 18 pools');
 
         // Typing into search must search ALL 16 pools even while featured filter is active
         uiController.setEarnPoolFilter('featured');
@@ -3652,6 +3653,7 @@ test('v2.9: OKX-style Token Detail Sheet (openTokenDetailSheet, setTokenDetailCh
       'token-detail-chains',
       'token-detail-balance',
       'token-detail-usd',
+      'token-detail-addr-row',
       'token-detail-addr',
       'token-detail-explorer-link',
       'token-detail-breakdown-card',
@@ -3764,6 +3766,183 @@ test('v2.9: OKX-style Token Detail Sheet (openTokenDetailSheet, setTokenDetailCh
       state.wallets = prevWallets;
       state.activeWalletId = prevActiveId;
       state.liveTokens = prevLiveTokens;
+      state.setLanguage(prevLang);
+    }
+  });
+});
+
+test('v3.0: Pill-scroll CSS, address-row visibility, chain-scoped earn/staking grouping, Solana partial RPC fallback, wrapped L1 exclusion & Aave Eth/Arb pools', async () => {
+  // 1. CSS checks for .pill-scroll & .filter-pill
+  const css = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
+  assert.ok(/\.pill-scroll\s*\{[^}]*flex-shrink:\s*0;[^}]*min-height:\s*34px;/s.test(css), '.pill-scroll must prevent vertical squishing');
+  assert.ok(/\.filter-pill\s*\{[^}]*flex-shrink:\s*0;/s.test(css), '.filter-pill must have flex-shrink: 0');
+
+  // 2. fetchSolanaNativeAndSplBalances still returns nativeSol when getTokenAccountsByOwner fails/rate-limits
+  const keys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+  await withMockedFetch(async (_url, opts) => {
+    const b = JSON.parse(opts.body);
+    if (b.method === 'getBalance') {
+      return jsonResponse({ jsonrpc: '2.0', id: 1, result: { value: 250000000 } });
+    }
+    if (b.method === 'getTokenAccountsByOwner') {
+      return jsonResponse({ error: { code: 429, message: 'Too many requests' } }, 429);
+    }
+    return jsonResponse({}, 404, 'Not Found');
+  }, async () => {
+    const solRes = await chainContracts.fetchSolanaNativeAndSplBalances(keys.solAddress, []);
+    assert.ok(solRes, 'fetchSolanaNativeAndSplBalances must succeed when getTokenAccountsByOwner fails');
+    assert.equal(solRes.nativeSol, 0.25);
+  });
+
+  // 3. Aave V3 Ethereum & Arbitrum USDC pools live metrics from DefiLlama + category filter
+  await withMockedFetch(async (url) => {
+    if (url.includes('yields.llama.fi/pools')) {
+      return jsonResponse({
+        data: [
+          { chain: 'Ethereum', project: 'aave-v3', symbol: 'USDC', apy: 4.35, tvlUsd: 3200000000 },
+          { chain: 'Arbitrum', project: 'aave-v3', symbol: 'USDC', apy: 5.12, tvlUsd: 240000000 }
+        ]
+      });
+    }
+    return jsonResponse({}, 404, 'Not Found');
+  }, async () => {
+    const prevLang = state.lang;
+    state.setLanguage('en');
+    try {
+      const pools = await chainContracts.fetchLiveStakingMetrics();
+      const byId = Object.fromEntries(pools.map((p) => [p.id, p]));
+      assert.equal(byId.aave_eth_usdc.category, 'lending');
+      assert.equal(byId.aave_eth_usdc.apy, 4.35);
+      assert.equal(byId.aave_eth_usdc.rate, 1.0);
+      assert.equal(byId.aave_eth_usdc.tvlText, '3.20B USDC ($3.20B)');
+      assert.equal(byId.aave_arb_usdc.category, 'lending');
+      assert.equal(byId.aave_arb_usdc.apy, 5.12);
+      assert.equal(byId.aave_arb_usdc.rate, 1.0);
+      assert.equal(byId.aave_arb_usdc.tvlText, '240.00M USDC ($240.00M)');
+    } finally {
+      state.setLanguage(prevLang);
+    }
+  });
+
+  // 4. buildAllOnChainAssetGroups: Wrapped SOL (BSC) excluded unless > 0, loaded ERC-20 chains default null -> 0
+  await withMockedStorage({}, async () => {
+    const prevDoc = globalThis.document;
+    const prevWallets = state.wallets.slice();
+    const prevActiveId = state.activeWalletId;
+    const prevLang = state.lang;
+
+    const w = state.normalizeWalletRecord({
+      id: 'w_v30_test',
+      name: 'V30Test',
+      mnemonic: TEST_MNEMONIC,
+      nearNamedAccount: 'alice.near',
+      nativeBalances: { near: 5, sol: 0, bsc: 0, eth: 0 },
+      erc20Balances: {}
+    });
+    state.wallets = [w];
+    state.activeWalletId = w.id;
+    state.setLanguage('en');
+
+    const groups = uiController.buildAllOnChainAssetGroups(w);
+    const solGrp = groups.find((g) => g.symbolKey === 'SOL');
+    assert.ok(solGrp);
+    assert.equal(solGrp.entries.some((e) => e.blockchain === 'bsc'), false, 'Wrapped SOL (BSC) at 0 must not merge into SOL');
+    const solNative = solGrp.entries.find((e) => e.blockchain === 'sol');
+    assert.equal(solNative.balance, 0);
+
+    const usdcGrp = groups.find((g) => g.symbolKey === 'USDC');
+    const ethUsdc = usdcGrp.entries.find((e) => e.blockchain === 'eth');
+    assert.equal(ethUsdc.balance, 0, 'Loaded EVM chain ERC-20 entry must default to 0 instead of null');
+
+    // 5. Token detail sheet: addr row hidden on 'all', visible on specific chain, earn pools strictly chain-scoped & separated
+    const domMap = new Map();
+    const makeEl = (id) => {
+      const classes = new Set();
+      const el = {
+        id,
+        innerHTML: '',
+        textContent: '',
+        value: '',
+        href: '#',
+        attributes: {},
+        classList: {
+          add: (c) => classes.add(c),
+          remove: (c) => classes.delete(c),
+          toggle: (c, force) => (force === undefined ? (classes.has(c) ? classes.delete(c) : classes.add(c)) : (force ? classes.add(c) : classes.delete(c))),
+          contains: (c) => classes.has(c)
+        },
+        setAttribute(k, v) { this.attributes[k] = v; },
+        getAttribute(k) { return this.attributes[k] || null; }
+      };
+      domMap.set(id, el);
+      return el;
+    };
+    [
+      'sheet-backdrop', 'sheet-token-detail', 'token-detail-icon', 'token-detail-title',
+      'token-detail-chains', 'token-detail-balance', 'token-detail-usd',
+      'token-detail-addr-row', 'token-detail-addr', 'token-detail-explorer-link',
+      'token-detail-breakdown-card', 'token-detail-breakdown-list',
+      'token-detail-earn-card', 'token-detail-earn-list', 'token-detail-history-list',
+      'token-detail-price-label', 'token-detail-price-val',
+      'staking-pools-list', 'earn-selected-title', 'earn-avail-balance',
+      'earn-in-symbol', 'earn-live-apy', 'earn-tvl-val', 'earn-stakers-val',
+      'earn-live-rate', 'earn-amount-in', 'earn-est-out', 'earn-lock-row', 'earn-lock-tiers'
+    ].forEach(makeEl);
+
+    globalThis.document = {
+      documentElement: { lang: 'en' },
+      getElementById: (id) => domMap.get(id) || null,
+      querySelectorAll: () => []
+    };
+
+    try {
+      await withMockedFetch(async () => jsonResponse({}, 404, 'Not Found'), async () => {
+        uiController.openTokenDetailSheet('SOL');
+        assert.equal(domMap.get('token-detail-addr-row').classList.contains('hidden'), true, 'addr-row must be hidden on all networks');
+        uiController.setTokenDetailChain('sol');
+        assert.equal(domMap.get('token-detail-addr-row').classList.contains('hidden'), false, 'addr-row must show on sol network');
+        assert.equal(domMap.get('token-detail-earn-card').classList.contains('hidden'), false, 'Solana staking pools must show on sol');
+        assert.ok(domMap.get('token-detail-earn-list').innerHTML.includes('jito_sol'));
+
+        uiController.setTokenDetailChain('near');
+        assert.equal(domMap.get('token-detail-addr-row').classList.contains('hidden'), false, 'addr-row must show on near network');
+        assert.equal(domMap.get('token-detail-earn-card').classList.contains('hidden'), true, 'Solana SOL pools must not appear when near network is selected');
+
+        uiController.openTokenDetailSheet('ETH');
+        const ethEarnHtml = domMap.get('token-detail-earn-list').innerHTML;
+        assert.ok(ethEarnHtml.includes('Liquid &amp; DAO Staking'), 'Staking group subheader must render for ETH');
+        assert.equal(ethEarnHtml.includes('Earn &amp; Lending Vaults'), false);
+        assert.ok(ethEarnHtml.includes('lido_steth'));
+
+        uiController.openTokenDetailSheet('USDC');
+        const usdcAllEarnHtml = domMap.get('token-detail-earn-list').innerHTML;
+        assert.ok(usdcAllEarnHtml.includes('Earn &amp; Lending Vaults'), 'Earn/Lending group subheader must render for USDC');
+        assert.equal(usdcAllEarnHtml.includes('Liquid &amp; DAO Staking'), false);
+        assert.ok(usdcAllEarnHtml.includes('aave_eth_usdc'));
+        assert.ok(usdcAllEarnHtml.includes('aave_arb_usdc'));
+
+        uiController.setTokenDetailChain('eth');
+        const usdcEthHtml = domMap.get('token-detail-earn-list').innerHTML;
+        assert.ok(usdcEthHtml.includes('aave_eth_usdc'));
+        assert.equal(usdcEthHtml.includes('aave_arb_usdc'), false, 'Chain filter eth must exclude Arbitrum Aave pool');
+        assert.equal(usdcEthHtml.includes('aave_base_usdc'), false, 'Chain filter eth must exclude Base Aave pool');
+
+        // 6. Earn View lending filter & category badge
+        uiController.setEarnPoolFilter('lending');
+        const lendingHtml = domMap.get('staking-pools-list').innerHTML;
+        assert.ok(lendingHtml.includes('aave_eth_usdc'));
+        assert.ok(lendingHtml.includes('aave_arb_usdc'));
+        assert.ok(lendingHtml.includes('aave_base_usdc'));
+        assert.ok(lendingHtml.includes('arc_steak_usdc'));
+        assert.ok(lendingHtml.includes('ethena_susde'));
+        assert.equal(lendingHtml.includes('jito_sol'), false, 'Lending filter must exclude liquid staking pools');
+        assert.ok(lendingHtml.includes('pool-cat-badge cat-lending'));
+        assert.ok(lendingHtml.includes('pool-cat-badge cat-vault'));
+      });
+    } finally {
+      globalThis.document = prevDoc;
+      state.wallets = prevWallets;
+      state.activeWalletId = prevActiveId;
       state.setLanguage(prevLang);
     }
   });

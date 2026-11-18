@@ -1,19 +1,19 @@
-﻿const CACHE_NAME = 'near-ca-wallet-v2.9';
+﻿const CACHE_NAME = 'near-ca-wallet-v3.0';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './style.css?v=2.9',
+  './style.css?v=3.0',
   './bip39-wordlist.js',
   './qrcode.min.js',
   './ethers.umd.min.js',
   './walletconnect.umd.min.js',
-  './src/crypto-engine.js?v=2.9',
-  './src/token-registry.js?v=2.9',
-  './src/near-intents.js?v=2.9',
-  './src/chain-contracts.js?v=2.9',
-  './src/mining-pro.js?v=2.9',
-  './src/state.js?v=2.9',
-  './src/ui-controller.js?v=2.9'
+  './src/crypto-engine.js?v=3.0',
+  './src/token-registry.js?v=3.0',
+  './src/near-intents.js?v=3.0',
+  './src/chain-contracts.js?v=3.0',
+  './src/mining-pro.js?v=3.0',
+  './src/state.js?v=3.0',
+  './src/ui-controller.js?v=3.0'
 ];
 
 self.addEventListener('install', (event) => {
