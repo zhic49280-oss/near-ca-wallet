@@ -191,8 +191,15 @@
     STETH: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84/logo.png',
     SUSDE: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x9D39A5DE30e57443BfF2A8307A4256c8797A3497/logo.png',
     KHYPE: 'https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg',
-    STEAKUSDC: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png',
-    ABASUSDC: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png'
+    STEAKUSDC: 'https://assets.coingecko.com/coins/images/6319/small/usdc.png',
+    ABASUSDC: 'https://assets.coingecko.com/coins/images/6319/small/usdc.png',
+    AETHUSDC: 'https://assets.coingecko.com/coins/images/6319/small/usdc.png',
+    AARBUSDCN: 'https://assets.coingecko.com/coins/images/6319/small/usdc.png',
+    AETHWETH: 'https://assets.coingecko.com/coins/images/279/small/ethereum.png',
+    BNEAR: 'https://assets.coingecko.com/coins/images/10365/small/near.jpg',
+    BUSDT: 'https://assets.coingecko.com/coins/images/325/small/Tether.png',
+    BUSDC: 'https://assets.coingecko.com/coins/images/6319/small/usdc.png',
+    'STAKED JUP': 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/assets/JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN/logo.png'
   };
 
   const DYNAMIC_ICON_BY_SYMBOL = Object.create(null);

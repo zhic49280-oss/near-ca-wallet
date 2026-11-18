@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#06080F" />
   <title>NEAR Chain Abstraction Wallet</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=3.1" />
+  <link rel="stylesheet" href="style.css?v=3.2" />
 </head>
 <body>
   <div class="ambient-bg" aria-hidden="true"></div>
@@ -82,7 +82,7 @@
         <div class="ios-glass-card hero-card">
           <div class="hero-top-row">
             <span class="hero-caption" data-i18n="home.totalBalance">统一资产总览 (USD)</span>
-            <button type="button" id="btn-refresh-balances" class="btn-ghost-sm" onclick="refreshAllBalancesAsync(true)">↻</button>
+            <button type="button" id="btn-refresh-balances" class="btn-ghost-sm hidden" onclick="refreshAllBalancesAsync(true)">↻</button>
           </div>
           <div id="hero-total-usd" class="hero-balance">--</div>
 
@@ -119,7 +119,7 @@
 
         <div class="section-header-row">
           <h2 class="section-title" data-i18n="home.assetsTitle">聚合资产列表</h2>
-          <span id="home-sync-status" class="section-sub" data-i18n="home.syncIdle">点击刷新链上余额</span>
+          <span id="home-sync-status" class="section-sub hidden" data-i18n="home.syncIdle">点击刷新链上余额</span>
         </div>
 
         <div id="home-unified-asset-list" class="asset-list"></div>
@@ -818,12 +818,12 @@
   <script src="qrcode.min.js"></script>
   <script src="ethers.umd.min.js"></script>
   <script src="walletconnect.umd.min.js"></script>
-  <script src="src/crypto-engine.js?v=3.1"></script>
-  <script src="src/token-registry.js?v=3.1"></script>
-  <script src="src/near-intents.js?v=3.1"></script>
-  <script src="src/chain-contracts.js?v=3.1"></script>
-  <script src="src/mining-pro.js?v=3.1"></script>
-  <script src="src/state.js?v=3.1"></script>
-  <script src="src/ui-controller.js?v=3.1"></script>
+  <script src="src/crypto-engine.js?v=3.2"></script>
+  <script src="src/token-registry.js?v=3.2"></script>
+  <script src="src/near-intents.js?v=3.2"></script>
+  <script src="src/chain-contracts.js?v=3.2"></script>
+  <script src="src/mining-pro.js?v=3.2"></script>
+  <script src="src/state.js?v=3.2"></script>
+  <script src="src/ui-controller.js?v=3.2"></script>
 </body>
 </html>

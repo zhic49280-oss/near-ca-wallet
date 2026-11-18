@@ -1157,6 +1157,60 @@
     return null;
   }
 
+  function getSymbolIcon(symbol) {
+    const tokens = getTokens();
+    const st = getState();
+    const symUpper = String(symbol || '').trim().replace(/^\$/, '').toUpperCase();
+    if (!symUpper) return '';
+    if (tokens && tokens.TOKEN_ICON_MAP && tokens.TOKEN_ICON_MAP[symUpper]) {
+      return tokens.TOKEN_ICON_MAP[symUpper];
+    }
+    const liveHit = Array.isArray(st.liveTokens)
+      ? st.liveTokens.find((item) => item && String(item.symbol || '').trim().toUpperCase() === symUpper && item.logoURI)
+      : null;
+    return (liveHit && liveHit.logoURI) || '';
+  }
+
+  function getPoolIconUrl(pool) {
+    if (!pool) return '';
+    return pool.icon || getSymbolIcon(pool.outSymbol) || getSymbolIcon(pool.inSymbol) || '';
+  }
+
+  function formatCompactTvlNum(val) {
+    const n = Number(val);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    const lang = getState().lang;
+    if (String(lang).toLowerCase().startsWith('en')) {
+      if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+      if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+      if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+      return Math.round(n).toLocaleString('en-US');
+    }
+    if (n >= 1e8) return `${(n / 1e8).toFixed(2)}亿`;
+    if (n >= 1e4) return `${Math.round(n / 1e4).toLocaleString('en-US')}万`;
+    return Math.round(n).toLocaleString('en-US');
+  }
+
+  function formatPoolTvlDisplay(pool) {
+    if (!pool) return '--';
+    if (typeof pool.tvlTokenAmount === 'number' && Number.isFinite(pool.tvlTokenAmount) && pool.tvlTokenAmount > 0) {
+      let usdVal = (typeof pool.tvlUsd === 'number' && Number.isFinite(pool.tvlUsd) && pool.tvlUsd > 0) ? pool.tvlUsd : null;
+      if (usdVal === null) {
+        const symU = String(pool.inSymbol || '').toUpperCase();
+        const px = (symU === 'USDC' || symU === 'USDT' || symU === 'USDE') ? 1.0 : getSymbolPrice(pool.inSymbol);
+        if (typeof px === 'number' && Number.isFinite(px) && px > 0) {
+          usdVal = pool.tvlTokenAmount * px;
+        }
+      }
+      const cTok = formatCompactTvlNum(pool.tvlTokenAmount);
+      if (cTok) {
+        const cUsd = usdVal !== null ? formatCompactTvlNum(usdVal) : null;
+        return cUsd ? `${cTok} ${pool.inSymbol} ($${cUsd})` : `${cTok} ${pool.inSymbol}`;
+      }
+    }
+    return pool.tvlText || '--';
+  }
+
   async function fetchBitcoinNativeBalance(btcAddress) {
     if (!btcAddress || typeof fetch !== 'function') return null;
     try {
@@ -1193,8 +1247,6 @@
     if (!wallet || _isRefreshing) return;
 
     _isRefreshing = true;
-    const syncEl = $('home-sync-status');
-    if (syncEl) syncEl.textContent = t('正在同步链上余额...', 'Syncing on-chain balances...');
 
     try {
       await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
@@ -1415,13 +1467,8 @@
         renderTokenDetailSheet();
       }
 
-      if (syncEl) {
-        const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        syncEl.textContent = `${t('已同步', 'Synced')} ${nowStr}`;
-      }
       if (showFeedback) showToast(t('多链资产已同步', 'Balances synced'));
     } catch (e) {
-      if (syncEl) syncEl.textContent = t('部分节点不可用', 'Partial sync error');
       if (showFeedback) showToast(e && e.message ? e.message : t('余额同步失败', 'Sync failed'));
     } finally {
       _isRefreshing = false;
@@ -2242,7 +2289,7 @@
           return `
             <button type="button" class="detail-row-item detail-row-clickable" onclick="openTokenDetailPool('${escapeHtml(p.id)}')">
               <div class="flex items-center gap-2" style="min-width:0;flex:1;">
-                ${tokens.renderTokenIconWithBadge({ symbol: p.outSymbol, blockchain: p.chain }, 26, true)}
+                ${tokens.renderTokenIconWithBadge({ symbol: p.outSymbol, blockchain: p.chain, logoURI: getPoolIconUrl(p) }, 26, true)}
                 <div class="flex flex-col" style="min-width:0;">
                   <div class="flex items-center gap-1" style="flex-wrap:wrap;">
                     <span style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(p.name)}</span>
@@ -5593,7 +5640,7 @@
           const selected = st.staking.selectedPoolId === p.id;
           const apyStr = formatPoolApyText(p);
           const avail = getEarnPoolAvailableBalance(wallet, p);
-          const tvlStr = p.tvlText || '--';
+          const tvlStr = formatPoolTvlDisplay(p);
           const stakersStr = typeof p.stakersCount === 'number' && Number.isFinite(p.stakersCount) && p.stakersCount > 0
             ? p.stakersCount.toLocaleString('en-US')
             : '--';
@@ -5601,7 +5648,7 @@
           return `
             <div class="staking-pool-card ${selected ? 'selected' : ''}" onclick="selectStakingPool('${escapeHtml(p.id)}')">
               <div class="flex items-center gap-3">
-                ${tokens.renderTokenIconWithBadge({ symbol: p.outSymbol, blockchain: p.chain }, 36, true)}
+                ${tokens.renderTokenIconWithBadge({ symbol: p.outSymbol, blockchain: p.chain, logoURI: getPoolIconUrl(p) }, 36, true)}
                 <div class="flex flex-col">
                   <div class="flex items-center gap-1" style="flex-wrap:wrap;">
                     <span style="font-weight:700;color:#fff;">${escapeHtml(p.name)}</span>
@@ -5633,7 +5680,7 @@
     if ($('earn-avail-balance')) $('earn-avail-balance').textContent = `${formatBal(avail, 5)} ${activePool.inSymbol}`;
     if ($('earn-in-symbol')) $('earn-in-symbol').textContent = activePool.inSymbol;
     if ($('earn-live-apy')) $('earn-live-apy').textContent = formatPoolApyText(activePool);
-    if ($('earn-tvl-val')) $('earn-tvl-val').textContent = activePool.tvlText || '--';
+    if ($('earn-tvl-val')) $('earn-tvl-val').textContent = formatPoolTvlDisplay(activePool);
     if ($('earn-stakers-val')) {
       $('earn-stakers-val').textContent = typeof activePool.stakersCount === 'number' && Number.isFinite(activePool.stakersCount) && activePool.stakersCount > 0
         ? activePool.stakersCount.toLocaleString('en-US')

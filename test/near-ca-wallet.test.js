@@ -4181,3 +4181,80 @@ test('v3.1: Burrow NEAR/USDT & Aave ETH lending pools, EVM holder counts, localS
     }
   });
 });
+
+test('v3.2: Pool icons on all 21 pools, Burrow TVL USD consistency, silent home sync UI, and iOS workflow git-add fix', async () => {
+  // 1. All 21 STAKING_POOLS have valid icon URLs & TOKEN_ICON_MAP covers bNEAR/bUSDT/bUSDC/aEthUSDC/aArbUSDCn/aBasUSDC/aEthWETH/steakUSDC
+  assert.equal(chainContracts.STAKING_POOLS.length, 21);
+  for (const p of chainContracts.STAKING_POOLS) {
+    assert.ok(typeof p.icon === 'string' && p.icon.startsWith('https://'), `Pool ${p.id} must have a valid https icon URL`);
+  }
+  for (const sym of ['BNEAR', 'BUSDT', 'BUSDC', 'AETHUSDC', 'AARBUSDCN', 'ABASUSDC', 'AETHWETH', 'STEAKUSDC']) {
+    assert.ok(tokenRegistry.TOKEN_ICON_MAP[sym], `TOKEN_ICON_MAP must include ${sym}`);
+  }
+
+  // 2. Burrow USDT TVL uses 1.0 USD per USDT on supplied.balance, and Burrow NEAR TVL includes ($USD) via live NEAR price
+  const prevLang = state.lang;
+  const prevLiveTokens = state.liveTokens;
+  state.setLanguage('en');
+  state.liveTokens = [{ assetId: 'nep141:wrap.near', symbol: 'NEAR', blockchain: 'near', price: 3.0 }];
+  try {
+    await withMockedFetch(async (url, opts) => {
+      if (url.includes('yields.llama.fi/pools')) {
+        return jsonResponse({
+          data: [{ chain: 'Near', project: 'rhea-lend', symbol: 'USDT', apy: 12.6, tvlUsd: 1495604 }]
+        });
+      }
+      if (url.includes('rpc.mainnet.near.org') && opts?.body) {
+        const b = JSON.parse(opts.body);
+        if (b.params?.account_id === 'contract.main.burrow.near' && b.params?.method_name === 'get_asset') {
+          const args = JSON.parse(Buffer.from(b.params.args_base64, 'base64').toString());
+          if (args.token_id === 'wrap.near') {
+            return jsonResponse({
+              jsonrpc: '2.0',
+              result: {
+                result: [...Buffer.from(JSON.stringify({
+                  token_id: 'wrap.near',
+                  supplied: { balance: (3240000n * 10n ** 24n).toString() },
+                  config: { extra_decimals: 0 },
+                  supply_apr: '0.0023'
+                }))]
+              }
+            });
+          }
+          if (args.token_id === 'usdt.tether-token.near') {
+            return jsonResponse({
+              jsonrpc: '2.0',
+              result: {
+                result: [...Buffer.from(JSON.stringify({
+                  token_id: 'usdt.tether-token.near',
+                  supplied: { balance: (11040000n * 10n ** 18n).toString() },
+                  config: { extra_decimals: 12 },
+                  supply_apr: '0.126'
+                }))]
+              }
+            });
+          }
+        }
+      }
+      return jsonResponse({}, 404, 'Not Found');
+    }, async () => {
+      const pools = await chainContracts.fetchLiveStakingMetrics();
+      const byId = Object.fromEntries(pools.map((p) => [p.id, p]));
+      assert.equal(byId.burrow_near_usdt.tvlText, '11.04M USDT ($11.04M)');
+      assert.equal(byId.burrow_near_wnear.tvlText, '3.24M NEAR ($9.72M)');
+    });
+  } finally {
+    state.liveTokens = prevLiveTokens;
+    state.setLanguage(prevLang);
+  }
+
+  // 3. Silent home sync UI in index.html + build-ios-ipa.yml git add fix
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  assert.ok(/id="btn-refresh-balances"[^>]*\bhidden\b/.test(html), '#btn-refresh-balances must be hidden');
+  assert.ok(/id="home-sync-status"[^>]*\bhidden\b/.test(html), '#home-sync-status must be hidden');
+
+  const iosYml = fs.readFileSync(path.join(ROOT_DIR, '.github', 'workflows', 'build-ios-ipa.yml'), 'utf8');
+  assert.equal(iosYml.includes('git add sidestore-source.json build/NEAR-CA-Wallet-unsigned.ipa'), false, 'Workflow must not git add ignored build/ IPA');
+  assert.ok(iosYml.includes('git add sidestore-source.json'), 'Workflow must git add sidestore-source.json');
+  assert.ok(iosYml.includes('git pull --rebase origin main && git push'), 'Workflow must rebase before pushing');
+});

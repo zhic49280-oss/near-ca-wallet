@@ -113,6 +113,7 @@
       chainLabel: 'NEAR',
       inSymbol: 'NEAR',
       outSymbol: 'rNEAR',
+      icon: 'https://assets.coingecko.com/coins/images/10365/small/near.jpg',
       decimals: 24,
       apy: null,
       rate: null,
@@ -131,6 +132,7 @@
       chainLabel: 'NEAR',
       inSymbol: 'RHEA',
       outSymbol: 'xRHEA',
+      icon: 'https://assets.coingecko.com/coins/images/10365/small/near.jpg',
       decimals: 18,
       isTokenStake: true,
       tokenContract: 'token.rhealab.near',
@@ -151,6 +153,7 @@
       chainLabel: 'NEAR',
       inSymbol: 'oRHEA',
       outSymbol: 'RHEA',
+      icon: 'https://assets.coingecko.com/coins/images/10365/small/near.jpg',
       decimals: 18,
       isTokenStake: true,
       isLockConvert: true,
@@ -174,6 +177,7 @@
       chainLabel: 'NEAR',
       inSymbol: 'NEAR',
       outSymbol: 'stNEAR',
+      icon: 'https://assets.coingecko.com/coins/images/10365/small/near.jpg',
       decimals: 24,
       apy: null,
       rate: null,
@@ -192,6 +196,7 @@
       chainLabel: 'NEAR',
       inSymbol: 'NEAR',
       outSymbol: 'LiNEAR',
+      icon: 'https://assets.coingecko.com/coins/images/10365/small/near.jpg',
       decimals: 24,
       apy: null,
       rate: null,
@@ -210,6 +215,7 @@
       chainLabel: 'NEAR',
       inSymbol: 'NEAR',
       outSymbol: 'NearX',
+      icon: 'https://assets.coingecko.com/coins/images/10365/small/near.jpg',
       decimals: 24,
       apy: null,
       rate: null,
@@ -228,6 +234,7 @@
       chainLabel: 'NEAR',
       inSymbol: 'NEAR',
       outSymbol: 'bNEAR',
+      icon: 'https://assets.coingecko.com/coins/images/10365/small/near.jpg',
       decimals: 24,
       isBurrowSupply: true,
       isNativeWrapSupply: true,
@@ -249,6 +256,7 @@
       chainLabel: 'NEAR',
       inSymbol: 'USDT',
       outSymbol: 'bUSDT',
+      icon: 'https://assets.coingecko.com/coins/images/325/small/Tether.png',
       decimals: 6,
       isTokenStake: true,
       isBurrowSupply: true,
@@ -271,6 +279,7 @@
       chainLabel: 'Solana',
       inSymbol: 'SOL',
       outSymbol: 'JitoSOL',
+      icon: 'https://static.datapi.jup.ag/token-icons/86932ec91f48cf380c8b694112b68ec9c18528deecfb82b11a88dadd927c2c6e.webp',
       decimals: 9,
       apy: null,
       rate: null,
@@ -289,6 +298,7 @@
       chainLabel: 'Solana',
       inSymbol: 'JUP',
       outSymbol: 'Staked JUP',
+      icon: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/assets/JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN/logo.png',
       decimals: 6,
       isTokenStake: true,
       isJupiterDao: true,
@@ -311,6 +321,7 @@
       chainLabel: 'Solana',
       inSymbol: 'SOL',
       outSymbol: 'jupSOL',
+      icon: 'https://static.datapi.jup.ag/token-icons/f65f73e25b3eadcdd65ac25be847bf9d2766822164fb118b37bb3824ee3cb69b.webp',
       decimals: 9,
       apy: null,
       rate: null,
@@ -329,6 +340,7 @@
       chainLabel: 'Solana',
       inSymbol: 'SOL',
       outSymbol: 'mSOL',
+      icon: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/assets/mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So/logo.png',
       decimals: 9,
       apy: null,
       rate: null,
@@ -347,6 +359,7 @@
       chainLabel: 'Solana',
       inSymbol: 'SOL',
       outSymbol: 'INF',
+      icon: 'https://arweave.net/CtPUchyfybiHymdCNAA_cDkPZ7p0xZDLmBYvHWOsAkE',
       decimals: 9,
       apy: null,
       rate: null,
@@ -366,6 +379,7 @@
       chainLabel: 'Ethereum',
       inSymbol: 'ETH',
       outSymbol: 'stETH',
+      icon: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84/logo.png',
       decimals: 18,
       apy: null,
       rate: null,
@@ -384,6 +398,7 @@
       chainLabel: 'Arc Mainnet',
       inSymbol: 'USDC',
       outSymbol: 'steakUSDC',
+      icon: 'https://assets.coingecko.com/coins/images/6319/small/usdc.png',
       decimals: 6,
       outDecimals: 18,
       tokenContract: '0x3600000000000000000000000000000000000000',
@@ -406,6 +421,7 @@
       chainLabel: 'Base',
       inSymbol: 'USDC',
       outSymbol: 'aBasUSDC',
+      icon: 'https://assets.coingecko.com/coins/images/6319/small/usdc.png',
       decimals: 6,
       outDecimals: 6,
       isTokenStake: true,
@@ -428,6 +444,7 @@
       chainLabel: 'Ethereum',
       inSymbol: 'USDC',
       outSymbol: 'aEthUSDC',
+      icon: 'https://assets.coingecko.com/coins/images/6319/small/usdc.png',
       decimals: 6,
       outDecimals: 6,
       isTokenStake: true,
@@ -450,6 +467,7 @@
       chainLabel: 'Arbitrum',
       inSymbol: 'USDC',
       outSymbol: 'aArbUSDCn',
+      icon: 'https://assets.coingecko.com/coins/images/6319/small/usdc.png',
       decimals: 6,
       outDecimals: 6,
       isTokenStake: true,
@@ -472,6 +490,7 @@
       chainLabel: 'Ethereum',
       inSymbol: 'ETH',
       outSymbol: 'aEthWETH',
+      icon: 'https://assets.coingecko.com/coins/images/279/small/ethereum.png',
       decimals: 18,
       outDecimals: 18,
       isTokenStake: true,
@@ -497,6 +516,7 @@
       chainLabel: 'Ethereum',
       inSymbol: 'USDe',
       outSymbol: 'sUSDe',
+      icon: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x9D39A5DE30e57443BfF2A8307A4256c8797A3497/logo.png',
       decimals: 18,
       outDecimals: 18,
       isTokenStake: true,
@@ -519,6 +539,7 @@
       chainLabel: 'HyperEVM',
       inSymbol: 'HYPE',
       outSymbol: 'kHYPE',
+      icon: 'https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg',
       decimals: 18,
       isKyberSwapStake: true,
       apy: null,
@@ -3813,6 +3834,22 @@
     const burrowAccountsCount = burrowAccountsRes.status === 'fulfilled' && Number(burrowAccountsRes.value) > 0
       ? Number(burrowAccountsRes.value)
       : null;
+    const resolveNearPriceFromRegistry = () => {
+      try {
+        const reg = getTokenRegistry();
+        const st = (typeof globalThis !== 'undefined' && (globalThis.NearCAState || globalThis.state)) || null;
+        const lists = [
+          (st && Array.isArray(st.liveTokens)) ? st.liveTokens : [],
+          (reg && Array.isArray(reg.LIVE_DEFUSE_TOKENS)) ? reg.LIVE_DEFUSE_TOKENS : []
+        ];
+        for (const list of lists) {
+          const hit = list.find((t) => t && (String(t.symbol || '').toUpperCase() === 'NEAR' || t.contractAddress === 'wrap.near') && typeof t.price === 'number' && t.price > 0);
+          if (hit) return hit.price;
+        }
+      } catch (_) {}
+      return null;
+    };
+    const nearPriceUsd = resolveNearPriceFromRegistry();
     const applyBurrowAsset = (poolId, rpcRes, baseDec, sym, llamaSyms) => {
       const isBurrowProj = (p) => String(p.chain || '').toLowerCase() === 'near' && /burrow|rhea-lend/i.test(String(p.project || ''));
       const symMatch = (p) => llamaSyms.includes(String(p.symbol || '').toUpperCase());
@@ -3833,17 +3870,25 @@
             const shift = Math.max(0, totalDec - 6);
             const suppliedAmt = Number(BigInt(String(supBal)) / (10n ** BigInt(shift))) / 1e6;
             if (Number.isFinite(suppliedAmt) && suppliedAmt > 0) {
-              const tvlText = formatTvlToken(suppliedAmt, sym, llamaUsd || (sym === 'USDT' ? suppliedAmt : null));
+              patch.tvlTokenAmount = suppliedAmt;
+              const isUsdStable = sym === 'USDT' || sym === 'USDC';
+              const unitPx = isUsdStable ? 1.0 : (sym === 'NEAR' ? nearPriceUsd : null);
+              const computedUsd = (typeof unitPx === 'number' && unitPx > 0) ? suppliedAmt * unitPx : null;
+              patch.tvlUsd = computedUsd;
+              const tvlText = formatTvlToken(suppliedAmt, sym, computedUsd);
               if (tvlText) patch.tvlText = tvlText;
             }
           } catch (_) {}
         }
       }
       if (!patch.tvlText && llamaUsd > 0) {
-        if (sym === 'USDT') {
-          const tvlText = formatTvlToken(llamaUsd, 'USDT', llamaUsd);
+        if (sym === 'USDT' || sym === 'USDC') {
+          patch.tvlTokenAmount = llamaUsd;
+          patch.tvlUsd = llamaUsd;
+          const tvlText = formatTvlToken(llamaUsd, sym, llamaUsd);
           if (tvlText) patch.tvlText = tvlText;
         } else {
+          patch.tvlUsd = llamaUsd;
           const c = formatCompactNum(llamaUsd);
           if (c) patch.tvlText = `$${c}`;
         }
