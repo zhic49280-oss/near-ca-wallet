@@ -38,7 +38,7 @@ jobs:
           npx cap add ios
 
           cp /tmp/ios-custom/Info.plist ios/App/App/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 2.6.${GITHUB_RUN_NUMBER}" ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 2.7.${GITHUB_RUN_NUMBER}" ios/App/App/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" ios/App/App/Info.plist
           cp /tmp/ios-custom/NativeSecurityPlugin.swift ios/App/App/NativeSecurityPlugin.swift
           cp /tmp/ios-custom/MainViewController.swift ios/App/App/MainViewController.swift
@@ -98,7 +98,7 @@ jobs:
         run: |
           IPA_SIZE=$(stat -f%z build/NEAR-CA-Wallet-unsigned.ipa)
           BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          VER="2.6.${GITHUB_RUN_NUMBER}"
+          VER="2.7.${GITHUB_RUN_NUMBER}"
           TAG="v${VER}"
           IPA_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/NEAR-CA-Wallet-unsigned.ipa"
           cat > sidestore-source.json <<EOF
@@ -148,10 +148,14 @@ jobs:
           }
           EOF
           cp sidestore-source.json build/sidestore-source.json
-          gh release create "${TAG}" build/NEAR-CA-Wallet-unsigned.ipa build/sidestore-source.json \
-            --title "NEAR CA Wallet ${TAG}" \
-            --notes "Automated iOS IPA & SideStore source release (${TAG})" \
-            --latest || true
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" build/NEAR-CA-Wallet-unsigned.ipa build/sidestore-source.json --clobber
+          else
+            gh release create "${TAG}" build/NEAR-CA-Wallet-unsigned.ipa build/sidestore-source.json \
+              --title "NEAR CA Wallet ${TAG}" \
+              --notes "Automated iOS IPA, Android APK & SideStore source release (${TAG})" \
+              --latest || true
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add sidestore-source.json build/NEAR-CA-Wallet-unsigned.ipa

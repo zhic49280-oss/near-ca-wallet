@@ -880,15 +880,21 @@
 
   async function buildWalletFromMnemonic(mnemonic, name = '', pin = '') {
     const crypto = getCrypto();
+    const contracts = getContracts();
     const st = getState();
     const derived = await crypto.deriveAllChainKeysAsync(mnemonic);
+    let nearNamedAccount = '';
+    if (contracts && typeof contracts.discoverNearAccountsByPublicKeyAsync === 'function' && derived.nearPublicKey) {
+      const discovered = await contracts.discoverNearAccountsByPublicKeyAsync(derived.nearPublicKey).catch(() => []);
+      if (discovered.length > 0) nearNamedAccount = discovered[0];
+    }
     const idx = st.wallets.length + 1;
     return st.normalizeWalletRecord({
       id: `near_ca_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: String(name || '').trim() || `Account ${idx}`,
+      name: String(name || '').trim() || nearNamedAccount || `Account ${idx}`,
       mnemonic: String(mnemonic).trim(),
       pin: String(pin || '').trim(),
-      nearNamedAccount: '',
+      nearNamedAccount,
       nearAddress: derived.nearAddress,
       nearPublicKey: derived.nearPublicKey,
       nearPrivateKey: derived.nearPrivateKey,
@@ -1192,6 +1198,16 @@
 
     try {
       await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+      if (!wallet.nearNamedAccount && wallet.nearPublicKey && !wallet._nearAccountChecked && typeof contracts.discoverNearAccountsByPublicKeyAsync === 'function') {
+        wallet._nearAccountChecked = true;
+        const discovered = await contracts.discoverNearAccountsByPublicKeyAsync(wallet.nearPublicKey).catch(() => []);
+        if (discovered.length > 0) {
+          wallet.nearNamedAccount = discovered[0];
+          wallet.discoveredNearAccounts = discovered;
+          await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+          st.saveWallets();
+        }
+      }
       const nearAccountId = wallet.nearNamedAccount || wallet.nearAddress;
 
       const solTokens = (tokens.DEX_CHAIN_TOKENS && tokens.DEX_CHAIN_TOKENS.sol) || [];
@@ -1224,6 +1240,7 @@
         pricesRes,
         nearBalRes,
         nep141BalRes,
+        nearStakingRes,
         solBalRes,
         prlRes,
         btcBalRes,
@@ -1235,6 +1252,9 @@
         (nearAccountId && typeof intents.fetchNearNep141Balances === 'function')
           ? intents.fetchNearNep141Balances(nearAccountId).catch(() => null)
           : Promise.resolve(null),
+        (nearAccountId && typeof contracts.fetchNearAccountStakingPositionsAsync === 'function')
+          ? contracts.fetchNearAccountStakingPositionsAsync(nearAccountId).catch(() => [])
+          : Promise.resolve([]),
         wallet.solAddress ? contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, solMints).catch(() => null) : Promise.resolve(null),
         wallet.address && mining
           ? mining.queryMinerDeepStats(wallet.address, 'onchain').catch(() => null)
@@ -1264,6 +1284,10 @@
 
       if (nep141BalRes && typeof nep141BalRes === 'object') {
         wallet.nearNep141Balances = { ...(wallet.nearNep141Balances || {}), ...nep141BalRes };
+      }
+
+      if (Array.isArray(nearStakingRes)) {
+        wallet.nearStakingPositions = nearStakingRes;
       }
 
       if (solBalRes && typeof solBalRes === 'object') {
@@ -4459,6 +4483,87 @@
     }
     if ($('earn-pool-search') && $('earn-pool-search').value !== searchQuery) {
       $('earn-pool-search').value = searchQuery;
+    }
+
+    const myPosCard = $('earn-my-positions-card');
+    const myPosList = $('earn-my-positions-list');
+    const myPosCount = $('earn-my-positions-count');
+    if (myPosCard && myPosList) {
+      const posItems = [];
+      const valList = Array.isArray(wallet.nearStakingPositions) ? wallet.nearStakingPositions : [];
+      for (const vp of valList) {
+        if (!vp || !(vp.totalNear > 0)) continue;
+        const statusText = vp.stakedNear > 0 && vp.unstakedNear > 0
+          ? `${t('质押中', 'Staked')}: ${formatBal(vp.stakedNear, 4)} · ${vp.canWithdraw ? t('可提现', 'Withdrawable') : t('解质押冷却中', 'Unstaking')}: ${formatBal(vp.unstakedNear, 4)}`
+          : (vp.stakedNear > 0
+              ? `${t('验证节点质押中', 'Validator Staked')}`
+              : (vp.canWithdraw ? t('已解质押 · 可提取', 'Unstaked · Ready') : t('解质押冷却中 (4 Epochs)', 'Unstaking (Cooldown)')));
+        posItems.push({
+          symbol: 'NEAR',
+          chain: 'near',
+          title: vp.poolId,
+          subtitle: statusText,
+          amountText: `${formatBal(vp.totalNear, 4)} NEAR`
+        });
+      }
+      const nepMap = wallet.nearNep141Balances || {};
+      const nearLstContracts = [
+        { cid: 'lst.rhealab.near', sym: 'rNEAR', name: 'Rhea Staked NEAR' },
+        { cid: 'xtoken.rhealab.near', sym: 'xRHEA', name: 'Staked RHEA' },
+        { cid: 'meta-pool.near', sym: 'stNEAR', name: 'Meta Pool stNEAR' },
+        { cid: 'linear-protocol.near', sym: 'LiNEAR', name: 'LiNEAR Protocol' },
+        { cid: 'v2-nearx.stader-labs.near', sym: 'NearX', name: 'Stader NearX' }
+      ];
+      for (const lst of nearLstContracts) {
+        const b = nepMap[lst.cid]?.formatted;
+        if (typeof b === 'number' && b > 0.00001) {
+          posItems.push({
+            symbol: lst.sym,
+            chain: 'near',
+            title: lst.name,
+            subtitle: lst.cid,
+            amountText: `${formatBal(b, 4)} ${lst.sym}`
+          });
+        }
+      }
+      const solSpl = wallet.splBalances || {};
+      const solLstMints = [
+        { mint: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', sym: 'JitoSOL', name: 'Jito Liquid Staking' },
+        { mint: 'jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v', sym: 'jupSOL', name: 'Jupiter Staked SOL' },
+        { mint: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So', sym: 'mSOL', name: 'Marinade Staked SOL' },
+        { mint: '5oVNBeEEQvYi1cX3ir8Dx5n1P7pdxydbGF2X4TxVusJm', sym: 'INF', name: 'Sanctum Infinity' }
+      ];
+      for (const sl of solLstMints) {
+        const b = solSpl[sl.mint];
+        if (typeof b === 'number' && b > 0.00001) {
+          posItems.push({
+            symbol: sl.sym,
+            chain: 'sol',
+            title: sl.name,
+            subtitle: 'Solana LST',
+            amountText: `${formatBal(b, 4)} ${sl.sym}`
+          });
+        }
+      }
+      if (posItems.length > 0) {
+        myPosCard.classList.remove('hidden');
+        if (myPosCount) myPosCount.textContent = String(posItems.length);
+        myPosList.innerHTML = posItems.map((it) => `
+          <div class="flex items-center justify-between" style="padding:6px 8px;border-radius:10px;background:rgba(255,255,255,0.03);">
+            <div class="flex items-center gap-2">
+              ${tokens.renderTokenIconWithBadge({ symbol: it.symbol, blockchain: it.chain }, 28, true)}
+              <div class="flex flex-col">
+                <span class="mono" style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(it.title)}</span>
+                <span style="font-size:11px;color:var(--text-secondary);">${escapeHtml(it.subtitle)}</span>
+              </div>
+            </div>
+            <span class="mono text-emerald" style="font-weight:700;font-size:12.5px;">${escapeHtml(it.amountText)}</span>
+          </div>
+        `).join('');
+      } else {
+        myPosCard.classList.add('hidden');
+        myPosList.innerHTML = '';
+      }
     }
 
     const listEl = $('staking-pools-list');

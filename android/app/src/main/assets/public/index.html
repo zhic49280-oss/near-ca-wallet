@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#06080F" />
   <title>NEAR Chain Abstraction Wallet</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=2.6" />
+  <link rel="stylesheet" href="style.css?v=2.7" />
 </head>
 <body>
   <div class="ambient-bg" aria-hidden="true"></div>
@@ -255,6 +255,14 @@
           <button type="button" class="filter-pill" data-filter="near" onclick="setEarnPoolFilter('near')" data-i18n="earn.filterNear">NEAR &amp; Rhea</button>
           <button type="button" class="filter-pill" data-filter="sol" onclick="setEarnPoolFilter('sol')" data-i18n="earn.filterSol">Solana &amp; JUP</button>
           <button type="button" class="filter-pill" data-filter="evm" onclick="setEarnPoolFilter('evm')" data-i18n="earn.filterEvm">EVM &amp; Arc</button>
+        </div>
+
+        <div id="earn-my-positions-card" class="ios-glass-card hidden flex flex-col gap-2" style="margin-bottom: 10px;">
+          <div class="flex items-center justify-between">
+            <span style="font-weight: 700; font-size: 13.5px;" data-i18n="earn.myPositionsTitle">我的质押仓位</span>
+            <span id="earn-my-positions-count" class="ca-badge">0</span>
+          </div>
+          <div id="earn-my-positions-list" class="flex flex-col gap-2"></div>
         </div>
 
         <div id="staking-pools-list" class="staking-pools-grid" style="max-height: 44vh; overflow-y: auto;"></div>
@@ -737,12 +745,12 @@
   <script src="qrcode.min.js"></script>
   <script src="ethers.umd.min.js"></script>
   <script src="walletconnect.umd.min.js"></script>
-  <script src="src/crypto-engine.js?v=2.6"></script>
-  <script src="src/token-registry.js?v=2.6"></script>
-  <script src="src/near-intents.js?v=2.6"></script>
-  <script src="src/chain-contracts.js?v=2.6"></script>
-  <script src="src/mining-pro.js?v=2.6"></script>
-  <script src="src/state.js?v=2.6"></script>
-  <script src="src/ui-controller.js?v=2.6"></script>
+  <script src="src/crypto-engine.js?v=2.7"></script>
+  <script src="src/token-registry.js?v=2.7"></script>
+  <script src="src/near-intents.js?v=2.7"></script>
+  <script src="src/chain-contracts.js?v=2.7"></script>
+  <script src="src/mining-pro.js?v=2.7"></script>
+  <script src="src/state.js?v=2.7"></script>
+  <script src="src/ui-controller.js?v=2.7"></script>
 </body>
 </html>

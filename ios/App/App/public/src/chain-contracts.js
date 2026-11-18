@@ -888,6 +888,71 @@
   }
 
   /**
+   * Auto-discovers any existing `.near` named account controlled by `nearPublicKey` on NEAR Mainnet
+   * via FastNear (`api.fastnear.com/v1/public_key/<pk>/all`) + KitWallet fallback.
+   */
+  async function discoverNearAccountsByPublicKeyAsync(publicKeyStr) {
+    const pk = String(publicKeyStr || '').trim();
+    if (!pk || !pk.startsWith('ed25519:')) return [];
+    const filterNamed = (arr) =>
+      Array.isArray(arr)
+        ? arr
+            .map((a) => String(a || '').trim().toLowerCase())
+            .filter((a) => a && !/^[0-9a-f]{64}$/.test(a) && (a.endsWith('.near') || a.endsWith('.tg') || a.includes('.')))
+        : [];
+    try {
+      const fRes = await fetchJsonWithTimeout(`https://api.fastnear.com/v1/public_key/${encodeURIComponent(pk)}/all`, {}, 4500).catch(() => null);
+      const hits = filterNamed(fRes && fRes.account_ids);
+      if (hits.length > 0) return hits;
+    } catch (_) {}
+    try {
+      const kRes = await fetchJsonWithTimeout(`https://api.kitwallet.app/publicKey/${encodeURIComponent(pk)}/accounts`, {}, 4500).catch(() => null);
+      const hits = filterNamed(kRes);
+      if (hits.length > 0) return hits;
+    } catch (_) {}
+    return [];
+  }
+
+  /**
+   * Queries real on-chain validator staking positions (`*.poolv1.near` / `*.pool.near`) and liquid staking balances
+   * for a NEAR account via FastNear account explorer + direct contract `get_account` view calls.
+   */
+  async function fetchNearAccountStakingPositionsAsync(nearAccountId) {
+    const acct = String(nearAccountId || '').trim().toLowerCase();
+    if (!acct) return [];
+    const positions = [];
+    try {
+      const full = await fetchJsonWithTimeout(`https://api.fastnear.com/v1/account/${encodeURIComponent(acct)}/full`, {}, 5000).catch(() => null);
+      const pools = full && Array.isArray(full.pools) ? full.pools : [];
+      const validatorResults = await Promise.all(
+        pools.slice(0, 12).map(async (p) => {
+          const poolId = String(p && p.pool_id || '').trim();
+          if (!poolId) return null;
+          const accInfo = await viewNearContractCall(poolId, 'get_account', { account_id: acct }).catch(() => null);
+          if (!accInfo) return null;
+          const stakedRaw = BigInt(String(accInfo.staked_balance || '0'));
+          const unstakedRaw = BigInt(String(accInfo.unstaked_balance || '0'));
+          const totalRaw = stakedRaw + unstakedRaw;
+          if (totalRaw <= 10n ** 19n) return null; // ignore < 0.00001 NEAR dust
+          const stakedNear = Number(stakedRaw / 10n ** 18n) / 1e6;
+          const unstakedNear = Number(unstakedRaw / 10n ** 18n) / 1e6;
+          const totalNear = stakedNear + unstakedNear;
+          return {
+            type: 'validator',
+            poolId,
+            stakedNear,
+            unstakedNear,
+            totalNear,
+            canWithdraw: Boolean(accInfo.can_withdraw)
+          };
+        })
+      );
+      validatorResults.filter(Boolean).forEach((pos) => positions.push(pos));
+    } catch (_) {}
+    return positions;
+  }
+
+  /**
    * Self-heals NEAR Master Account credentials from mnemonic and derives all
    * external chain addresses (EVM, Solana, Pearl, Bitcoin) via NEAR MPC (v1.signer).
    */
@@ -4405,6 +4470,8 @@
     DCL_CONTRACT_ID,
     NEAR_DCL_POOLS,
     findSolanaPdaAsync,
+    discoverNearAccountsByPublicKeyAsync,
+    fetchNearAccountStakingPositionsAsync,
     ensureWalletSigningKeysAsync,
     deriveMpcEvmAddressAsync,
     validateSufficientChainBalance,

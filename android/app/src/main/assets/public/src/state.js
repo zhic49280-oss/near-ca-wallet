@@ -348,6 +348,7 @@
       'earn.amountLabel': '质押数量',
       'earn.estReceive': '预计获得',
       'earn.stakeBtn': '确认链上质押',
+      'earn.myPositionsTitle': '我的质押仓位',
       // Hub
       'hub.nearDomainTitle': 'NEAR .near 账户注册与绑定',
       'hub.nearDomainCurrent': '当前主账户',
@@ -502,6 +503,7 @@
       'earn.amountLabel': 'Stake Amount',
       'earn.estReceive': 'Est. Receive',
       'earn.stakeBtn': 'Stake On-Chain',
+      'earn.myPositionsTitle': 'My Staking Positions',
       // Hub
       'hub.nearDomainTitle': 'NEAR (.near) Account Registration & Binding',
       'hub.nearDomainCurrent': 'Active Master Account',
