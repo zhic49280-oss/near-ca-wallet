@@ -1,4 +1,4 @@
-(function (root) {
+﻿(function (root) {
   'use strict';
 
   const NEAR_RPC_URL = 'https://rpc.mainnet.near.org';
@@ -2961,6 +2961,7 @@
       linearAccountsRes,
       staderPriceRes,
       staderTotalRes,
+      staderAccountsRes,
       llamaRes,
       sanctumValRes,
       jitoApyRes,
@@ -2987,6 +2988,7 @@
       viewNearContractCall('linear-protocol.near', 'get_number_of_accounts', {}),
       viewNearContractCall('v2-nearx.stader-labs.near', 'get_nearx_price', {}),
       viewNearContractCall('v2-nearx.stader-labs.near', 'get_total_staked_balance', {}),
+      viewNearContractCall('v2-nearx.stader-labs.near', 'get_number_of_accounts', {}),
       fetchJsonWithTimeout('https://yields.llama.fi/pools', {}, 7000),
       fetchJsonWithTimeout('https://extra-api.sanctum.so/v1/sol-value/current?lst=INF&lst=jupSOL&lst=mSOL&lst=JitoSOL', {}, 6000),
       fetchJsonWithTimeout('https://kobe.mainnet.jito.network/api/v1/stake_pool_stats', {}, 6000),
@@ -3189,7 +3191,17 @@
         if (tvlText) setPool('stader_nearx', { tvlText });
       } catch (_) {}
     }
-    const nearxApy = findLlamaApy((p) => String(p.chain || '').toLowerCase() === 'near' && /nearx/i.test(String(p.symbol || '')));
+    if (staderAccountsRes.status === 'fulfilled' && Number(staderAccountsRes.value) > 0) {
+      setPool('stader_nearx', { stakersCount: Number(staderAccountsRes.value) });
+    }
+    let nearxApy = findLlamaApy((p) => String(p.chain || '').toLowerCase() === 'near' && /nearx/i.test(String(p.symbol || '')));
+    if (nearxApy === null && narRes.status === 'fulfilled' && narRes.value) {
+      const m = narRes.value;
+      const baseEpochApy = Number(m.linear_30_day_apy || m.st_near_30_day_apy || m.mp01_staking_apy);
+      if (Number.isFinite(baseEpochApy) && baseEpochApy > 0) {
+        nearxApy = Number(baseEpochApy.toFixed(2));
+      }
+    }
     if (nearxApy !== null) setPool('stader_nearx', { apy: nearxApy });
 
     // 7-11. Solana LSTs & Jupiter DAO Staking
@@ -3240,16 +3252,16 @@
       setPool('jupiter_jup', { rate: 1.0 });
     }
 
-    // Solana LST holderCount & TVL from datapi.jup.ag/v1/assets/search
+    // Solana LST holderCount & TVL (converted to staked SOL quantity via live exchange rate)
     const jupAssets = jupAssetsRes.status === 'fulfilled' && jupAssetsRes.value && Array.isArray(jupAssetsRes.value)
       ? jupAssetsRes.value
       : [];
     const jupAssetPoolMap = {
       JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN: { id: 'jupiter_jup', sym: 'JUP', stakersOnly: true },
-      J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn: { id: 'jito_sol', sym: 'JitoSOL' },
-      jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v: { id: 'jupiter_sol', sym: 'jupSOL' },
-      mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So: { id: 'marinade_msol', sym: 'mSOL' },
-      '5oVNBeEEQvYi1cX3ir8Dx5n1P7pdxydbGF2X4TxVusJm': { id: 'sanctum_inf', sym: 'INF' }
+      J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn: { id: 'jito_sol', sym: 'JitoSOL', solConverted: true },
+      jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v: { id: 'jupiter_sol', sym: 'jupSOL', solConverted: true },
+      mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So: { id: 'marinade_msol', sym: 'mSOL', solConverted: true },
+      '5oVNBeEEQvYi1cX3ir8Dx5n1P7pdxydbGF2X4TxVusJm': { id: 'sanctum_inf', sym: 'INF', solConverted: true }
     };
     for (const asset of jupAssets) {
       if (!asset) continue;
@@ -3259,7 +3271,15 @@
       const patch = {};
       if (Number(asset.holderCount) > 0) patch.stakersCount = Number(asset.holderCount);
       if (!cfg.stakersOnly && Number(asset.totalSupply) > 0) {
-        const tvlText = formatTvlToken(Number(asset.totalSupply), cfg.sym, Number(asset.mcap || 0));
+        const poolObj = findStakingPool(cfg.id);
+        const solPerLst = sanctumVals[cfg.sym]
+          ? Number(sanctumVals[cfg.sym]) / 1e9
+          : (poolObj && poolObj.rate > 0 ? 1 / poolObj.rate : 1);
+        const stakedAmount = cfg.solConverted && Number.isFinite(solPerLst) && solPerLst > 0
+          ? Number(asset.totalSupply) * solPerLst
+          : Number(asset.totalSupply);
+        const unitLabel = cfg.solConverted ? 'SOL' : cfg.sym;
+        const tvlText = formatTvlToken(stakedAmount, unitLabel, Number(asset.mcap || 0));
         if (tvlText) patch.tvlText = tvlText;
       }
       if (Object.keys(patch).length > 0) setPool(cfg.id, patch);
@@ -3731,27 +3751,25 @@
   }
 
   async function viewNearContractCall(contractId, methodName, argsObj) {
-    const res = await fetchJsonWithTimeout(
-      NEAR_RPC_URL,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: `${contractId}-${methodName}`,
-          method: 'query',
-          params: {
-            request_type: 'call_function',
-            finality: 'final',
-            account_id: contractId,
-            method_name: methodName,
-            args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify(argsObj)))
-          }
-        })
-      },
-      6000
-    );
-    const bytes = res && res.result && res.result.result;
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: `${contractId}-${methodName}`,
+      method: 'query',
+      params: {
+        request_type: 'call_function',
+        finality: 'final',
+        account_id: contractId,
+        method_name: methodName,
+        args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify(argsObj)))
+      }
+    });
+    const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body };
+    let res = await fetchJsonWithTimeout(NEAR_RPC_URL, opts, 5000).catch(() => null);
+    let bytes = res && res.result && res.result.result;
+    if (!Array.isArray(bytes)) {
+      res = await fetchJsonWithTimeout('https://free.rpc.fastnear.com', opts, 5000).catch(() => null);
+      bytes = res && res.result && res.result.result;
+    }
     return Array.isArray(bytes) ? JSON.parse(new TextDecoder().decode(new Uint8Array(bytes))) : null;
   }
 
@@ -3962,52 +3980,108 @@
       }
     }
 
-    if (smartRouterBest && directKnownRes) {
-      return BigInt(directKnownRes.amountOut) > BigInt(smartRouterBest.amountOut) ? directKnownRes : smartRouterBest;
-    }
-    if (smartRouterBest) return smartRouterBest;
-    if (directKnownRes) return directKnownRes;
+    // Always compare every route (smart router, direct pool, dynamic pool, 2-hop via hubs) and pick the best output.
+    // A thin direct pool must never beat a deeper 2-hop route (e.g. NEAR -> RHEA -> oRHEA).
+    const refCandidates = [smartRouterBest, directKnownRes].filter(Boolean);
 
-    // Fallback 1: Dynamic pool discovery via api.ref.finance/list-pools-by-tokens -> v2.ref-finance.near get_return
     if (knownPoolId === null) {
       const apiPoolId = await resolveKnownOrApiRefV2PoolId(inId, outId, true);
       if (apiPoolId !== null) {
         const dynRes = await quoteDirectRefV2SingleHop(apiPoolId, inId, outId, amtStr, slippageBps).catch(() => null);
-        if (dynRes) return dynRes;
+        if (dynRes) refCandidates.push(dynRes);
       }
     }
 
-    // Fallback 2: 2-hop Ref V2 route via RHEA / wNEAR / USDC
     const hubs = ['token.rhealab.near', WRAP_NEAR_CONTRACT, NEAR_USDC_CONTRACT_REF];
-    for (const mid of hubs) {
-      if (mid === inId || mid === outId) continue;
-      const pid1 = await resolveKnownOrApiRefV2PoolId(inId, mid, false);
-      const pid2 = await resolveKnownOrApiRefV2PoolId(mid, outId, false);
-      if (pid1 === null || pid2 === null) continue;
-      const hop1 = await quoteDirectRefV2SingleHop(pid1, inId, mid, amtStr, slippageBps).catch(() => null);
-      if (!hop1) continue;
-      const hop2 = await quoteDirectRefV2SingleHop(pid2, mid, outId, hop1.amountOut, slippageBps).catch(() => null);
-      if (!hop2) continue;
-      const actions = [
-        { pool_id: Number(pid1), token_in: inId, token_out: mid, amount_in: amtStr, min_amount_out: '0' },
-        { pool_id: Number(pid2), token_in: mid, token_out: outId, min_amount_out: hop2.minAmountOut }
-      ];
-      return {
-        ok: true,
-        label: `Ref Finance V2 (#${pid1}➔#${pid2})`,
-        routeSource: 'Ref Finance',
-        contractId: REF_FINANCE_CONTRACT,
-        tokenIn: inId,
-        tokenOut: outId,
-        amountIn: amtStr,
-        amountOut: hop2.amountOut,
-        minAmountOut: hop2.minAmountOut,
-        actions,
-        routeData: { direct2Hop: [pid1, pid2], actions, amount_out: hop2.amountOut },
-        error: null
-      };
+    const twoHopResults = await Promise.all(hubs.map(async (mid) => {
+      if (mid === inId || mid === outId) return null;
+      try {
+        const [pid1, pid2] = await Promise.all([
+          resolveKnownOrApiRefV2PoolId(inId, mid, true),
+          resolveKnownOrApiRefV2PoolId(mid, outId, true)
+        ]);
+        if (pid1 === null || pid2 === null) return null;
+        const hop1 = await quoteDirectRefV2SingleHop(pid1, inId, mid, amtStr, slippageBps);
+        if (!hop1) return null;
+        const hop2 = await quoteDirectRefV2SingleHop(pid2, mid, outId, hop1.amountOut, slippageBps);
+        if (!hop2) return null;
+        const actions = [
+          { pool_id: Number(pid1), token_in: inId, token_out: mid, amount_in: amtStr, min_amount_out: hop1.minAmountOut },
+          { pool_id: Number(pid2), token_in: mid, token_out: outId, min_amount_out: hop2.minAmountOut }
+        ];
+        return {
+          ok: true,
+          label: `Ref Finance V2 (#${pid1}➔#${pid2})`,
+          routeSource: 'Ref Finance',
+          contractId: REF_FINANCE_CONTRACT,
+          tokenIn: inId,
+          tokenOut: outId,
+          amountIn: amtStr,
+          amountOut: hop2.amountOut,
+          minAmountOut: hop2.minAmountOut,
+          actions,
+          routeData: { direct2Hop: [pid1, pid2], actions, amount_out: hop2.amountOut },
+          error: null
+        };
+      } catch (_) {
+        return null;
+      }
+    }));
+    twoHopResults.forEach((r) => { if (r) refCandidates.push(r); });
+    // 3-hop via two hubs using known pools only (e.g. PRL -> USDC -> RHEA -> oRHEA), executed atomically by Ref actions.
+    const threeHopJobs = [];
+    for (const h1 of hubs) {
+      for (const h2 of hubs) {
+        if (h1 === h2 || h1 === inId || h1 === outId || h2 === inId || h2 === outId) continue;
+        threeHopJobs.push((async () => {
+          try {
+            const [p1, p2, p3] = await Promise.all([
+              resolveKnownOrApiRefV2PoolId(inId, h1, false),
+              resolveKnownOrApiRefV2PoolId(h1, h2, false),
+              resolveKnownOrApiRefV2PoolId(h2, outId, false)
+            ]);
+            if (p1 === null || p2 === null || p3 === null) return null;
+            const q1 = await quoteDirectRefV2SingleHop(p1, inId, h1, amtStr, slippageBps);
+            if (!q1) return null;
+            const q2 = await quoteDirectRefV2SingleHop(p2, h1, h2, q1.amountOut, slippageBps);
+            if (!q2) return null;
+            const q3 = await quoteDirectRefV2SingleHop(p3, h2, outId, q2.amountOut, slippageBps);
+            if (!q3) return null;
+            const actions = [
+              { pool_id: Number(p1), token_in: inId, token_out: h1, amount_in: amtStr, min_amount_out: q1.minAmountOut },
+              { pool_id: Number(p2), token_in: h1, token_out: h2, min_amount_out: q2.minAmountOut },
+              { pool_id: Number(p3), token_in: h2, token_out: outId, min_amount_out: q3.minAmountOut }
+            ];
+            return {
+              ok: true,
+              label: `Ref Finance V2 (#${p1}➔#${p2}➔#${p3})`,
+              routeSource: 'Ref Finance',
+              contractId: REF_FINANCE_CONTRACT,
+              tokenIn: inId,
+              tokenOut: outId,
+              amountIn: amtStr,
+              amountOut: q3.amountOut,
+              minAmountOut: q3.minAmountOut,
+              actions,
+              routeData: { direct3Hop: [p1, p2, p3], actions, amount_out: q3.amountOut },
+              error: null
+            };
+          } catch (_) {
+            return null;
+          }
+        })());
+      }
     }
+    (await Promise.all(threeHopJobs)).forEach((r) => { if (r) refCandidates.push(r); });
 
+    if (refCandidates.length > 0) {
+      refCandidates.sort((a, b) => {
+        const x = BigInt(a.amountOut);
+        const y = BigInt(b.amountOut);
+        return y > x ? 1 : (y < x ? -1 : 0);
+      });
+      return refCandidates[0];
+    }
     // Fallback 3: Rhea / Ref DCL CLMM (dclv2.ref-labs.near)
     const dclFallback = await quoteNearDclPoolSwap({ tokenIn: inId, tokenOut: outId, amountRaw: amtStr, slippageBps }).catch(() => null);
     if (dclFallback && dclFallback.ok) return dclFallback;

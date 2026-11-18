@@ -1,4 +1,4 @@
-/**
+﻿/**
  * NEAR Chain Abstraction Wallet - Unified UI Controller
  * Wires crypto-engine, token-registry, near-intents, chain-contracts, mining-pro, and state
  * to index.html with zero fake data, strict balance pre-validation, and full zh/en i18n.
@@ -649,34 +649,49 @@
 
   async function verifySecurityAuthAsync(wallet, reason = '') {
     const w = wallet || getState().getActiveWallet();
-    if (!w) return true;
+    if (!w) return false;
     const hasPin = Boolean(w.pin);
-    const bioLocked = Boolean(w.biometricLocked);
-    if (!hasPin && !bioLocked) return true;
+    const profile = _cachedBioProfile || await detectDeviceBiometricProfileAsync();
+    const bioSupported = Boolean(profile && profile.supported);
+    // On iOS / Android the native prompt already falls back to the phone unlock passcode; wallet PIN is web-only.
+    const nativeAuth = Boolean(getNativeSecurityPlugin());
 
+    // 1. Always try system biometrics first (Face ID / Touch ID / fingerprint / face)
+    if (bioSupported) {
+      const bioRes = await requestBiometricAuth(reason, w);
+      if (bioRes.ok) return true;
+      if (!hasPin || nativeAuth) {
+        showToast(bioRes.cancelled
+          ? t('已取消验证', 'Verification cancelled')
+          : (bioRes.error || t('验证未通过', 'Verification failed')));
+        return false;
+      }
+    } else if (!hasPin) {
+      showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
+      if (typeof openSetWalletPinPrompt === 'function') openSetWalletPinPrompt();
+      return false;
+    }
+
+    // 2. PIN fallback
     const modalEl = $('sheet-security-auth');
     if (!modalEl || typeof document === 'undefined') {
-      if (bioLocked) {
-        const bioRes = await requestBiometricAuth(reason, w);
-        if (bioRes.ok) return true;
-        if (!hasPin) return false;
-      }
-      if (hasPin && typeof window !== 'undefined' && typeof window.prompt === 'function') {
-        const entered = window.prompt(t('请输入钱包交易密码 (PIN)', 'Enter wallet PIN'));
+      if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
+        const entered = window.prompt(t('请输入安全 PIN', 'Enter PIN'));
         if (entered === null) return false;
         if (String(entered).trim() !== String(w.pin)) {
-          showToast(t('交易密码错误', 'Incorrect PIN'));
+          showToast(t('PIN 错误', 'Incorrect PIN'));
           return false;
         }
+        return true;
       }
-      return true;
+      return false;
     }
 
     if (typeof _secAuthState.resolve === 'function') {
       _secAuthState.resolve(false);
     }
 
-    const expectedLen = hasPin && String(w.pin).length >= 4 ? Math.min(6, String(w.pin).length) : 6;
+    const expectedLen = String(w.pin).length >= 4 ? Math.min(6, String(w.pin).length) : 6;
     _secAuthState = {
       resolve: null,
       wallet: w,
@@ -686,38 +701,20 @@
     };
 
     const reasonEl = $('security-auth-reason');
-    if (reasonEl) {
-      reasonEl.textContent = reason || t('请输入安全密码或使用生物识别完成验证', 'Verify with biometrics or your PIN to continue');
-    }
+    if (reasonEl) reasonEl.textContent = reason || t('请输入 PIN', 'Enter PIN');
     const pinSection = $('security-pin-section');
-    if (pinSection) pinSection.classList.toggle('hidden', !hasPin);
+    if (pinSection) pinSection.classList.remove('hidden');
     renderSecurityPinDots();
 
     const bioBtn = $('btn-security-biometric');
-    const devBadge = $('security-auth-device-badge');
-    const profile = _cachedBioProfile || await detectDeviceBiometricProfileAsync();
-    if (devBadge) {
-      devBadge.textContent = profile.deviceModel || 'Device';
-    }
-    const showBioBtn = Boolean(bioLocked || (w.biometricEnabled !== false && profile.supported));
-    if (bioBtn) {
-      bioBtn.classList.toggle('hidden', !showBioBtn);
-      const bioLabel = profile.platform === 'ios'
-        ? (profile.biometryType === 'touchID' ? 'Touch ID' : 'Face ID / Touch ID')
-        : (profile.platform === 'macos' ? 'Touch ID' : (profile.platform === 'windows' ? 'Windows Hello' : t('指纹 / 人脸识别', 'Fingerprint / Face Unlock')));
-      bioBtn.textContent = `${t('使用', 'Use')} ${bioLabel}`;
-    }
+    if (bioBtn) bioBtn.classList.toggle('hidden', !bioSupported);
 
     openSheet('sheet-security-auth');
 
     return new Promise((resolve) => {
       _secAuthState.resolve = resolve;
-      if (bioLocked && !hasPin) {
-        triggerSecurityBiometricNow().catch(() => {});
-      }
     });
   }
-
   function verifyPinIfNeeded(wallet, reason = '') {
     return verifySecurityAuthAsync(wallet, reason);
   }
@@ -2943,9 +2940,253 @@
         }).catch(() => null);
       }
 
-      // Composite PRL Routes (Ref Finance Pool #9010 + 1Click)
+      // Composite PRL & Smart Hub Multi-Stage Routes
       const originIsPrl = isPrlSwapToken(fromToken);
       const destIsPrl = isPrlSwapToken(toToken);
+
+      if (activeQuote?.compositeType === 'SMART_HUB_ROUTE' && Array.isArray(activeQuote.stages) && activeQuote.stages.length > 0) {
+        let stages = activeQuote.stages.slice();
+        let stageAmtRaw = amountRaw;
+        if (stages[0] && stages[0].type === 'ORIGIN_DEX') {
+          const origStage = stages.shift();
+          if (origStage.chain === 'sol') {
+            const solAddr = wallet.solAddress;
+            const preSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
+            const preLamports = BigInt(preSolRes?.nativeLamports || '0');
+            const s0Quote = origStage.quote || await contracts.quoteSolanaJupiterSwap({
+              inputMint: fromToken.contractAddress,
+              outputMint: 'So11111111111111111111111111111111111111112',
+              amountRaw,
+              slippageBps: st.swap.slippageBps
+            });
+            await contracts.executeSolanaJupiterSwap({
+              wallet,
+              quoteResponse: s0Quote,
+              wrapAndUnwrapSol: true,
+              tokenBalance: avail,
+              inputDecimals: fromToken.decimals
+            });
+            const postSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
+            const postLamports = BigInt(postSolRes?.nativeLamports || '0');
+            const deltaL = postLamports > preLamports ? (postLamports - preLamports) : BigInt(s0Quote.outAmount || '0');
+            stageAmtRaw = (deltaL > 0n ? deltaL : BigInt(s0Quote.outAmount || '0')).toString();
+          } else {
+            const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
+            const preEvm = await contracts.fetchEvmNativeAndErc20Balance(origStage.chain, evmAddr).catch(() => null);
+            const preWei = BigInt(preEvm?.nativeRaw || '0');
+            const s0Q = origStage.quote || await contracts.quoteEvmDexSwap({
+              chainKey: origStage.chain,
+              srcToken: fromToken.contractAddress,
+              destToken: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+              amountRaw,
+              srcDecimals: fromToken.decimals,
+              destDecimals: 18,
+              slippageBps: st.swap.slippageBps
+            });
+            await contracts.executeEvmDexSwap({
+              wallet,
+              chainKey: origStage.chain,
+              routeSource: s0Q.routeSource,
+              routeData: s0Q.routeData,
+              srcToken: fromToken.contractAddress,
+              destToken: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+              amountRaw,
+              srcDecimals: fromToken.decimals,
+              slippageBps: st.swap.slippageBps,
+              tokenBalance: avail
+            });
+            const postEvm = await contracts.fetchEvmNativeAndErc20Balance(origStage.chain, evmAddr).catch(() => null);
+            const postWei = BigInt(postEvm?.nativeRaw || '0');
+            const deltaW = postWei > preWei ? (postWei - preWei) : BigInt(s0Q.amountOut || '0');
+            stageAmtRaw = (deltaW > 0n ? deltaW : BigInt(s0Q.amountOut || '0')).toString();
+          }
+        }
+        const first = stages[0];
+        if (!first) return;
+        const destDexLeg = stages.find((s) => s.type === 'DEST_DEX') || null;
+        const buildDestDexFollowUp = async (expectedInRaw) => {
+          if (!destDexLeg) return {};
+          if (destDexLeg.chain === 'sol') {
+            const preSol = await contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, []).catch(() => null);
+            return {
+              followUpSolDexSwap: {
+                outputMint: toToken.contractAddress,
+                outputDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 6,
+                toSymbol: toToken.symbol,
+                expectedSolRaw: String(expectedInRaw || '0'),
+                preSolLamports: String(preSol?.nativeLamports || '0'),
+                slippageBps: st.swap.slippageBps
+              }
+            };
+          }
+          const evmRecip = wallet.mpcEvmAddress || wallet.evmAddress;
+          const preEvm = await contracts.fetchEvmNativeAndErc20Balance(destDexLeg.chain, evmRecip).catch(() => null);
+          return {
+            followUpEvmDexSwap: {
+              chainKey: destDexLeg.chain,
+              destToken: toToken.contractAddress,
+              destDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 18,
+              toSymbol: toToken.symbol,
+              expectedInRaw: String(expectedInRaw || '0'),
+              preNativeWei: String(preEvm?.nativeRaw || '0'),
+              slippageBps: st.swap.slippageBps
+            }
+          };
+        };
+        if (first.type === 'BRIDGE_IN') {
+          const liveIn = await intents.quoteIntentSwapOrWithdraw({
+            originAsset: first.originAsset || fromToken.assetId,
+            destinationAsset: first.destinationAsset,
+            amountRaw: stageAmtRaw,
+            slippageBps: st.swap.slippageBps,
+            recipient: nearId,
+            refundTo,
+            depositType: 'ORIGIN_CHAIN',
+            recipientType: 'DESTINATION_CHAIN',
+            dry: false
+          });
+          if (!liveIn.ok || !liveIn.depositAddress) {
+            throw new Error(liveIn.error || t('创建第一阶段跨链订单失败', 'Failed to create Stage 1 cross-chain order'));
+          }
+          const swapLeg = stages.find((s) => s.type === 'NEAR_SWAP') || null;
+          const outLeg = stages.find((s) => s.type === 'BRIDGE_OUT') || null;
+          const destFollow = outLeg ? await buildDestDexFollowUp(outLeg.expectedOut) : {};
+          st.swap.activeOrder = {
+            depositAddress: liveIn.depositAddress,
+            memo: liveIn.memo || null,
+            status: 'PENDING_DEPOSIT',
+            fromSymbol: fromToken.symbol,
+            toSymbol: toToken.symbol,
+            followUpRefSwap: swapLeg ? {
+              tokenIn: swapLeg.tokenIn,
+              tokenOut: swapLeg.tokenOut,
+              amountUsdcRaw: liveIn.amountOut || first.expectedOut,
+              slippageBps: st.swap.slippageBps,
+              inputDecimals: swapLeg.inDecimals || first.hubDecimals || 8,
+              tokenSymbol: swapLeg.inSymbol || first.hubSymbol || 'PRL',
+              followUpBridgeOut: outLeg ? {
+                originAsset: outLeg.originAsset,
+                destinationAsset: outLeg.destinationAsset,
+                hubContract: outLeg.hubContract,
+                hubDecimals: outLeg.hubDecimals || swapLeg.outDecimals || 8,
+                hubSymbol: outLeg.hubSymbol || swapLeg.outSymbol || 'PRL',
+                recipient: outLeg.recipient || recipient,
+                expectedInRaw: outLeg.expectedIn || swapLeg.expectedOut,
+                ...destFollow
+              } : null
+            } : null
+          };
+          const bridgeToken = stages.length < activeQuote.stages.length
+            ? {
+                blockchain: fromToken.blockchain,
+                symbol: fromToken.blockchain === 'sol' ? 'SOL' : fromToken.blockchain.toUpperCase(),
+                contractAddress: '',
+                decimals: fromToken.blockchain === 'sol' ? 9 : 18
+              }
+            : fromToken;
+          const bridgeAmtNum = stages.length < activeQuote.stages.length
+            ? Number(intents.fromBaseUnits(stageAmtRaw, bridgeToken.decimals))
+            : amt;
+          renderSwapOrderCard();
+          const inTx = await broadcastOriginDepositTx({ wallet, fromToken: bridgeToken, amt: bridgeAmtNum, avail: bridgeAmtNum, depositAddress: liveIn.depositAddress });
+          if (inTx && inTx.txHash) {
+            await intents.submitExternalDepositTxHash({
+              depositAddress: liveIn.depositAddress,
+              txHash: inTx.txHash,
+              nearSenderAccount: nearId
+            }).catch(() => {});
+            showToast(`✅ ${t('跨链第一阶段已发送，到账后将自动完成后续兑换', 'Stage 1 sent; will auto-complete remaining stages on arrival')}`);
+          } else {
+            showToast(t('第一阶段订单已生成，请向下方充值地址转入源资产，到账后自动执行后续兑换', 'Stage 1 order created; deposit to address below to auto-trigger swap'));
+          }
+          startOrderStatusPolling();
+          return;
+        }
+
+        if (first.type === 'NEAR_SWAP') {
+          const outLeg = stages.find((s) => s.type === 'BRIDGE_OUT') || null;
+          const preOutBal = outLeg
+            ? await intents.fetchNearNep141Balances(nearId, { [first.tokenOut]: first.outDecimals || 8 }).catch(() => null)
+            : null;
+          const preOutRaw = BigInt(preOutBal?.[first.tokenOut]?.raw || '0');
+          const swapRes = await contracts.executeNearRefFinanceSwap({
+            wallet,
+            tokenIn: first.tokenIn,
+            tokenOut: first.tokenOut,
+            amountRaw: stageAmtRaw,
+            slippageBps: st.swap.slippageBps,
+            tokenBalance: avail,
+            inputDecimals: first.inDecimals || fromToken.decimals || 18,
+            tokenSymbol: first.inSymbol || fromToken.symbol
+          });
+          if (!outLeg) {
+            showToast(`✅ Ref Finance ${t('成交广播成功', 'Swap broadcast')}: ${shortenAddr(swapRes.txHash)}`);
+            refreshAllBalancesAsync(false);
+            return;
+          }
+          const postOutBal = await intents.fetchNearNep141Balances(nearId, { [first.tokenOut]: first.outDecimals || 8 }).catch(() => null);
+          const postOutRaw = BigInt(postOutBal?.[first.tokenOut]?.raw || '0');
+          const deltaOut = postOutRaw > preOutRaw ? (postOutRaw - preOutRaw) : BigInt(swapRes.amountOut || first.expectedOut || '0');
+          const bridgeInRaw = (deltaOut > 0n ? deltaOut : BigInt(first.expectedOut || '0')).toString();
+          const destFollow = await buildDestDexFollowUp(outLeg.expectedOut);
+          const liveOut = await intents.quoteIntentSwapOrWithdraw({
+            originAsset: outLeg.originAsset,
+            destinationAsset: outLeg.destinationAsset,
+            amountRaw: bridgeInRaw,
+            slippageBps: st.swap.slippageBps,
+            recipient: outLeg.recipient || recipient,
+            refundTo: nearId,
+            depositType: 'ORIGIN_CHAIN',
+            recipientType: 'DESTINATION_CHAIN',
+            dry: false
+          });
+          if (!liveOut.ok || !liveOut.depositAddress) {
+            throw new Error(liveOut.error || t('获取第二阶段跨链桥路由失败', 'Failed to get Stage 2 bridge route'));
+          }
+          const bridgeDec = outLeg.hubDecimals || first.outDecimals || 8;
+          const bridgeSym = outLeg.hubSymbol || first.outSymbol || 'PRL';
+          const bridgeHuman = Number(intents.fromBaseUnits(bridgeInRaw, bridgeDec));
+          let sendBridge = null;
+          if (outLeg.hubContract === 'wrap.near') {
+            sendBridge = await contracts.executeNearNep141Transfer({
+              wallet,
+              tokenContract: 'wrap.near',
+              receiverId: liveOut.depositAddress,
+              amount: bridgeHuman,
+              decimals: 24,
+              tokenSymbol: 'wNEAR',
+              tokenBalance: bridgeHuman
+            });
+          } else {
+            sendBridge = await contracts.executeNearNep141Transfer({
+              wallet,
+              tokenContract: outLeg.hubContract,
+              receiverId: liveOut.depositAddress,
+              amount: bridgeHuman,
+              decimals: bridgeDec,
+              tokenSymbol: bridgeSym,
+              tokenBalance: bridgeHuman
+            });
+          }
+          await intents.submitExternalDepositTxHash({
+            depositAddress: liveOut.depositAddress,
+            txHash: sendBridge.txHash,
+            nearSenderAccount: nearId
+          }).catch(() => {});
+          st.swap.activeOrder = {
+            depositAddress: liveOut.depositAddress,
+            memo: liveOut.memo || null,
+            status: 'PENDING_DEPOSIT',
+            fromSymbol: fromToken.symbol,
+            toSymbol: toToken.symbol,
+            ...destFollow
+          };
+          renderSwapOrderCard();
+          startOrderStatusPolling();
+          showToast(`✅ ${t('已完成 NEAR 链内兑换并自动发起跨链交付', 'Swapped on NEAR & bridging to destination chain')}`);
+          return;
+        }
+      }
 
       // Sub-route A: NEAR Token -> PRL (Pearl L1) via Ref Finance -> 1Click bridge
       if (!originIsPrl && destIsPrl && fromToken.blockchain === 'near') {
@@ -3002,6 +3243,73 @@
         return;
       }
 
+      // Sub-route P: PRL -> NEAR-chain token via Ref multi-hop (tokens 1Click does not list, e.g. oRHEA)
+      if (originIsPrl && !destIsPrl && toToken.blockchain === 'near' && toToken.contractAddress
+          && st.swap.quoteData?.compositeType === 'PRL_TO_NEAR_REF' && st.swap.quoteData.refQuote) {
+        const refQ = st.swap.quoteData.refQuote;
+        if (fromToken.blockchain === 'near') {
+          const res = await contracts.executeNearRefFinanceSwap({
+            wallet,
+            routeData: refQ.routeData,
+            actions: refQ.actions,
+            poolIds: refQ.poolIds,
+            minAmountOut: refQ.minAmountOut,
+            tokenIn: intents.PRL_NEAR_CONTRACT,
+            tokenOut: toToken.contractAddress,
+            amountRaw,
+            slippageBps: st.swap.slippageBps,
+            tokenBalance: avail,
+            inputDecimals: 8,
+            tokenSymbol: 'PRL'
+          });
+          showToast(`✅ Ref Finance ${t('成交广播成功', 'Swap broadcast')}: ${shortenAddr(res.txHash)}`);
+          refreshAllBalancesAsync(false);
+          return;
+        }
+        const bridgeLive = await intents.quoteIntentSwapOrWithdraw({
+          originAsset: fromToken.assetId,
+          destinationAsset: intents.PRL_NEAR_ASSET_ID,
+          amountRaw,
+          slippageBps: st.swap.slippageBps,
+          recipient: nearId,
+          refundTo,
+          depositType: 'ORIGIN_CHAIN',
+          recipientType: 'DESTINATION_CHAIN',
+          dry: false
+        });
+        if (!bridgeLive.ok || !bridgeLive.depositAddress) {
+          throw new Error(bridgeLive.error || t('创建 PRL 跨链订单失败', 'Failed to create PRL bridge order'));
+        }
+        st.swap.activeOrder = {
+          depositAddress: bridgeLive.depositAddress,
+          memo: bridgeLive.memo || null,
+          status: 'PENDING_DEPOSIT',
+          fromSymbol: fromToken.symbol,
+          toSymbol: toToken.symbol,
+          followUpRefSwap: {
+            tokenIn: intents.PRL_NEAR_CONTRACT,
+            tokenOut: toToken.contractAddress,
+            amountUsdcRaw: bridgeLive.amountOut,
+            slippageBps: st.swap.slippageBps,
+            inputDecimals: 8,
+            tokenSymbol: 'PRL'
+          }
+        };
+        renderSwapOrderCard();
+        const bridgeTx = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: bridgeLive.depositAddress });
+        if (bridgeTx && bridgeTx.txHash) {
+          await intents.submitExternalDepositTxHash({
+            depositAddress: bridgeLive.depositAddress,
+            txHash: bridgeTx.txHash,
+            nearSenderAccount: nearId
+          }).catch(() => {});
+          showToast(`✅ ${t('跨链已发送，到账后自动兑换', 'Bridge sent; auto-swap on arrival')}`);
+        } else {
+          showToast(t('订单已生成，请向下方充值地址转入资产', 'Order created; deposit to the address below'));
+        }
+        startOrderStatusPolling();
+        return;
+      }
       // Sub-route B: PRL (NEAR) -> External chain (e.g. SOL / ETH / BNB)
       if (originIsPrl && !destIsPrl && fromToken.blockchain === 'near') {
         const preUsdc = await intents.fetchNearNep141Balances(nearId, { usdc: intents.NEAR_USDC_CONTRACT }).catch(() => null);
@@ -3629,16 +3937,72 @@
                     : String(balMap.usdc.raw))
                 : String(follow.amountUsdcRaw || '0');
               if (BigInt(amtInRaw) > 0n) {
+                const outFollow = follow.followUpBridgeOut || null;
+                const preOutBal = outFollow
+                  ? await intents.fetchNearNep141Balances(nearId, { [follow.tokenOut]: outFollow.hubDecimals || 8 }).catch(() => null)
+                  : null;
+                const preOutRaw = BigInt(preOutBal?.[follow.tokenOut]?.raw || '0');
                 const refRes = await contracts.executeNearRefFinanceSwap({
                   wallet,
                   tokenIn: follow.tokenIn,
                   tokenOut: follow.tokenOut,
                   amountRaw: amtInRaw,
                   slippageBps: follow.slippageBps || 100,
-                  inputDecimals: 6,
-                  tokenSymbol: 'USDC'
+                  inputDecimals: follow.inputDecimals || 6,
+                  tokenSymbol: follow.tokenSymbol || 'USDC'
                 });
-                showToast(`✅ ${t('第二阶段 Ref Finance 已自动兑换为 PRL', 'Step 2 auto-swapped USDC to PRL on Ref')}: ${shortenAddr(refRes.txHash)}`);
+                if (outFollow && outFollow.destinationAsset) {
+                  const postOutBal = await intents.fetchNearNep141Balances(nearId, { [follow.tokenOut]: outFollow.hubDecimals || 8 }).catch(() => null);
+                  const postOutRaw = BigInt(postOutBal?.[follow.tokenOut]?.raw || '0');
+                  const deltaOut = postOutRaw > preOutRaw ? (postOutRaw - preOutRaw) : BigInt(refRes.amountOut || outFollow.expectedInRaw || '0');
+                  const bridgeInRaw = (deltaOut > 0n ? deltaOut : BigInt(outFollow.expectedInRaw || '0')).toString();
+                  if (BigInt(bridgeInRaw) > 0n) {
+                    const liveOut = await intents.quoteIntentSwapOrWithdraw({
+                      originAsset: outFollow.originAsset,
+                      destinationAsset: outFollow.destinationAsset,
+                      amountRaw: bridgeInRaw,
+                      slippageBps: follow.slippageBps || 100,
+                      recipient: outFollow.recipient,
+                      refundTo: nearId,
+                      depositType: 'ORIGIN_CHAIN',
+                      recipientType: 'DESTINATION_CHAIN',
+                      dry: false
+                    });
+                    if (liveOut.ok && liveOut.depositAddress) {
+                      const bDec = outFollow.hubDecimals || 8;
+                      const bSym = outFollow.hubSymbol || 'PRL';
+                      const bHuman = Number(intents.fromBaseUnits(bridgeInRaw, bDec));
+                      const sendB = await contracts.executeNearNep141Transfer({
+                        wallet,
+                        tokenContract: outFollow.hubContract || follow.tokenOut,
+                        receiverId: liveOut.depositAddress,
+                        amount: bHuman,
+                        decimals: bDec,
+                        tokenSymbol: bSym,
+                        tokenBalance: bHuman
+                      });
+                      await intents.submitExternalDepositTxHash({
+                        depositAddress: liveOut.depositAddress,
+                        txHash: sendB.txHash,
+                        nearSenderAccount: nearId
+                      }).catch(() => {});
+                      st.swap.activeOrder = {
+                        depositAddress: liveOut.depositAddress,
+                        memo: liveOut.memo || null,
+                        status: 'PENDING_DEPOSIT',
+                        fromSymbol: order.fromSymbol,
+                        toSymbol: order.toSymbol,
+                        followUpSolDexSwap: outFollow.followUpSolDexSwap || null,
+                        followUpEvmDexSwap: outFollow.followUpEvmDexSwap || null
+                      };
+                      renderSwapOrderCard();
+                      startOrderStatusPolling();
+                      showToast(`✅ ${t('第二阶段已换币并自动发起第三阶段跨链交付', 'Stage 2 swapped & Stage 3 bridge sent')}`);
+                      return;
+                    }
+                  }
+                }
+                showToast(`✅ ${t('第二阶段 Ref Finance 已自动兑换', 'Step 2 auto-swapped on Ref')}: ${shortenAddr(refRes.txHash)}`);
               }
             } catch (err) {
               showToast(err && err.message ? err.message : t('自动兑换 PRL 失败，请在资产页手动闪兑', 'Auto Ref swap failed'));
@@ -3807,10 +4171,21 @@
 
   // ==================== Token Picker Modal ====================
 
+  const PICKER_CHAIN_STORAGE_KEY = 'near_ca_swap_picker_chain';
+
+  function loadSavedPickerChain() {
+    try {
+      const v = typeof localStorage !== 'undefined' ? localStorage.getItem(PICKER_CHAIN_STORAGE_KEY) : null;
+      return v ? String(v) : 'all';
+    } catch (_) {
+      return 'all';
+    }
+  }
+
   function openTokenPicker(side) {
     const st = getState();
     st.swap.pickerSide = side === 'to' ? 'to' : 'from';
-    st.swap.pickerChainFilter = 'all';
+    st.swap.pickerChainFilter = loadSavedPickerChain();
     st.swap.pickerSearch = '';
     if ($('token-picker-search')) $('token-picker-search').value = '';
     renderTokenPickerList();
@@ -3819,6 +4194,7 @@
 
   function setTokenPickerChain(chainKey) {
     getState().swap.pickerChainFilter = chainKey;
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem(PICKER_CHAIN_STORAGE_KEY, String(chainKey)); } catch (_) {}
     renderTokenPickerList();
   }
 
@@ -3940,7 +4316,8 @@
     const listEl = $('token-picker-list');
     if (!listEl) return;
     listEl.innerHTML = filteredWithMeta.map(({ tok, bal }) => {
-      const priceText = formatTokenPrice(tok.price);
+      const liveP = (typeof tok.price === 'number' && tok.price > 0) ? tok.price : getSymbolPrice(tok.symbol);
+      const priceText = formatTokenPrice(liveP);
       const isFav = favSet.has(String(tok.assetId || '').toLowerCase());
       const starStyle = isFav
         ? 'color:#F59E0B;font-size:16px;padding:4px 6px;background:transparent;border:none;cursor:pointer;line-height:1;'
@@ -4327,60 +4704,21 @@
     const st = getState();
     const wallet = st.getActiveWallet();
     if (!wallet || !$('hub-security-bio-card')) return;
-
+    const profile = _cachedBioProfile || await detectDeviceBiometricProfileAsync();
     const statusBadge = $('hub-bio-status-badge');
     if (statusBadge) {
-      const bioLocked = Boolean(wallet.biometricLocked);
-      const pinText = wallet.pin ? ' + PIN' : '';
-      statusBadge.textContent = bioLocked
-        ? `${t('生物锁定已开启', 'Biometric ON')}${pinText}`
-        : (wallet.pin ? t('仅 PIN 保护', 'PIN Only') : t('未开启锁定', 'Lock OFF'));
-      statusBadge.className = bioLocked ? 'badge badge-emerald' : 'badge badge-cyan';
+      const parts = [];
+      if (profile && profile.supported) {
+        parts.push(profile.platform === 'ios' ? 'Face ID / Touch ID' : t('生物识别', 'Biometrics'));
+      }
+      if (getNativeSecurityPlugin()) parts.push(t('锁屏密码', 'Passcode'));
+      else if (wallet.pin) parts.push('PIN');
+      const pinBtn = $('btn-hub-set-pin');
+      if (pinBtn) pinBtn.classList.toggle('hidden', Boolean(getNativeSecurityPlugin()));
+      statusBadge.textContent = parts.length ? parts.join(' + ') : t('未设置', 'Not set');
+      statusBadge.className = parts.length ? 'badge badge-emerald' : 'badge badge-cyan';
     }
-
-    const devEl = $('hub-bio-device-model');
-    const methEl = $('hub-bio-methods');
-    if (_cachedBioProfile) {
-      if (devEl) devEl.textContent = _cachedBioProfile.deviceModel || '--';
-      if (methEl) methEl.textContent = `${_cachedBioProfile.methodsText || '--'}${wallet.pin ? ` · PIN (${t('已设置', 'Set')})` : ''}`;
-    }
-
-    const profile = await detectDeviceBiometricProfileAsync();
-    if (devEl) devEl.textContent = profile.deviceModel || '--';
-    if (methEl) methEl.textContent = `${profile.methodsText || '--'}${wallet.pin ? ` · PIN (${t('已设置', 'Set')})` : ''}`;
   }
-
-  async function toggleBiometricProtection() {
-    const st = getState();
-    const wallet = st.getActiveWallet();
-    if (!wallet) return;
-
-    if (wallet.biometricLocked) {
-      const ok = await verifySecurityAuthAsync(wallet, t('关闭生物识别交易锁定', 'Disable biometric transaction lock'));
-      if (!ok) return;
-      wallet.biometricLocked = false;
-      st.saveWallets();
-      await renderHubBiometricCardAsync();
-      showToast(t('已关闭生物识别交易锁定', 'Biometric lock disabled'));
-      return;
-    }
-
-    const bioRes = await requestBiometricAuth(t('启用生物识别交易保护', 'Enable biometric transaction lock'), wallet);
-    if (bioRes.ok) {
-      wallet.biometricLocked = true;
-      wallet.biometricEnabled = true;
-      st.saveWallets();
-      await renderHubBiometricCardAsync();
-      showToast(t('已开启生物识别交易锁定', 'Biometric lock enabled'));
-      return;
-    }
-    if (bioRes.cancelled) {
-      showToast(t('已取消验证', 'Verification cancelled'));
-      return;
-    }
-    showToast(bioRes.error || t('当前环境不支持系统生物识别，请先设置 4-6 位交易 PIN', 'Biometrics unavailable; set a 4-6 digit PIN instead'));
-  }
-
   async function testBiometricAuthNow() {
     const st = getState();
     const wallet = st.getActiveWallet();
@@ -4999,6 +5337,7 @@
     const client = st.wc.client;
     const wallet = st.getActiveWallet();
     if (!p || !client || !wallet) return;
+    if (!(await verifySecurityAuthAsync(wallet, t('授权 WalletConnect 连接', 'Authorize WalletConnect')))) return;
     try {
       await contracts.ensureWalletSigningKeysAsync(wallet);
       const chainsSet = new Set(['eip155:1', 'eip155:8453', 'eip155:56', 'eip155:42161', 'eip155:4663', 'eip155:999']);
@@ -5203,7 +5542,6 @@
     verifySecurityAuthAsync,
     verifyPinIfNeeded,
     renderHubBiometricCardAsync,
-    toggleBiometricProtection,
     testBiometricAuthNow,
     openSetWalletPinPrompt,
     pressSecurityPinDigit,
@@ -5257,7 +5595,6 @@
     openBackupKeysSheet,
     openPinSheet,
     saveWalletPin,
-    toggleBiometricProtection,
     testBiometricAuthNow,
     openSetWalletPinPrompt,
     pressSecurityPinDigit,

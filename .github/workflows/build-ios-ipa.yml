@@ -1,4 +1,4 @@
-name: Build Unsigned iOS IPA
+﻿name: Build Unsigned iOS IPA
 
 on:
   workflow_dispatch:
@@ -9,6 +9,8 @@ on:
 jobs:
   build-ios:
     runs-on: macos-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -29,13 +31,19 @@ jobs:
           mkdir -p /tmp/ios-custom
           cp ios/App/App/Info.plist /tmp/ios-custom/Info.plist
           cp ios/App/App/NativeSecurityPlugin.swift /tmp/ios-custom/NativeSecurityPlugin.swift
+          cp ios/App/App/MainViewController.swift /tmp/ios-custom/MainViewController.swift
 
           rm -rf ios
           npm install --no-save @capacitor/core@^6.1.0 @capacitor/cli@^6.1.0 @capacitor/ios@^6.1.0
           npx cap add ios
 
           cp /tmp/ios-custom/Info.plist ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 2.6.${GITHUB_RUN_NUMBER}" ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" ios/App/App/Info.plist
           cp /tmp/ios-custom/NativeSecurityPlugin.swift ios/App/App/NativeSecurityPlugin.swift
+          cp /tmp/ios-custom/MainViewController.swift ios/App/App/MainViewController.swift
+          sed -i '' 's/customClass="CAPBridgeViewController" customModule="Capacitor"/customClass="MainViewController" customModule="App"/' ios/App/App/Base.lproj/Main.storyboard
+          grep -n MainViewController ios/App/App/Base.lproj/Main.storyboard
 
           ruby -e '
             require "xcodeproj"
@@ -43,9 +51,11 @@ jobs:
             project = Xcodeproj::Project.open(proj_path)
             target = project.targets.find { |t| t.name == "App" }
             app_group = project.main_group.find_subpath("App/App", false) || project.main_group.find_subpath("App", false)
-            file_ref = app_group.files.find { |f| f.path == "NativeSecurityPlugin.swift" } || app_group.new_file("NativeSecurityPlugin.swift")
-            unless target.source_build_phase.files_references.include?(file_ref)
-              target.source_build_phase.add_file_reference(file_ref)
+            ["NativeSecurityPlugin.swift", "MainViewController.swift"].each do |fname|
+              file_ref = app_group.files.find { |f| f.path == fname } || app_group.new_file(fname)
+              unless target.source_build_phase.files_references.include?(file_ref)
+                target.source_build_phase.add_file_reference(file_ref)
+              end
             end
             project.save
           '
@@ -81,3 +91,68 @@ jobs:
           name: NEAR-CA-Wallet-unsigned-ipa
           path: build/NEAR-CA-Wallet-unsigned.ipa
           retention-days: 30
+
+      - name: Generate SideStore / AltStore source JSON & publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          IPA_SIZE=$(stat -f%z build/NEAR-CA-Wallet-unsigned.ipa)
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          VER="2.6.${GITHUB_RUN_NUMBER}"
+          TAG="v${VER}"
+          IPA_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/NEAR-CA-Wallet-unsigned.ipa"
+          cat > sidestore-source.json <<EOF
+          {
+            "name": "NEAR CA Wallet Official Source",
+            "identifier": "io.near.cawallet.source",
+            "subtitle": "Self-Custody Chain Abstraction Wallet",
+            "description": "Official SideStore / AltStore auto-update repository for NEAR CA Wallet.",
+            "iconURL": "https://assets.coingecko.com/coins/images/10365/large/near.jpg",
+            "website": "https://github.com/${GITHUB_REPOSITORY}",
+            "tintColor": "#10B981",
+            "featuredApps": ["io.near.cawallet"],
+            "apps": [
+              {
+                "name": "NEAR CA Wallet",
+                "bundleIdentifier": "io.near.cawallet",
+                "developerName": "NEAR CA Wallet",
+                "subtitle": "Chain Abstraction Self-Custody Wallet",
+                "localizedDescription": "NEAR Account-Centric Chain Abstraction Self-Custody Wallet",
+                "iconURL": "https://assets.coingecko.com/coins/images/10365/large/near.jpg",
+                "tintColor": "#10B981",
+                "category": "utilities",
+                "version": "${VER}",
+                "versionDate": "${BUILD_DATE}",
+                "versionDescription": "Auto-built from commit ${GITHUB_SHA::7}",
+                "downloadURL": "${IPA_URL}",
+                "size": ${IPA_SIZE},
+                "versions": [
+                  {
+                    "version": "${VER}",
+                    "date": "${BUILD_DATE}",
+                    "localizedDescription": "Auto-built from commit ${GITHUB_SHA::7}",
+                    "downloadURL": "${IPA_URL}",
+                    "size": ${IPA_SIZE},
+                    "minOSVersion": "14.0"
+                  }
+                ],
+                "appPermissions": {
+                  "entitlements": [],
+                  "privacy": {
+                    "NSFaceIDUsageDescription": "Verify identity for transaction signing and recovery phrase access."
+                  }
+                }
+              }
+            ],
+            "news": []
+          }
+          EOF
+          cp sidestore-source.json build/sidestore-source.json
+          gh release create "${TAG}" build/NEAR-CA-Wallet-unsigned.ipa build/sidestore-source.json \
+            --title "NEAR CA Wallet ${TAG}" \
+            --notes "Automated iOS IPA & SideStore source release (${TAG})" \
+            --latest || true
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add sidestore-source.json build/NEAR-CA-Wallet-unsigned.ipa
+          git diff --cached --quiet || (git commit -m "chore(ios): update IPA and SideStore source to ${TAG} [skip ci]" && git push)

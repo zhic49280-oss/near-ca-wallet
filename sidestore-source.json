@@ -1,0 +1,46 @@
+{
+  "name": "NEAR CA Wallet Official Source",
+  "identifier": "io.near.cawallet.source",
+  "subtitle": "Self-Custody Chain Abstraction Wallet",
+  "description": "Official SideStore / AltStore auto-update repository for NEAR CA Wallet.",
+  "iconURL": "https://assets.coingecko.com/coins/images/10365/large/near.jpg",
+  "website": "https://github.com/zhic49280-oss/near-ca-wallet",
+  "tintColor": "#10B981",
+  "featuredApps": [
+    "io.near.cawallet"
+  ],
+  "apps": [
+    {
+      "name": "NEAR CA Wallet",
+      "bundleIdentifier": "io.near.cawallet",
+      "developerName": "NEAR CA Wallet",
+      "subtitle": "Chain Abstraction Self-Custody Wallet",
+      "localizedDescription": "NEAR Account-Centric Chain Abstraction Self-Custody Wallet (NEAR Intents NEP-413 + MPC v1.signer + Multi-Chain Smart Contracts)",
+      "iconURL": "https://assets.coingecko.com/coins/images/10365/large/near.jpg",
+      "tintColor": "#10B981",
+      "category": "utilities",
+      "version": "2.6.0",
+      "versionDate": "2026-11-18T06:00:00Z",
+      "versionDescription": "Face ID / Passcode native security bridge, Smart Hub multi-stage router, and full token price coverage.",
+      "downloadURL": "https://raw.githubusercontent.com/zhic49280-oss/near-ca-wallet/main/build/NEAR-CA-Wallet-unsigned.ipa",
+      "size": 1408806,
+      "versions": [
+        {
+          "version": "2.6.0",
+          "date": "2026-11-18T06:00:00Z",
+          "localizedDescription": "Face ID / Passcode native security bridge, Smart Hub multi-stage router, and full token price coverage.",
+          "downloadURL": "https://raw.githubusercontent.com/zhic49280-oss/near-ca-wallet/main/build/NEAR-CA-Wallet-unsigned.ipa",
+          "size": 1408806,
+          "minOSVersion": "14.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSFaceIDUsageDescription": "Verify identity for transaction signing and recovery phrase access."
+        }
+      }
+    }
+  ],
+  "news": []
+}

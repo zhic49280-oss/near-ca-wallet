@@ -1,4 +1,4 @@
-(function (root) {
+﻿(function (root) {
   'use strict';
 
   const NEAR_RPC_URL = 'https://rpc.mainnet.near.org';
@@ -314,7 +314,14 @@
     if (typeof contractsMap === 'object') {
       const out = {};
       for (const [k, v] of Object.entries(contractsMap)) {
-        if (k) out[String(k).trim()] = typeof v === 'number' ? v : (Number(v) || 18);
+        if (!k) continue;
+        if (typeof v === 'string' && v.trim()) {
+          const cid = v.trim();
+          const dec = DEFAULT_NEAR_NEP141_CONTRACTS[cid] !== undefined ? DEFAULT_NEAR_NEP141_CONTRACTS[cid] : resolveTokenDecimals(`nep141:${cid}`);
+          out[cid] = dec;
+        } else {
+          out[String(k).trim()] = typeof v === 'number' ? v : (Number(v) || 18);
+        }
       }
       return out;
     }
@@ -383,6 +390,14 @@
       })
     );
 
+    const aliasPairs = (contractsMap && typeof contractsMap === 'object' && !Array.isArray(contractsMap))
+      ? Object.entries(contractsMap).filter(([, v]) => typeof v === 'string' && v.trim())
+      : [];
+    for (const [alias, cid] of aliasPairs) {
+      if (results[cid.trim()] && !results[alias]) {
+        results[alias] = results[cid.trim()];
+      }
+    }
     return anySuccess ? results : null;
   }
 
@@ -751,15 +766,20 @@
 
       const cgImageById = Object.create(null);
       const cgImageBySymbol = Object.create(null);
+      const cgPriceBySymbol = Object.create(null);
       const cgData = cgRes.status === 'fulfilled' && cgRes.value?.ok ? cgRes.value.data : null;
       if (Array.isArray(cgData)) {
         for (const coin of cgData) {
           if (!coin || typeof coin !== 'object') continue;
+          const symClean = String(coin.symbol || '').trim().replace(/^\$/, '').toUpperCase();
+          const cp = Number(coin.current_price);
+          if (symClean && Number.isFinite(cp) && cp > 0 && !cgPriceBySymbol[symClean]) {
+            cgPriceBySymbol[symClean] = cp;
+          }
           const safeImg = sanitizeImg(coin.image);
           if (!safeImg) continue;
           const cgId = String(coin.id || '').trim().toLowerCase();
           if (cgId && !cgImageById[cgId]) cgImageById[cgId] = safeImg;
-          const symClean = String(coin.symbol || '').trim().replace(/^\$/, '').toUpperCase();
           if (symClean && !cgImageBySymbol[symClean]) cgImageBySymbol[symClean] = safeImg;
         }
       }
@@ -1050,9 +1070,23 @@
             token.price = prlLivePrice;
           }
 
-          // Ensure HYPE gets live market price from Hyperliquid if absent in 1Click
-          if (symUpper === 'HYPE' && hypeLivePrice > 0 && (!(token.price > 0))) {
+          // Ensure HYPE / WHYPE get live market price from Hyperliquid if absent in 1Click
+          if ((symUpper === 'HYPE' || symUpper === 'WHYPE') && hypeLivePrice > 0 && (!(token.price > 0))) {
             token.price = hypeLivePrice;
+          }
+
+          // Fallback to CoinGecko top-250 live price or canonical base symbol price (WBNB->BNB, BTCB->BTC, USDbC->USDC)
+          if (!(token.price > 0) && token.blockchain !== 'arc') {
+            const aliasSym = symUpper === 'WBNB' ? 'BNB'
+              : (symUpper === 'BTCB' ? 'BTC'
+              : (symUpper === 'USDBC' ? 'USDC' : symUpper));
+            const aliasLive = bySymbol.get(aliasSym);
+            const cgHit = cgPriceBySymbol[symUpper] || cgPriceBySymbol[aliasSym];
+            if (aliasLive && aliasLive.price > 0) {
+              token.price = aliasLive.price;
+            } else if (cgHit > 0) {
+              token.price = cgHit;
+            }
           }
 
           // Hydrate Arc Mainnet token live price & icon from Li.Fi / KyberSwap when present
@@ -1066,6 +1100,55 @@
 
           if (token.price === undefined) {
             token.price = null;
+          }
+        }
+
+        // Batch DexScreener fallback (<= 25 addresses per call) for any remaining non-Arc tokens missing price
+        const remainingDexTokens = allTargetTokens.filter(
+          (t) => t && t.blockchain !== 'arc' && t.contractAddress
+            && t.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL_LOWER
+            && !(t.price > 0)
+        );
+        if (remainingDexTokens.length > 0) {
+          const uniqueAddrs = Array.from(new Set(remainingDexTokens.map((t) => String(t.contractAddress).trim())));
+          const extraPriceMap = Object.create(null);
+          const extraLiqMap = Object.create(null);
+          const chunks = [];
+          for (let i = 0; i < uniqueAddrs.length; i += 25) {
+            chunks.push(uniqueAddrs.slice(i, i + 25));
+          }
+          await Promise.allSettled(
+            chunks.map(async (chunk) => {
+              const dsResp = await fetchJsonWithTimeout(
+                `https://api.dexscreener.com/latest/dex/tokens/${chunk.join(',')}`,
+                {},
+                4500
+              ).catch(() => null);
+              const pairs = dsResp && dsResp.ok && dsResp.data && Array.isArray(dsResp.data.pairs) ? dsResp.data.pairs : [];
+              for (const pair of pairs) {
+                const bAddr = String(pair?.baseToken?.address || '').trim().toLowerCase();
+                const pUsd = Number(pair?.priceUsd);
+                const liqUsd = Number(pair?.liquidity?.usd || 0);
+                if (!bAddr || !Number.isFinite(pUsd) || pUsd <= 0) continue;
+                if (liqUsd >= (extraLiqMap[bAddr] ?? -1)) {
+                  extraLiqMap[bAddr] = liqUsd;
+                  extraPriceMap[bAddr] = pUsd;
+                }
+              }
+            })
+          );
+          for (const tok of remainingDexTokens) {
+            const addrLow = String(tok.contractAddress || '').trim().toLowerCase();
+            const foundP = extraPriceMap[addrLow];
+            if (foundP > 0 && !(tok.price > 0)) {
+              tok.price = foundP;
+              const symU = String(tok.symbol || '').trim().toUpperCase();
+              for (const other of allTargetTokens) {
+                if (other && !(other.price > 0) && String(other.symbol || '').trim().toUpperCase() === symU) {
+                  other.price = foundP;
+                }
+              }
+            }
           }
         }
 
@@ -1500,7 +1583,7 @@
       Boolean(dry) &&
       firstTry.status === 400 &&
       nearAcct &&
-      /recipient is not valid|No liquidity available/i.test(firstTry.error || '')
+      /recipient is not valid|refundTo is not valid|No liquidity available/i.test(firstTry.error || '')
     ) {
       if (String(destinationAsset).startsWith('nep141:') && !String(destinationAsset).startsWith('1cs_v1:near:')) {
         const nearWrappedDest = `1cs_v1:near:${destinationAsset}`;
@@ -1519,6 +1602,14 @@
         recipientType: 'INTENTS'
       });
       if (retryIntents.ok) return retryIntents;
+      if (/refundTo is not valid/i.test(firstTry.error || '')) {
+        const retryRefund = await postQuote({
+          ...body,
+          refundTo: nearAcct,
+          refundType: 'INTENTS'
+        });
+        if (retryRefund.ok) return retryRefund;
+      }
     }
 
     return {
@@ -1592,12 +1683,25 @@
 
         const directNearDest = extractNearTokenContract(destinationAsset);
         if (directNearDest) {
-          const refQ = await quoteRefSmartRouterPath({
+          let refQ = await quoteRefSmartRouterPath({
             tokenIn: PRL_NEAR_CONTRACT,
             tokenOut: directNearDest,
             amountRaw: effectivePrlIn,
             slippageBps
           });
+          if (!refQ.ok) {
+            // Multi-hop fallback (e.g. PRL -> USDC -> RHEA -> oRHEA) via Ref v2 pools in a single atomic route
+            const helper = getContractsHelper();
+            if (helper && typeof helper.quoteNearRefFinanceSwap === 'function') {
+              const alt = await helper.quoteNearRefFinanceSwap({
+                tokenIn: PRL_NEAR_CONTRACT,
+                tokenOut: directNearDest,
+                amountRaw: effectivePrlIn,
+                slippageBps
+              }).catch(() => null);
+              if (alt && alt.ok) refQ = alt;
+            }
+          }
           // Only short-circuit if Ref Finance actually has a direct route; otherwise fall through to PRL->USDC->1Click
           if (refQ.ok) {
             const dec = NEAR_ASSET_DECIMALS[String(destinationAsset).toLowerCase()] || resolveTokenDecimals(destinationAsset);
@@ -2161,7 +2265,326 @@
    * 3) 2-Stage Cross-Chain Bridge (1Click / Ref #9010) + Target Chain DEX (Jupiter/Raydium or EVM Kyber/Para/OpenOcean)
    * 4) Arc Mainnet (5042) Cross-Chain Relay (1Click <-> Base USDC <-> Relay/Li.Fi <-> KyberSwap Arc)
    */
-  async function quoteCrossChainWithDexRelay({
+  // ==================== Smart Hub Router (any chain -> any chain via NEAR liquidity hub) ====================
+  // Stages: [1Click bridge-in -> NEAR hub] -> [Ref v2 multi-hop / Rhea CLMM on NEAR] -> [1Click bridge-out -> destination chain]
+  // Every candidate (entry hub x exit hub) is quoted live and the highest final output wins.
+  const SMART_HUBS = [
+    { key: 'wnear', contract: 'wrap.near', asset: 'nep141:wrap.near', decimals: 24, symbol: 'wNEAR' },
+    { key: 'usdc', contract: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', asset: 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', decimals: 6, symbol: 'USDC' },
+    { key: 'prl', contract: 'prl.omft.near', asset: '1cs_v1:near:nep141:prl.omft.near', decimals: 8, symbol: 'PRL' }
+  ];
+
+  function chainLabel(bc) {
+    const b = String(bc || '').toLowerCase();
+    return b === 'prl' ? 'Pearl' : b.toUpperCase();
+  }
+
+  async function quoteSmartHubRoute({
+    fromToken,
+    toToken,
+    amountRaw,
+    slippageBps = 100,
+    recipient,
+    refundTo,
+    nearAccountId
+  } = {}) {
+    try {
+      const contracts = getContractsHelper();
+      const nearAcct = String(nearAccountId || '').trim();
+      if (!fromToken || !toToken || !nearAcct || !contracts || typeof contracts.quoteNearRefFinanceSwap !== 'function') {
+        return { ok: false, error: t('智能路由参数不完整', 'Smart route parameters incomplete') };
+      }
+      const fromBc = String(fromToken.blockchain || '').toLowerCase();
+      const toBc = String(toToken.blockchain || '').toLowerCase();
+      const amtStr = String(amountRaw || '0').trim();
+      if (!/^\d+$/.test(amtStr) || BigInt(amtStr) <= 0n) return { ok: false, error: t('兑换数量无效', 'Invalid amount') };
+
+      const fromAsset = resolveOneClickAssetId(fromToken, fromBc);
+      const toAsset = resolveOneClickAssetId(toToken, toBc);
+      const toDec = typeof toToken.decimals === 'number' ? toToken.decimals : resolveTokenDecimals(toAsset);
+      const fromDec = typeof fromToken.decimals === 'number' ? fromToken.decimals : resolveTokenDecimals(fromAsset);
+      const toNearContract = toBc === 'near' ? (toToken.contractAddress || extractNearTokenContract(toToken.assetId) || 'wrap.near') : null;
+      const fromNearContract = fromBc === 'near' ? (fromToken.contractAddress || extractNearTokenContract(fromToken.assetId) || 'wrap.near') : null;
+      if (fromBc === 'near' && toBc === 'near') return { ok: false, error: 'same-chain' };
+      const okAmt = (q) => q && q.ok && /^\d+$/.test(String(q.amountOut || '')) && BigInt(q.amountOut) > 0n;
+
+      const isOneClickId = (s) => /^(nep141:|1cs_v1:)/i.test(String(s || ''));
+      const originIsSolDex = fromBc === 'sol' && !isOneClickId(fromAsset) && Boolean(fromToken.contractAddress)
+        && fromToken.contractAddress.toLowerCase() !== SOL_NATIVE_WSOL.toLowerCase();
+      const originIsEvmDex = ['eth', 'base', 'arb', 'bsc', 'hood'].includes(fromBc) && !isOneClickId(fromAsset) && Boolean(fromToken.contractAddress)
+        && fromToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL;
+      const targetIsSolDex = toBc === 'sol' && !isOneClickId(toAsset) && Boolean(toToken.contractAddress)
+        && toToken.contractAddress.toLowerCase() !== SOL_NATIVE_WSOL.toLowerCase();
+      const targetIsEvmDex = ['eth', 'base', 'arb', 'bsc', 'hood'].includes(toBc) && !isOneClickId(toAsset) && Boolean(toToken.contractAddress)
+        && toToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL;
+
+      // Optional Stage 0: Origin Chain DEX -> Origin Chain Native (when origin token is DEX-only)
+      let stage0Dex = null;
+      let bridgeInOriginAsset = fromAsset;
+      let bridgeInAmountRaw = amtStr;
+      let bridgeInRefundTo = refundTo || nearAcct;
+      if (originIsSolDex && typeof contracts.quoteSolanaJupiterSwap === 'function') {
+        const jupS0 = await contracts.quoteSolanaJupiterSwap({
+          inputMint: fromToken.contractAddress,
+          outputMint: SOL_NATIVE_WSOL,
+          amountRaw: amtStr,
+          slippageBps
+        }).catch(() => null);
+        if (!jupS0 || !jupS0.outAmount || BigInt(jupS0.outAmount) <= 0n) {
+          return { ok: false, error: t('Solana 源链 DEX 询价失败', 'Origin Solana DEX quote failed') };
+        }
+        stage0Dex = { chain: 'sol', quote: jupS0, label: `${jupS0.bestSource || 'Jupiter'} (➔SOL)` };
+        bridgeInOriginAsset = SOL_1CLICK_ASSET_ID;
+        bridgeInAmountRaw = String(jupS0.outAmount);
+      } else if (originIsEvmDex && EVM_NATIVE_1CLICK_MAP[fromBc] && typeof contracts.quoteEvmDexSwap === 'function') {
+        const evmS0 = await contracts.quoteEvmDexSwap({
+          chainKey: fromBc,
+          srcToken: fromToken.contractAddress,
+          destToken: EVM_NATIVE_SENTINEL,
+          amountRaw: amtStr,
+          srcDecimals: fromDec,
+          destDecimals: 18,
+          slippageBps
+        }).catch(() => null);
+        if (!evmS0 || !evmS0.ok || !evmS0.amountOut || BigInt(evmS0.amountOut) <= 0n) {
+          return { ok: false, error: t('EVM 源链 DEX 询价失败', 'Origin EVM DEX quote failed') };
+        }
+        stage0Dex = { chain: fromBc, quote: evmS0, label: `${evmS0.bestSource || evmS0.label} (➔${fromBc.toUpperCase()})` };
+        bridgeInOriginAsset = EVM_NATIVE_1CLICK_MAP[fromBc];
+        bridgeInAmountRaw = String(evmS0.amountOut);
+      }
+
+      // ---- Entry options (asset sitting on NEAR before the swap leg)
+      let entries = [];
+      if (fromBc === 'near') {
+        entries.push({ contract: fromNearContract, decimals: fromDec, symbol: fromToken.symbol, out: amtStr, bridgeIn: null, hubAsset: fromAsset });
+      } else {
+        const hubs = SMART_HUBS;
+        const bridged = await Promise.all(hubs.map(async (h) => {
+          if (String(bridgeInOriginAsset).toLowerCase() === h.asset.toLowerCase()) return null;
+          const q = await quoteRawOneClick({
+            originAsset: bridgeInOriginAsset,
+            destinationAsset: h.asset,
+            amountRaw: bridgeInAmountRaw,
+            slippageBps,
+            recipient: nearAcct,
+            refundTo: bridgeInRefundTo,
+            nearAccountId: nearAcct,
+            depositType: 'ORIGIN_CHAIN',
+            recipientType: 'DESTINATION_CHAIN',
+            dry: true
+          }).catch(() => null);
+          return okAmt(q) ? { contract: h.contract, decimals: h.decimals, symbol: h.symbol, out: String(q.amountOut), bridgeIn: q, hubAsset: h.asset } : null;
+        }));
+        entries = bridged.filter(Boolean);
+      }
+      if (entries.length === 0) {
+        return { ok: false, error: t('该来源资产暂无法跨入 NEAR 流动性', 'Origin asset cannot be bridged into NEAR liquidity') };
+      }
+
+      // ---- Exit options
+      const bridgeOutDestAsset = targetIsSolDex
+        ? SOL_1CLICK_ASSET_ID
+        : (targetIsEvmDex && EVM_NATIVE_1CLICK_MAP[toBc] ? EVM_NATIVE_1CLICK_MAP[toBc] : toAsset);
+      const exits = toBc === 'near'
+        ? [{ contract: toNearContract, decimals: toDec, symbol: toToken.symbol, asset: toAsset, isFinal: true }]
+        : SMART_HUBS.map((h) => ({ contract: h.contract, decimals: h.decimals, symbol: h.symbol, asset: h.asset, isFinal: false }));
+
+      const combos = [];
+      entries.forEach((e) => exits.forEach((x) => combos.push({ e, x })));
+
+      const evaluated = await Promise.all(combos.map(async ({ e, x }) => {
+        try {
+          let midOut = e.out;
+          let swapQ = null;
+          if (e.contract !== x.contract) {
+            swapQ = await contracts.quoteNearRefFinanceSwap({ tokenIn: e.contract, tokenOut: x.contract, amountRaw: e.out, slippageBps }).catch(() => null);
+            if (!okAmt(swapQ)) return null;
+            midOut = String(swapQ.amountOut);
+          }
+          let bridgeOut = null;
+          let finalOut = midOut;
+          if (!x.isFinal) {
+            bridgeOut = await quoteRawOneClick({
+              originAsset: x.asset,
+              destinationAsset: bridgeOutDestAsset,
+              amountRaw: midOut,
+              slippageBps,
+              recipient,
+              refundTo: nearAcct,
+              nearAccountId: nearAcct,
+              depositType: 'ORIGIN_CHAIN',
+              recipientType: 'DESTINATION_CHAIN',
+              dry: true
+            }).catch(() => null);
+            if (!okAmt(bridgeOut)) return null;
+            finalOut = String(bridgeOut.amountOut);
+          }
+          let destDexQ = null;
+          if (targetIsSolDex && typeof contracts.quoteSolanaJupiterSwap === 'function') {
+            destDexQ = await contracts.quoteSolanaJupiterSwap({
+              inputMint: SOL_NATIVE_WSOL,
+              outputMint: toToken.contractAddress,
+              amountRaw: finalOut,
+              slippageBps
+            }).catch(() => null);
+            if (!destDexQ || !destDexQ.outAmount || BigInt(destDexQ.outAmount) <= 0n) return null;
+            finalOut = String(destDexQ.outAmount);
+          } else if (targetIsEvmDex && typeof contracts.quoteEvmDexSwap === 'function') {
+            destDexQ = await contracts.quoteEvmDexSwap({
+              chainKey: toBc,
+              srcToken: EVM_NATIVE_SENTINEL,
+              destToken: toToken.contractAddress,
+              amountRaw: finalOut,
+              srcDecimals: 18,
+              destDecimals: toDec,
+              slippageBps
+            }).catch(() => null);
+            if (!destDexQ || !destDexQ.ok || !destDexQ.amountOut || BigInt(destDexQ.amountOut) <= 0n) return null;
+            finalOut = String(destDexQ.amountOut);
+          }
+          const stageCount = (stage0Dex ? 1 : 0) + (e.bridgeIn ? 1 : 0) + (swapQ ? 1 : 0) + (bridgeOut ? 1 : 0) + (destDexQ ? 1 : 0);
+          if (stageCount === 0) return null;
+          return { e, x, swapQ, bridgeOut, destDexQ, midOut, finalOut, outBig: BigInt(finalOut), stageCount };
+        } catch (_) {
+          return null;
+        }
+      }));
+
+      const valid = evaluated.filter(Boolean).sort((a, b) => {
+        if (a.outBig === b.outBig) return a.stageCount - b.stageCount;
+        // Prefer fewer stages unless the extra stage gives > 0.3% more output
+        if (a.stageCount !== b.stageCount) {
+          const fewer = a.stageCount < b.stageCount ? a : b;
+          const more = a.stageCount < b.stageCount ? b : a;
+          if (more.outBig * 1000n <= fewer.outBig * 1003n) {
+            return a === fewer ? -1 : 1;
+          }
+        }
+        return b.outBig > a.outBig ? 1 : -1;
+      });
+      if (valid.length === 0) {
+        return { ok: false, error: t('暂无可用的跨链/多跳兑换路径', 'No viable multi-stage route found') };
+      }
+      const best = valid[0];
+      const stages = [];
+      const labels = [];
+      if (stage0Dex) {
+        stages.push({
+          type: 'ORIGIN_DEX',
+          chain: stage0Dex.chain,
+          quote: stage0Dex.quote
+        });
+        labels.push(stage0Dex.label);
+      }
+      if (best.e.bridgeIn) {
+        stages.push({
+          type: 'BRIDGE_IN',
+          originAsset: bridgeInOriginAsset,
+          destinationAsset: best.e.hubAsset,
+          hubContract: best.e.contract,
+          hubDecimals: best.e.decimals,
+          hubSymbol: best.e.symbol,
+          expectedOut: best.e.out
+        });
+        labels.push(
+          !best.swapQ && !best.bridgeOut && !best.destDexQ
+            ? `1Click (${chainLabel(fromBc)}➔${chainLabel(toBc)})`
+            : `1Click (${chainLabel(fromBc)}➔NEAR ${best.e.symbol})`
+        );
+      }
+      if (best.swapQ) {
+        stages.push({
+          type: 'NEAR_SWAP',
+          tokenIn: best.e.contract,
+          tokenOut: best.x.contract,
+          inDecimals: best.e.decimals,
+          inSymbol: best.e.symbol,
+          outDecimals: best.x.decimals,
+          outSymbol: best.x.symbol,
+          expectedIn: best.e.out,
+          expectedOut: best.midOut
+        });
+        labels.push(best.swapQ.label || 'Ref Finance');
+      }
+      if (best.bridgeOut) {
+        stages.push({
+          type: 'BRIDGE_OUT',
+          originAsset: best.x.asset,
+          destinationAsset: bridgeOutDestAsset,
+          hubContract: best.x.contract,
+          hubDecimals: best.x.decimals,
+          hubSymbol: best.x.symbol,
+          recipient,
+          expectedIn: best.midOut,
+          expectedOut: best.bridgeOut.amountOut
+        });
+        labels.push(`1Click (NEAR➔${chainLabel(toBc)})`);
+      }
+      if (best.destDexQ) {
+        stages.push({
+          type: 'DEST_DEX',
+          chain: toBc,
+          quote: best.destDexQ
+        });
+        labels.push(best.destDexQ.routeLabel || best.destDexQ.bestSource || best.destDexQ.label || `${toBc.toUpperCase()} DEX`);
+      }
+      const routeLabel = `${valid.length > 1 ? '⚡ ' : ''}${labels.join(' + ')}`;
+      return {
+        ok: true,
+        compositeType: 'SMART_HUB_ROUTE',
+        stages,
+        depositAddress: null,
+        memo: null,
+        amountOut: best.finalOut,
+        amountOutFormatted: fromBaseUnits(best.finalOut, toDec),
+        amountInUsd: (best.e.bridgeIn && best.e.bridgeIn.amountInUsd) || null,
+        amountOutUsd: (best.bridgeOut && best.bridgeOut.amountOutUsd) || null,
+        comparedPools: valid.length,
+        bestSource: labels.join(' + '),
+        routeLabel,
+        error: null
+      };
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : t('智能路由询价失败', 'Smart route quote failed') };
+    }
+  }
+
+  /**
+   * Public cross-chain quote entry: runs the generic Smart Hub Router together with the legacy special-case router
+   * (Arc / Solana DEX / EVM DEX / direct 1Click) and returns the best executable route.
+   */
+  async function quoteCrossChainWithDexRelay(params = {}) {
+    const { fromToken, toToken } = params;
+    if (!fromToken || !toToken) return quoteCrossChainWithDexRelayLegacy(params);
+    const fromBc = String(fromToken.blockchain || '').toLowerCase();
+    const toBc = String(toToken.blockchain || '').toLowerCase();
+    if (fromBc === 'near' && toBc === 'near') return quoteCrossChainWithDexRelayLegacy(params);
+    if (fromBc === 'arc' || toBc === 'arc') return quoteCrossChainWithDexRelayLegacy(params);
+
+    const [smart, legacy] = await Promise.all([
+      quoteSmartHubRoute(params),
+      quoteCrossChainWithDexRelayLegacy(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'legacy failed' }))
+    ]);
+    const smartOk = smart && smart.ok;
+    const legacyOk = legacy && legacy.ok && /^\d+$/.test(String(legacy.amountOut || '')) && BigInt(legacy.amountOut) > 0n;
+    if (smartOk && legacyOk) {
+      const prlInvolved = isPrlAssetId(fromToken.assetId) || isPrlAssetId(toToken.assetId);
+      if (prlInvolved) return smart;
+      const sBig = BigInt(smart.amountOut);
+      const lBig = BigInt(legacy.amountOut);
+      const sStages = Array.isArray(smart.stages) ? smart.stages.length : 2;
+      const lStages = Array.isArray(legacy.stages) ? legacy.stages.length : (legacy.compositeType ? 2 : 1);
+      // Prefer fewer stages unless the extra stage beats it by > 0.3%; on equal stages & equal output, preserve legacy compositeType
+      if (lStages < sStages && sBig * 1000n <= lBig * 1003n) return legacy;
+      if (sStages < lStages && lBig * 1000n <= sBig * 1003n) return smart;
+      return sBig > lBig ? smart : legacy;
+    }
+    if (smartOk) return smart;
+    if (legacyOk) return legacy;
+    return (smart && smart.error && smart.error !== 'same-chain') ? smart : legacy;
+  }
+  async function quoteCrossChainWithDexRelayLegacy({
     fromToken,
     toToken,
     amountRaw,
@@ -2952,6 +3375,7 @@
     quoteBestNearPairSwap,
     quoteCompositePrlSwap,
     quoteCrossChainWithDexRelay,
+  quoteSmartHubRoute,
     quoteIntentSwapOrWithdraw,
     resolveOneClickAssetId,
     signAndPublishNep413Intent,

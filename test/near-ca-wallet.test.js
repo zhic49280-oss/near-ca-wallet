@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -2973,7 +2973,7 @@ test('v2.1 Native iOS/Android Capacitor Security Bridge Files & Config', () => {
   assert.match(swiftPlugin, /getSecurityCapabilities/);
   assert.match(swiftPlugin, /authenticateWithBiometrics/);
   assert.match(swiftPlugin, /deviceOwnerAuthenticationWithBiometrics/);
-  assert.match(swiftPlugin, /evaluateSystemPasscodeFallback/);
+  assert.match(swiftPlugin, /\.deviceOwnerAuthentication,\s*localizedReason/);
 
   const manifest = fs.readFileSync(path.join(ROOT_DIR, 'android', 'app', 'src', 'main', 'AndroidManifest.xml'), 'utf8');
   assert.match(manifest, /android\.permission\.USE_BIOMETRIC/);
@@ -3227,26 +3227,29 @@ test('v2.1 Native Capacitor Auth, WebAuthn Passkey & Interactive #sheet-security
     };
 
     try {
-      // Enable biometric lock via toggleBiometricProtection()
-      assert.equal(w.biometricLocked, false);
-      await uiController.toggleBiometricProtection();
-      assert.equal(w.biometricLocked, true);
-      assert.match(domMap.get('hub-bio-status-badge').textContent, /Biometric ON|生物锁定已开启/);
-      assert.equal(domMap.get('hub-bio-device-model').textContent, 'Apple iPhone');
+      // Biometrics (native mock) pass automatically without opening the PIN sheet
+      assert.equal(await uiController.verifySecurityAuthAsync(w, 'Confirm Transfer'), true);
+      assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), false);
 
-      // Open interactive #sheet-security-auth modal and enter PIN via keypad
+      // Native failure never falls back to wallet PIN (phone passcode is handled natively)
+      const nativeAuthFn = globalThis.window.Capacitor.Plugins.NativeSecurity.authenticateWithBiometrics;
+      globalThis.window.Capacitor.Plugins.NativeSecurity.authenticateWithBiometrics = async () => ({ authenticated: false, error: 'fail' });
+      assert.equal(await uiController.verifySecurityAuthAsync(w, 'x'), false);
+      assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), false);
+      globalThis.window.Capacitor.Plugins.NativeSecurity.authenticateWithBiometrics = nativeAuthFn;
+
+      // Web (no native plugin): PIN keypad fallback
+      delete globalThis.window.Capacitor;
+      globalThis.window.navigator = {};
       const authPromise = uiController.verifySecurityAuthAsync(w, 'Confirm Transfer');
-      // Wait one microtask tick for async detectDeviceBiometricProfileAsync inside verifySecurityAuthAsync
       await new Promise((r) => setTimeout(r, 15));
       assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), true);
       assert.equal(domMap.get('security-auth-reason').textContent, 'Confirm Transfer');
 
-      // Enter wrong PIN 999999 -> resets dots and stays open
       ['9', '9', '9', '9', '9', '9'].forEach((d) => uiController.pressSecurityPinDigit(d));
       assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), true);
       assert.equal(pinDots.filter((d) => d.classList.contains('filled')).length, 0);
 
-      // Test backspace & clear, then enter correct PIN 123456
       uiController.pressSecurityPinDigit('1');
       uiController.pressSecurityPinDigit('9');
       uiController.backspaceSecurityPin();
@@ -3255,18 +3258,9 @@ test('v2.1 Native Capacitor Auth, WebAuthn Passkey & Interactive #sheet-security
       assert.equal(pinDots.filter((d) => d.classList.contains('filled')).length, 0);
 
       ['1', '2', '3', '4', '5', '6'].forEach((d) => uiController.pressSecurityPinDigit(d));
-      const accepted = await authPromise;
-      assert.equal(accepted, true);
+      assert.equal(await authPromise, true);
       assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), false);
-
-      // Verify biometric trigger button inside #sheet-security-auth + disabling biometric lock
-      const toggleOffPromise = uiController.toggleBiometricProtection();
-      await new Promise((r) => setTimeout(r, 15));
-      assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), true);
-      const bioOk = await uiController.triggerSecurityBiometricNow();
-      assert.equal(bioOk, true);
-      await toggleOffPromise;
-      assert.equal(w.biometricLocked, false);
+      await uiController.renderHubBiometricCardAsync?.();
     } finally {
       globalThis.document = prevDoc;
       if (prevWin === undefined) delete globalThis.window;
