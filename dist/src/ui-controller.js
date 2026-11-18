@@ -1146,7 +1146,7 @@
     const dexLists = tokens.DEX_CHAIN_TOKENS && typeof tokens.DEX_CHAIN_TOKENS === 'object'
       ? Object.values(tokens.DEX_CHAIN_TOKENS)
       : [];
-    const lists = [tokens.UNIFIED_CORE_TOKENS || [], st.liveTokens || [], st.dynamicSolTokens || [], ...dexLists];
+    const lists = [st.liveTokens || [], tokens.UNIFIED_CORE_TOKENS || [], st.dynamicSolTokens || [], ...dexLists];
     for (const list of lists) {
       if (!Array.isArray(list)) continue;
       const hit = list.find((item) => item && String(item.symbol || '').toUpperCase() === symUpper && typeof item.price === 'number' && item.price > 0);
@@ -1242,6 +1242,7 @@
         nep141BalRes,
         nearStakingRes,
         solBalRes,
+        solStakingRes,
         prlRes,
         btcBalRes,
         arcBalRes,
@@ -1256,6 +1257,9 @@
           ? contracts.fetchNearAccountStakingPositionsAsync(nearAccountId).catch(() => [])
           : Promise.resolve([]),
         wallet.solAddress ? contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, solMints).catch(() => null) : Promise.resolve(null),
+        (wallet.solAddress && typeof contracts.fetchSolanaAccountStakingPositionsAsync === 'function')
+          ? contracts.fetchSolanaAccountStakingPositionsAsync(wallet.solAddress).catch(() => [])
+          : Promise.resolve([]),
         wallet.address && mining
           ? mining.queryMinerDeepStats(wallet.address, 'onchain').catch(() => null)
           : Promise.resolve(null),
@@ -1288,6 +1292,10 @@
 
       if (Array.isArray(nearStakingRes)) {
         wallet.nearStakingPositions = nearStakingRes;
+      }
+
+      if (Array.isArray(solStakingRes)) {
+        wallet.solStakingPositions = solStakingRes;
       }
 
       if (solBalRes && typeof solBalRes === 'object') {
@@ -1337,6 +1345,10 @@
       st.syncWalletCompatBalances(wallet);
       st.saveWallets();
       renderAll();
+      const detailSheet = $('sheet-token-detail');
+      if (detailSheet && detailSheet.classList && detailSheet.classList.contains('open')) {
+        renderTokenDetailSheet();
+      }
 
       if (syncEl) {
         const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -1660,20 +1672,11 @@
       const parentIconHtml = tokens.renderTokenIconWithBadge(
         { symbol: g.symbol, blockchain: g.primaryToken ? g.primaryToken.blockchain : '' },
         38,
-        g.entries.length === 1
+        false
       );
 
-      // Show mini chain badges strictly when multiple chains exist
-      const netNames = [];
-      if (g.entries.length > 1) {
-        for (const e of g.entries) {
-          const meta = tokens.getChainMeta(e.blockchain);
-          if (meta && !netNames.includes(meta.shortName)) {
-            netNames.push(meta.shortName);
-          }
-        }
-      }
-      const pillsHtml = netNames.slice(0, 4).map((n) => `<span class="net-mini-pill">${escapeHtml(n)}</span>`).join('');
+      // OKX-style home list: pure aggregated token balance without chain mini-pills
+      const pillsHtml = '';
 
       const priceText = g.price !== null ? formatTokenPrice(g.price) : '--';
       const totalAmtText = formatBal(g.totalBalance, 5);
@@ -1711,7 +1714,7 @@
 
       return `
         <div class="asset-group-card ${isExpanded ? 'expanded' : ''}">
-          <button type="button" class="asset-parent-row" onclick="toggleAssetExpand('${escapeHtml(g.symbolKey)}')">
+          <button type="button" class="asset-parent-row" onclick="openTokenDetailSheet('${escapeHtml(g.symbolKey)}')">
             <div class="asset-left">
               ${parentIconHtml}
               <div class="asset-title-block">
@@ -1763,6 +1766,733 @@
 
   function quickActionSendFromEntry(symbol, blockchain, assetId, contractAddress) {
     openSendSheet({ symbol, chainKey: blockchain, assetId, contractAddress });
+  }
+
+  // ==================== OKX-Style Token Detail Sheet & Activity ====================
+
+  let _tokenDetailState = {
+    symbolKey: '',
+    chainFilter: 'all',
+    historyLoading: false,
+    historyItems: [],
+    fetchSeq: 0
+  };
+
+  function recordWalletActivity(wallet, activity = {}) {
+    if (!wallet || typeof wallet !== 'object') return null;
+    const st = getState();
+    if (!Array.isArray(wallet.activityHistory)) wallet.activityHistory = [];
+    const entry = {
+      id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      type: String(activity.type || 'tx').toLowerCase(),
+      symbol: String(activity.symbol || '').toUpperCase(),
+      toSymbol: activity.toSymbol ? String(activity.toSymbol).toUpperCase() : '',
+      chain: String(activity.chain || '').toLowerCase(),
+      amount: activity.amount !== undefined && activity.amount !== null && Number.isFinite(Number(activity.amount))
+        ? Number(activity.amount)
+        : null,
+      txHash: String(activity.txHash || '').trim(),
+      title: String(activity.title || '').trim(),
+      timestamp: Number.isFinite(Number(activity.timestamp)) ? Number(activity.timestamp) : Math.floor(Date.now() / 1000)
+    };
+    if (entry.txHash) {
+      wallet.activityHistory = wallet.activityHistory.filter((x) => !(x && x.txHash === entry.txHash && x.type === entry.type));
+    }
+    wallet.activityHistory.unshift(entry);
+    if (wallet.activityHistory.length > 100) {
+      wallet.activityHistory = wallet.activityHistory.slice(0, 100);
+    }
+    if (st && typeof st.saveWallets === 'function') {
+      st.saveWallets();
+    }
+    return entry;
+  }
+
+  function getExplorerAddressUrl(chainKey, addr) {
+    const a = String(addr || '').trim();
+    if (!a) return '';
+    const enc = encodeURIComponent(a);
+    const bc = String(chainKey || '').toLowerCase();
+    if (bc === 'near') return `https://nearblocks.io/address/${enc}`;
+    if (bc === 'prl') return `https://explorer.prlscan.com/address/${enc}`;
+    if (bc === 'sol') return `https://solscan.io/account/${enc}`;
+    if (bc === 'eth') return `https://etherscan.io/address/${enc}`;
+    if (bc === 'base') return `https://basescan.org/address/${enc}`;
+    if (bc === 'arb') return `https://arbiscan.io/address/${enc}`;
+    if (bc === 'bsc') return `https://bscscan.com/address/${enc}`;
+    if (bc === 'arc') return `https://explorer.arc.io/address/${enc}`;
+    if (bc === 'hood') return `https://robinhoodchain.blockscout.com/address/${enc}`;
+    if (bc === 'hype') return `https://purrsec.com/address/${enc}`;
+    if (bc === 'btc') return `https://mempool.space/address/${enc}`;
+    return '';
+  }
+
+  function getExplorerTxUrl(chainKey, txHash) {
+    const h = String(txHash || '').trim();
+    if (!h) return '';
+    const enc = encodeURIComponent(h);
+    const bc = String(chainKey || '').toLowerCase();
+    if (bc === 'near') return `https://nearblocks.io/txns/${enc}`;
+    if (bc === 'prl') return `https://explorer.prlscan.com/tx/${enc}`;
+    if (bc === 'sol') return `https://solscan.io/tx/${enc}`;
+    if (bc === 'eth') return `https://etherscan.io/tx/${enc}`;
+    if (bc === 'base') return `https://basescan.org/tx/${enc}`;
+    if (bc === 'arb') return `https://arbiscan.io/tx/${enc}`;
+    if (bc === 'bsc') return `https://bscscan.com/tx/${enc}`;
+    if (bc === 'arc') return `https://explorer.arc.io/tx/${enc}`;
+    if (bc === 'hood') return `https://robinhoodchain.blockscout.com/tx/${enc}`;
+    if (bc === 'hype') return `https://purrsec.com/tx/${enc}`;
+    if (bc === 'btc') return `https://mempool.space/tx/${enc}`;
+    return '';
+  }
+
+  function resolveTokenDetailGroup(wallet, symbolKey) {
+    if (!wallet || !symbolKey) return null;
+    const symUpper = String(symbolKey).toUpperCase();
+    const groups = buildAllOnChainAssetGroups(wallet);
+    return groups.find((g) => g.symbolKey === symUpper) || null;
+  }
+
+  function resolveTokenDetailActiveEntry(group, chainFilter) {
+    if (!group || !Array.isArray(group.entries) || group.entries.length === 0) return null;
+    const cf = String(chainFilter || 'all').toLowerCase();
+    if (cf !== 'all') {
+      const exact = group.entries.find((e) => e.blockchain === cf && typeof e.balance === 'number' && e.balance > 0);
+      if (exact) return exact;
+      const anyOnChain = group.entries.find((e) => e.blockchain === cf);
+      if (anyOnChain) return anyOnChain;
+    }
+    const pos = group.entries.find((e) => typeof e.balance === 'number' && e.balance > 0);
+    if (pos) return pos;
+    const primaryChain = PRIMARY_CHAIN_BY_DEFAULT_SYMBOL[group.symbolKey];
+    if (primaryChain) {
+      const prim = group.entries.find((e) => e.blockchain === primaryChain);
+      if (prim) return prim;
+    }
+    return group.entries[0];
+  }
+
+  function openTokenDetailSheet(symbolKey, chainFilter = 'all') {
+    _tokenDetailState.symbolKey = String(symbolKey || '').toUpperCase();
+    _tokenDetailState.chainFilter = String(chainFilter || 'all').toLowerCase();
+    _tokenDetailState.historyLoading = true;
+    _tokenDetailState.historyItems = [];
+    renderTokenDetailSheet();
+    openSheet('sheet-token-detail');
+    fetchTokenDetailHistoryAsync();
+  }
+
+  function setTokenDetailChain(chainKey) {
+    _tokenDetailState.chainFilter = String(chainKey || 'all').toLowerCase();
+    _tokenDetailState.historyLoading = true;
+    _tokenDetailState.historyItems = [];
+    renderTokenDetailSheet();
+    fetchTokenDetailHistoryAsync();
+  }
+
+  function openTokenDetailPool(poolId) {
+    closeAllSheets();
+    switchTab('earn');
+    selectStakingPool(poolId);
+  }
+
+  function formatActivityTime(tsSec) {
+    if (!tsSec || !Number.isFinite(Number(tsSec))) return '';
+    try {
+      const d = new Date(Number(tsSec) * 1000);
+      if (Number.isNaN(d.getTime())) return '';
+      return d.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function getMergedTokenHistoryItems(wallet, symKey, chainFilter) {
+    const localList = Array.isArray(wallet && wallet.activityHistory) ? wallet.activityHistory : [];
+    const matchedLocal = localList
+      .filter((item) => {
+        if (!item) return false;
+        const matchSym = String(item.symbol || '').toUpperCase() === symKey || String(item.toSymbol || '').toUpperCase() === symKey;
+        if (!matchSym) return false;
+        if (chainFilter !== 'all' && String(item.chain || '').toLowerCase() !== chainFilter) return false;
+        return true;
+      })
+      .map((item) => ({ ...item, source: 'local' }));
+
+    const remoteList = Array.isArray(_tokenDetailState.historyItems) ? _tokenDetailState.historyItems : [];
+    const byKey = new Map();
+    for (const item of [...matchedLocal, ...remoteList]) {
+      const key = item.txHash ? `${item.txHash.toLowerCase()}_${item.chain || ''}` : item.id;
+      if (!byKey.has(key)) {
+        byKey.set(key, item);
+      }
+    }
+    return Array.from(byKey.values()).sort((a, b) => (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0));
+  }
+
+  function renderTokenDetailHistoryList() {
+    const listEl = $('token-detail-history-list');
+    if (!listEl) return;
+    const st = getState();
+    const wallet = st.getActiveWallet();
+    const tokens = getTokens();
+    const symKey = _tokenDetailState.symbolKey;
+    const chainFilter = _tokenDetailState.chainFilter || 'all';
+    if (!wallet || !symKey) {
+      listEl.innerHTML = '';
+      return;
+    }
+
+    const items = getMergedTokenHistoryItems(wallet, symKey, chainFilter);
+    if (_tokenDetailState.historyLoading && items.length === 0) {
+      listEl.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:8px 0;">${escapeHtml(t('正在加载链上交易记录...', 'Loading on-chain activity...'))}</div>`;
+      return;
+    }
+    if (items.length === 0) {
+      listEl.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:8px 0;">${escapeHtml(t('暂无该代币链上变动记录，可点击右上方前往区块浏览器查看', 'No recent token activity found; click Explorer above to view on-chain'))}</div>`;
+      return;
+    }
+
+    const typeLabels = {
+      receive: { zh: '转入', en: 'Receive', color: 'var(--near-emerald)' },
+      send: { zh: '转出', en: 'Send', color: 'var(--rose-alert)' },
+      swap: { zh: '闪兑', en: 'Swap', color: 'var(--cyan-glow)' },
+      stake: { zh: '质押', en: 'Stake', color: '#a78bfa' },
+      unstake: { zh: '解质押', en: 'Unstake', color: '#fbbf24' },
+      mine: { zh: '挖矿', en: 'Mining', color: '#fbbf24' },
+      tx: { zh: '链上', en: 'On-Chain', color: 'var(--text-secondary)' },
+      failed: { zh: '失败', en: 'Failed', color: 'var(--rose-alert)' }
+    };
+
+    listEl.innerHTML = items.slice(0, 20).map((it) => {
+      const badge = typeLabels[it.type] || typeLabels.tx;
+      const chainMeta = it.chain ? tokens.getChainMeta(it.chain) : null;
+      const netTag = chainMeta ? chainMeta.shortName : (it.chain ? it.chain.toUpperCase() : '');
+      const amtStr = (typeof it.amount === 'number' && Number.isFinite(it.amount))
+        ? `${it.type === 'send' ? '-' : (it.type === 'receive' || it.type === 'mine' ? '+' : '')}${formatBal(it.amount, 5)} ${escapeHtml(it.symbol || symKey)}`
+        : '';
+      const timeStr = formatActivityTime(it.timestamp);
+      const txUrl = it.txHash ? getExplorerTxUrl(it.chain, it.txHash) : '';
+      const txShort = it.txHash ? shortenAddr(it.txHash, 6, 4) : '';
+      const subText = [netTag, it.title, timeStr, txShort].filter(Boolean).join(' · ');
+      const tagOpen = txUrl
+        ? `<a href="${escapeHtml(txUrl)}" target="_blank" rel="noopener noreferrer" class="detail-row-item" style="text-decoration:none;color:inherit;">`
+        : `<div class="detail-row-item">`;
+      const tagClose = txUrl ? `</a>` : `</div>`;
+      return `
+        ${tagOpen}
+          <div class="flex flex-col" style="min-width:0;flex:1;gap:2px;">
+            <div class="flex items-center gap-2">
+              <span class="mono" style="font-size:11px;font-weight:700;color:${badge.color};">${escapeHtml(t(badge.zh, badge.en))}</span>
+              <span style="font-size:11.5px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(it.title || netTag || symKey)}</span>
+            </div>
+            <span class="mono" style="font-size:10.5px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(subText)}</span>
+          </div>
+          <div class="flex flex-col" style="text-align:right;flex-shrink:0;">
+            ${amtStr ? `<span class="mono" style="font-size:12px;font-weight:700;color:${badge.color};">${amtStr}</span>` : ''}
+            ${txUrl ? `<span style="font-size:10.5px;color:var(--text-secondary);">↗</span>` : ''}
+          </div>
+        ${tagClose}
+      `;
+    }).join('');
+  }
+
+  function renderTokenDetailSheet() {
+    const st = getState();
+    const tokens = getTokens();
+    const contracts = getContracts();
+    const wallet = st.getActiveWallet();
+    if (!wallet || !_tokenDetailState.symbolKey) return;
+
+    const group = resolveTokenDetailGroup(wallet, _tokenDetailState.symbolKey);
+    if (!group) return;
+
+    const symKey = group.symbolKey;
+    const validChains = new Set(group.entries.map((e) => e.blockchain));
+    let chainFilter = _tokenDetailState.chainFilter || 'all';
+    if (chainFilter !== 'all' && !validChains.has(chainFilter)) {
+      chainFilter = 'all';
+      _tokenDetailState.chainFilter = 'all';
+    }
+
+    const activeEntry = resolveTokenDetailActiveEntry(group, chainFilter);
+    const activeChain = chainFilter !== 'all'
+      ? chainFilter
+      : (activeEntry ? activeEntry.blockchain : 'near');
+
+    const iconEl = $('token-detail-icon');
+    if (iconEl) {
+      iconEl.innerHTML = tokens.renderTokenIconWithBadge(
+        { symbol: group.symbol, blockchain: activeChain },
+        30,
+        chainFilter !== 'all'
+      );
+    }
+    const titleEl = $('token-detail-title');
+    if (titleEl) {
+      titleEl.textContent = group.symbol;
+    }
+
+    // Build per-chain summary pills
+    const chainTotals = new Map();
+    for (const e of group.entries) {
+      const bc = e.blockchain;
+      if (!chainTotals.has(bc)) {
+        chainTotals.set(bc, { blockchain: bc, balance: null });
+      }
+      if (typeof e.balance === 'number' && Number.isFinite(e.balance)) {
+        const cur = chainTotals.get(bc);
+        cur.balance = (cur.balance === null ? 0 : cur.balance) + e.balance;
+      }
+    }
+
+    const chainsEl = $('token-detail-chains');
+    if (chainsEl) {
+      const allPill = `<button type="button" class="filter-pill ${chainFilter === 'all' ? 'active' : ''}" onclick="setTokenDetailChain('all')">${escapeHtml(t('全部网络', 'All Networks'))}</button>`;
+      const netPills = Array.from(chainTotals.values()).map((ct) => {
+        const meta = tokens.getChainMeta(ct.blockchain);
+        const balSuffix = typeof ct.balance === 'number' && ct.balance > 0 ? ` · ${formatBal(ct.balance, 4)}` : '';
+        return `<button type="button" class="filter-pill ${chainFilter === ct.blockchain ? 'active' : ''}" onclick="setTokenDetailChain('${escapeHtml(ct.blockchain)}')">${escapeHtml((meta.shortName || meta.name) + balSuffix)}</button>`;
+      }).join('');
+      chainsEl.innerHTML = allPill + netPills;
+    }
+
+    // Compute balance & USD for active scope
+    const scopedEntries = chainFilter === 'all'
+      ? group.entries
+      : group.entries.filter((e) => e.blockchain === chainFilter);
+    let anyLoaded = false;
+    let balSum = 0;
+    for (const e of scopedEntries) {
+      if (typeof e.balance === 'number' && Number.isFinite(e.balance)) {
+        anyLoaded = true;
+        balSum += e.balance;
+      }
+    }
+    const displayBal = anyLoaded ? balSum : null;
+    const displayUsd = (displayBal !== null && group.price !== null) ? displayBal * group.price : null;
+
+    if ($('token-detail-balance')) $('token-detail-balance').textContent = displayBal !== null ? formatBal(displayBal, 6) : '--';
+    if ($('token-detail-usd')) $('token-detail-usd').textContent = displayUsd !== null ? formatUsd(displayUsd) : '--';
+
+    const recvAddr = getWalletDefaultRecipientForChain(wallet, activeChain) || '';
+    if ($('token-detail-addr')) $('token-detail-addr').textContent = recvAddr || '--';
+
+    const explorerEl = $('token-detail-explorer-link');
+    if (explorerEl) {
+      const url = getExplorerAddressUrl(activeChain, recvAddr);
+      explorerEl.href = url || '#';
+    }
+
+    // Per-chain breakdown card
+    const breakdownCard = $('token-detail-breakdown-card');
+    const breakdownList = $('token-detail-breakdown-list');
+    if (breakdownCard && breakdownList) {
+      if (chainFilter === 'all') {
+        breakdownCard.classList.remove('hidden');
+        const sortedEntries = [...group.entries].sort((a, b) => {
+          const ba = typeof a.balance === 'number' ? a.balance : -1;
+          const bb = typeof b.balance === 'number' ? b.balance : -1;
+          return bb - ba;
+        });
+        breakdownList.innerHTML = sortedEntries.map((e) => {
+          const meta = tokens.getChainMeta(e.blockchain);
+          const cleanNetName = e.kind === 'nep141'
+            ? `${meta.name} (NEP-141)`
+            : (meta.name || e.networkName);
+          const balStr = formatBal(e.balance, 6);
+          return `
+            <div class="detail-row-item">
+              <div class="flex items-center gap-2" style="min-width:0;flex:1;">
+                ${tokens.renderTokenIconWithBadge(e.token, 28, true)}
+                <div class="flex flex-col" style="min-width:0;">
+                  <span style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(cleanNetName)}</span>
+                  <span class="mono" style="font-size:11.5px;color:var(--text-secondary);">${escapeHtml(balStr)} ${escapeHtml(group.symbol)}</span>
+                </div>
+              </div>
+              <div class="flex gap-1" style="flex-shrink:0;">
+                <button type="button" class="mini-action-btn primary" onclick="closeAllSheets();quickActionSwapFromEntry('${escapeHtml(e.assetId)}','${escapeHtml(e.blockchain)}','${escapeHtml(e.contractAddress || '')}')">${escapeHtml(t('闪兑', 'Swap'))}</button>
+                <button type="button" class="mini-action-btn" onclick="quickActionSendFromEntry('${escapeHtml(group.symbol)}','${escapeHtml(e.blockchain)}','${escapeHtml(e.assetId)}','${escapeHtml(e.contractAddress || '')}')">${escapeHtml(t('转账', 'Send'))}</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } else {
+        breakdownCard.classList.add('hidden');
+        breakdownList.innerHTML = '';
+      }
+    }
+
+    // Earn / Staking / Lending section matching this token
+    const earnCard = $('token-detail-earn-card');
+    const earnList = $('token-detail-earn-list');
+    if (earnCard && earnList) {
+      const allPools = (st.staking && st.staking.pools) || (contracts && contracts.STAKING_POOLS) || [];
+      const matchedPools = allPools
+        .filter((p) => p && (
+          String(p.inSymbol || '').toUpperCase() === symKey ||
+          String(p.outSymbol || '').toUpperCase() === symKey
+        ))
+        .sort((a, b) => {
+          if (chainFilter !== 'all') {
+            const aMatch = String(a.chain || '').toLowerCase() === chainFilter ? 1 : 0;
+            const bMatch = String(b.chain || '').toLowerCase() === chainFilter ? 1 : 0;
+            if (bMatch !== aMatch) return bMatch - aMatch;
+          }
+          return 0;
+        });
+
+      if (matchedPools.length > 0) {
+        earnCard.classList.remove('hidden');
+        earnList.innerHTML = matchedPools.map((p) => `
+          <button type="button" class="detail-row-item detail-row-clickable" onclick="openTokenDetailPool('${escapeHtml(p.id)}')">
+            <div class="flex items-center gap-2" style="min-width:0;flex:1;">
+              ${tokens.renderTokenIconWithBadge({ symbol: p.outSymbol, blockchain: p.chain }, 26, true)}
+              <div class="flex flex-col" style="min-width:0;">
+                <span style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(p.name)}</span>
+                <span style="font-size:11px;color:var(--text-secondary);">${escapeHtml(p.protocol || p.chainLabel || '')} · ${escapeHtml(p.inSymbol)} ➔ ${escapeHtml(p.outSymbol)}</span>
+              </div>
+            </div>
+            <span class="mono text-emerald" style="font-weight:800;font-size:13px;flex-shrink:0;">${escapeHtml(formatPoolApyText(p))}</span>
+          </button>
+        `).join('');
+      } else {
+        earnCard.classList.add('hidden');
+        earnList.innerHTML = '';
+      }
+    }
+
+    // Bottom live price bar
+    if ($('token-detail-price-label')) {
+      $('token-detail-price-label').textContent = `${group.symbol} ${t('实时参考价', 'Live Price')}`;
+    }
+    if ($('token-detail-price-val')) {
+      $('token-detail-price-val').textContent = group.price !== null ? formatTokenPrice(group.price) : '--';
+    }
+
+    renderTokenDetailHistoryList();
+  }
+
+  function tokenDetailAction(actionType) {
+    const st = getState();
+    const wallet = st.getActiveWallet();
+    if (!wallet || !_tokenDetailState.symbolKey) return;
+    const group = resolveTokenDetailGroup(wallet, _tokenDetailState.symbolKey);
+    if (!group) return;
+    const entry = resolveTokenDetailActiveEntry(group, _tokenDetailState.chainFilter);
+    if (!entry) return;
+
+    const act = String(actionType || '').toLowerCase();
+    if (act === 'send') {
+      quickActionSendFromEntry(group.symbol, entry.blockchain, entry.assetId, entry.contractAddress || '');
+      return;
+    }
+    if (act === 'receive') {
+      const bc = String(entry.blockchain || 'near').toLowerCase();
+      const receiveNet = ['eth', 'base', 'arb', 'bsc', 'hype', 'hood'].includes(bc) ? 'evm' : bc;
+      closeAllSheets();
+      openReceiveSheet(receiveNet);
+      return;
+    }
+    if (act === 'swap' || act === 'bridge') {
+      closeAllSheets();
+      quickActionSwapFromEntry(entry.assetId, entry.blockchain, entry.contractAddress || '');
+    }
+  }
+
+  function copyTokenDetailAddress() {
+    const st = getState();
+    const tokens = getTokens();
+    const wallet = st.getActiveWallet();
+    if (!wallet || !_tokenDetailState.symbolKey) return;
+    const group = resolveTokenDetailGroup(wallet, _tokenDetailState.symbolKey);
+    const entry = group ? resolveTokenDetailActiveEntry(group, _tokenDetailState.chainFilter) : null;
+    const activeChain = _tokenDetailState.chainFilter !== 'all'
+      ? _tokenDetailState.chainFilter
+      : (entry ? entry.blockchain : 'near');
+    const addr = getWalletDefaultRecipientForChain(wallet, activeChain);
+    if (addr) {
+      const meta = tokens.getChainMeta(activeChain);
+      copyText(addr, `${meta.shortName || activeChain.toUpperCase()} ${t('收款地址', 'Address')}`);
+    }
+  }
+
+  async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 6000) {
+    if (typeof fetch !== 'function') return null;
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const resp = await fetch(url, controller ? { ...options, signal: controller.signal } : options);
+      if (!resp || !resp.ok) return null;
+      return await resp.json();
+    } catch (_) {
+      return null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  async function fetchTokenDetailHistoryAsync() {
+    const st = getState();
+    const wallet = st.getActiveWallet();
+    const symKey = _tokenDetailState.symbolKey;
+    const chainFilter = _tokenDetailState.chainFilter || 'all';
+    if (!wallet || !symKey) return;
+
+    const group = resolveTokenDetailGroup(wallet, symKey);
+    if (!group) return;
+
+    const seq = ++_tokenDetailState.fetchSeq;
+    _tokenDetailState.historyLoading = true;
+    renderTokenDetailHistoryList();
+
+    const targetChains = chainFilter !== 'all'
+      ? [chainFilter]
+      : Array.from(new Set(group.entries.map((e) => e.blockchain)));
+
+    const nearId = wallet.nearNamedAccount || wallet.nearAddress || '';
+    const nearContracts = new Set(
+      group.entries
+        .filter((e) => e.blockchain === 'near' && e.contractAddress)
+        .map((e) => String(e.contractAddress).toLowerCase())
+    );
+    const nearDecByContract = new Map(
+      group.entries
+        .filter((e) => e.blockchain === 'near' && e.contractAddress)
+        .map((e) => [String(e.contractAddress).toLowerCase(), e.decimals || 8])
+    );
+
+    const tasks = [];
+
+    if (targetChains.includes('near') && nearId) {
+      if (symKey !== 'NEAR') {
+        tasks.push((async () => {
+          const data = await fetchJsonWithTimeout(`https://api.nearblocks.io/v1/account/${encodeURIComponent(nearId)}/ft-txns?per_page=12`);
+          const txns = Array.isArray(data && data.txns) ? data.txns : [];
+          const out = [];
+          for (const tx of txns) {
+            const ftSym = String((tx.ft && tx.ft.symbol) || (tx.ft_meta && tx.ft_meta.symbol) || '').toUpperCase();
+            const contractId = String(tx.contract || tx.affected_account_id || '').toLowerCase();
+            if (ftSym !== symKey && !nearContracts.has(contractId)) continue;
+            const dec = Number((tx.ft && tx.ft.decimals) || nearDecByContract.get(contractId) || 8);
+            const deltaNum = Number(tx.delta_amount || 0);
+            const isIn = deltaNum >= 0;
+            const amtVal = Number.isFinite(deltaNum) ? Math.abs(deltaNum) / (10 ** dec) : null;
+            const ts = tx.block_timestamp ? Math.floor(Number(tx.block_timestamp) / 1e9) : null;
+            out.push({
+              id: `nb_ft_${tx.transaction_hash}`,
+              type: isIn ? 'receive' : 'send',
+              symbol: symKey,
+              chain: 'near',
+              amount: amtVal,
+              txHash: tx.transaction_hash || '',
+              title: tx.involved_account_id ? `${isIn ? t('来自', 'From') : t('发送至', 'To')} ${shortenAddr(tx.involved_account_id)}` : 'NEAR NEP-141',
+              timestamp: ts
+            });
+          }
+          return out;
+        })());
+      }
+
+      tasks.push((async () => {
+        const data = await fetchJsonWithTimeout(`https://api.nearblocks.io/v1/account/${encodeURIComponent(nearId)}/txns?per_page=12`);
+        const txns = Array.isArray(data && data.txns) ? data.txns : [];
+        const out = [];
+        for (const tx of txns) {
+          const actions = Array.isArray(tx.actions) ? tx.actions : [];
+          const methods = actions.map((a) => String(a && a.method || '').toLowerCase()).filter(Boolean);
+          let type = '';
+          let title = '';
+          if (methods.includes('deposit_and_stake') || methods.includes('stake')) {
+            type = 'stake';
+            title = tx.receiver_account_id || 'NEAR Stake';
+          } else if (methods.includes('unstake') || methods.includes('unstake_all') || methods.includes('withdraw_all')) {
+            type = 'unstake';
+            title = tx.receiver_account_id || 'NEAR Unstake';
+          } else if (methods.includes('ft_transfer_call') || methods.includes('swap')) {
+            if (symKey !== 'NEAR' && !nearContracts.has(String(tx.receiver_account_id || '').toLowerCase())) continue;
+            type = 'swap';
+            title = tx.receiver_account_id || 'NEAR Swap';
+          } else if (symKey === 'NEAR') {
+            const isOut = String(tx.signer_account_id || '').toLowerCase() === nearId.toLowerCase();
+            type = isOut ? 'send' : 'receive';
+            title = isOut
+              ? `${t('至', 'To')} ${shortenAddr(tx.receiver_account_id)}`
+              : `${t('来自', 'From')} ${shortenAddr(tx.signer_account_id)}`;
+          } else {
+            continue;
+          }
+          const depRaw = tx.actions_agg && tx.actions_agg.deposit ? Number(tx.actions_agg.deposit) : 0;
+          const amtVal = symKey === 'NEAR' && Number.isFinite(depRaw) && depRaw > 0 ? depRaw / 1e24 : null;
+          const ts = tx.block_timestamp ? Math.floor(Number(tx.block_timestamp) / 1e9) : null;
+          out.push({
+            id: `nb_tx_${tx.transaction_hash}`,
+            type,
+            symbol: symKey,
+            chain: 'near',
+            amount: amtVal,
+            txHash: tx.transaction_hash || '',
+            title,
+            timestamp: ts
+          });
+        }
+        return out;
+      })());
+    }
+
+    if (targetChains.includes('prl') && wallet.address) {
+      tasks.push((async () => {
+        const data = await fetchJsonWithTimeout(`https://api.prlscan.com/v1/addresses/${encodeURIComponent(wallet.address)}/txs?limit=15`);
+        const txs = Array.isArray(data) ? data : (Array.isArray(data && data.txs) ? data.txs : (Array.isArray(data && data.items) ? data.items : []));
+        return txs.map((tx) => {
+          const delta = Number(tx.delta_grains || 0) / 1e8;
+          const isCoinbase = Boolean(tx.is_coinbase);
+          const type = isCoinbase ? 'mine' : (delta >= 0 ? 'receive' : 'send');
+          const rawTime = tx.time !== undefined ? tx.time : (tx.timestamp !== undefined ? tx.timestamp : tx.block_time);
+          const tsNum = typeof rawTime === 'number'
+            ? (rawTime > 1e12 ? Math.floor(rawTime / 1000) : rawTime)
+            : (rawTime ? Math.floor(Date.parse(rawTime) / 1000) : null);
+          return {
+            id: `prl_${tx.txid || tx.hash}`,
+            type,
+            symbol: 'PRL',
+            chain: 'prl',
+            amount: Number.isFinite(delta) ? Math.abs(delta) : null,
+            txHash: tx.txid || tx.hash || '',
+            title: isCoinbase ? t('区块挖矿奖励', 'Mining Reward') : t('Pearl L1 转账', 'Pearl L1 Transfer'),
+            timestamp: Number.isFinite(tsNum) ? tsNum : null
+          };
+        });
+      })());
+    }
+
+    if (targetChains.includes('sol') && wallet.solAddress) {
+      tasks.push((async () => {
+        const data = await fetchJsonWithTimeout('https://solana-rpc.publicnode.com', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getSignaturesForAddress',
+            params: [wallet.solAddress, { limit: 10 }]
+          })
+        });
+        const sigs = Array.isArray(data && data.result) ? data.result : [];
+        return sigs.map((s) => ({
+          id: `sol_${s.signature}`,
+          type: s.err ? 'failed' : 'tx',
+          symbol: symKey,
+          chain: 'sol',
+          amount: null,
+          txHash: s.signature || '',
+          title: s.err ? t('Solana 交易失败', 'Solana Tx Failed') : t('Solana 链上交易', 'Solana Transaction'),
+          timestamp: s.blockTime || null
+        }));
+      })());
+    }
+
+    if (targetChains.includes('eth') && wallet.evmAddress) {
+      tasks.push((async () => {
+        const isNativeEth = symKey === 'ETH';
+        const endpoint = isNativeEth
+          ? `https://eth.blockscout.com/api/v2/addresses/${encodeURIComponent(wallet.evmAddress)}/transactions`
+          : `https://eth.blockscout.com/api/v2/addresses/${encodeURIComponent(wallet.evmAddress)}/token-transfers`;
+        const data = await fetchJsonWithTimeout(endpoint);
+        const items = Array.isArray(data && data.items) ? data.items : [];
+        const addrLower = wallet.evmAddress.toLowerCase();
+        const out = [];
+        for (const it of items) {
+          if (!isNativeEth) {
+            const tokSym = String(it.token && it.token.symbol || '').toUpperCase();
+            if (tokSym !== symKey) continue;
+            const dec = Number((it.token && it.token.decimals) || (it.total && it.total.decimals) || 18);
+            const rawVal = Number((it.total && it.total.value) || 0);
+            const fromHash = String(it.from && it.from.hash || '').toLowerCase();
+            const isIn = fromHash !== addrLower;
+            out.push({
+              id: `eth_tok_${it.tx_hash || it.transaction_hash}_${out.length}`,
+              type: isIn ? 'receive' : 'send',
+              symbol: symKey,
+              chain: 'eth',
+              amount: Number.isFinite(rawVal) ? rawVal / (10 ** dec) : null,
+              txHash: it.tx_hash || it.transaction_hash || '',
+              title: isIn ? `${t('来自', 'From')} ${shortenAddr(it.from && it.from.hash)}` : `${t('至', 'To')} ${shortenAddr(it.to && it.to.hash)}`,
+              timestamp: it.timestamp ? Math.floor(Date.parse(it.timestamp) / 1000) : null
+            });
+          } else {
+            const fromHash = String(it.from && it.from.hash || '').toLowerCase();
+            const isIn = fromHash !== addrLower;
+            const valEth = Number(it.value || 0) / 1e18;
+            out.push({
+              id: `eth_tx_${it.hash}`,
+              type: isIn ? 'receive' : 'send',
+              symbol: 'ETH',
+              chain: 'eth',
+              amount: Number.isFinite(valEth) ? valEth : null,
+              txHash: it.hash || '',
+              title: isIn ? `${t('来自', 'From')} ${shortenAddr(it.from && it.from.hash)}` : `${t('至', 'To')} ${shortenAddr(it.to && it.to.hash)}`,
+              timestamp: it.timestamp ? Math.floor(Date.parse(it.timestamp) / 1000) : null
+            });
+          }
+        }
+        return out;
+      })());
+    }
+
+    if (targetChains.includes('btc') && wallet.btcAddress) {
+      tasks.push((async () => {
+        const txs = await fetchJsonWithTimeout(`https://mempool.space/api/address/${encodeURIComponent(wallet.btcAddress)}/txs`);
+        if (!Array.isArray(txs)) return [];
+        const addr = wallet.btcAddress;
+        return txs.slice(0, 12).map((tx) => {
+          let receivedSats = 0;
+          let spentSats = 0;
+          for (const vout of (tx.vout || [])) {
+            if (vout && vout.scriptpubkey_address === addr) receivedSats += Number(vout.value || 0);
+          }
+          for (const vin of (tx.vin || [])) {
+            if (vin && vin.prevout && vin.prevout.scriptpubkey_address === addr) spentSats += Number(vin.prevout.value || 0);
+          }
+          const netSats = receivedSats - spentSats;
+          const isIn = netSats >= 0;
+          return {
+            id: `btc_${tx.txid}`,
+            type: isIn ? 'receive' : 'send',
+            symbol: 'BTC',
+            chain: 'btc',
+            amount: Math.abs(netSats) / 1e8,
+            txHash: tx.txid || '',
+            title: tx.status && tx.status.confirmed ? t('已确认', 'Confirmed') : t('内存池待确认', 'Unconfirmed'),
+            timestamp: tx.status && tx.status.block_time ? tx.status.block_time : null
+          };
+        });
+      })());
+    }
+
+    const chunks = await Promise.all(tasks.map((p) => p.catch(() => [])));
+    if (seq !== _tokenDetailState.fetchSeq) return;
+
+    _tokenDetailState.historyItems = chunks.flat().filter(Boolean);
+    _tokenDetailState.historyLoading = false;
+    renderTokenDetailHistoryList();
+  }
+
+  let _autoSyncTimer = null;
+
+  function startAutoPriceAndBalanceSync() {
+    if (_autoSyncTimer) {
+      clearInterval(_autoSyncTimer);
+      _autoSyncTimer = null;
+    }
+    _autoSyncTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      const st = getState();
+      if (st && st.getActiveWallet() && !_isRefreshing) {
+        refreshAllBalancesAsync(false);
+      }
+    }, 15000);
+    return _autoSyncTimer;
   }
 
   // ==================== Header & Home Wallet Rendering ====================
@@ -2107,7 +2837,7 @@
       return;
     }
 
-    if (!(await verifySecurityAuthAsync(wallet, `${t('确认发送', 'Confirm send')} ${amt} ${asset.symbol}`))) return;
+    if (!(await verifySecurityAuthAsync(wallet, `${t('确认发送', 'Confirm send')} ${amountNum} ${asset.symbol}`))) return;
 
     const btn = $('btn-confirm-send');
     if (btn) btn.disabled = true;
@@ -2130,6 +2860,7 @@
             receiverId: recipient.toLowerCase(),
             amountNear: amountNum
           });
+          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
           showToast(`✅ NEAR ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
           closeAllSheets();
           refreshAllBalancesAsync(false);
@@ -2146,6 +2877,7 @@
             tokenSymbol: asset.symbol,
             tokenBalance: avail
           });
+          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
           showToast(`✅ ${asset.symbol} (NEAR) ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
           closeAllSheets();
           refreshAllBalancesAsync(false);
@@ -2154,6 +2886,7 @@
 
         if (asset.blockchain === 'sol' && (!asset.contractAddress || asset.contractAddress === 'So11111111111111111111111111111111111111112')) {
           const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: recipient, amountSol: amountNum });
+          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
           showToast(`✅ SOL ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
           closeAllSheets();
           refreshAllBalancesAsync(false);
@@ -2170,6 +2903,7 @@
             decimals: asset.decimals,
             tokenBalance: avail
           });
+          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
           showToast(`✅ EVM ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
           closeAllSheets();
           refreshAllBalancesAsync(false);
@@ -2255,6 +2989,14 @@
         }).catch(() => {});
       }
 
+      recordWalletActivity(wallet, {
+        type: 'send',
+        symbol: asset.symbol,
+        chain: asset.blockchain,
+        amount: amountNum,
+        txHash: depositTxHash || quote.depositAddress,
+        title: `${t('跨链转账至', 'Cross-chain to')} ${shortenAddr(recipient)}`
+      });
       showToast(`✅ ${t('跨链转账已广播', 'Cross-chain transfer sent')}: ${shortenAddr(depositTxHash || quote.depositAddress)}`);
       closeAllSheets();
       refreshAllBalancesAsync(false);
@@ -2887,6 +3629,15 @@
                 inputDecimals: fromToken.decimals,
                 tokenSymbol: fromToken.symbol
               });
+              recordWalletActivity(wallet, {
+                type: 'swap',
+                symbol: fromToken.symbol,
+                toSymbol: toToken.symbol,
+                chain: fromToken.blockchain,
+                amount: amt,
+                txHash: res.txHash,
+                title: `${fromToken.symbol} ➔ ${toToken.symbol}`
+              });
               showToast(`✅ ${refQ.isDcl ? 'Rhea CLMM' : 'Ref Finance'} ${t('成交广播成功', 'Swap broadcast')}: ${shortenAddr(res.txHash)}`);
               refreshAllBalancesAsync(false);
               return;
@@ -2907,6 +3658,15 @@
             wrapAndUnwrapSol: true,
             tokenBalance: avail,
             inputDecimals: fromToken.decimals
+          });
+          recordWalletActivity(wallet, {
+            type: 'swap',
+            symbol: fromToken.symbol,
+            toSymbol: toToken.symbol,
+            chain: fromToken.blockchain,
+            amount: amt,
+            txHash: res.txHash,
+            title: `${fromToken.symbol} ➔ ${toToken.symbol}`
           });
           showToast(`✅ ${quoteResp.bestSource || 'Jupiter'} ${t('成交广播成功', 'Swap broadcast')}: ${shortenAddr(res.txHash)}`);
           refreshAllBalancesAsync(false);
@@ -2937,6 +3697,15 @@
             srcDecimals: fromToken.decimals,
             slippageBps: st.swap.slippageBps,
             tokenBalance: avail
+          });
+          recordWalletActivity(wallet, {
+            type: 'swap',
+            symbol: fromToken.symbol,
+            toSymbol: toToken.symbol,
+            chain: fromToken.blockchain,
+            amount: amt,
+            txHash: res.txHash,
+            title: `${fromToken.symbol} ➔ ${toToken.symbol}`
           });
           showToast(`✅ ${q.label} ${t('MPC 兑换广播成功', 'MPC Swap broadcast')}: ${shortenAddr(res.txHash)}`);
           refreshAllBalancesAsync(false);
@@ -3114,6 +3883,15 @@
           renderSwapOrderCard();
           const inTx = await broadcastOriginDepositTx({ wallet, fromToken: bridgeToken, amt: bridgeAmtNum, avail: bridgeAmtNum, depositAddress: liveIn.depositAddress });
           if (inTx && inTx.txHash) {
+            recordWalletActivity(wallet, {
+              type: 'swap',
+              symbol: fromToken.symbol,
+              toSymbol: toToken.symbol,
+              chain: fromToken.blockchain,
+              amount: amt,
+              txHash: inTx.txHash,
+              title: `${fromToken.symbol} ➔ ${toToken.symbol}`
+            });
             await intents.submitExternalDepositTxHash({
               depositAddress: liveIn.depositAddress,
               txHash: inTx.txHash,
@@ -3144,6 +3922,15 @@
             tokenSymbol: first.inSymbol || fromToken.symbol
           });
           if (!outLeg) {
+            recordWalletActivity(wallet, {
+              type: 'swap',
+              symbol: fromToken.symbol,
+              toSymbol: toToken.symbol,
+              chain: fromToken.blockchain,
+              amount: amt,
+              txHash: swapRes.txHash,
+              title: `${fromToken.symbol} ➔ ${toToken.symbol}`
+            });
             showToast(`✅ Ref Finance ${t('成交广播成功', 'Swap broadcast')}: ${shortenAddr(swapRes.txHash)}`);
             refreshAllBalancesAsync(false);
             return;
@@ -3892,6 +4679,15 @@
       });
 
       if (txRes && txRes.txHash) {
+        recordWalletActivity(wallet, {
+          type: 'swap',
+          symbol: fromToken.symbol,
+          toSymbol: toToken.symbol,
+          chain: fromToken.blockchain,
+          amount: amt,
+          txHash: txRes.txHash,
+          title: `${fromToken.symbol} ➔ ${toToken.symbol}`
+        });
         await intents.submitExternalDepositTxHash({
           depositAddress: liveQuote.depositAddress,
           txHash: txRes.txHash,
@@ -4492,7 +5288,20 @@
       const posItems = [];
       const valList = Array.isArray(wallet.nearStakingPositions) ? wallet.nearStakingPositions : [];
       for (const vp of valList) {
-        if (!vp || !(vp.totalNear > 0)) continue;
+        if (!vp) continue;
+        if (vp.type === 'lock_convert') {
+          if (!(vp.totalAmount > 0.00001)) continue;
+          const sym = vp.symbol || 'oRHEA';
+          posItems.push({
+            symbol: sym,
+            chain: vp.chain || 'near',
+            title: vp.title || vp.poolId || 'Rhea oRHEA Convert',
+            subtitle: vp.subtitle || t('锁仓兑换中', 'Locked Converting'),
+            amountText: `${formatBal(vp.totalAmount, 4)} ${sym}`
+          });
+          continue;
+        }
+        if (!(vp.totalNear > 0)) continue;
         const statusText = vp.stakedNear > 0 && vp.unstakedNear > 0
           ? `${t('质押中', 'Staked')}: ${formatBal(vp.stakedNear, 4)} · ${vp.canWithdraw ? t('可提现', 'Withdrawable') : t('解质押冷却中', 'Unstaking')}: ${formatBal(vp.unstakedNear, 4)}`
           : (vp.stakedNear > 0
@@ -4526,6 +5335,22 @@
           });
         }
       }
+      const solPosList = Array.isArray(wallet.solStakingPositions) ? wallet.solStakingPositions : [];
+      for (const sp of solPosList) {
+        if (!sp || !(sp.amount > 0.00001)) continue;
+        const isJup = sp.type === 'jupiter_dao';
+        const subAddr = String(sp.subtitle || '');
+        const shortAddr = subAddr.length > 12 ? `${subAddr.slice(0, 6)}...${subAddr.slice(-4)}` : subAddr;
+        posItems.push({
+          symbol: sp.symbol || (isJup ? 'JUP' : 'SOL'),
+          chain: sp.chain || 'sol',
+          title: sp.title || (isJup ? 'Jupiter DAO (ASR)' : 'Solana Validator'),
+          subtitle: isJup
+            ? t('Jupiter DAO 锁仓质押', 'Jupiter DAO Locked Stake')
+            : (shortAddr ? `${t('验证节点质押', 'Validator Stake')} · ${shortAddr}` : t('Solana 原生质押', 'Solana Native Stake')),
+          amountText: `${formatBal(sp.amount, 4)} ${sp.symbol || (isJup ? 'JUP' : 'SOL')}`
+        });
+      }
       const solSpl = wallet.splBalances || {};
       const solLstMints = [
         { mint: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', sym: 'JitoSOL', name: 'Jito Liquid Staking' },
@@ -4542,6 +5367,36 @@
             title: sl.name,
             subtitle: 'Solana LST',
             amountText: `${formatBal(b, 4)} ${sl.sym}`
+          });
+        }
+      }
+      const readErc20PosBal = (chainKey, contractAddr) => {
+        const eb = wallet.erc20Balances;
+        if (!eb || !chainKey || !contractAddr) return 0;
+        const cKey = String(chainKey).toLowerCase();
+        const addrLower = String(contractAddr).toLowerCase();
+        const nested = eb[cKey]?.[addrLower];
+        if (typeof nested === 'number' && Number.isFinite(nested)) return nested;
+        const flat = eb[`${cKey}_${addrLower}`];
+        if (typeof flat === 'number' && Number.isFinite(flat)) return flat;
+        return 0;
+      };
+      const evmStakingPositions = [
+        { chain: 'eth', contract: '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', sym: 'stETH', title: 'Lido Staked ETH', subtitle: 'Ethereum · Lido' },
+        { chain: 'eth', contract: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', sym: 'sUSDe', title: 'Ethena Staked USDe', subtitle: 'Ethereum · Ethena' },
+        { chain: 'base', contract: '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', sym: 'aBasUSDC', title: 'Aave V3 Base USDC', subtitle: 'Base · Aave V3' },
+        { chain: 'arc', contract: '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', sym: 'steakUSDC', title: 'Steakhouse Prime USDC', subtitle: 'Arc · Morpho' },
+        { chain: 'hype', contract: '0xfD739d4e423301CE9385c1fb8850539D657C296D', sym: 'kHYPE', title: 'Kinetiq Staked HYPE', subtitle: 'HyperEVM · Kinetiq' }
+      ];
+      for (const ep of evmStakingPositions) {
+        const b = readErc20PosBal(ep.chain, ep.contract);
+        if (typeof b === 'number' && b > 0.00001) {
+          posItems.push({
+            symbol: ep.sym,
+            chain: ep.chain,
+            title: ep.title,
+            subtitle: ep.subtitle,
+            amountText: `${formatBal(b, 4)} ${ep.sym}`
           });
         }
       }
@@ -4756,6 +5611,15 @@
           ${res.explorerUrl ? `<a href="${escapeHtml(res.explorerUrl)}" target="_blank" rel="noopener noreferrer" class="text-cyan" style="font-size:11.5px;">${t('在区块浏览器查看 ↗', 'View on Explorer ↗')}</a>` : ''}
         `;
       }
+      recordWalletActivity(wallet, {
+        type: 'stake',
+        symbol: pool.inSymbol,
+        toSymbol: pool.outSymbol,
+        chain: pool.chain,
+        amount: amt,
+        txHash: res.txHash,
+        title: `${pool.name} (${pool.inSymbol} ➔ ${pool.outSymbol})`
+      });
       showToast(`✅ ${pool.name} ${t('质押成功', 'Staked')}`);
       refreshAllBalancesAsync(false);
     } catch (err) {
@@ -5611,6 +6475,10 @@
       if (st.activeTab === 'swap') renderSwapView();
       if (st.activeTab === 'earn') renderEarnView();
       if (st.activeTab === 'hub') renderHubView();
+      const detailSheet = $('sheet-token-detail');
+      if (detailSheet && detailSheet.classList && detailSheet.classList.contains('open')) {
+        renderTokenDetailSheet();
+      }
     }
   }
 
@@ -5622,6 +6490,7 @@
     if (st.getActiveWallet()) {
       refreshAllBalancesAsync(false);
     }
+    startAutoPriceAndBalanceSync();
     if (st.wc.projectId) {
       ensureWcReady().catch(() => {});
     }
@@ -5655,9 +6524,16 @@
     triggerSecurityBiometricNow,
     cancelSecurityAuthModal,
     refreshAllBalancesAsync,
+    startAutoPriceAndBalanceSync,
     buildAggregatedAssetGroups,
     renderUnifiedAssetList,
     toggleAssetExpand,
+    openTokenDetailSheet,
+    setTokenDetailChain,
+    renderTokenDetailSheet,
+    tokenDetailAction,
+    copyTokenDetailAddress,
+    recordWalletActivity,
     openSendSheet,
     executeUnifiedSend,
     openReceiveSheet,
@@ -5712,7 +6588,14 @@
     jumpToNearDomainManager,
     focusMpcInspector,
     refreshAllBalancesAsync,
+    startAutoPriceAndBalanceSync,
     toggleAssetExpand,
+    openTokenDetailSheet,
+    setTokenDetailChain,
+    tokenDetailAction,
+    copyTokenDetailAddress,
+    openTokenDetailPool,
+    recordWalletActivity,
     quickActionSwapFromEntry,
     quickActionSendFromEntry,
     openSendSheet,

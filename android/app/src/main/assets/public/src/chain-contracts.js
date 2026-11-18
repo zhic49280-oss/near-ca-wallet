@@ -914,15 +914,18 @@
   }
 
   /**
-   * Queries real on-chain validator staking positions (`*.poolv1.near` / `*.pool.near`) and liquid staking balances
-   * for a NEAR account via FastNear account explorer + direct contract `get_account` view calls.
+   * Queries real on-chain validator staking positions (`*.poolv1.near` / `*.pool.near`) and
+   * Rhea oRHEA lock-convert positions for a NEAR account via FastNear + direct contract view calls.
    */
   async function fetchNearAccountStakingPositionsAsync(nearAccountId) {
     const acct = String(nearAccountId || '').trim().toLowerCase();
     if (!acct) return [];
     const positions = [];
     try {
-      const full = await fetchJsonWithTimeout(`https://api.fastnear.com/v1/account/${encodeURIComponent(acct)}/full`, {}, 5000).catch(() => null);
+      const [full, orheaConvs] = await Promise.all([
+        fetchJsonWithTimeout(`https://api.fastnear.com/v1/account/${encodeURIComponent(acct)}/full`, {}, 5000).catch(() => null),
+        viewNearContractCall('orhea-conv.rhealab.near', 'get_account_conversions', { account_id: acct }).catch(() => null)
+      ]);
       const pools = full && Array.isArray(full.pools) ? full.pools : [];
       const validatorResults = await Promise.all(
         pools.slice(0, 12).map(async (p) => {
@@ -948,6 +951,130 @@
         })
       );
       validatorResults.filter(Boolean).forEach((pos) => positions.push(pos));
+
+      if (Array.isArray(orheaConvs) && orheaConvs.length > 0) {
+        let totalRaw = 0n;
+        let activeCount = 0;
+        for (const conv of orheaConvs) {
+          if (!conv || typeof conv !== 'object') continue;
+          const statusLower = String(conv.status || '').toLowerCase();
+          if (conv.is_withdrawn === true || conv.withdrawn === true || statusLower === 'withdrawn' || statusLower === 'claimed') {
+            continue;
+          }
+          const rawVal = conv.source_amount ?? conv.amount ?? conv.locked_amount ?? conv.source_token_amount ?? '0';
+          try {
+            const rawBig = BigInt(String(rawVal));
+            if (rawBig > 0n) {
+              totalRaw += rawBig;
+              activeCount += 1;
+            }
+          } catch (_) {}
+        }
+        const totalAmount = Number(totalRaw / 10n ** 12n) / 1e6;
+        if (Number.isFinite(totalAmount) && totalAmount > 0.00001) {
+          positions.push({
+            type: 'lock_convert',
+            poolId: 'orhea-conv.rhealab.near',
+            symbol: 'oRHEA',
+            totalAmount,
+            chain: 'near',
+            title: 'Rhea oRHEA Convert',
+            subtitle: t(`锁仓兑换中 (${activeCount} 笔)`, `Locked Converting (${activeCount})`)
+          });
+        }
+      }
+    } catch (_) {}
+    return positions;
+  }
+
+  /**
+   * Queries real on-chain Solana staking positions:
+   * - Jupiter DAO Staked JUP (`voTpe3tHQ7AjQHMapgSue2HJFAh2cGsdokqN3XqmVSj`)
+   * - Solana Native Validator Stake Accounts (`Stake11111111111111111111111111111111111111`)
+   */
+  async function fetchSolanaAccountStakingPositionsAsync(solAddress) {
+    const addr = String(solAddress || '').trim();
+    if (!addr) return [];
+    let ownerBytes;
+    try {
+      ownerBytes = base58Decode(addr);
+      if (!ownerBytes || ownerBytes.length !== 32) return [];
+    } catch (_) {
+      return [];
+    }
+
+    const positions = [];
+    try {
+      const voterProgId = 'voTpe3tHQ7AjQHMapgSue2HJFAh2cGsdokqN3XqmVSj';
+      const lockerAddr = 'CVMdMd79no569tjc5Sq7kzz8isbfCcFyBS5TLGsrZ5dN';
+      const escrowPda = await findSolanaPdaAsync(
+        [new TextEncoder().encode('Escrow'), base58Decode(lockerAddr), ownerBytes],
+        base58Decode(voterProgId)
+      );
+
+      const [escrowRes, stakeAccountsRes] = await Promise.all([
+        callSolanaRpc('getAccountInfo', [escrowPda.address, { encoding: 'base64' }]).catch(() => null),
+        fetchJsonWithTimeout(
+          'https://api.mainnet-beta.solana.com',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 'sol_native_stake',
+              method: 'getProgramAccounts',
+              params: [
+                'Stake11111111111111111111111111111111111111',
+                { encoding: 'jsonParsed', filters: [{ memcmp: { offset: 12, bytes: addr } }] }
+              ]
+            })
+          },
+          6000
+        ).catch(() => null)
+      ]);
+
+      if (escrowRes && escrowRes.value && escrowRes.value.data && escrowRes.value.data[0]) {
+        try {
+          const buf = base64ToBytes(String(escrowRes.value.data[0]));
+          if (buf.length >= 129) {
+            const amountRaw = decodeU64LE(buf, 105);
+            if (amountRaw > 0n) {
+              const stakedJup = Number(amountRaw) / 1e6;
+              if (Number.isFinite(stakedJup) && stakedJup > 0.00001) {
+                positions.push({
+                  type: 'jupiter_dao',
+                  chain: 'sol',
+                  symbol: 'JUP',
+                  title: 'Jupiter DAO (ASR)',
+                  subtitle: escrowPda.address,
+                  amount: stakedJup,
+                  amountText: `${stakedJup.toFixed(4)} JUP`
+                });
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      const stakeList = stakeAccountsRes && Array.isArray(stakeAccountsRes.result) ? stakeAccountsRes.result : [];
+      for (const item of stakeList) {
+        if (!item || !item.account) continue;
+        try {
+          const lamports = BigInt(item.account.lamports || 0);
+          if (lamports > 1000000n) {
+            const voter = item.account?.data?.parsed?.info?.stake?.delegation?.voter || 'Solana Validator';
+            const solAmt = Number(lamports) / 1e9;
+            positions.push({
+              type: 'sol_validator',
+              chain: 'sol',
+              symbol: 'SOL',
+              title: voter,
+              subtitle: item.pubkey || '',
+              amount: solAmt
+            });
+          }
+        } catch (_) {}
+      }
     } catch (_) {}
     return positions;
   }
@@ -3037,7 +3164,14 @@
       lidoRes,
       arcSteakPreviewRes,
       ethSusdeAssetsRes,
-      hyperKhypeRes
+      hyperKhypeRes,
+      lidoBlockscoutRes,
+      susdeBlockscoutRes,
+      susdeTotalAssetsRes,
+      aaveBaseInfoRes,
+      aaveBaseSupplyRes,
+      arcSteakAssetsRes,
+      khypeSupplyRes
     ] = await Promise.allSettled([
       fetchJsonWithTimeout('https://validators.narwallets.com/metrics_json', {}, 6000),
       viewNearContractCall('lst.rhealab.near', 'get_summary', {}),
@@ -3076,7 +3210,14 @@
         'https://aggregator-api.kyberswap.com/hyperevm/api/v1/routes?tokenIn=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&tokenOut=0xfD739d4e423301CE9385c1fb8850539D657C296D&amountIn=1000000000000000000',
         {},
         6000
-      )
+      ),
+      fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', {}, 6000),
+      fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', {}, 6000),
+      ethReadCall('eth', '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', '0x01e1d114'),
+      fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/base/tokens/0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB/info', {}, 6000),
+      ethReadCall('base', '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', '0x18160ddd'),
+      ethReadCall('arc', '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', '0x01e1d114'),
+      ethReadCall('hype', '0xfD739d4e423301CE9385c1fb8850539D657C296D', '0x18160ddd')
     ]);
 
     const llamaPools = llamaRes.status === 'fulfilled' && llamaRes.value && Array.isArray(llamaRes.value.data)
@@ -3091,6 +3232,10 @@
     const findLlamaApy = (predicate) => {
       const top = findLlamaPool((p) => typeof p.apy === 'number' && Number.isFinite(p.apy) && p.apy > 0 && predicate(p));
       return top ? Number(Number(top.apy).toFixed(2)) : null;
+    };
+    const findLlamaTvlUsd = (predicate) => {
+      const top = findLlamaPool((p) => typeof p.tvlUsd === 'number' && Number.isFinite(p.tvlUsd) && p.tvlUsd > 0 && predicate(p));
+      return top ? Number(top.tvlUsd) : null;
     };
     const findLlamaTvlText = (predicate) => {
       const top = findLlamaPool((p) => typeof p.tvlUsd === 'number' && Number.isFinite(p.tvlUsd) && p.tvlUsd > 0 && predicate(p));
@@ -3379,14 +3524,49 @@
         setPool('lido_steth', { apy: Number(latest.toFixed(2)), rate: 1.0 });
       }
     }
-    const lidoTvl = findLlamaTvlText((p) => p.project === 'lido' && String(p.symbol || '').toUpperCase() === 'STETH');
-    if (lidoTvl) setPool('lido_steth', { tvlText: lidoTvl });
+    const lidoUsd = findLlamaTvlUsd((p) => p.project === 'lido' && String(p.symbol || '').toUpperCase() === 'STETH');
+    let lidoTvlSet = false;
+    if (lidoBlockscoutRes.status === 'fulfilled' && lidoBlockscoutRes.value) {
+      const hCount = Number(lidoBlockscoutRes.value?.holders_count || lidoBlockscoutRes.value?.holders);
+      if (Number.isFinite(hCount) && hCount > 0) setPool('lido_steth', { stakersCount: hCount });
+      try {
+        const supRaw = lidoBlockscoutRes.value?.total_supply;
+        const ethStaked = supRaw ? Number(BigInt(String(supRaw)) / 10n ** 12n) / 1e6 : null;
+        if (Number.isFinite(ethStaked) && ethStaked > 0) {
+          const tvlText = formatTvlToken(ethStaked, 'ETH', lidoUsd);
+          if (tvlText) {
+            setPool('lido_steth', { tvlText });
+            lidoTvlSet = true;
+          }
+        }
+      } catch (_) {}
+    }
+    if (!lidoTvlSet) {
+      const lidoTvl = findLlamaTvlText((p) => p.project === 'lido' && String(p.symbol || '').toUpperCase() === 'STETH');
+      if (lidoTvl) setPool('lido_steth', { tvlText: lidoTvl });
+    }
 
     // 13. Arc Mainnet Steakhouse Prime USDC (ERC-4626)
     const arcSteakApy = findLlamaApy((p) => String(p.chain || '').toLowerCase() === 'arc' && String(p.symbol || '').toUpperCase() === 'STEAKUSDC');
     if (arcSteakApy !== null) setPool('arc_steak_usdc', { apy: arcSteakApy });
-    const arcSteakTvl = findLlamaTvlText((p) => String(p.chain || '').toLowerCase() === 'arc' && String(p.symbol || '').toUpperCase() === 'STEAKUSDC');
-    if (arcSteakTvl) setPool('arc_steak_usdc', { tvlText: arcSteakTvl });
+    const arcUsd = findLlamaTvlUsd((p) => String(p.chain || '').toLowerCase() === 'arc' && String(p.symbol || '').toUpperCase() === 'STEAKUSDC');
+    let arcTvlSet = false;
+    if (arcSteakAssetsRes.status === 'fulfilled' && arcSteakAssetsRes.value) {
+      try {
+        const usdcStaked = Number(BigInt(arcSteakAssetsRes.value)) / 1e6;
+        if (Number.isFinite(usdcStaked) && usdcStaked > 0) {
+          const tvlText = formatTvlToken(usdcStaked, 'USDC', arcUsd || usdcStaked);
+          if (tvlText) {
+            setPool('arc_steak_usdc', { tvlText });
+            arcTvlSet = true;
+          }
+        }
+      } catch (_) {}
+    }
+    if (!arcTvlSet && arcUsd > 0) {
+      const tvlText = formatTvlToken(arcUsd, 'USDC', arcUsd);
+      if (tvlText) setPool('arc_steak_usdc', { tvlText });
+    }
     if (arcSteakPreviewRes.status === 'fulfilled' && arcSteakPreviewRes.value) {
       try {
         const shares = BigInt(arcSteakPreviewRes.value);
@@ -3398,14 +3578,49 @@
     // 14. Aave V3 Base USDC
     const baseAaveApy = findLlamaApy((p) => String(p.chain || '').toLowerCase() === 'base' && p.project === 'aave-v3' && String(p.symbol || '').toUpperCase() === 'USDC');
     if (baseAaveApy !== null) setPool('aave_base_usdc', { apy: baseAaveApy, rate: 1.0 });
-    const baseAaveTvl = findLlamaTvlText((p) => String(p.chain || '').toLowerCase() === 'base' && p.project === 'aave-v3' && String(p.symbol || '').toUpperCase() === 'USDC');
-    if (baseAaveTvl) setPool('aave_base_usdc', { tvlText: baseAaveTvl });
+    const baseUsd = findLlamaTvlUsd((p) => String(p.chain || '').toLowerCase() === 'base' && p.project === 'aave-v3' && String(p.symbol || '').toUpperCase() === 'USDC');
+    if (aaveBaseInfoRes.status === 'fulfilled' && aaveBaseInfoRes.value) {
+      const hCount = Number(aaveBaseInfoRes.value?.data?.attributes?.holders?.count);
+      if (Number.isFinite(hCount) && hCount > 0) setPool('aave_base_usdc', { stakersCount: hCount });
+    }
+    if (baseUsd > 0) {
+      const tvlText = formatTvlToken(baseUsd, 'USDC', baseUsd);
+      if (tvlText) setPool('aave_base_usdc', { tvlText });
+    } else if (aaveBaseSupplyRes.status === 'fulfilled' && aaveBaseSupplyRes.value) {
+      try {
+        const usdcSupply = Number(BigInt(aaveBaseSupplyRes.value)) / 1e6;
+        if (Number.isFinite(usdcSupply) && usdcSupply > 0) {
+          const tvlText = formatTvlToken(usdcSupply, 'USDC', usdcSupply);
+          if (tvlText) setPool('aave_base_usdc', { tvlText });
+        }
+      } catch (_) {}
+    }
 
     // 15. Ethena sUSDe (ETH ERC-4626)
     const susdeApy = findLlamaApy((p) => p.project === 'ethena-usde' && String(p.symbol || '').toUpperCase() === 'SUSDE');
     if (susdeApy !== null) setPool('ethena_susde', { apy: susdeApy });
-    const susdeTvl = findLlamaTvlText((p) => p.project === 'ethena-usde' && String(p.symbol || '').toUpperCase() === 'SUSDE');
-    if (susdeTvl) setPool('ethena_susde', { tvlText: susdeTvl });
+    const susdeUsd = findLlamaTvlUsd((p) => p.project === 'ethena-usde' && String(p.symbol || '').toUpperCase() === 'SUSDE');
+    if (susdeBlockscoutRes.status === 'fulfilled' && susdeBlockscoutRes.value) {
+      const hCount = Number(susdeBlockscoutRes.value?.holders_count || susdeBlockscoutRes.value?.holders);
+      if (Number.isFinite(hCount) && hCount > 0) setPool('ethena_susde', { stakersCount: hCount });
+    }
+    let susdeTvlSet = false;
+    if (susdeTotalAssetsRes.status === 'fulfilled' && susdeTotalAssetsRes.value) {
+      try {
+        const usdeStaked = Number(BigInt(susdeTotalAssetsRes.value) / 10n ** 12n) / 1e6;
+        if (Number.isFinite(usdeStaked) && usdeStaked > 0) {
+          const tvlText = formatTvlToken(usdeStaked, 'USDe', susdeUsd || usdeStaked);
+          if (tvlText) {
+            setPool('ethena_susde', { tvlText });
+            susdeTvlSet = true;
+          }
+        }
+      } catch (_) {}
+    }
+    if (!susdeTvlSet && susdeUsd > 0) {
+      const tvlText = formatTvlToken(susdeUsd, 'USDe', susdeUsd);
+      if (tvlText) setPool('ethena_susde', { tvlText });
+    }
     if (ethSusdeAssetsRes.status === 'fulfilled' && ethSusdeAssetsRes.value) {
       try {
         const assetsPerShare = BigInt(ethSusdeAssetsRes.value);
@@ -3417,11 +3632,29 @@
     // 16. Kinetiq kHYPE (HyperEVM)
     const khypeApy = findLlamaApy((p) => p.project === 'kinetiq-khype' && String(p.symbol || '').toUpperCase() === 'KHYPE');
     if (khypeApy !== null) setPool('hyper_khype', { apy: khypeApy });
-    const khypeTvl = findLlamaTvlText((p) => p.project === 'kinetiq-khype' && String(p.symbol || '').toUpperCase() === 'KHYPE');
-    if (khypeTvl) setPool('hyper_khype', { tvlText: khypeTvl });
     if (hyperKhypeRes.status === 'fulfilled' && hyperKhypeRes.value && hyperKhypeRes.value.data?.routeSummary?.amountOut) {
       const r = Number(fromBaseUnits(String(hyperKhypeRes.value.data.routeSummary.amountOut), 18));
       if (Number.isFinite(r) && r > 0) setPool('hyper_khype', { rate: r });
+    }
+    const khypeUsd = findLlamaTvlUsd((p) => p.project === 'kinetiq-khype' && String(p.symbol || '').toUpperCase() === 'KHYPE');
+    let khypeTvlSet = false;
+    if (khypeSupplyRes.status === 'fulfilled' && khypeSupplyRes.value) {
+      try {
+        const khypeSupply = Number(BigInt(khypeSupplyRes.value) / 10n ** 12n) / 1e6;
+        const poolR = findStakingPool('hyper_khype')?.rate;
+        const hypeStaked = poolR && poolR > 0 ? (khypeSupply / poolR) : khypeSupply;
+        if (Number.isFinite(hypeStaked) && hypeStaked > 0) {
+          const tvlText = formatTvlToken(hypeStaked, 'HYPE', khypeUsd);
+          if (tvlText) {
+            setPool('hyper_khype', { tvlText });
+            khypeTvlSet = true;
+          }
+        }
+      } catch (_) {}
+    }
+    if (!khypeTvlSet) {
+      const khypeTvl = findLlamaTvlText((p) => p.project === 'kinetiq-khype' && String(p.symbol || '').toUpperCase() === 'KHYPE');
+      if (khypeTvl) setPool('hyper_khype', { tvlText: khypeTvl });
     }
 
     return STAKING_POOLS;
@@ -4472,6 +4705,7 @@
     findSolanaPdaAsync,
     discoverNearAccountsByPublicKeyAsync,
     fetchNearAccountStakingPositionsAsync,
+    fetchSolanaAccountStakingPositionsAsync,
     ensureWalletSigningKeysAsync,
     deriveMpcEvmAddressAsync,
     validateSufficientChainBalance,

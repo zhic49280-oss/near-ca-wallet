@@ -1612,6 +1612,18 @@
       }
     }
 
+    let finalError = firstTry.error;
+    const minMatch = String(finalError || '').match(/Amount is too low for bridge,\s*try at least\s*(\d+)/i);
+    if (minMatch) {
+      const dec = resolveTokenDecimals(resolvedOriginAsset);
+      const rawStr = fromBaseUnits(minMatch[1], dec);
+      const rawNum = Number(rawStr);
+      const minHuman = Number.isFinite(rawNum) && rawNum > 0
+        ? (rawNum >= 1e-6 && rawNum < 1e12 ? String(Number(rawNum.toPrecision(6))) : rawStr)
+        : rawStr;
+      finalError = t(`跨链金额过低，最低需约 ${minHuman}`, `Amount too low for bridge (min ~${minHuman})`);
+    }
+
     return {
       ok: false,
       quote: null,
@@ -1621,7 +1633,7 @@
       amountOutFormatted: null,
       amountInUsd: null,
       amountOutUsd: null,
-      error: firstTry.error
+      error: finalError
     };
   }
 

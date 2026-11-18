@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#06080F" />
   <title>NEAR Chain Abstraction Wallet</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=2.7" />
+  <link rel="stylesheet" href="style.css?v=2.9" />
 </head>
 <body>
   <div class="ambient-bg" aria-hidden="true"></div>
@@ -492,6 +492,79 @@
     </div>
   </div>
 
+  <!-- ==================== Sheet: OKX-Style Token Detail & Activity ==================== -->
+  <div id="sheet-token-detail" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <div class="flex items-center gap-2">
+        <div id="token-detail-icon"></div>
+        <h3 id="token-detail-title" class="sheet-title">--</h3>
+      </div>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body flex flex-col gap-3" style="max-height: 78vh; overflow-y: auto;">
+      <div id="token-detail-chains" class="pill-scroll"></div>
+      <div class="ios-glass-card flex flex-col gap-3">
+        <div class="flex items-baseline justify-between">
+          <span id="token-detail-balance" class="mono" style="font-size: 26px; font-weight: 800; color: #fff;">0</span>
+          <span id="token-detail-usd" class="mono" style="font-size: 13.5px; color: var(--text-secondary);">--</span>
+        </div>
+        <div class="quick-actions-grid" style="grid-template-columns: repeat(4, 1fr); gap: 8px;">
+          <button type="button" class="action-pill" onclick="tokenDetailAction('send')">
+            <span class="action-icon">↑</span>
+            <span data-i18n="home.sendBtn">转账</span>
+          </button>
+          <button type="button" class="action-pill" onclick="tokenDetailAction('receive')">
+            <span class="action-icon">↓</span>
+            <span data-i18n="home.receiveBtn">收款</span>
+          </button>
+          <button type="button" class="action-pill" onclick="tokenDetailAction('swap')">
+            <span class="action-icon">⇄</span>
+            <span data-i18n="home.swapBtn">闪兑</span>
+          </button>
+          <button type="button" class="action-pill" onclick="tokenDetailAction('bridge')">
+            <span class="action-icon">⛓</span>
+            <span data-i18n="detail.bridgeBtn">跨链桥</span>
+          </button>
+        </div>
+        <div id="token-detail-addr-row" class="meta-row" style="padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.06);">
+          <div class="flex flex-col" style="min-width: 0; flex: 1;">
+            <span class="meta-key" data-i18n="detail.receiveAddrLabel">当前网络收款地址</span>
+            <span id="token-detail-addr" class="mono" style="font-size: 11.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">--</span>
+          </div>
+          <button type="button" class="mini-action-btn" onclick="copyTokenDetailAddress()" data-i18n="common.copy">复制</button>
+        </div>
+      </div>
+
+      <!-- Per-Chain Breakdown when 'all' is selected -->
+      <div id="token-detail-breakdown-card" class="ios-glass-card flex flex-col gap-2">
+        <span style="font-weight: 700; font-size: 13px;" data-i18n="detail.chainBreakdownTitle">分链余额明细</span>
+        <div id="token-detail-breakdown-list" class="flex flex-col gap-2"></div>
+      </div>
+
+      <!-- Earn / Staking / Lending Section for this token -->
+      <div id="token-detail-earn-card" class="ios-glass-card hidden flex flex-col gap-2">
+        <span style="font-weight: 700; font-size: 13px;" data-i18n="detail.earnSectionTitle">赚币 · 质押 · 存款</span>
+        <div id="token-detail-earn-list" class="flex flex-col gap-2"></div>
+      </div>
+
+      <!-- On-Chain Activity & Transaction History -->
+      <div class="ios-glass-card flex flex-col gap-2">
+        <div class="flex items-center justify-between">
+          <span style="font-weight: 700; font-size: 13px;" data-i18n="detail.historyTitle">代币变动与交易历史</span>
+          <a id="token-detail-explorer-link" href="#" target="_blank" rel="noopener noreferrer" class="mono" style="font-size: 11.5px; color: var(--near-emerald); text-decoration: none;" data-i18n="detail.openExplorerBtn">前往浏览器 ↗</a>
+        </div>
+        <div id="token-detail-history-list" class="flex flex-col gap-2" style="font-size: 12px;"></div>
+      </div>
+
+      <!-- Bottom Live Price Bar -->
+      <div class="ios-glass-card flex items-center justify-between" style="padding: 10px 14px;">
+        <span id="token-detail-price-label" style="font-size: 12.5px; color: var(--text-secondary);">--</span>
+        <span id="token-detail-price-val" class="mono text-emerald" style="font-weight: 700; font-size: 14px;">--</span>
+      </div>
+    </div>
+  </div>
+
   <!-- ==================== Sheet: Token Picker ==================== -->
   <div id="sheet-token-picker" class="bottom-sheet" aria-hidden="true">
     <div class="sheet-handle"></div>
@@ -745,12 +818,12 @@
   <script src="qrcode.min.js"></script>
   <script src="ethers.umd.min.js"></script>
   <script src="walletconnect.umd.min.js"></script>
-  <script src="src/crypto-engine.js?v=2.7"></script>
-  <script src="src/token-registry.js?v=2.7"></script>
-  <script src="src/near-intents.js?v=2.7"></script>
-  <script src="src/chain-contracts.js?v=2.7"></script>
-  <script src="src/mining-pro.js?v=2.7"></script>
-  <script src="src/state.js?v=2.7"></script>
-  <script src="src/ui-controller.js?v=2.7"></script>
+  <script src="src/crypto-engine.js?v=2.9"></script>
+  <script src="src/token-registry.js?v=2.9"></script>
+  <script src="src/near-intents.js?v=2.9"></script>
+  <script src="src/chain-contracts.js?v=2.9"></script>
+  <script src="src/mining-pro.js?v=2.9"></script>
+  <script src="src/state.js?v=2.9"></script>
+  <script src="src/ui-controller.js?v=2.9"></script>
 </body>
 </html>

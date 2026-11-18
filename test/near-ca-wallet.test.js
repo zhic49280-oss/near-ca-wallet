@@ -3268,3 +3268,503 @@ test('v2.1 Native Capacitor Auth, WebAuthn Passkey & Interactive #sheet-security
     }
   });
 });
+
+test('v2.8 Task 1: EVM Staking Pools TVL (token qty + USD) & holder stakersCount in fetchLiveStakingMetrics', async () => {
+  const prevLang = state.lang;
+  state.setLanguage('en');
+  const padHex = (n) => '0x' + BigInt(n).toString(16).padStart(64, '0');
+  try {
+    await withMockedFetch(async (url, opts) => {
+      if (url.includes('yields.llama.fi/pools')) {
+        return jsonResponse({
+          data: [
+            { chain: 'Ethereum', project: 'lido', symbol: 'STETH', apy: 3.05, tvlUsd: 24500000000 },
+            { chain: 'Arc', project: 'morpho-blue', symbol: 'STEAKUSDC', apy: 4.12, tvlUsd: 6500000 },
+            { chain: 'Base', project: 'aave-v3', symbol: 'USDC', apy: 5.88, tvlUsd: 18200000 },
+            { chain: 'Ethereum', project: 'ethena-usde', symbol: 'SUSDE', apy: 6.45, tvlUsd: 1250000000 },
+            { chain: 'Hyperliquid L1', project: 'kinetiq-khype', symbol: 'KHYPE', apy: 2.15, tvlUsd: 540000000 }
+          ]
+        });
+      }
+      if (url.includes('eth.blockscout.com/api/v2/tokens/0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84')) {
+        return jsonResponse({ holders_count: '492310', total_supply: (9450000n * 10n ** 18n).toString() });
+      }
+      if (url.includes('eth.blockscout.com/api/v2/tokens/0x9D39A5DE30e57443BfF2A8307A4256c8797A3497')) {
+        return jsonResponse({ holders_count: '76540', total_supply: (1100000000n * 10n ** 18n).toString() });
+      }
+      if (url.includes('api.geckoterminal.com/api/v2/networks/base/tokens/0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB/info')) {
+        return jsonResponse({ data: { attributes: { holders: { count: 14280 } } } });
+      }
+      if (url.includes('eth-api.lido.fi')) {
+        return jsonResponse({ data: { smaApr: 3.1 } });
+      }
+      if (url.includes('aggregator-api.kyberswap.com/hyperevm/api/v1/routes')) {
+        return jsonResponse({ code: 0, data: { routeSummary: { amountOut: '950000000000000000' } } });
+      }
+      if (opts?.body) {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'eth_call') {
+          const to = String(body.params?.[0]?.to || '').toLowerCase();
+          const data = String(body.params?.[0]?.data || '').toLowerCase();
+          if (to === '0x9d39a5de30e57443bff2a8307a4256c8797a3497' && data === '0x01e1d114') {
+            return jsonResponse({ jsonrpc: '2.0', id: 1, result: padHex(1250000000n * 10n ** 18n) });
+          }
+          if (to === '0x9d39a5de30e57443bff2a8307a4256c8797a3497' && data.startsWith('0x07a2d13a')) {
+            return jsonResponse({ jsonrpc: '2.0', id: 1, result: padHex(1150000000000000000n) });
+          }
+          if (to === '0xbeef0016cb2fd5c352ea7ca08a9f54739dfa7298' && data === '0x01e1d114') {
+            return jsonResponse({ jsonrpc: '2.0', id: 1, result: padHex(6500000n * 10n ** 6n) });
+          }
+          if (to === '0xbeef0016cb2fd5c352ea7ca08a9f54739dfa7298' && data.startsWith('0xef8b30f7')) {
+            return jsonResponse({ jsonrpc: '2.0', id: 1, result: padHex(990000000000000000n) });
+          }
+          if (to === '0xfd739d4e423301ce9385c1fb8850539d657c296d' && data === '0x18160ddd') {
+            return jsonResponse({ jsonrpc: '2.0', id: 1, result: padHex(19000000n * 10n ** 18n) });
+          }
+        }
+      }
+      return jsonResponse({}, 404, 'Not Found');
+    }, async () => {
+      const pools = await chainContracts.fetchLiveStakingMetrics();
+      const byId = Object.fromEntries(pools.map((p) => [p.id, p]));
+
+      assert.equal(byId.lido_steth.stakersCount, 492310);
+      assert.equal(byId.lido_steth.tvlText, '9.45M ETH ($24.50B)');
+
+      assert.equal(byId.arc_steak_usdc.tvlText, '6.50M USDC ($6.50M)');
+
+      assert.equal(byId.aave_base_usdc.stakersCount, 14280);
+      assert.equal(byId.aave_base_usdc.tvlText, '18.20M USDC ($18.20M)');
+
+      assert.equal(byId.ethena_susde.stakersCount, 76540);
+      assert.equal(byId.ethena_susde.tvlText, '1.25B USDe ($1.25B)');
+
+      // 19M kHYPE / 0.95 rate = 20.00M HYPE
+      assert.equal(byId.hyper_khype.tvlText, '20.00M HYPE ($540.00M)');
+    });
+  } finally {
+    state.setLanguage(prevLang);
+  }
+});
+
+test('v2.8 Task 2: Multi-chain staking positions discovery (NEAR oRHEA + Solana JUP/Validator + EVM LSTs)', async () => {
+  const keys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+  const solAddr = keys.solAddress;
+
+  const voterProgId = 'voTpe3tHQ7AjQHMapgSue2HJFAh2cGsdokqN3XqmVSj';
+  const lockerAddr = 'CVMdMd79no569tjc5Sq7kzz8isbfCcFyBS5TLGsrZ5dN';
+  const bs58Alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  const decode58 = (str) => {
+    const bytes = [0];
+    for (const ch of str) {
+      let carry = bs58Alphabet.indexOf(ch);
+      for (let i = 0; i < bytes.length; i++) {
+        carry += bytes[i] * 58;
+        bytes[i] = carry & 0xff;
+        carry >>= 8;
+      }
+      while (carry > 0) {
+        bytes.push(carry & 0xff);
+        carry >>= 8;
+      }
+    }
+    for (let i = 0; i < str.length && str[i] === '1'; i++) bytes.push(0);
+    return new Uint8Array(bytes.reverse());
+  };
+  const escrowPda = await chainContracts.findSolanaPdaAsync(
+    [new TextEncoder().encode('Escrow'), decode58(lockerAddr), decode58(solAddr)],
+    decode58(voterProgId)
+  );
+
+  await withMockedFetch(async (url, opts) => {
+    if (url.includes('api.fastnear.com/v1/account/alice.near/full')) {
+      return jsonResponse({ pools: [{ pool_id: 'astro-stakers.poolv1.near' }] });
+    }
+    if (url.includes('rpc.mainnet.near.org') && opts?.body) {
+      const b = JSON.parse(opts.body);
+      const acc = b.params?.account_id;
+      const m = b.params?.method_name;
+      if (acc === 'astro-stakers.poolv1.near' && m === 'get_account') {
+        const resBytes = [...Buffer.from(JSON.stringify({
+          staked_balance: (15n * 10n ** 24n).toString(),
+          unstaked_balance: '0',
+          can_withdraw: false
+        }))];
+        return jsonResponse({ jsonrpc: '2.0', result: { result: resBytes } });
+      }
+      if (acc === 'orhea-conv.rhealab.near' && m === 'get_account_conversions') {
+        const resBytes = [...Buffer.from(JSON.stringify([
+          { source_amount: (25n * 10n ** 18n).toString(), is_withdrawn: false },
+          { source_amount: (10n * 10n ** 18n).toString(), is_withdrawn: true },
+          { source_amount: (5n * 10n ** 18n).toString(), status: 'Locked' }
+        ]))];
+        return jsonResponse({ jsonrpc: '2.0', result: { result: resBytes } });
+      }
+    }
+    if (url.includes('solana') && opts?.body) {
+      const b = JSON.parse(opts.body);
+      if (b.method === 'getAccountInfo' && b.params?.[0] === escrowPda.address) {
+        const buf = Buffer.alloc(136);
+        buf.writeBigUInt64LE(123450000n, 105); // 123.45 JUP
+        return jsonResponse({ jsonrpc: '2.0', result: { value: { data: [buf.toString('base64'), 'base64'] } } });
+      }
+      if (b.method === 'getProgramAccounts' && b.params?.[0] === 'Stake11111111111111111111111111111111111111') {
+        return jsonResponse({
+          jsonrpc: '2.0',
+          result: [
+            {
+              pubkey: 'StakeAcc11111111111111111111111111111111111',
+              account: {
+                lamports: 2500000000, // 2.5 SOL
+                data: { parsed: { info: { stake: { delegation: { voter: 'JitoValidator111111111111111' } } } } }
+              }
+            }
+          ]
+        });
+      }
+    }
+    return jsonResponse({}, 404, 'Not Found');
+  }, async () => {
+    const nearPos = await chainContracts.fetchNearAccountStakingPositionsAsync('alice.near');
+    assert.equal(nearPos.length, 2);
+    const valPos = nearPos.find((p) => p.type === 'validator');
+    const convPos = nearPos.find((p) => p.type === 'lock_convert');
+    assert.equal(valPos.poolId, 'astro-stakers.poolv1.near');
+    assert.equal(valPos.totalNear, 15);
+    assert.equal(convPos.poolId, 'orhea-conv.rhealab.near');
+    assert.equal(convPos.symbol, 'oRHEA');
+    assert.equal(convPos.totalAmount, 30);
+
+    const solPos = await chainContracts.fetchSolanaAccountStakingPositionsAsync(solAddr);
+    assert.equal(solPos.length, 2);
+    const jupPos = solPos.find((p) => p.type === 'jupiter_dao');
+    const solValPos = solPos.find((p) => p.type === 'sol_validator');
+    assert.equal(jupPos.symbol, 'JUP');
+    assert.equal(jupPos.amount, 123.45);
+    assert.equal(jupPos.subtitle, escrowPda.address);
+    assert.equal(solValPos.symbol, 'SOL');
+    assert.equal(solValPos.title, 'JitoValidator111111111111111');
+    assert.equal(solValPos.amount, 2.5);
+
+    // Verify renderEarnView renders all 5 categories into #earn-my-positions-list
+    const prevDoc = globalThis.document;
+    const prevWallets = state.wallets.slice();
+    const prevActiveId = state.activeWalletId;
+    const domMap = new Map();
+    const makeEl = (id) => {
+      const classes = new Set();
+      const el = {
+        id,
+        innerHTML: '',
+        textContent: '',
+        value: '',
+        classList: {
+          add: (c) => classes.add(c),
+          remove: (c) => classes.delete(c),
+          toggle: (c, force) => (force ? classes.add(c) : classes.delete(c)),
+          contains: (c) => classes.has(c)
+        },
+        getAttribute: () => null
+      };
+      domMap.set(id, el);
+      return el;
+    };
+    ['earn-my-positions-card', 'earn-my-positions-list', 'earn-my-positions-count', 'staking-pools-list'].forEach(makeEl);
+    globalThis.document = {
+      getElementById: (id) => domMap.get(id) || null,
+      querySelectorAll: () => []
+    };
+
+    try {
+      const testWallet = state.normalizeWalletRecord({
+        id: 'w_earn_positions',
+        name: 'Positions Test',
+        nearNamedAccount: 'alice.near',
+        solAddress: solAddr,
+        nearStakingPositions: nearPos,
+        solStakingPositions: solPos,
+        nearNep141Balances: { 'lst.rhealab.near': { raw: '5000000000000000000000000', formatted: 5 } },
+        splBalances: { J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn: 3.25 },
+        erc20Balances: {
+          eth: {
+            '0xae7ab96520de3a18e5e111b5eaab095312d7fe84': 1.5,
+            '0x9d39a5de30e57443bff2a8307a4256c8797a3497': 200
+          },
+          base: { '0x4e65fe4dba92790696d040ac24aa414708f5c0ab': 500 },
+          arc: { '0xbeef0016cb2fd5c352ea7ca08a9f54739dfa7298': 250 },
+          hype: { '0xfd739d4e423301ce9385c1fb8850539d657c296d': 12.5 }
+        }
+      });
+      state.wallets = [testWallet];
+      state.activeWalletId = testWallet.id;
+      uiController.renderEarnView();
+
+      const card = domMap.get('earn-my-positions-card');
+      const countEl = domMap.get('earn-my-positions-count');
+      const listHtml = domMap.get('earn-my-positions-list').innerHTML;
+
+      assert.equal(card.classList.contains('hidden'), false);
+      assert.equal(countEl.textContent, '11');
+      for (const expected of [
+        'astro-stakers.poolv1.near',
+        'Rhea oRHEA Convert',
+        '30 oRHEA',
+        '5 rNEAR',
+        'Jupiter DAO (ASR)',
+        '123.45 JUP',
+        'JitoValidator111111111111111',
+        '2.5 SOL',
+        '3.25 JitoSOL',
+        'Lido Staked ETH',
+        '1.5 stETH',
+        'Ethena Staked USDe',
+        '200 sUSDe',
+        'Aave V3 Base USDC',
+        '500 aBasUSDC',
+        'Steakhouse Prime USDC',
+        '250 steakUSDC',
+        'Kinetiq Staked HYPE',
+        '12.5 kHYPE'
+      ]) {
+        assert.ok(listHtml.includes(expected), `Expected position output to include ${expected}`);
+      }
+    } finally {
+      globalThis.document = prevDoc;
+      state.wallets = prevWallets;
+      state.activeWalletId = prevActiveId;
+    }
+  });
+});
+
+test('v2.8 Task 3: Human-readable minimum bridge amount error in quoteRawOneClick', async () => {
+  const prevLang = state.lang;
+  try {
+    await withMockedFetch(async (url, opts) => {
+      if (url.includes('1click.chaindefuser.com/v0/quote')) {
+        const body = JSON.parse(opts.body);
+        if (body.originAsset === 'nep141:wrap.near') {
+          return jsonResponse({ message: 'Amount is too low for bridge, try at least 500000000000000000000000' }, 400);
+        }
+        return jsonResponse({ message: 'Amount is too low for bridge, try at least 12345678' }, 400);
+      }
+      return jsonResponse({}, 404, 'Not Found');
+    }, async () => {
+      state.setLanguage('en');
+      const qEn = await nearIntents.quoteIntentSwapOrWithdraw({
+        originAsset: 'nep141:wrap.near',
+        destinationAsset: 'nep141:sol.omft.near',
+        amountRaw: '10000000000000000000000',
+        recipient: '7xLk17EQQ5KLDLDe44wCmupJKJjTGd8hs3eSVVhCx932',
+        refundTo: 'alice.near'
+      });
+      assert.equal(qEn.ok, false);
+      assert.equal(qEn.error, 'Amount too low for bridge (min ~0.5)');
+
+      state.setLanguage('zh');
+      const qZh = await nearIntents.quoteIntentSwapOrWithdraw({
+        originAsset: 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+        destinationAsset: 'nep141:sol.omft.near',
+        amountRaw: '1000000',
+        recipient: '7xLk17EQQ5KLDLDe44wCmupJKJjTGd8hs3eSVVhCx932',
+        refundTo: 'alice.near'
+      });
+      assert.equal(qZh.ok, false);
+      assert.equal(qZh.error, '跨链金额过低，最低需约 12.3457');
+    });
+  } finally {
+    state.setLanguage(prevLang);
+  }
+});
+
+test('v2.9: OKX-style Token Detail Sheet (openTokenDetailSheet, setTokenDetailChain, earn matching, recordWalletActivity & auto-sync)', async () => {
+  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  assert.ok(indexHtml.includes('id="sheet-token-detail"'), 'index.html must include #sheet-token-detail');
+
+  for (const fnName of [
+    'openTokenDetailSheet',
+    'setTokenDetailChain',
+    'tokenDetailAction',
+    'copyTokenDetailAddress',
+    'startAutoPriceAndBalanceSync',
+    'recordWalletActivity'
+  ]) {
+    assert.equal(typeof uiController[fnName], 'function', `uiController.${fnName} must be exported`);
+    assert.equal(typeof globalThis[fnName], 'function', `globalThis.${fnName} must be exported`);
+  }
+
+  await withMockedStorage({}, async () => {
+    const prevDoc = globalThis.document;
+    const prevWallets = state.wallets.slice();
+    const prevActiveId = state.activeWalletId;
+    const prevLiveTokens = state.liveTokens;
+    const prevLang = state.lang;
+
+    const wallet = state.normalizeWalletRecord({
+      id: 'w_v29_detail',
+      name: 'DetailTest',
+      mnemonic: TEST_MNEMONIC,
+      nearNamedAccount: 'alice.near',
+      nearAddress: 'a'.repeat(64),
+      nativeBalances: { near: 12.5, prl: 100, sol: 3.2 },
+      nearNep141Balances: {
+        'prl.omft.near': { raw: '5000000000', formatted: 50 }
+      }
+    });
+    state.wallets = [wallet];
+    state.activeWalletId = wallet.id;
+    state.liveTokens = [
+      { symbol: 'PRL', blockchain: 'near', price: 0.42 },
+      { symbol: 'NEAR', blockchain: 'near', price: 3.5 }
+    ];
+    state.setLanguage('zh');
+
+    const domMap = new Map();
+    const makeEl = (id) => {
+      const classes = new Set();
+      if (id === 'token-detail-earn-card') classes.add('hidden');
+      const el = {
+        id,
+        innerHTML: '',
+        textContent: '',
+        value: '',
+        href: '#',
+        attributes: {},
+        classList: {
+          add: (c) => classes.add(c),
+          remove: (c) => classes.delete(c),
+          toggle: (c, force) => (force === undefined ? (classes.has(c) ? classes.delete(c) : classes.add(c)) : (force ? classes.add(c) : classes.delete(c))),
+          contains: (c) => classes.has(c)
+        },
+        setAttribute(k, v) { this.attributes[k] = v; },
+        getAttribute(k) { return this.attributes[k] || null; }
+      };
+      domMap.set(id, el);
+      return el;
+    };
+
+    [
+      'home-unified-asset-list',
+      'hero-total-usd',
+      'sheet-backdrop',
+      'sheet-token-detail',
+      'token-detail-icon',
+      'token-detail-title',
+      'token-detail-chains',
+      'token-detail-balance',
+      'token-detail-usd',
+      'token-detail-addr',
+      'token-detail-explorer-link',
+      'token-detail-breakdown-card',
+      'token-detail-breakdown-list',
+      'token-detail-earn-card',
+      'token-detail-earn-list',
+      'token-detail-history-list',
+      'token-detail-price-label',
+      'token-detail-price-val'
+    ].forEach(makeEl);
+
+    globalThis.document = {
+      documentElement: { lang: 'zh-CN' },
+      getElementById: (id) => domMap.get(id) || null,
+      querySelectorAll: () => []
+    };
+
+    try {
+      // 1. Home list hides chain mini-pills and opens Token Detail Sheet on click
+      uiController.renderUnifiedAssetList();
+      const homeHtml = domMap.get('home-unified-asset-list').innerHTML;
+      assert.ok(homeHtml.includes("openTokenDetailSheet('PRL')"));
+      assert.equal(homeHtml.includes('net-mini-pill'), false, 'Home list must not render net-mini-pill');
+
+      // 2. Record local wallet activity & verify normalization preserves activityHistory
+      const act = uiController.recordWalletActivity(wallet, {
+        type: 'swap',
+        symbol: 'PRL',
+        toSymbol: 'USDC',
+        chain: 'near',
+        amount: 25,
+        txHash: 'LocalTxHash1111111111111111',
+        title: 'PRL ➔ USDC'
+      });
+      assert.ok(act && act.id);
+      const reNormalized = state.normalizeWalletRecord(JSON.parse(JSON.stringify(wallet)));
+      assert.equal(reNormalized.activityHistory.length, 1);
+      assert.equal(reNormalized.activityHistory[0].txHash, 'LocalTxHash1111111111111111');
+
+      // 3. Open Token Detail Sheet for PRL with mocked explorer APIs
+      await withMockedFetch(async (url) => {
+        if (url.includes('api.prlscan.com/v1/addresses/')) {
+          return jsonResponse({
+            txs: [
+              { txid: 'prl_tx_001', time: 1700000100, delta_grains: '2500000000', is_coinbase: true }
+            ]
+          });
+        }
+        if (url.includes('api.nearblocks.io/v1/account/alice.near/ft-txns')) {
+          return jsonResponse({
+            txns: [
+              {
+                transaction_hash: 'near_ft_001',
+                block_timestamp: '1700000200000000000',
+                delta_amount: '5000000000',
+                contract: 'prl.omft.near',
+                involved_account_id: 'bridge.near',
+                ft: { symbol: 'PRL', decimals: 8 }
+              }
+            ]
+          });
+        }
+        if (url.includes('api.nearblocks.io/v1/account/alice.near/txns')) {
+          return jsonResponse({ txns: [] });
+        }
+        return jsonResponse({}, 404, 'Not Found');
+      }, async () => {
+        uiController.openTokenDetailSheet('PRL');
+        assert.equal(domMap.get('sheet-token-detail').classList.contains('open'), true);
+        assert.equal(domMap.get('token-detail-title').textContent, 'PRL');
+        assert.equal(domMap.get('token-detail-balance').textContent, '150');
+        assert.equal(domMap.get('token-detail-usd').textContent, '$63.00');
+        assert.ok(domMap.get('token-detail-chains').innerHTML.includes("setTokenDetailChain('all')"));
+        assert.ok(domMap.get('token-detail-chains').innerHTML.includes("setTokenDetailChain('prl')"));
+        assert.ok(domMap.get('token-detail-chains').innerHTML.includes("setTokenDetailChain('near')"));
+        assert.equal(domMap.get('token-detail-breakdown-card').classList.contains('hidden'), false);
+        assert.ok(domMap.get('token-detail-breakdown-list').innerHTML.includes('Pearl Network'));
+
+        // Let background fetch settle
+        await new Promise((r) => setTimeout(r, 30));
+        const histHtml = domMap.get('token-detail-history-list').innerHTML;
+        assert.ok(histHtml.includes('PRL ➔ USDC'), 'Local activity must appear in history');
+        assert.ok(histHtml.includes('prl_tx_001'), 'Pearl L1 history must appear');
+        assert.ok(histHtml.includes('near_ft_001'), 'NEAR NEP-141 history must appear');
+
+        // 4. Filter by 'prl' chain
+        uiController.setTokenDetailChain('prl');
+        assert.equal(domMap.get('token-detail-balance').textContent, '100');
+        assert.equal(domMap.get('token-detail-addr').textContent, wallet.address);
+        assert.ok(domMap.get('token-detail-explorer-link').href.includes('explorer.prlscan.com/address/'));
+        assert.equal(domMap.get('token-detail-breakdown-card').classList.contains('hidden'), true);
+        await new Promise((r) => setTimeout(r, 30));
+
+        // 5. Open NEAR Token Detail Sheet and verify Earn pool matching
+        uiController.openTokenDetailSheet('NEAR');
+        const earnCard = domMap.get('token-detail-earn-card');
+        const earnHtml = domMap.get('token-detail-earn-list').innerHTML;
+        assert.equal(earnCard.classList.contains('hidden'), false, 'NEAR detail sheet must unhide Earn section');
+        assert.ok(earnHtml.includes('rhea_rnear'), 'NEAR detail sheet must list Rhea rNEAR pool');
+        assert.ok(earnHtml.includes('NEAR ➔ rNEAR'));
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      // 6. Auto-sync timer starts and clears cleanly
+      const timerId = uiController.startAutoPriceAndBalanceSync();
+      assert.ok(timerId);
+      clearInterval(timerId);
+    } finally {
+      globalThis.document = prevDoc;
+      state.wallets = prevWallets;
+      state.activeWalletId = prevActiveId;
+      state.liveTokens = prevLiveTokens;
+      state.setLanguage(prevLang);
+    }
+  });
+});

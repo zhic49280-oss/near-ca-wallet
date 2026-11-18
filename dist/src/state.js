@@ -239,7 +239,10 @@
       intentsBalances: (raw.intentsBalances && typeof raw.intentsBalances === 'object') ? { ...raw.intentsBalances } : {},
       nativeBalances,
       splBalances: (raw.splBalances && typeof raw.splBalances === 'object') ? { ...raw.splBalances } : {},
-      erc20Balances: normalizeErc20Map(raw.erc20Balances)
+      erc20Balances: normalizeErc20Map(raw.erc20Balances),
+      nearStakingPositions: Array.isArray(raw.nearStakingPositions) ? raw.nearStakingPositions.slice() : [],
+      solStakingPositions: Array.isArray(raw.solStakingPositions) ? raw.solStakingPositions.slice() : [],
+      activityHistory: Array.isArray(raw.activityHistory) ? raw.activityHistory.slice(0, 100) : []
     };
 
     return syncWalletCompatBalances(wallet);
@@ -309,8 +312,18 @@
       'home.receive': '收款',
       'home.swap': '闪兑',
       'home.earn': '质押',
+      'home.sendBtn': '转账',
+      'home.receiveBtn': '收款',
+      'home.swapBtn': '闪兑',
       'home.assetsTitle': '聚合资产列表',
       'home.syncIdle': '点击刷新链上余额',
+      // Token Detail Sheet
+      'detail.bridgeBtn': '跨链桥',
+      'detail.receiveAddrLabel': '当前网络收款地址',
+      'detail.chainBreakdownTitle': '分链余额明细',
+      'detail.earnSectionTitle': '赚币 · 质押 · 存款',
+      'detail.historyTitle': '代币变动与交易历史',
+      'detail.openExplorerBtn': '前往浏览器 ↗',
       // Swap
       'swap.title': '全链统一闪兑',
       'swap.autoRouteLabel': '智能路由',
@@ -464,8 +477,18 @@
       'home.receive': 'Receive',
       'home.swap': 'Swap',
       'home.earn': 'Earn',
+      'home.sendBtn': 'Send',
+      'home.receiveBtn': 'Receive',
+      'home.swapBtn': 'Swap',
       'home.assetsTitle': 'Unified Assets',
       'home.syncIdle': 'Tap refresh to sync balances',
+      // Token Detail Sheet
+      'detail.bridgeBtn': 'Bridge',
+      'detail.receiveAddrLabel': 'Current Network Receive Address',
+      'detail.chainBreakdownTitle': 'Balance by Network',
+      'detail.earnSectionTitle': 'Earn · Staking · Lending',
+      'detail.historyTitle': 'Token Activity & History',
+      'detail.openExplorerBtn': 'Explorer ↗',
       // Swap
       'swap.title': 'Cross-Chain & DEX Swap',
       'swap.autoRouteLabel': 'Auto Route',
