@@ -1268,6 +1268,29 @@
     if (!wallet) return wallet;
     const cryptoEngine = getCryptoEngine();
 
+    if (wallet.accountType === 'post_quantum') {
+      if (wallet.mnemonic && (!wallet.nearMlDsa65PublicKey || !wallet.nearMlDsa65PrivateKey || !wallet.nearUniversalAddress)) {
+        if (!cryptoEngine || typeof cryptoEngine.deriveNearMlDsa65FromMnemonicAsync !== 'function') {
+          throw new Error(t('ML-DSA-65 后量子引擎不可用', 'NearCACrypto ML-DSA-65 unavailable'));
+        }
+        const pq = await cryptoEngine.deriveNearMlDsa65FromMnemonicAsync(wallet.mnemonic, 0);
+        wallet.nearMlDsa65PublicKey = wallet.nearMlDsa65PublicKey || pq.publicKey;
+        wallet.nearMlDsa65PublicKeyHandle = wallet.nearMlDsa65PublicKeyHandle || pq.publicKeyHandle;
+        wallet.nearMlDsa65PrivateKey = wallet.nearMlDsa65PrivateKey || pq.secretKey;
+        wallet.nearUniversalAddress = wallet.nearUniversalAddress || pq.universalAccountId;
+        wallet.nearAddress = wallet.nearAddress || pq.universalAccountId;
+      } else if (wallet.nearMlDsa65PrivateKey && (!wallet.nearMlDsa65PublicKey || !wallet.nearUniversalAddress)) {
+        if (cryptoEngine && typeof cryptoEngine.importNearMlDsa65FromSecretKey === 'function') {
+          const pq = cryptoEngine.importNearMlDsa65FromSecretKey(wallet.nearMlDsa65PrivateKey);
+          wallet.nearMlDsa65PublicKey = wallet.nearMlDsa65PublicKey || pq.publicKey;
+          wallet.nearMlDsa65PublicKeyHandle = wallet.nearMlDsa65PublicKeyHandle || pq.publicKeyHandle;
+          wallet.nearUniversalAddress = wallet.nearUniversalAddress || pq.universalAccountId;
+          wallet.nearAddress = wallet.nearAddress || pq.universalAccountId;
+        }
+      }
+      return wallet;
+    }
+
     if (wallet.mnemonic) {
       const needsNear = !wallet.nearAddress || !wallet.nearPrivateKey || !wallet.nearPublicKey || !wallet.nearPrivateSeedHex;
       if (needsNear) {
@@ -2724,34 +2747,102 @@
     return bytesToHex(secretBytes.slice(0, 32));
   }
 
-  async function buildSignAndBroadcastNearActions({ accountId, publicKeyStr, privateKeyStr, receiverId, actionsBytes }) {
+  function getWalletNearSignerCredentials(wallet) {
+    if (!wallet) {
+      return { accountId: '', publicKeyStr: '', privateKeyStr: '', isPostQuantum: false };
+    }
+    const accountId = String(wallet.nearNamedAccount || wallet.nearAddress || wallet.nearUniversalAddress || '').trim();
+    const isPq = wallet.accountType === 'post_quantum' || (!wallet.nearPrivateKey && Boolean(wallet.nearMlDsa65PrivateKey));
+    if (isPq) {
+      return {
+        accountId,
+        publicKeyStr: String(wallet.nearMlDsa65PublicKey || '').trim(),
+        publicKeyHandleStr: String(wallet.nearMlDsa65PublicKeyHandle || '').trim(),
+        privateKeyStr: String(wallet.nearMlDsa65PrivateKey || '').trim(),
+        isPostQuantum: true
+      };
+    }
+    return {
+      accountId,
+      publicKeyStr: String(wallet.nearPublicKey || '').trim(),
+      publicKeyHandleStr: '',
+      privateKeyStr: String(wallet.nearPrivateKey || '').trim(),
+      isPostQuantum: false
+    };
+  }
+
+  function encodeNearPublicKeyBorsh(publicKeyStr) {
+    const raw = String(publicKeyStr || '').trim();
+    const cryptoEngine = getCryptoEngine();
+    if (raw.startsWith('ml-dsa-65:')) {
+      if (!cryptoEngine || typeof cryptoEngine.decodeNearMlDsa65PublicKey !== 'function') {
+        throw new Error(t('ML-DSA-65 后量子引擎不可用', 'NearCACrypto ML-DSA-65 unavailable'));
+      }
+      const pubBytes = cryptoEngine.decodeNearMlDsa65PublicKey(raw);
+      return concatUint8Arrays([new Uint8Array([2]), pubBytes]); // KeyType::MLDSA65 = 2
+    }
+    if (raw.startsWith('secp256k1:')) {
+      const pubBytes = base58Decode(raw.slice('secp256k1:'.length));
+      if (pubBytes.length !== 64) {
+        throw new Error(t('secp256k1 公钥长度无效', 'Invalid secp256k1 public key length'));
+      }
+      return concatUint8Arrays([new Uint8Array([1]), pubBytes]); // KeyType::SECP256K1 = 1
+    }
+    const pubBytes = base58Decode(raw.replace(/^ed25519:/, ''));
+    if (pubBytes.length !== 32) {
+      throw new Error(t('Ed25519 公钥长度无效', 'Invalid Ed25519 public key length'));
+    }
+    return concatUint8Arrays([new Uint8Array([0]), pubBytes]); // KeyType::ED25519 = 0
+  }
+
+  async function buildSignAndBroadcastNearActions({ accountId, publicKeyStr, privateKeyStr, receiverId, actionsBytes, actionCount = 1 }) {
     if (!accountId || !publicKeyStr || !privateKeyStr || !receiverId) {
       throw new Error(t('缺少 NEAR 交易签名参数', 'Missing NEAR transaction signing parameters'));
     }
     const cryptoEngine = getCryptoEngine();
-    if (!cryptoEngine || typeof cryptoEngine.ed25519SignAsync !== 'function') {
+    const isMlDsa65 = String(publicKeyStr).startsWith('ml-dsa-65:') || String(privateKeyStr).startsWith('ml-dsa-65:');
+    if (isMlDsa65) {
+      if (!cryptoEngine || typeof cryptoEngine.signNearHashMlDsa65 !== 'function') {
+        throw new Error(t('ML-DSA-65 签名引擎不可用', 'NearCACrypto.signNearHashMlDsa65 unavailable'));
+      }
+    } else if (!cryptoEngine || typeof cryptoEngine.ed25519SignAsync !== 'function') {
       throw new Error(t('Ed25519 签名引擎不可用', 'NearCACrypto.ed25519SignAsync unavailable'));
     }
 
-    const akRes = await fetchJsonWithTimeout(
-      NEAR_RPC_URL,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 'ak',
-          method: 'query',
-          params: {
-            request_type: 'view_access_key',
-            finality: 'final',
-            account_id: accountId,
-            public_key: publicKeyStr
+    async function queryAccessKey(pkQuery) {
+      return fetchJsonWithTimeout(
+        NEAR_RPC_URL,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'ak',
+            method: 'query',
+            params: {
+              request_type: 'view_access_key',
+              finality: 'final',
+              account_id: accountId,
+              public_key: pkQuery
+            }
+          })
+        },
+        8000
+      );
+    }
+
+    let akRes = await queryAccessKey(publicKeyStr);
+    if (isMlDsa65 && (!akRes || akRes.error) && cryptoEngine && typeof cryptoEngine.buildUniversalStateInitFromMlDsa65PublicKey === 'function') {
+      try {
+        const { publicKeyHandle } = cryptoEngine.buildUniversalStateInitFromMlDsa65PublicKey(publicKeyStr);
+        if (publicKeyHandle) {
+          const handleRes = await queryAccessKey(publicKeyHandle);
+          if (handleRes && !handleRes.error && handleRes.result) {
+            akRes = handleRes;
           }
-        })
-      },
-      8000
-    );
+        }
+      } catch (_) {}
+    }
 
     if (!akRes || akRes.error || !akRes.result || typeof akRes.result.nonce !== 'number') {
       throw new Error(
@@ -2762,23 +2853,28 @@
 
     const nonce = BigInt(akRes.result.nonce) + 1n;
     const blockHashBytes = base58Decode(akRes.result.block_hash);
-    const pubBytes = base58Decode(String(publicKeyStr).replace(/^ed25519:/, ''));
-    const seedHex = extractNearEd25519SeedHex(privateKeyStr);
+    const pubBorshBytes = encodeNearPublicKeyBorsh(publicKeyStr);
 
     const txBytes = concatUint8Arrays([
       encodeBorshString(accountId),
-      new Uint8Array([0]), // ED25519 PublicKey tag
-      pubBytes,
+      pubBorshBytes,
       encodeU64LE(nonce),
       encodeBorshString(receiverId),
       blockHashBytes,
-      encodeU32LE(1), // 1 action
+      encodeU32LE(actionCount),
       actionsBytes
     ]);
 
     const txHashBytes = await sha256BytesAsync(txBytes);
-    const sig = await cryptoEngine.ed25519SignAsync(txHashBytes, seedHex);
-    const signedTxBytes = concatUint8Arrays([txBytes, new Uint8Array([0]), sig]);
+    let signedTxBytes;
+    if (isMlDsa65) {
+      const sig = cryptoEngine.signNearHashMlDsa65(txHashBytes, privateKeyStr);
+      signedTxBytes = concatUint8Arrays([txBytes, new Uint8Array([2]), sig]); // Signature::MLDSA65 = 2
+    } else {
+      const seedHex = extractNearEd25519SeedHex(privateKeyStr);
+      const sig = await cryptoEngine.ed25519SignAsync(txHashBytes, seedHex);
+      signedTxBytes = concatUint8Arrays([txBytes, new Uint8Array([0]), sig]); // Signature::ED25519 = 0
+    }
     const signedB64 = bytesToBase64(signedTxBytes);
 
     const txRes = await fetchJsonWithTimeout(
@@ -2875,9 +2971,10 @@
     }
 
     const resolvedWallet = wallet ? await ensureWalletSigningKeysAsync(wallet) : null;
-    const sender = accountId || (resolvedWallet && (resolvedWallet.nearNamedAccount || resolvedWallet.nearAddress));
-    const pub = publicKeyStr || (resolvedWallet && resolvedWallet.nearPublicKey);
-    const priv = privateKeyStr || (resolvedWallet && resolvedWallet.nearPrivateKey);
+    const creds = getWalletNearSignerCredentials(resolvedWallet);
+    const sender = accountId || creds.accountId;
+    const pub = publicKeyStr || creds.publicKeyStr;
+    const priv = privateKeyStr || creds.privateKeyStr;
 
     if (!sender || !pub || !priv) {
       throw new Error(t('缺少 NEAR 转账账户或收款方参数', 'Missing NEAR transfer account or receiverId'));
@@ -2988,10 +3085,11 @@
         if (Array.isArray(rawBytes)) {
           const decoded = JSON.parse(new TextDecoder().decode(new Uint8Array(rawBytes)));
           if (decoded === null) {
+            const creds = getWalletNearSignerCredentials(resolvedWallet);
             await api.signAndSendNearFunctionCall({
               accountId: sender,
-              publicKeyStr: resolvedWallet.nearPublicKey,
-              privateKeyStr: resolvedWallet.nearPrivateKey,
+              publicKeyStr: creds.publicKeyStr,
+              privateKeyStr: creds.privateKeyStr,
               receiverId: contract,
               methodName: 'storage_deposit',
               argsJson: JSON.stringify({ account_id: dest, registration_only: true }),
@@ -3003,10 +3101,11 @@
       } catch (_) {}
     }
 
+    const creds = getWalletNearSignerCredentials(resolvedWallet);
     const txHash = await api.signAndSendNearFunctionCall({
       accountId: sender,
-      publicKeyStr: resolvedWallet.nearPublicKey,
-      privateKeyStr: resolvedWallet.nearPrivateKey,
+      publicKeyStr: creds.publicKeyStr,
+      privateKeyStr: creds.privateKeyStr,
       receiverId: contract,
       methodName: 'ft_transfer',
       argsJson: JSON.stringify({ receiver_id: dest, amount: rawAmount }),
@@ -3018,6 +3117,235 @@
       txHash,
       explorerUrl: `${NEAR_EXPLORER_TX}${txHash}`
     };
+  }
+
+  // ======================== NEAR Access Keys Management & Key Rotation ========================
+
+  async function fetchNearAccessKeysAsync(accountId) {
+    const cleanId = String(accountId || '').trim().toLowerCase();
+    if (!cleanId) {
+      throw new Error(t('缺少 NEAR 账户 ID', 'Missing NEAR account ID'));
+    }
+    const res = await fetchJsonWithTimeout(
+      NEAR_RPC_URL,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'ak-list',
+          method: 'query',
+          params: {
+            request_type: 'view_access_key_list',
+            finality: 'final',
+            account_id: cleanId
+          }
+        })
+      },
+      8000
+    );
+    if (!res || res.error || !res.result) {
+      const msg = (res && res.error && (res.error.data || res.error.message)) || '';
+      if (/does not exist|unknown account/i.test(String(msg))) {
+        return { accountId: cleanId, exists: false, keys: [] };
+      }
+      throw new Error(msg || t('查询 NEAR Access Keys 失败', 'Failed to query NEAR Access Keys'));
+    }
+    const keys = Array.isArray(res.result.keys) ? res.result.keys : [];
+    return {
+      accountId: cleanId,
+      exists: true,
+      keys
+    };
+  }
+
+  function buildAddKeyActionBytes({ newPublicKeyStr, permission = 'FullAccess' } = {}) {
+    const pubBorsh = encodeNearPublicKeyBorsh(newPublicKeyStr);
+    // AccessKey { nonce: u64(0), permission: AccessKeyPermission::FullAccess (tag 1) }
+    if (permission !== 'FullAccess') {
+      throw new Error(t('暂仅支持添加 FullAccess 密钥', 'Only FullAccess permission is supported'));
+    }
+    return concatUint8Arrays([
+      new Uint8Array([5]), // Action::AddKey
+      pubBorsh,
+      encodeU64LE(0n),
+      new Uint8Array([1]) // AccessKeyPermission::FullAccess
+    ]);
+  }
+
+  function buildDeleteKeyActionBytes({ targetPublicKeyStr } = {}) {
+    const pubBorsh = encodeNearPublicKeyBorsh(targetPublicKeyStr);
+    return concatUint8Arrays([
+      new Uint8Array([6]), // Action::DeleteKey
+      pubBorsh
+    ]);
+  }
+
+  async function addNearAccessKeyAsync({ wallet, newPublicKeyStr } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const resolved = await ensureWalletSigningKeysAsync(wallet);
+    const creds = getWalletNearSignerCredentials(resolved);
+    if (!creds.accountId || !creds.publicKeyStr || !creds.privateKeyStr) {
+      throw new Error(t('当前 NEAR 账户缺少签名密钥', 'Missing NEAR signing credentials'));
+    }
+    validateSufficientChainBalance({
+      wallet: resolved,
+      chain: 'near',
+      tokenSymbol: 'NEAR',
+      amount: 0.002,
+      isNative: true
+    });
+    const actionBytes = buildAddKeyActionBytes({ newPublicKeyStr, permission: 'FullAccess' });
+    const txHash = await buildSignAndBroadcastNearActions({
+      accountId: creds.accountId,
+      publicKeyStr: creds.publicKeyStr,
+      privateKeyStr: creds.privateKeyStr,
+      receiverId: creds.accountId,
+      actionsBytes: actionBytes
+    });
+    return { txHash, explorerUrl: `${NEAR_EXPLORER_TX}${txHash}` };
+  }
+
+  async function deleteNearAccessKeyAsync({ wallet, targetPublicKeyStr, skipSafetyCheck = false } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const resolved = await ensureWalletSigningKeysAsync(wallet);
+    const creds = getWalletNearSignerCredentials(resolved);
+    if (!creds.accountId || !creds.publicKeyStr || !creds.privateKeyStr) {
+      throw new Error(t('当前 NEAR 账户缺少签名密钥', 'Missing NEAR signing credentials'));
+    }
+    let resolvedTarget = String(targetPublicKeyStr || '').trim();
+    if (resolvedTarget.startsWith('ml-dsa-65-hash:') && creds.publicKeyHandleStr === resolvedTarget && creds.publicKeyStr) {
+      resolvedTarget = creds.publicKeyStr;
+    }
+    if (!skipSafetyCheck) {
+      const list = await fetchNearAccessKeysAsync(creds.accountId);
+      const fullKeys = (list.keys || []).filter((k) => k && k.access_key && k.access_key.permission === 'FullAccess');
+      const cryptoEngine = getCryptoEngine();
+      let targetHandle = '';
+      if (resolvedTarget.startsWith('ml-dsa-65:') && cryptoEngine && typeof cryptoEngine.buildUniversalStateInitFromMlDsa65PublicKey === 'function') {
+        try {
+          targetHandle = cryptoEngine.buildUniversalStateInitFromMlDsa65PublicKey(resolvedTarget).publicKeyHandle;
+        } catch (_) {}
+      }
+      const remainingFull = fullKeys.filter((k) => k.public_key !== resolvedTarget && (!targetHandle || k.public_key !== targetHandle));
+      if (fullKeys.length > 0 && remainingFull.length === 0) {
+        throw new Error(
+          t(
+            '安全拦截：不能删除账户上最后一把 FullAccess 密钥，否则账户将永久锁死',
+            'Safety block: Cannot delete the last FullAccess key on this account'
+          )
+        );
+      }
+    }
+    validateSufficientChainBalance({
+      wallet: resolved,
+      chain: 'near',
+      tokenSymbol: 'NEAR',
+      amount: 0.002,
+      isNative: true
+    });
+    const actionBytes = buildDeleteKeyActionBytes({ targetPublicKeyStr: resolvedTarget });
+    const txHash = await buildSignAndBroadcastNearActions({
+      accountId: creds.accountId,
+      publicKeyStr: creds.publicKeyStr,
+      privateKeyStr: creds.privateKeyStr,
+      receiverId: creds.accountId,
+      actionsBytes: actionBytes
+    });
+    return { txHash, explorerUrl: `${NEAR_EXPLORER_TX}${txHash}` };
+  }
+
+  async function rotateNearAccountKeyAsync({ wallet, newMnemonic, upgradeToMlDsa65 = false, deleteOldKey = true } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const cryptoEngine = getCryptoEngine();
+    const resolved = await ensureWalletSigningKeysAsync(wallet);
+    const creds = getWalletNearSignerCredentials(resolved);
+    if (!creds.accountId || !creds.publicKeyStr || !creds.privateKeyStr) {
+      throw new Error(t('当前 NEAR 账户缺少签名密钥', 'Missing NEAR signing credentials'));
+    }
+
+    validateSufficientChainBalance({
+      wallet: resolved,
+      chain: 'near',
+      tokenSymbol: 'NEAR',
+      amount: 0.005,
+      isNative: true
+    });
+
+    let newDerived;
+    if (upgradeToMlDsa65) {
+      newDerived = await cryptoEngine.deriveNearMlDsa65FromMnemonicAsync(newMnemonic, 0);
+    } else {
+      newDerived = await cryptoEngine.deriveNearFromSeedAsync(newMnemonic, 0);
+    }
+    const newPubKey = upgradeToMlDsa65 ? newDerived.publicKey : newDerived.nearPublicKey;
+
+    const addAction = buildAddKeyActionBytes({ newPublicKeyStr: newPubKey, permission: 'FullAccess' });
+    const addTxHash = await buildSignAndBroadcastNearActions({
+      accountId: creds.accountId,
+      publicKeyStr: creds.publicKeyStr,
+      privateKeyStr: creds.privateKeyStr,
+      receiverId: creds.accountId,
+      actionsBytes: addAction
+    });
+
+    let deleteTxHash = '';
+    if (deleteOldKey && creds.publicKeyStr !== newPubKey) {
+      const newSignerPriv = upgradeToMlDsa65 ? newDerived.secretKey : newDerived.nearPrivateKey;
+      const delAction = buildDeleteKeyActionBytes({ targetPublicKeyStr: creds.publicKeyStr });
+      deleteTxHash = await buildSignAndBroadcastNearActions({
+        accountId: creds.accountId,
+        publicKeyStr: newPubKey,
+        privateKeyStr: newSignerPriv,
+        receiverId: creds.accountId,
+        actionsBytes: delAction
+      });
+    }
+
+    return {
+      addTxHash,
+      deleteTxHash,
+      upgradeToMlDsa65,
+      newDerived,
+      explorerUrl: `${NEAR_EXPLORER_TX}${deleteTxHash || addTxHash}`
+    };
+  }
+
+  async function activateUniversalAccountAsync({ fundingWallet, targetUniversalAccountId, rawStateInitHex, depositNear = '0.05' } = {}) {
+    if (!fundingWallet) throw new Error(t('缺少出资账户', 'Funding wallet is required'));
+    const resolved = await ensureWalletSigningKeysAsync(fundingWallet);
+    const creds = getWalletNearSignerCredentials(resolved);
+    const targetId = String(targetUniversalAccountId || '').trim().toLowerCase();
+    if (!creds.accountId || !creds.publicKeyStr || !creds.privateKeyStr) {
+      throw new Error(t('出资账户缺少 NEAR 签名密钥', 'Funding wallet missing NEAR signing credentials'));
+    }
+    if (!/^0u[0-9a-hjkmnp-tv-z]{52}$/.test(targetId)) {
+      throw new Error(t('目标不是有效的 0u 通用账户地址', 'Invalid 0u universal account ID'));
+    }
+    validateSufficientChainBalance({
+      wallet: resolved,
+      chain: 'near',
+      tokenSymbol: 'NEAR',
+      amount: Number(depositNear) + 0.01,
+      isNative: true
+    });
+    const cryptoEngine = getCryptoEngine();
+    const stateInitBytes = cryptoEngine.hexToBytes(rawStateInitHex);
+    const yoctoDeposit = toBaseUnits(depositNear, 24);
+    const actionBytes = concatUint8Arrays([
+      new Uint8Array([15]), // Action::UniversalStateInit (tag 15)
+      encodeU32LE(stateInitBytes.length),
+      stateInitBytes,
+      encodeU128LE(yoctoDeposit)
+    ]);
+    const txHash = await buildSignAndBroadcastNearActions({
+      accountId: creds.accountId,
+      publicKeyStr: creds.publicKeyStr,
+      privateKeyStr: creds.privateKeyStr,
+      receiverId: targetId,
+      actionsBytes: actionBytes
+    });
+    return { txHash, explorerUrl: `${NEAR_EXPLORER_TX}${txHash}` };
   }
 
   async function registerNearNamedAccountOnChain({
@@ -5192,6 +5520,15 @@
     signAndSendNearFunctionCall,
     signAndSendNearTransfer,
     executeNearNep141Transfer,
+    getWalletNearSignerCredentials,
+    encodeNearPublicKeyBorsh,
+    fetchNearAccessKeysAsync,
+    buildAddKeyActionBytes,
+    buildDeleteKeyActionBytes,
+    addNearAccessKeyAsync,
+    deleteNearAccessKeyAsync,
+    rotateNearAccountKeyAsync,
+    activateUniversalAccountAsync,
     quoteNearRefFinanceSwap,
     executeNearRefFinanceSwap,
     quoteNearDclPoolSwap,

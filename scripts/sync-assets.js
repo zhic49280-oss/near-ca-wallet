@@ -12,6 +12,7 @@ const FILES_TO_SYNC = [
   'qrcode.min.js',
   'ethers.umd.min.js',
   'walletconnect.umd.min.js',
+  'ml-dsa-65.umd.min.js',
   'src/crypto-engine.js',
   'src/token-registry.js',
   'src/near-intents.js',

@@ -212,9 +212,13 @@
       }
     }
 
+    const accountType = String(raw.accountType || '').trim() === 'post_quantum' ? 'post_quantum' : 'standard';
+    const isPq = accountType === 'post_quantum';
+    const nearUniversalAddress = String(raw.nearUniversalAddress || '').trim();
     const wallet = {
       id: String(raw.id || `w_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),
-      name: String(raw.name || 'NEAR Account'),
+      name: String(raw.name || (isPq ? 'PQ Vault' : 'NEAR Account')),
+      accountType,
       mnemonic: mnemonicClean,
       pin: String(raw.pin || ''),
       biometricEnabled: raw.biometricEnabled !== undefined ? Boolean(raw.biometricEnabled) : true,
@@ -222,20 +226,25 @@
       webauthnCredentialId: String(raw.webauthnCredentialId || '').trim(),
       // Primary NEAR CA Identity
       nearNamedAccount,
-      nearAddress,
+      nearAddress: nearAddress || (isPq ? nearUniversalAddress : ''),
       nearPublicKey: String(raw.nearPublicKey || '').trim(),
       nearPrivateKey: String(raw.nearPrivateKey || '').trim(),
       nearPrivateSeedHex: String(raw.nearPrivateSeedHex || '').trim(),
+      // Post-Quantum ML-DSA-65 Identity (isolated from standard MPC multi-chain keys)
+      nearUniversalAddress,
+      nearMlDsa65PublicKey: String(raw.nearMlDsa65PublicKey || '').trim(),
+      nearMlDsa65PublicKeyHandle: String(raw.nearMlDsa65PublicKeyHandle || '').trim(),
+      nearMlDsa65PrivateKey: String(raw.nearMlDsa65PrivateKey || '').trim(),
       // External Chain Addresses Controlled by NEAR MPC (v1.signer) + Native BIP-86 Pearl Address
-      mpcEvmAddress,
-      evmAddress,
-      solAddress,
-      solPublicKey: solAddress,
-      address: pearlAddress,
-      privateKeyHex,
-      tweakedPrivateKeyHex,
-      btcAddress,
-      qtcDepositAddress: String(raw.qtcDepositAddress || '').trim(),
+      mpcEvmAddress: isPq ? '' : mpcEvmAddress,
+      evmAddress: isPq ? '' : evmAddress,
+      solAddress: isPq ? '' : solAddress,
+      solPublicKey: isPq ? '' : solAddress,
+      address: isPq ? '' : pearlAddress,
+      privateKeyHex: isPq ? '' : privateKeyHex,
+      tweakedPrivateKeyHex: isPq ? '' : tweakedPrivateKeyHex,
+      btcAddress: isPq ? '' : btcAddress,
+      qtcDepositAddress: isPq ? '' : String(raw.qtcDepositAddress || '').trim(),
       // Balances
       nearNep141Balances: (raw.nearNep141Balances && typeof raw.nearNep141Balances === 'object') ? { ...raw.nearNep141Balances } : {},
       intentsBalances: (raw.intentsBalances && typeof raw.intentsBalances === 'object') ? { ...raw.intentsBalances } : {},
@@ -250,8 +259,13 @@
     return syncWalletCompatBalances(wallet);
   }
 
+  function isPostQuantumWallet(wallet) {
+    return Boolean(wallet && wallet.accountType === 'post_quantum');
+  }
+
   function recomputeWalletMpcAddresses(wallet) {
     if (!wallet || typeof wallet !== 'object') return wallet;
+    if (isPostQuantumWallet(wallet)) return wallet;
     const cryptoEngine = getCryptoEngine();
     if (wallet.mnemonic && cryptoEngine && typeof cryptoEngine.derivePearlFromSeed === 'function') {
       try {
@@ -290,7 +304,13 @@
       'onboard.title': '一个 NEAR 账户，畅通全链资产',
       'onboard.subtitle': '支持 NEAR Intents 0-Gas 跨链闪兑、MPC v1.signer 与多链合约直连',
       'onboard.createBtn': '创建 NEAR 链抽象钱包',
+      'onboard.createPqBtn': '创建后量子安全账户 (ML-DSA-65)',
+      'onboard.pqBadge': '后量子 ML-DSA-65',
+      'onboard.pqAddrLabel': '后量子地址',
       'onboard.importBtn': '导入 12 / 24 词助记词',
+      'onboard.importModeStd': '标准全链账户',
+      'onboard.importModePq': '后量子账户',
+      'onboard.importNearIdPlaceholder': '已绑定的 .near 账户名（可选）',
       'onboard.createTitle': '备份您的助记词',
       'onboard.createHint': '请妥善离线保存以下 12 个单词，它是恢复所有链上资产的唯一凭证',
       'onboard.walletNamePlaceholder': '钱包名称（可选）',
@@ -389,6 +409,7 @@
       'hub.securityTitle': '安全与偏好设置',
       'hub.pinBtn': '设置 / 修改 PIN 密码',
       'hub.langBtn': '切换语言 (中/EN)',
+      'hub.accessKeysBtn': 'NEAR 密钥管理与更换助记词',
       'hub.bioCardTitle': '安全验证',
       'hub.bioSetPinBtn': '设置安全 PIN',
       // Sheets
@@ -432,6 +453,18 @@
       'sheet.walletsTitle': '多钱包管理',
       'sheet.walletsCreateBtn': '新建钱包',
       'sheet.walletsImportBtn': '导入助记词',
+      'sheet.walletsCreatePqBtn': '新建后量子账户 (ML-DSA-65)',
+      'sheet.keysTitle': 'NEAR 密钥管理',
+      'sheet.keysAccountLabel': '当前账户',
+      'sheet.keysActivateTitle': '激活 0u 后量子地址',
+      'sheet.keysActivateBtn': '激活 (0.05 NEAR)',
+      'sheet.keysListTitle': '链上访问密钥',
+      'sheet.keysRotateTitle': '更换助记词 / 升级密钥',
+      'sheet.keysRotateStdBtn': '新普通助记词 (12词)',
+      'sheet.keysRotatePqBtn': '后量子密钥 (24词)',
+      'sheet.keysRotatePlaceholder': '点击下方生成新助记词，或粘贴已有助记词',
+      'sheet.keysGenSeedBtn': '生成新助记词',
+      'sheet.keysRotateConfirmBtn': '确认更换并删除旧密钥',
       'sheet.backupTitle': '助记词与 NEAR 主密钥备份',
       'sheet.pinTitle': '安全密码设置',
       'sheet.pinPlaceholder': '输入 4-6 位数字密码',
@@ -443,7 +476,8 @@
       'common.copy': '复制',
       'common.close': '关闭',
       'common.paste': '粘贴',
-      'common.contacts': '地址簿'
+      'common.contacts': '地址簿',
+      'common.refresh': '刷新'
     },
     en: {
       // Header
@@ -456,7 +490,13 @@
       'onboard.title': 'One NEAR Account. Every Chain.',
       'onboard.subtitle': '0-Gas Cross-Chain Intents, MPC v1.signer & Direct On-Chain Contracts',
       'onboard.createBtn': 'Create New NEAR Chain Abstraction Wallet',
+      'onboard.createPqBtn': 'Create Post-Quantum Vault (ML-DSA-65)',
+      'onboard.pqBadge': 'Post-Quantum ML-DSA-65',
+      'onboard.pqAddrLabel': 'PQ Address',
       'onboard.importBtn': 'Import 12/24-Word Recovery Phrase',
+      'onboard.importModeStd': 'Standard Multi-Chain',
+      'onboard.importModePq': 'Post-Quantum Vault',
+      'onboard.importNearIdPlaceholder': 'Bound .near account ID (optional)',
       'onboard.createTitle': 'Back Up Recovery Phrase',
       'onboard.createHint': 'Store these 12 words safely offline. They control all derived chain accounts.',
       'onboard.walletNamePlaceholder': 'Wallet Name (optional)',
@@ -555,6 +595,7 @@
       'hub.securityTitle': 'Security & Preferences',
       'hub.pinBtn': 'Set / Change PIN',
       'hub.langBtn': 'Language (中/EN)',
+      'hub.accessKeysBtn': 'NEAR Access Keys & Seed Rotation',
       'hub.bioCardTitle': 'Security',
       'hub.bioSetPinBtn': 'Set PIN',
       // Sheets
@@ -598,6 +639,18 @@
       'sheet.walletsTitle': 'Wallets',
       'sheet.walletsCreateBtn': 'New Wallet',
       'sheet.walletsImportBtn': 'Import Phrase',
+      'sheet.walletsCreatePqBtn': 'New Post-Quantum Vault (ML-DSA-65)',
+      'sheet.keysTitle': 'NEAR Access Keys',
+      'sheet.keysAccountLabel': 'Active Account',
+      'sheet.keysActivateTitle': 'Activate 0u PQ Address',
+      'sheet.keysActivateBtn': 'Activate (0.05 NEAR)',
+      'sheet.keysListTitle': 'On-Chain Access Keys',
+      'sheet.keysRotateTitle': 'Rotate Seed / Upgrade Key',
+      'sheet.keysRotateStdBtn': 'New Standard (12 Words)',
+      'sheet.keysRotatePqBtn': 'Post-Quantum (24 Words)',
+      'sheet.keysRotatePlaceholder': 'Generate a new phrase below or paste an existing one',
+      'sheet.keysGenSeedBtn': 'Generate Phrase',
+      'sheet.keysRotateConfirmBtn': 'Rotate Key & Delete Old',
       'sheet.backupTitle': 'Seed Phrase & NEAR Master Key',
       'sheet.pinTitle': 'Security PIN',
       'sheet.pinPlaceholder': 'Enter 4-6 digit PIN',
@@ -609,7 +662,8 @@
       'common.copy': 'Copy',
       'common.close': 'Close',
       'common.paste': 'Paste',
-      'common.contacts': 'Contacts'
+      'common.contacts': 'Contacts',
+      'common.refresh': 'Refresh'
     }
   };
 
@@ -1018,6 +1072,7 @@
   state.saveCachedStakingMetrics = saveCachedStakingMetrics;
   state.toggleFavoriteTokenId = toggleFavoriteTokenId;
   state.normalizeWalletRecord = normalizeWalletRecord;
+  state.isPostQuantumWallet = isPostQuantumWallet;
   state.recomputeWalletMpcAddresses = recomputeWalletMpcAddresses;
   state.syncWalletCompatBalances = syncWalletCompatBalances;
   state.setWalletErc20Balance = setWalletErc20Balance;

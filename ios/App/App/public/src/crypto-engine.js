@@ -1009,6 +1009,10 @@
     return /^(([a-z\d]+[-_])*[a-z\d]+\.)+([a-z\d]+[-_])*[a-z\d]+$/.test(addr) && /\.(near|tg)$/i.test(addr);
   }
 
+  function isNearUniversalAccount(addr) {
+    return /^0u[0-9a-hjkmnp-tv-z]{52}$/.test(String(addr || '').trim());
+  }
+
   function isValidSolanaAddressFormat(clean) {
     if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(clean)) return false;
     try {
@@ -1035,12 +1039,13 @@
       };
     }
     if (net === 'near') {
-      if (/^[a-f0-9]{64}$/i.test(clean) || isNearNamedAccount(clean.toLowerCase())) {
+      const lower = clean.toLowerCase();
+      if (/^[a-f0-9]{64}$/i.test(clean) || isNearNamedAccount(lower) || isNearUniversalAccount(lower)) {
         return { valid: true };
       }
       return {
         valid: false,
-        error: msg('NEAR 地址应为 .near/.tg 域名或 64 位十六进制隐式地址', 'NEAR address must be a .near/.tg account ID or 64-hex implicit account')
+        error: msg('NEAR 地址应为 .near/.tg 域名、0u 通用地址或 64 位十六进制隐式地址', 'NEAR address must be a .near/.tg account ID, 0u universal address, or 64-hex implicit account')
       };
     }
     if (EVM_NETWORKS.has(net)) {
@@ -1083,7 +1088,7 @@
     if (/^prl1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{10,}$/i.test(clean)) return 'prl';
     if (/^qz[1-9A-HJ-NP-Za-km-z]{45,50}$/.test(clean)) return 'qtc';
     if (/^0x[a-fA-F0-9]{40}$/.test(clean)) return 'evm';
-    if (/^[a-f0-9]{64}$/i.test(clean) || isNearNamedAccount(clean.toLowerCase())) return 'near';
+    if (/^[a-f0-9]{64}$/i.test(clean) || isNearNamedAccount(clean.toLowerCase()) || isNearUniversalAccount(clean.toLowerCase())) return 'near';
     if (/^bc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{25,87}$/i.test(clean)) return 'btc';
     if (/^[1-9A-HJ-NP-Za-km-z]{26,44}$/.test(clean)) {
       let decodedLen = -1;
@@ -1912,6 +1917,139 @@
     };
   }
 
+  // ======================== Post-Quantum ML-DSA-65 & NEP-655 Universal Accounts ========================
+
+  function getNearMlDsa65Lib() {
+    if (typeof globalThis !== 'undefined' && globalThis.NearMlDsa65) {
+      return globalThis.NearMlDsa65;
+    }
+    if (typeof require === 'function') {
+      try {
+        require('../ml-dsa-65.umd.min.js');
+        if (typeof globalThis !== 'undefined' && globalThis.NearMlDsa65) {
+          return globalThis.NearMlDsa65;
+        }
+      } catch (_) {}
+    }
+    throw new Error(msg('ML-DSA-65 后量子引擎未加载', 'ML-DSA-65 post-quantum engine is not loaded'));
+  }
+
+  function encodeCrockfordBase32(bytes) {
+    const alphabet = '0123456789abcdefghjkmnpqrstvwxyz';
+    let bits = 0;
+    let value = 0;
+    let out = '';
+    for (let i = 0; i < bytes.length; i++) {
+      value = (value << 8) | bytes[i];
+      bits += 8;
+      while (bits >= 5) {
+        out += alphabet[(value >>> (bits - 5)) & 31];
+        bits -= 5;
+      }
+    }
+    if (bits > 0) {
+      out += alphabet[(value << (5 - bits)) & 31];
+    }
+    return out;
+  }
+
+  function buildUniversalStateInitFromMlDsa65PublicKey(publicKeyStr) {
+    const lib = getNearMlDsa65Lib();
+    const handleStr = lib.publicKeyToHandle(publicKeyStr);
+    const handleBytes = lib.decodePublicKeyHandle(handleStr);
+    // UniversalStateInit::V1 { code: None (0x00), data: empty (0x00000000), access_keys: [PublicKeyHandle::MLDSA65(2, handle32)] }
+    const rawStateInitBytes = concatUint8Arrays([
+      new Uint8Array([0]), // UniversalStateInit::V1
+      new Uint8Array([0]), // code: Option::None
+      encodeU32LE(0), // data: empty BTreeMap
+      encodeU32LE(1), // access_keys: BTreeSet len 1
+      new Uint8Array([2]), // PublicKeyHandle::MLDSA65 (KeyType = 2)
+      handleBytes
+    ]);
+    const digest = sha3_256Bytes(rawStateInitBytes);
+    const universalAccountId = `0u${encodeCrockfordBase32(digest)}`;
+    return {
+      rawStateInitBytes,
+      publicKeyHandle: handleStr,
+      universalAccountId
+    };
+  }
+
+  async function deriveNearMlDsa65FromMnemonicAsync(mnemonic, index = 0) {
+    const checked = validateMnemonic(mnemonic);
+    if (!checked.valid) {
+      throw new Error(checked.error || 'Invalid mnemonic');
+    }
+    const normalizedPhrase = checked.words.join(' ');
+    const bip39Seed = await cryptoPbkdf2Async(normalizedPhrase, 'mnemonic', 2048, 64);
+    const domain = new TextEncoder().encode(`near:ml-dsa-65-seed:v1:${Number(index) || 0}:`);
+    const seed32 = sha256Bytes(concatUint8Arrays([domain, bip39Seed]));
+    const lib = getNearMlDsa65Lib();
+    const signer = lib.signerFromSeed(seed32);
+    try {
+      const publicKey = signer.publicKey;
+      const secretKey = signer.exportSecretKey();
+      const { universalAccountId, publicKeyHandle, rawStateInitBytes } = buildUniversalStateInitFromMlDsa65PublicKey(publicKey);
+      return {
+        mnemonic: normalizedPhrase,
+        seedHex: bytesToHex(seed32),
+        publicKey,
+        publicKeyHandle,
+        secretKey,
+        universalAccountId,
+        rawStateInitHex: bytesToHex(rawStateInitBytes)
+      };
+    } finally {
+      signer.destroy();
+    }
+  }
+
+  function importNearMlDsa65FromSecretKey(secretKeyStr) {
+    const lib = getNearMlDsa65Lib();
+    const signer = lib.signerFromSecretKey(String(secretKeyStr || '').trim());
+    try {
+      const publicKey = signer.publicKey;
+      const secretKey = signer.exportSecretKey();
+      const { universalAccountId, publicKeyHandle, rawStateInitBytes } = buildUniversalStateInitFromMlDsa65PublicKey(publicKey);
+      return {
+        publicKey,
+        publicKeyHandle,
+        secretKey,
+        universalAccountId,
+        rawStateInitHex: bytesToHex(rawStateInitBytes)
+      };
+    } finally {
+      signer.destroy();
+    }
+  }
+
+  function decodeNearMlDsa65PublicKey(publicKeyStr) {
+    return getNearMlDsa65Lib().decodePublicKey(String(publicKeyStr || '').trim());
+  }
+
+  function decodeNearMlDsa65PublicKeyHandle(handleStr) {
+    return getNearMlDsa65Lib().decodePublicKeyHandle(String(handleStr || '').trim());
+  }
+
+  function signNearHashMlDsa65(hashBytes, secretKeyStr) {
+    const lib = getNearMlDsa65Lib();
+    const signer = lib.signerFromSecretKey(String(secretKeyStr || '').trim());
+    try {
+      return signer.signHash(toUint8Array(hashBytes));
+    } finally {
+      signer.destroy();
+    }
+  }
+
+  function verifyNearHashMlDsa65(hashBytes, signatureBytes, publicKeyStr) {
+    const lib = getNearMlDsa65Lib();
+    return lib.verifyHash({
+      hash: toUint8Array(hashBytes),
+      signature: signatureBytes,
+      publicKey: publicKeyStr
+    });
+  }
+
   // ======================== Export Bundle ========================
 
   const NearCACrypto = {
@@ -1975,7 +2113,18 @@
     deriveNearMpcSolanaAddress,
     deriveNearMpcPearlAddress,
     deriveNearMpcBitcoinAddress,
-    deriveNearMpcAllAddresses
+    deriveNearMpcAllAddresses,
+
+    // 6. Post-Quantum ML-DSA-65 & NEP-655 Universal Accounts
+    isNearUniversalAccount,
+    encodeCrockfordBase32,
+    buildUniversalStateInitFromMlDsa65PublicKey,
+    deriveNearMlDsa65FromMnemonicAsync,
+    importNearMlDsa65FromSecretKey,
+    decodeNearMlDsa65PublicKey,
+    decodeNearMlDsa65PublicKeyHandle,
+    signNearHashMlDsa65,
+    verifyNearHashMlDsa65
   };
 
   if (root) {

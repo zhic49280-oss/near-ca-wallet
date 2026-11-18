@@ -806,12 +806,20 @@
 
   // ==================== Onboarding & Multi-Wallet ====================
 
+  let _isAddingAdditionalWallet = false;
+
   function renderOnboardingVisibility() {
     const st = getState();
     const wallet = st.getActiveWallet();
     const hasWallet = Boolean(wallet);
     const onboard = $('view-onboarding');
     const nav = $('bottom-nav');
+
+    if (hasWallet && _isAddingAdditionalWallet) {
+      if (onboard) onboard.classList.remove('hidden');
+      if (nav) nav.classList.add('hidden');
+      return;
+    }
 
     if (onboard) onboard.classList.toggle('hidden', hasWallet);
     if (nav) nav.classList.toggle('hidden', !hasWallet);
@@ -839,15 +847,20 @@
         if (importP) importP.classList.add('hidden');
         return;
       }
+      _isAddingAdditionalWallet = false;
       $('view-onboarding').classList.add('hidden');
       $('bottom-nav')?.classList.remove('hidden');
       switchTab(st.activeTab || 'wallet');
       return;
     }
+    _isAddingAdditionalWallet = false;
     $('onboard-choice-panel')?.classList.remove('hidden');
     $('onboard-create-panel')?.classList.add('hidden');
     $('onboard-import-panel')?.classList.add('hidden');
   }
+
+  let _pendingCreateMode = 'standard';
+  let _pendingImportMode = 'standard';
 
   function openCreateWalletFlow() {
     const crypto = getCrypto();
@@ -856,6 +869,7 @@
       showToast(t('加密引擎未就绪', 'Crypto engine unavailable'));
       return;
     }
+    _pendingCreateMode = 'standard';
     const rawGenerated = crypto.generateMnemonic(12);
     const words = Array.isArray(rawGenerated)
       ? rawGenerated
@@ -868,9 +882,53 @@
         .map((w, i) => `<div class="seed-word"><span class="seed-idx">${i + 1}.</span><span>${escapeHtml(w)}</span></div>`)
         .join('');
     }
+    $('onboard-create-pq-badge')?.classList.add('hidden');
+    $('onboard-pq-addr-preview')?.classList.add('hidden');
+    const hintEl = $('onboard-create-hint');
+    if (hintEl) hintEl.textContent = t('请妥善离线保存以下 12 个单词，它是恢复所有链上资产的唯一凭证', 'Store these 12 words safely offline. They control all derived chain accounts.');
     $('onboard-choice-panel')?.classList.add('hidden');
     $('onboard-import-panel')?.classList.add('hidden');
     $('onboard-create-panel')?.classList.remove('hidden');
+  }
+
+  async function openCreatePqWalletFlow() {
+    const crypto = getCrypto();
+    const st = getState();
+    if (!crypto || typeof crypto.generateMnemonic !== 'function' || typeof crypto.deriveNearMlDsa65FromMnemonicAsync !== 'function') {
+      showToast(t('ML-DSA-65 后量子引擎未就绪', 'ML-DSA-65 engine unavailable'));
+      return;
+    }
+    _pendingCreateMode = 'post_quantum';
+    const rawGenerated = crypto.generateMnemonic(24);
+    const words = Array.isArray(rawGenerated)
+      ? rawGenerated
+      : String(rawGenerated || '').trim().split(/\s+/).filter(Boolean);
+    const phrase = words.join(' ');
+    st.pendingMnemonic = phrase;
+    const grid = $('onboard-seed-grid');
+    if (grid) {
+      grid.innerHTML = words
+        .map((w, i) => `<div class="seed-word"><span class="seed-idx">${i + 1}.</span><span>${escapeHtml(w)}</span></div>`)
+        .join('');
+    }
+    $('onboard-create-pq-badge')?.classList.remove('hidden');
+    $('onboard-pq-addr-preview')?.classList.remove('hidden');
+    const addrEl = $('onboard-pq-addr-val');
+    if (addrEl) addrEl.textContent = t('正在派生 0u 后量子地址...', 'Deriving 0u PQ address...');
+    const hintEl = $('onboard-create-hint');
+    if (hintEl) hintEl.textContent = t('请妥善离线保存以下 24 个单词，它仅用于恢复此独立后量子账户', 'Store these 24 words safely offline. They belong only to this independent post-quantum vault.');
+    $('onboard-choice-panel')?.classList.add('hidden');
+    $('onboard-import-panel')?.classList.add('hidden');
+    $('onboard-create-panel')?.classList.remove('hidden');
+
+    try {
+      const pq = await crypto.deriveNearMlDsa65FromMnemonicAsync(phrase, 0);
+      if (st.pendingMnemonic === phrase && addrEl) {
+        addrEl.textContent = pq.universalAccountId || '--';
+      }
+    } catch (e) {
+      if (addrEl) addrEl.textContent = e && e.message ? e.message : '--';
+    }
   }
 
   function copyPendingMnemonic() {
@@ -910,6 +968,35 @@
     });
   }
 
+  async function buildPqWalletFromInput(inputStr, name = '', pin = '', boundNearId = '') {
+    const crypto = getCrypto();
+    const st = getState();
+    const clean = String(inputStr || '').trim();
+    let pq;
+    let mnemonic = '';
+    if (clean.startsWith('ml-dsa-65:')) {
+      pq = crypto.importNearMlDsa65FromSecretKey(clean);
+    } else {
+      pq = await crypto.deriveNearMlDsa65FromMnemonicAsync(clean, 0);
+      mnemonic = pq.mnemonic;
+    }
+    const nearNamedAccount = String(boundNearId || '').trim().toLowerCase();
+    const idx = st.wallets.filter((w) => w.accountType === 'post_quantum').length + 1;
+    return st.normalizeWalletRecord({
+      id: `near_pq_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: String(name || '').trim() || nearNamedAccount || `PQ Vault ${idx}`,
+      accountType: 'post_quantum',
+      mnemonic,
+      pin: String(pin || '').trim(),
+      nearNamedAccount,
+      nearAddress: nearNamedAccount || pq.universalAccountId,
+      nearUniversalAddress: pq.universalAccountId,
+      nearMlDsa65PublicKey: pq.publicKey,
+      nearMlDsa65PublicKeyHandle: pq.publicKeyHandle,
+      nearMlDsa65PrivateKey: pq.secretKey
+    });
+  }
+
   async function confirmCreateWallet() {
     const st = getState();
     const phrase = st.pendingMnemonic;
@@ -921,17 +1008,38 @@
       return;
     }
     try {
-      const wallet = await buildWalletFromMnemonic(phrase, name, pin);
+      const isPqCreate = _pendingCreateMode === 'post_quantum';
+      const wallet = isPqCreate
+        ? await buildPqWalletFromInput(phrase, name, pin, '')
+        : await buildWalletFromMnemonic(phrase, name, pin);
       st.wallets.push(wallet);
       st.activeWalletId = wallet.id;
       st.pendingMnemonic = '';
+      _pendingCreateMode = 'standard';
+      _isAddingAdditionalWallet = false;
+      st.activeTab = 'wallet';
       st.saveWallets();
-      showToast(t('钱包已创建', 'Wallet created'));
+      showToast(isPqCreate ? t('后量子账户已创建', 'Post-quantum vault created') : t('钱包已创建', 'Wallet created'));
       renderAll();
       refreshAllBalancesAsync(true);
     } catch (e) {
       showToast(e && e.message ? e.message : t('创建失败', 'Create failed'));
     }
+  }
+
+  function setOnboardImportMode(mode) {
+    _pendingImportMode = mode === 'post_quantum' ? 'post_quantum' : 'standard';
+    const isPq = _pendingImportMode === 'post_quantum';
+    if ($('btn-import-mode-std')) $('btn-import-mode-std').className = isPq ? 'btn-secondary flex-1' : 'btn-primary flex-1';
+    if ($('btn-import-mode-pq')) $('btn-import-mode-pq').className = isPq ? 'btn-primary flex-1' : 'btn-secondary flex-1';
+    $('onboard-import-near-id')?.classList.toggle('hidden', !isPq);
+    const ta = $('onboard-import-phrase');
+    if (ta) {
+      ta.placeholder = isPq
+        ? t('输入 24 个英文助记词，或 ml-dsa-65:... 后量子私钥', 'Enter 24 BIP-39 words or ml-dsa-65:... secret key')
+        : t('输入 12 或 24 个英文助记词，使用空格分隔', 'Enter 12 or 24 BIP-39 words separated by spaces');
+    }
+    validateOnboardImportLive();
   }
 
   function openImportWalletFlow() {
@@ -940,8 +1048,11 @@
     $('onboard-import-panel')?.classList.remove('hidden');
     const ta = $('onboard-import-phrase');
     if (ta) ta.value = '';
+    const nearIdInp = $('onboard-import-near-id');
+    if (nearIdInp) nearIdInp.value = '';
     const status = $('onboard-import-status');
     if (status) status.textContent = '';
+    setOnboardImportMode('standard');
   }
 
   function validateOnboardImportLive() {
@@ -952,6 +1063,18 @@
     if (!phrase) {
       statusEl.textContent = '';
       return null;
+    }
+    if (_pendingImportMode === 'post_quantum' && phrase.startsWith('ml-dsa-65:')) {
+      try {
+        const pq = crypto.importNearMlDsa65FromSecretKey(phrase);
+        statusEl.style.color = 'var(--near-emerald)';
+        statusEl.textContent = t(`✓ 有效 ML-DSA-65 私钥 (${shortenAddr(pq.universalAccountId, 8, 6)})`, `✓ Valid ML-DSA-65 key (${shortenAddr(pq.universalAccountId, 8, 6)})`);
+        return { valid: true, isRawSecretKey: true };
+      } catch (err) {
+        statusEl.style.color = 'var(--rose-alert)';
+        statusEl.textContent = (err && err.message) || t('ML-DSA-65 私钥格式无效', 'Invalid ML-DSA-65 secret key');
+        return { valid: false };
+      }
     }
     const res = crypto.validateMnemonic(phrase);
     if (res.valid) {
@@ -970,16 +1093,48 @@
     const crypto = getCrypto();
     const st = getState();
     const raw = ($('onboard-import-phrase')?.value || '').trim();
+    const name = $('onboard-import-name')?.value || '';
+    const boundNearId = ($('onboard-import-near-id')?.value || '').trim().toLowerCase();
+
+    if (_pendingImportMode === 'post_quantum') {
+      if (!raw.startsWith('ml-dsa-65:')) {
+        const check = crypto.validateMnemonic(raw);
+        if (!check.valid) {
+          showToast(check.error || t('无效后量子助记词或私钥', 'Invalid PQ phrase or secret key'));
+          return;
+        }
+      }
+      try {
+        const wallet = await buildPqWalletFromInput(raw, name, '', boundNearId);
+        const existing = st.wallets.find(
+          (w) => w.accountType === 'post_quantum' && w.nearMlDsa65PublicKey && w.nearMlDsa65PublicKey === wallet.nearMlDsa65PublicKey
+        );
+        if (existing) {
+          st.activeWalletId = existing.id;
+          showToast(t('已切换至该后量子账户', 'Switched to existing PQ vault'));
+        } else {
+          st.wallets.push(wallet);
+          st.activeWalletId = wallet.id;
+          showToast(t('后量子账户导入成功', 'Post-quantum vault imported'));
+        }
+        st.saveWallets();
+        renderAll();
+        refreshAllBalancesAsync(true);
+      } catch (e) {
+        showToast(e && e.message ? e.message : t('导入失败', 'Import failed'));
+      }
+      return;
+    }
+
     const check = crypto.validateMnemonic(raw);
     if (!check.valid) {
       showToast(check.error || t('无效助记词', 'Invalid recovery phrase'));
       return;
     }
     const normalizedPhrase = check.words.join(' ');
-    const name = $('onboard-import-name')?.value || '';
     try {
       const wallet = await buildWalletFromMnemonic(normalizedPhrase, name, '');
-      const existing = st.wallets.find((w) => w.nearAddress && w.nearAddress === wallet.nearAddress);
+      const existing = st.wallets.find((w) => w.accountType !== 'post_quantum' && w.nearAddress && w.nearAddress === wallet.nearAddress);
       if (existing) {
         st.activeWalletId = existing.id;
         showToast(t('已切换至该助记词对应钱包', 'Switched to existing wallet'));
@@ -989,6 +1144,8 @@
         showToast(t('全链钱包导入成功', 'Multi-chain wallet imported'));
       }
       st.saveWallets();
+      _isAddingAdditionalWallet = false;
+      st.activeTab = 'wallet';
       renderAll();
       refreshAllBalancesAsync(true);
     } catch (e) {
@@ -996,8 +1153,18 @@
     }
   }
 
+  function startAdditionalPqWalletCreate() {
+    closeAllSheets();
+    _isAddingAdditionalWallet = true;
+    ['wallet', 'swap', 'earn', 'hub'].forEach((v) => $(`view-${v}`)?.classList.add('hidden'));
+    $('bottom-nav')?.classList.add('hidden');
+    $('view-onboarding')?.classList.remove('hidden');
+    openCreatePqWalletFlow();
+  }
+
   function startAdditionalWalletCreate() {
     closeAllSheets();
+    _isAddingAdditionalWallet = true;
     ['wallet', 'swap', 'earn', 'hub'].forEach((v) => $(`view-${v}`)?.classList.add('hidden'));
     $('bottom-nav')?.classList.add('hidden');
     $('view-onboarding')?.classList.remove('hidden');
@@ -1006,6 +1173,7 @@
 
   function startAdditionalWalletImport() {
     closeAllSheets();
+    _isAddingAdditionalWallet = true;
     ['wallet', 'swap', 'earn', 'hub'].forEach((v) => $(`view-${v}`)?.classList.add('hidden'));
     $('bottom-nav')?.classList.add('hidden');
     $('view-onboarding')?.classList.remove('hidden');
@@ -1027,12 +1195,14 @@
     }
     listEl.innerHTML = st.wallets.map((w) => {
       const isActive = w.id === st.activeWalletId;
-      const nearId = w.nearNamedAccount || shortenAddr(w.nearAddress, 8, 6);
+      const isPq = w.accountType === 'post_quantum';
+      const nearId = w.nearNamedAccount || shortenAddr(w.nearAddress || w.nearUniversalAddress, 8, 6);
       return `
         <div class="ios-glass-card flex items-center justify-between gap-2" style="padding:12px;border-color:${isActive ? 'rgba(0,236,151,0.45)' : 'var(--border-glass)'};">
           <div class="min-w-0 flex-1" style="cursor:pointer;" onclick="switchActiveWallet('${escapeHtml(w.id)}')">
             <div class="flex items-center gap-2">
               <span style="font-weight:700;color:#fff;">${escapeHtml(w.name)}</span>
+              ${isPq ? `<span class="badge badge-cyan">PQ · ML-DSA-65</span>` : ''}
               ${isActive ? `<span class="ca-badge">${t('当前', 'Active')}</span>` : ''}
             </div>
             <div class="mono text-emerald" style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(nearId)}</div>
@@ -1086,17 +1256,27 @@
     await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
     st.saveWallets();
 
-    const rows = [
-      { label: t('助记词 (12/24词)', 'Recovery Phrase'), val: wallet.mnemonic },
-      { label: t('NEAR 主账户', 'NEAR Master Account'), val: wallet.nearNamedAccount || wallet.nearAddress },
-      { label: t('NEAR 主私钥', 'NEAR Master Private Key'), val: wallet.nearPrivateKey },
-      { label: t('Pearl (PRL) 地址', 'Pearl (PRL) Address'), val: wallet.address },
-      { label: t('Pearl (PRL) 私钥', 'Pearl (PRL) Private Key'), val: wallet.privateKeyHex }
-    ];
+    const isPq = wallet.accountType === 'post_quantum';
+    const rows = isPq
+      ? [
+          { label: t('助记词 (24词)', 'Recovery Phrase (24 Words)'), val: wallet.mnemonic || t('由原始私钥导入', 'Imported via Secret Key') },
+          { label: t('NEAR 后量子账户', 'NEAR PQ Account'), val: wallet.nearNamedAccount || wallet.nearUniversalAddress || wallet.nearAddress },
+          { label: t('ML-DSA-65 公钥摘要', 'ML-DSA-65 Key Handle'), val: wallet.nearMlDsa65PublicKeyHandle },
+          { label: t('ML-DSA-65 私钥', 'ML-DSA-65 Secret Key'), val: wallet.nearMlDsa65PrivateKey }
+        ]
+      : [
+          { label: t('助记词 (12/24词)', 'Recovery Phrase'), val: wallet.mnemonic },
+          { label: t('NEAR 主账户', 'NEAR Master Account'), val: wallet.nearNamedAccount || wallet.nearAddress },
+          { label: t('NEAR 主私钥', 'NEAR Master Private Key'), val: wallet.nearPrivateKey },
+          { label: t('Pearl (PRL) 地址', 'Pearl (PRL) Address'), val: wallet.address },
+          { label: t('Pearl (PRL) 私钥', 'Pearl (PRL) Private Key'), val: wallet.privateKeyHex }
+        ];
 
     const container = $('backup-keys-content');
     if (container) {
-      const hint = `<div style="font-size:11.5px;color:var(--text-secondary);padding:6px 2px;">${escapeHtml(t('EVM、Solana、Bitcoin、Pearl 均由当前 NEAR 主账户通过 v1.signer MPC 统一控制，无额外链本地私钥。', 'EVM, Solana, Bitcoin & Pearl accounts are all controlled by this NEAR Master Account via v1.signer MPC.'))}</div>`;
+      const hint = isPq
+        ? `<div style="font-size:11.5px;color:var(--text-secondary);padding:6px 2px;">${escapeHtml(t('此账户为独立 ML-DSA-65 后量子金库，仅用于 NEAR 链上资产。请妥善离线保管 24 词或后量子私钥。', 'Independent ML-DSA-65 post-quantum vault for NEAR assets. Back up the 24-word phrase or secret key offline.'))}</div>`
+        : `<div style="font-size:11.5px;color:var(--text-secondary);padding:6px 2px;">${escapeHtml(t('EVM、Solana、Bitcoin、Pearl 均由当前 NEAR 主账户通过 v1.signer MPC 统一控制，无额外链本地私钥。', 'EVM, Solana, Bitcoin & Pearl accounts are all controlled by this NEAR Master Account via v1.signer MPC.'))}</div>`;
       container.innerHTML = hint + rows.map((r) => `
         <div class="meta-list">
           <div class="meta-row">
@@ -1740,6 +1920,9 @@
         visibleEntries = [];
       }
 
+      if (wallet.accountType === 'post_quantum') {
+        visibleEntries = visibleEntries.filter((e) => e.blockchain === 'near');
+      }
       if (visibleEntries.length === 0) continue;
 
       g.entries = visibleEntries;
@@ -2673,18 +2856,29 @@
     const wallet = st.getActiveWallet();
     if (!wallet) return;
 
-    const nearId = wallet.nearNamedAccount || wallet.nearAddress || '';
-    const displayId = wallet.nearNamedAccount ? wallet.nearNamedAccount : shortenAddr(wallet.nearAddress, 6, 4);
+    const isPq = wallet.accountType === 'post_quantum';
+    const nearId = wallet.nearNamedAccount || wallet.nearUniversalAddress || wallet.nearAddress || '';
+    const displayId = wallet.nearNamedAccount ? wallet.nearNamedAccount : shortenAddr(nearId, 6, 4);
 
     const headerLbl = $('header-account-label');
     if (headerLbl) headerLbl.textContent = displayId;
 
+    const caBadge = document.querySelector('#header-account-pill .ca-badge');
+    if (caBadge) {
+      caBadge.textContent = isPq ? 'PQ · ML-DSA-65' : 'NEAR CA';
+    }
+
     const heroNearId = $('hero-near-id');
-    if (heroNearId) heroNearId.textContent = wallet.nearNamedAccount || shortenAddr(wallet.nearAddress, 10, 8);
+    if (heroNearId) heroNearId.textContent = wallet.nearNamedAccount || shortenAddr(nearId, 10, 8);
 
     const regBtn = $('btn-hero-register-near');
     if (regBtn) {
-      regBtn.classList.toggle('hidden', Boolean(wallet.nearNamedAccount));
+      regBtn.classList.toggle('hidden', isPq || Boolean(wallet.nearNamedAccount));
+    }
+
+    const mpcBtn = $('header-mpc-btn');
+    if (mpcBtn) {
+      mpcBtn.classList.toggle('hidden', isPq);
     }
 
     const wcDot = $('header-wc-dot');
@@ -3233,15 +3427,18 @@
       st.recomputeWalletMpcAddresses(wallet);
     }
 
-    const options = [
-      { key: 'near', label: 'NEAR (.near / NEP-141)', addr: wallet.nearNamedAccount || wallet.nearAddress },
-      { key: 'evm', label: 'EVM (ETH/Base/ARB/BSC/Robinhood · v1.signer)', addr: wallet.mpcEvmAddress || wallet.evmAddress },
-      { key: 'arc', label: 'Arc Network (USDC · v1.signer)', addr: wallet.mpcEvmAddress || wallet.evmAddress },
-      { key: 'sol', label: 'Solana (SOL/SPL · v1.signer)', addr: wallet.solAddress },
-      { key: 'btc', label: 'Bitcoin (BTC · v1.signer)', addr: wallet.btcAddress },
-      { key: 'prl', label: 'Pearl (PRL 主网)', addr: wallet.address },
-      { key: 'qtc', label: t('QTC (Quantus 跨链收款)', 'QTC (Quantus Deposit)'), addr: wallet.qtcDepositAddress || '' }
-    ];
+    const isPq = wallet.accountType === 'post_quantum';
+    const options = isPq
+      ? [{ key: 'near', label: 'NEAR (ML-DSA-65)', addr: wallet.nearNamedAccount || wallet.nearUniversalAddress || wallet.nearAddress }]
+      : [
+          { key: 'near', label: 'NEAR (.near / NEP-141)', addr: wallet.nearNamedAccount || wallet.nearAddress },
+          { key: 'evm', label: 'EVM (ETH/Base/ARB/BSC/Robinhood · v1.signer)', addr: wallet.mpcEvmAddress || wallet.evmAddress },
+          { key: 'arc', label: 'Arc Network (USDC · v1.signer)', addr: wallet.mpcEvmAddress || wallet.evmAddress },
+          { key: 'sol', label: 'Solana (SOL/SPL · v1.signer)', addr: wallet.solAddress },
+          { key: 'btc', label: 'Bitcoin (BTC · v1.signer)', addr: wallet.btcAddress },
+          { key: 'prl', label: 'Pearl (PRL 主网)', addr: wallet.address },
+          { key: 'qtc', label: t('QTC (Quantus 跨链收款)', 'QTC (Quantus Deposit)'), addr: wallet.qtcDepositAddress || '' }
+        ];
 
     const pillsEl = $('receive-network-pills');
     if (pillsEl) {
@@ -3380,6 +3577,36 @@
     const tokens = getTokens();
     const wallet = st.getActiveWallet();
     if (!wallet) return;
+
+    const isPq = wallet.accountType === 'post_quantum';
+    const execBtn = $('btn-execute-swap');
+    const amtInputEl = $('swap-amount-in');
+    const fromPickerBtn = $('swap-from-token-btn');
+    const toPickerBtn = $('swap-to-token-btn');
+    const recInputEl = $('swap-recipient-input');
+    if (isPq) {
+      if (execBtn) execBtn.disabled = true;
+      if (amtInputEl) {
+        amtInputEl.value = '';
+        amtInputEl.disabled = true;
+      }
+      if (fromPickerBtn) fromPickerBtn.disabled = true;
+      if (toPickerBtn) toPickerBtn.disabled = true;
+      if (recInputEl) {
+        recInputEl.value = '';
+        recInputEl.disabled = true;
+      }
+      if ($('swap-auto-route-badge')) {
+        $('swap-auto-route-badge').textContent = t('PQ · 暂不支持闪兑', 'PQ · Swap Unavailable');
+      }
+      setSwapError(t('后量子账户暂不支持 NEAR Intents 跨链闪兑，请切换至标准账户使用闪兑与跨链桥', 'Post-quantum accounts do not support NEAR Intents cross-chain swaps yet. Switch to a standard account.'));
+      return;
+    }
+    if (execBtn) execBtn.disabled = false;
+    if (amtInputEl) amtInputEl.disabled = false;
+    if (fromPickerBtn) fromPickerBtn.disabled = false;
+    if (toPickerBtn) toPickerBtn.disabled = false;
+    setSwapError('');
 
     const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
     const toToken = resolveSwapToken(st.swap.toAssetId, 1);
@@ -3738,6 +3965,13 @@
     const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
     const toToken = resolveSwapToken(st.swap.toAssetId, 1);
     if (!fromToken || !toToken || fromToken.assetId === toToken.assetId) return;
+
+    if (wallet.accountType === 'post_quantum' && (fromToken.blockchain !== 'near' || toToken.blockchain !== 'near')) {
+      const pqMsg = t('后量子账户暂不支持 NEAR Intents 跨链闪兑，请切换至标准账户', 'Post-quantum accounts do not support NEAR Intents cross-chain swaps yet. Switch to a standard account.');
+      setSwapError(pqMsg);
+      showToast(pqMsg);
+      return;
+    }
 
     const avail = getSwapTokenAvailableBalance(fromToken);
     const isNative = !fromToken.contractAddress ||
@@ -5845,6 +6079,201 @@
 
   // ==================== Hub: .near Domain, MPC v1.signer, Contacts, WC ====================
 
+  // ==================== NEAR Access Keys & Key Rotation Sheet ====================
+
+  let _rotateKeyMode = 'standard';
+
+  function setRotateKeyMode(mode) {
+    _rotateKeyMode = mode === 'post_quantum' ? 'post_quantum' : 'standard';
+    const isPq = _rotateKeyMode === 'post_quantum';
+    if ($('btn-rotate-mode-std')) $('btn-rotate-mode-std').className = isPq ? 'btn-secondary flex-1' : 'btn-primary flex-1';
+    if ($('btn-rotate-mode-pq')) $('btn-rotate-mode-pq').className = isPq ? 'btn-primary flex-1' : 'btn-secondary flex-1';
+  }
+
+  function generateRotateMnemonicInSheet() {
+    const crypto = getCrypto();
+    if (!crypto || typeof crypto.generateMnemonic !== 'function') return;
+    const len = _rotateKeyMode === 'post_quantum' ? 24 : 12;
+    const words = crypto.generateMnemonic(len);
+    const phrase = Array.isArray(words) ? words.join(' ') : String(words || '').trim();
+    if ($('near-keys-rotate-mnemonic')) {
+      $('near-keys-rotate-mnemonic').value = phrase;
+    }
+  }
+
+  async function openNearAccessKeysSheet() {
+    const st = getState();
+    const wallet = st.getActiveWallet();
+    if (!wallet) return;
+    setRotateKeyMode(wallet.accountType === 'post_quantum' ? 'post_quantum' : 'standard');
+    if ($('near-keys-rotate-mnemonic')) $('near-keys-rotate-mnemonic').value = '';
+    openSheet('sheet-near-keys');
+    await refreshNearAccessKeysSheet();
+  }
+
+  async function refreshNearAccessKeysSheet() {
+    const st = getState();
+    const contracts = getContracts();
+    const wallet = st.getActiveWallet();
+    if (!wallet || !contracts) return;
+    const creds = contracts.getWalletNearSignerCredentials(wallet);
+    const accountId = creds.accountId;
+    if ($('near-keys-account-id')) {
+      $('near-keys-account-id').textContent = shortenAddr(accountId, 12, 8) || '--';
+    }
+    const listEl = $('near-keys-list');
+    if (listEl) {
+      listEl.innerHTML = `<div class="text-muted" style="font-size:12px;padding:8px;">${t('正在查询链上密钥...', 'Loading on-chain keys...')}</div>`;
+    }
+
+    try {
+      const res = await contracts.fetchNearAccessKeysAsync(accountId);
+      const activateCard = $('near-keys-activate-card');
+      if (activateCard) {
+        const showActivate = Boolean(!res.exists && wallet.accountType === 'post_quantum' && wallet.nearUniversalAddress);
+        activateCard.classList.toggle('hidden', !showActivate);
+        if (showActivate && $('near-keys-funding-select')) {
+          const funders = st.wallets.filter((w) => w.id !== wallet.id && w.accountType !== 'post_quantum' && (w.nearNamedAccount || w.nearAddress));
+          $('near-keys-funding-select').innerHTML = funders.length
+            ? funders.map((f) => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.name)} (${escapeHtml(shortenAddr(f.nearNamedAccount || f.nearAddress, 6, 4))})</option>`).join('')
+            : `<option value="">${t('暂无可用的普通 NEAR 出资账户', 'No standard NEAR funding account')}</option>`;
+        }
+      }
+
+      if (!listEl) return;
+      if (!res.exists || res.keys.length === 0) {
+        listEl.innerHTML = `<div class="text-muted" style="font-size:12px;padding:8px;">${t('账户尚未在链上激活（首次收款或激活后可见密钥）', 'Account not yet active on-chain')}</div>`;
+        return;
+      }
+
+      const fullCount = res.keys.filter((k) => k.access_key && k.access_key.permission === 'FullAccess').length;
+      listEl.innerHTML = res.keys.map((k) => {
+        const pk = String(k.public_key || '');
+        const isFull = Boolean(k.access_key && k.access_key.permission === 'FullAccess');
+        const isCurrent = pk === creds.publicKeyStr || (creds.publicKeyHandleStr && pk === creds.publicKeyHandleStr);
+        const isPqKey = pk.startsWith('ml-dsa-65');
+        const canDelete = !isFull || fullCount > 1;
+        return `
+          <div class="ios-glass-card flex items-center justify-between gap-2" style="padding:10px 12px;">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1" style="flex-wrap:wrap;">
+                <span class="badge ${isFull ? 'badge-emerald' : 'badge-cyan'}">${isFull ? 'FullAccess' : 'dApp Key'}</span>
+                ${isPqKey ? `<span class="badge badge-cyan">ML-DSA-65</span>` : ''}
+                ${isCurrent ? `<span class="ca-badge">${t('当前使用', 'In Use')}</span>` : ''}
+              </div>
+              <div class="mono" style="font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;margin-top:4px;">${escapeHtml(shortenAddr(pk, 14, 8))}</div>
+            </div>
+            ${canDelete
+              ? `<button type="button" class="btn-danger" onclick="deleteNearAccessKeyFromSheet('${escapeHtml(pk)}')">${t('删除', 'Delete')}</button>`
+              : ''}
+          </div>
+        `;
+      }).join('');
+    } catch (e) {
+      if (listEl) {
+        listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:8px;">${escapeHtml(e && e.message ? e.message : t('查询失败', 'Query failed'))}</div>`;
+      }
+    }
+  }
+
+  async function deleteNearAccessKeyFromSheet(targetPublicKeyStr) {
+    const st = getState();
+    const contracts = getContracts();
+    const wallet = st.getActiveWallet();
+    if (!wallet || !contracts) return;
+    if (!(await verifySecurityAuthAsync(wallet, t('删除 NEAR 访问密钥', 'Delete NEAR Access Key')))) return;
+    try {
+      showToast(t('正在广播 DeleteKey 交易...', 'Broadcasting DeleteKey...'));
+      const res = await contracts.deleteNearAccessKeyAsync({ wallet, targetPublicKeyStr });
+      showToast(`✅ ${t('密钥已删除', 'Access Key deleted')}: ${shortenAddr(res.txHash, 8, 6)}`);
+      await refreshNearAccessKeysSheet();
+    } catch (e) {
+      showToast(e && e.message ? e.message : t('删除失败', 'Delete failed'));
+    }
+  }
+
+  async function confirmRotateNearAccountKey() {
+    const st = getState();
+    const crypto = getCrypto();
+    const contracts = getContracts();
+    const wallet = st.getActiveWallet();
+    if (!wallet || !contracts || !crypto) return;
+    const rawPhrase = ($('near-keys-rotate-mnemonic')?.value || '').trim();
+    const check = crypto.validateMnemonic(rawPhrase);
+    if (!check.valid) {
+      showToast(check.error || t('请先生成或输入有效助记词', 'Generate or enter a valid mnemonic'));
+      return;
+    }
+    if (!(await verifySecurityAuthAsync(wallet, t('更换 NEAR 控制助记词', 'Rotate NEAR Control Mnemonic')))) return;
+
+    const upgradeToPq = _rotateKeyMode === 'post_quantum';
+    try {
+      showToast(t('正在执行 AddKey + DeleteKey...', 'Rotating key on-chain...'));
+      const res = await contracts.rotateNearAccountKeyAsync({
+        wallet,
+        newMnemonic: check.words.join(' '),
+        upgradeToMlDsa65: upgradeToPq,
+        deleteOldKey: true
+      });
+      wallet.mnemonic = res.newDerived.mnemonic;
+      if (upgradeToPq) {
+        wallet.accountType = 'post_quantum';
+        wallet.nearMlDsa65PublicKey = res.newDerived.publicKey;
+        wallet.nearMlDsa65PublicKeyHandle = res.newDerived.publicKeyHandle;
+        wallet.nearMlDsa65PrivateKey = res.newDerived.secretKey;
+        wallet.nearPublicKey = '';
+        wallet.nearPrivateKey = '';
+        wallet.nearPrivateSeedHex = '';
+      } else {
+        wallet.accountType = 'standard';
+        wallet.nearPublicKey = res.newDerived.nearPublicKey;
+        wallet.nearPrivateKey = res.newDerived.nearPrivateKey;
+        wallet.nearPrivateSeedHex = res.newDerived.nearPrivateSeedHex;
+        wallet.nearMlDsa65PublicKey = '';
+        wallet.nearMlDsa65PublicKeyHandle = '';
+        wallet.nearMlDsa65PrivateKey = '';
+      }
+      st.saveWallets();
+      showToast(`✅ ${t('助记词与链上密钥已更换', 'Mnemonic & on-chain key rotated')}: ${shortenAddr(res.deleteTxHash || res.addTxHash, 8, 6)}`);
+      if ($('near-keys-rotate-mnemonic')) $('near-keys-rotate-mnemonic').value = '';
+      renderAll();
+      await refreshNearAccessKeysSheet();
+    } catch (e) {
+      showToast(e && e.message ? e.message : t('更换密钥失败', 'Key rotation failed'));
+    }
+  }
+
+  async function activateUniversalAccountFromSheet() {
+    const st = getState();
+    const crypto = getCrypto();
+    const contracts = getContracts();
+    const pqWallet = st.getActiveWallet();
+    if (!pqWallet || !contracts || !crypto) return;
+    const funderId = $('near-keys-funding-select')?.value || '';
+    const fundingWallet = st.wallets.find((w) => w.id === funderId);
+    if (!fundingWallet) {
+      showToast(t('请选择一个有效的普通 NEAR 出资账户', 'Select a valid standard NEAR funding wallet'));
+      return;
+    }
+    if (!(await verifySecurityAuthAsync(fundingWallet, t('激活 0u 后量子地址 (0.05 NEAR)', 'Activate 0u PQ Address (0.05 NEAR)')))) return;
+    try {
+      const built = crypto.buildUniversalStateInitFromMlDsa65PublicKey(pqWallet.nearMlDsa65PublicKey);
+      const rawStateInitHex = crypto.bytesToHex(built.rawStateInitBytes);
+      showToast(t('正在链上激活 0u 地址...', 'Activating 0u address on-chain...'));
+      const res = await contracts.activateUniversalAccountAsync({
+        fundingWallet,
+        targetUniversalAccountId: pqWallet.nearUniversalAddress,
+        rawStateInitHex,
+        depositNear: '0.05'
+      });
+      showToast(`✅ ${t('0u 后量子账户已激活', '0u PQ account activated')}: ${shortenAddr(res.txHash, 8, 6)}`);
+      await refreshNearAccessKeysSheet();
+      refreshAllBalancesAsync(true);
+    } catch (e) {
+      showToast(e && e.message ? e.message : t('激活失败', 'Activation failed'));
+    }
+  }
+
   function renderHubView() {
     const st = getState();
     const wallet = st.getActiveWallet();
@@ -5862,14 +6291,23 @@
 
     const addrList = $('hub-addresses-list');
     if (addrList) {
-      const items = [
-        { k: t('NEAR 主账户', 'NEAR Master Account'), v: wallet.nearNamedAccount || wallet.nearAddress },
-        { k: 'EVM (v1.signer · ethereum-1)', v: wallet.mpcEvmAddress || wallet.evmAddress },
-        { k: 'Arc Network (USDC · v1.signer)', v: wallet.mpcEvmAddress || wallet.evmAddress },
-        { k: 'Solana (v1.signer · solana-1)', v: wallet.solAddress },
-        { k: 'Bitcoin (v1.signer · bitcoin-1)', v: wallet.btcAddress },
-        { k: 'Pearl (PRL 主网 · BIP-86)', v: wallet.address }
-      ];
+      const isPq = wallet.accountType === 'post_quantum';
+      $('hub-mpc-card')?.classList.toggle('hidden', isPq);
+      $('hub-near-domain-card')?.classList.toggle('hidden', isPq);
+      const items = isPq
+        ? [
+            { k: t('NEAR 后量子账户 (ML-DSA-65)', 'NEAR PQ Account (ML-DSA-65)'), v: wallet.nearNamedAccount || wallet.nearUniversalAddress || wallet.nearAddress },
+            { k: t('0u 通用后量子地址', '0u Universal Address'), v: wallet.nearUniversalAddress || '--' },
+            { k: t('ML-DSA-65 公钥摘要', 'ML-DSA-65 Key Handle'), v: wallet.nearMlDsa65PublicKeyHandle || '--' }
+          ]
+        : [
+            { k: t('NEAR 主账户', 'NEAR Master Account'), v: wallet.nearNamedAccount || wallet.nearAddress },
+            { k: 'EVM (v1.signer · ethereum-1)', v: wallet.mpcEvmAddress || wallet.evmAddress },
+            { k: 'Arc Network (USDC · v1.signer)', v: wallet.mpcEvmAddress || wallet.evmAddress },
+            { k: 'Solana (v1.signer · solana-1)', v: wallet.solAddress },
+            { k: 'Bitcoin (v1.signer · bitcoin-1)', v: wallet.btcAddress },
+            { k: 'Pearl (PRL 主网 · BIP-86)', v: wallet.address }
+          ];
       addrList.innerHTML = items.map((x) => `
         <div class="meta-row">
           <span class="meta-key">${escapeHtml(x.k)}</span>
@@ -5948,6 +6386,8 @@
         wallet.evmAddress = wallet.mpcEvmAddress;
       }
       st.saveWallets();
+      _isAddingAdditionalWallet = false;
+      st.activeTab = 'wallet';
       renderAll();
       showToast(`✅ ${res.accountId} ${t('注册成功，MPC 全链地址已切换', 'registered & MPC addresses updated')}`);
       refreshAllBalancesAsync(true);
@@ -5995,6 +6435,8 @@
         wallet.evmAddress = wallet.mpcEvmAddress;
       }
       st.saveWallets();
+      _isAddingAdditionalWallet = false;
+      st.activeTab = 'wallet';
       renderAll();
       showToast(`✅ ${t('已绑定主账户，MPC 全链地址已同步', 'Bound master account & MPC addresses synced')}: ${domain}`);
       refreshAllBalancesAsync(true);
@@ -6772,15 +7214,27 @@
     openContactsSheet,
     openWalletSwitcherSheet,
     openBackupKeysSheet,
-    openPinSheet
+    openPinSheet,
+    openCreatePqWalletFlow,
+    setOnboardImportMode,
+    startAdditionalPqWalletCreate,
+    openNearAccessKeysSheet,
+    refreshNearAccessKeysSheet,
+    deleteNearAccessKeyFromSheet,
+    setRotateKeyMode,
+    generateRotateMnemonicInSheet,
+    confirmRotateNearAccountKey,
+    activateUniversalAccountFromSheet
   };
 
   const globalHandlers = {
     switchTab,
     toggleLanguage,
     openCreateWalletFlow,
+    openCreatePqWalletFlow,
     confirmCreateWallet,
     openImportWalletFlow,
+    setOnboardImportMode,
     validateOnboardImportLive,
     confirmImportWallet,
     cancelOnboardSubPanel,
@@ -6789,8 +7243,16 @@
     switchActiveWallet,
     deleteWalletById,
     startAdditionalWalletCreate,
+    startAdditionalPqWalletCreate,
     startAdditionalWalletImport,
     openBackupKeysSheet,
+    openNearAccessKeysSheet,
+    refreshNearAccessKeysSheet,
+    deleteNearAccessKeyFromSheet,
+    setRotateKeyMode,
+    generateRotateMnemonicInSheet,
+    confirmRotateNearAccountKey,
+    activateUniversalAccountFromSheet,
     openPinSheet,
     saveWalletPin,
     testBiometricAuthNow,

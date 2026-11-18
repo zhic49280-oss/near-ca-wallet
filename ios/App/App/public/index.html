@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#06080F" />
   <title>NEAR Chain Abstraction Wallet</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=3.3" />
+  <link rel="stylesheet" href="style.css?v=3.6" />
 </head>
 <body>
   <div class="ambient-bg" aria-hidden="true"></div>
@@ -48,12 +48,20 @@
 
           <div id="onboard-choice-panel" class="flex flex-col gap-2">
             <button type="button" class="btn-primary" onclick="openCreateWalletFlow()" data-i18n="onboard.createBtn">创建 NEAR 链抽象钱包</button>
+            <button type="button" class="btn-secondary" onclick="openCreatePqWalletFlow()" data-i18n="onboard.createPqBtn">创建后量子安全账户 (ML-DSA-65)</button>
             <button type="button" class="btn-secondary" onclick="openImportWalletFlow()" data-i18n="onboard.importBtn">导入 12 / 24 词助记词</button>
           </div>
 
           <div id="onboard-create-panel" class="hidden flex flex-col gap-3" style="text-align: left; margin-top: 10px;">
-            <div style="font-weight: 700; font-size: 14px;" data-i18n="onboard.createTitle">备份您的助记词</div>
-            <div style="font-size: 12px; color: var(--text-secondary);" data-i18n="onboard.createHint">请妥善离线保存以下 12 个单词，它是恢复所有链上资产的唯一凭证</div>
+            <div class="flex items-center justify-between gap-2">
+              <div id="onboard-create-title" style="font-weight: 700; font-size: 14px;" data-i18n="onboard.createTitle">备份您的助记词</div>
+              <span id="onboard-create-pq-badge" class="ca-badge hidden" data-i18n="onboard.pqBadge">后量子 ML-DSA-65</span>
+            </div>
+            <div id="onboard-create-hint" style="font-size: 12px; color: var(--text-secondary);" data-i18n="onboard.createHint">请妥善离线保存以下 12 个单词，它是恢复所有链上资产的唯一凭证</div>
+            <div id="onboard-pq-addr-preview" class="hidden meta-row" style="font-size: 11px;">
+              <span class="meta-key" data-i18n="onboard.pqAddrLabel">后量子地址</span>
+              <span id="onboard-pq-addr-val" class="mono" style="word-break: break-all;">--</span>
+            </div>
             <div id="onboard-seed-grid" class="seed-grid"></div>
             <button type="button" class="btn-ghost-sm" style="align-self: flex-start;" onclick="copyPendingMnemonic()" data-i18n="onboard.copySeedBtn">复制助记词</button>
             <input id="onboard-create-name" type="text" class="input-field" data-i18n-placeholder="onboard.walletNamePlaceholder" placeholder="钱包名称（可选）" />
@@ -66,8 +74,13 @@
 
           <div id="onboard-import-panel" class="hidden flex flex-col gap-3" style="text-align: left; margin-top: 10px;">
             <div style="font-weight: 700; font-size: 14px;" data-i18n="onboard.importTitle">导入恢复助记词</div>
+            <div class="flex gap-2">
+              <button type="button" id="btn-import-mode-std" class="btn-primary flex-1" style="padding: 8px 10px; font-size: 12px;" onclick="setOnboardImportMode('standard')" data-i18n="onboard.importModeStd">标准全链账户</button>
+              <button type="button" id="btn-import-mode-pq" class="btn-secondary flex-1" style="padding: 8px 10px; font-size: 12px;" onclick="setOnboardImportMode('post_quantum')" data-i18n="onboard.importModePq">后量子账户</button>
+            </div>
             <textarea id="onboard-import-phrase" class="input-field mono" data-i18n-placeholder="onboard.importPlaceholder" placeholder="输入 12 或 24 个英文助记词，使用空格分隔" oninput="validateOnboardImportLive()"></textarea>
             <div id="onboard-import-status" style="font-size: 11.5px; color: var(--text-secondary);"></div>
+            <input id="onboard-import-near-id" type="text" class="input-field hidden mono" data-i18n-placeholder="onboard.importNearIdPlaceholder" placeholder="已绑定的 .near 账户名（可选）" />
             <input id="onboard-import-name" type="text" class="input-field" data-i18n-placeholder="onboard.walletNamePlaceholder" placeholder="钱包名称（可选）" />
             <div class="flex gap-2">
               <button type="button" class="btn-secondary" onclick="cancelOnboardSubPanel()" data-i18n="onboard.cancelBtn">返回</button>
@@ -374,6 +387,7 @@
             <button type="button" class="btn-secondary flex-1" onclick="openWalletSwitcherSheet()" data-i18n="hub.manageWalletsBtn">切换 / 新增钱包</button>
             <button type="button" class="btn-secondary flex-1" onclick="openBackupKeysSheet()" data-i18n="hub.backupKeysBtn">导出助记词与 NEAR 主密钥</button>
           </div>
+          <button type="button" class="btn-secondary" onclick="openNearAccessKeysSheet()" data-i18n="hub.accessKeysBtn">NEAR 密钥管理与更换助记词</button>
         </div>
 
         <!-- 5. Security -->
@@ -744,6 +758,7 @@
         <button type="button" class="btn-primary flex-1" onclick="startAdditionalWalletCreate()" data-i18n="sheet.walletsCreateBtn">新建钱包</button>
         <button type="button" class="btn-secondary flex-1" onclick="startAdditionalWalletImport()" data-i18n="sheet.walletsImportBtn">导入助记词</button>
       </div>
+      <button type="button" class="btn-secondary" onclick="startAdditionalPqWalletCreate()" data-i18n="sheet.walletsCreatePqBtn">新建后量子账户 (ML-DSA-65)</button>
     </div>
   </div>
 
@@ -769,6 +784,46 @@
     <div class="sheet-body">
       <input id="pin-input" type="password" inputmode="numeric" maxlength="6" class="input-field mono" data-i18n-placeholder="sheet.pinPlaceholder" placeholder="输入 4-6 位数字密码" />
       <button type="button" class="btn-primary" onclick="saveWalletPin()" data-i18n="sheet.pinSaveBtn">保存密码</button>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: NEAR Access Keys & Key Rotation ==================== -->
+  <div id="sheet-near-keys" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.keysTitle">NEAR 密钥管理</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body" style="max-height: 76vh; overflow-y: auto;">
+      <div id="near-keys-account-bar" class="meta-row" style="font-size: 12px;">
+        <span class="meta-key" data-i18n="sheet.keysAccountLabel">当前账户</span>
+        <span id="near-keys-account-id" class="mono">--</span>
+      </div>
+      <div id="near-keys-activate-card" class="hidden ios-glass-card flex flex-col gap-2" style="padding: 12px; border-color: rgba(0,236,151,0.35);">
+        <div style="font-size: 12.5px; font-weight: 700;" data-i18n="sheet.keysActivateTitle">激活 0u 后量子地址</div>
+        <div class="flex gap-2 items-center">
+          <select id="near-keys-funding-select" class="input-field flex-1" style="padding: 8px 10px;"></select>
+          <button type="button" class="btn-primary" style="padding: 8px 14px;" onclick="activateUniversalAccountFromSheet()" data-i18n="sheet.keysActivateBtn">激活 (0.05 NEAR)</button>
+        </div>
+      </div>
+      <div class="flex items-center justify-between">
+        <span style="font-size: 12.5px; font-weight: 700;" data-i18n="sheet.keysListTitle">链上访问密钥</span>
+        <button type="button" class="btn-ghost-sm" onclick="refreshNearAccessKeysSheet()" data-i18n="common.refresh">刷新</button>
+      </div>
+      <div id="near-keys-list" class="flex flex-col gap-2"></div>
+
+      <div class="ios-glass-card flex flex-col gap-2" style="padding: 12px; margin-top: 6px;">
+        <div style="font-size: 13px; font-weight: 700;" data-i18n="sheet.keysRotateTitle">更换助记词 / 升级密钥</div>
+        <div class="flex gap-2">
+          <button type="button" id="btn-rotate-mode-std" class="btn-primary flex-1" style="padding: 8px 10px; font-size: 12px;" onclick="setRotateKeyMode('standard')" data-i18n="sheet.keysRotateStdBtn">新普通助记词 (12词)</button>
+          <button type="button" id="btn-rotate-mode-pq" class="btn-secondary flex-1" style="padding: 8px 10px; font-size: 12px;" onclick="setRotateKeyMode('post_quantum')" data-i18n="sheet.keysRotatePqBtn">后量子密钥 (24词)</button>
+        </div>
+        <textarea id="near-keys-rotate-mnemonic" class="input-field mono" style="min-height: 64px;" data-i18n-placeholder="sheet.keysRotatePlaceholder" placeholder="点击下方生成新助记词，或粘贴已有助记词"></textarea>
+        <div class="flex gap-2">
+          <button type="button" class="btn-secondary flex-1" onclick="generateRotateMnemonicInSheet()" data-i18n="sheet.keysGenSeedBtn">生成新助记词</button>
+          <button type="button" class="btn-primary flex-1" onclick="confirmRotateNearAccountKey()" data-i18n="sheet.keysRotateConfirmBtn">确认更换并删除旧密钥</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -818,12 +873,13 @@
   <script src="qrcode.min.js"></script>
   <script src="ethers.umd.min.js"></script>
   <script src="walletconnect.umd.min.js"></script>
-  <script src="src/crypto-engine.js?v=3.3"></script>
-  <script src="src/token-registry.js?v=3.3"></script>
-  <script src="src/near-intents.js?v=3.3"></script>
-  <script src="src/chain-contracts.js?v=3.3"></script>
-  <script src="src/mining-pro.js?v=3.3"></script>
-  <script src="src/state.js?v=3.3"></script>
-  <script src="src/ui-controller.js?v=3.3"></script>
+  <script src="ml-dsa-65.umd.min.js"></script>
+  <script src="src/crypto-engine.js?v=3.6"></script>
+  <script src="src/token-registry.js?v=3.6"></script>
+  <script src="src/near-intents.js?v=3.6"></script>
+  <script src="src/chain-contracts.js?v=3.6"></script>
+  <script src="src/mining-pro.js?v=3.6"></script>
+  <script src="src/state.js?v=3.6"></script>
+  <script src="src/ui-controller.js?v=3.6"></script>
 </body>
 </html>

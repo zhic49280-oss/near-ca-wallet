@@ -1737,6 +1737,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
     'qrcode.min.js',
     'ethers.umd.min.js',
     'walletconnect.umd.min.js',
+    'ml-dsa-65.umd.min.js',
     'src/crypto-engine.js',
     'src/token-registry.js',
     'src/near-intents.js',
@@ -1767,7 +1768,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
   const listMatch = syncScript.match(/const FILES_TO_SYNC = \[([\s\S]*?)\];/);
   assert.ok(listMatch, 'scripts/sync-assets.js must define FILES_TO_SYNC');
   const filesToSync = [...listMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  assert.equal(filesToSync.length, 15);
+  assert.equal(filesToSync.length, 16);
 
   const targets = [
     path.join(ROOT_DIR, 'dist'),
@@ -4407,5 +4408,119 @@ test('v3.3: Zero-GFW-block distinct pool icons, server Cache-Control no-store, s
     state.staking.updatedAt = prevUpdatedAt;
     state.liveTokens = prevLiveTokens;
     state.setLanguage(prevLang);
+  }
+});
+
+
+test('v3.4 Post-Quantum: ML-DSA-65 24-word derivation, 0u Universal Account ID, Borsh AddKey/DeleteKey & tx signing', async () => {
+  const words24 = cryptoEngine.generateMnemonic(24);
+  assert.equal(words24.length, 24);
+  const phrase24 = words24.join(' ');
+  const pq = await cryptoEngine.deriveNearMlDsa65FromMnemonicAsync(phrase24, 0);
+
+  assert.ok(pq.publicKey.startsWith('ml-dsa-65:'), 'publicKey must start with ml-dsa-65:');
+  assert.ok(pq.secretKey.startsWith('ml-dsa-65:'), 'secretKey must start with ml-dsa-65:');
+  assert.ok(pq.publicKeyHandle.startsWith('ml-dsa-65-hash:'), 'publicKeyHandle must start with ml-dsa-65-hash:');
+  assert.equal(cryptoEngine.decodeNearMlDsa65PublicKey(pq.publicKey).length, 1952);
+  assert.ok(cryptoEngine.isNearUniversalAccount(pq.universalAccountId), 'universalAccountId must be 54-char 0u Crockford base32');
+  assert.equal(cryptoEngine.validateChainAddress('near', pq.universalAccountId).valid, true);
+  assert.equal(cryptoEngine.detectAddressNetwork(pq.universalAccountId), 'near');
+
+  // Sign & verify 32-byte hash round-trip
+  const msgHash = cryptoEngine.sha256Bytes('near-post-quantum-tx-test');
+  const sig = cryptoEngine.signNearHashMlDsa65(msgHash, pq.secretKey);
+  assert.equal(sig.length, 3309);
+  assert.equal(cryptoEngine.verifyNearHashMlDsa65(msgHash, sig, pq.publicKey), true);
+
+  // Import from raw secret key matches derived keys & 0u address
+  const reimported = cryptoEngine.importNearMlDsa65FromSecretKey(pq.secretKey);
+  assert.equal(reimported.publicKey, pq.publicKey);
+  assert.equal(reimported.universalAccountId, pq.universalAccountId);
+
+  // State isolation for post_quantum wallet + self-healing
+  const pqWallet = state.normalizeWalletRecord({
+    id: 'test_pq_1',
+    name: 'Test PQ Vault',
+    accountType: 'post_quantum',
+    mnemonic: phrase24,
+    nearUniversalAddress: pq.universalAccountId,
+    nearBalance: 2
+  });
+  assert.equal(state.isPostQuantumWallet(pqWallet), true);
+  assert.equal(pqWallet.evmAddress, '');
+  assert.equal(pqWallet.solAddress, '');
+  assert.equal(pqWallet.btcAddress, '');
+  assert.equal(pqWallet.address, '');
+  await chainContracts.ensureWalletSigningKeysAsync(pqWallet);
+  assert.equal(pqWallet.nearMlDsa65PublicKey, pq.publicKey);
+  assert.equal(pqWallet.nearMlDsa65PrivateKey, pq.secretKey);
+
+  // Borsh AddKey / DeleteKey encoding
+  const addBytes = chainContracts.buildAddKeyActionBytes({ newPublicKeyStr: pq.publicKey });
+  assert.equal(addBytes[0], 5); // Action::AddKey
+  assert.equal(addBytes[1], 2); // KeyType::MLDSA65
+  assert.equal(addBytes.length, 1 + 1 + 1952 + 8 + 1);
+
+  const delBytes = chainContracts.buildDeleteKeyActionBytes({ targetPublicKeyStr: pq.publicKey });
+  assert.equal(delBytes[0], 6); // Action::DeleteKey
+  assert.equal(delBytes[1], 2);
+  assert.equal(delBytes.length, 1 + 1 + 1952);
+
+  // Mocked RPC: ML-DSA-65 NEAR Transfer signing & DeleteKey last-FullAccess-key guard
+  const origFetch = globalThis.fetch;
+  let capturedSignedB64 = '';
+  try {
+    globalThis.fetch = async (_url, opts) => {
+      const body = JSON.parse(opts.body);
+      if (body.method === 'query' && body.params.request_type === 'view_access_key') {
+        return new Response(JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          result: {
+            nonce: 10,
+            permission: 'FullAccess',
+            block_hash: cryptoEngine.base58Encode(new Uint8Array(32).fill(7))
+          }
+        }), { status: 200 });
+      }
+      if (body.method === 'query' && body.params.request_type === 'view_access_key_list') {
+        return new Response(JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          result: {
+            keys: [{ public_key: pq.publicKeyHandle, access_key: { nonce: 10, permission: 'FullAccess' } }]
+          }
+        }), { status: 200 });
+      }
+      if (body.method === 'broadcast_tx_commit') {
+        capturedSignedB64 = body.params[0];
+        return new Response(JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          result: {
+            transaction: { hash: 'PQTxHash11111111111111111111111111111111111' },
+            status: { SuccessValue: '' }
+          }
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected RPC call: ${body.method}`);
+    };
+
+    const txRes = await chainContracts.signAndSendNearTransfer({
+      wallet: pqWallet,
+      receiverId: 'bob.near',
+      amountNear: 0.25
+    });
+    assert.equal(txRes.txHash, 'PQTxHash11111111111111111111111111111111111');
+    const signedBytes = cryptoEngine.base64ToBytes(capturedSignedB64);
+    // Last 3310 bytes must be Signature::MLDSA65 (0x02) + 3309-byte signature
+    assert.equal(signedBytes[signedBytes.length - 3310], 2);
+
+    await assert.rejects(
+      chainContracts.deleteNearAccessKeyAsync({ wallet: pqWallet, targetPublicKeyStr: pq.publicKeyHandle }),
+      /last FullAccess key|最后一把 FullAccess/
+    );
+  } finally {
+    globalThis.fetch = origFetch;
   }
 });
