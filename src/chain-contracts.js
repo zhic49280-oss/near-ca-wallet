@@ -220,6 +220,48 @@
       featured: false
     },
     {
+      id: 'burrow_near_wnear',
+      name: 'Burrow Finance NEAR',
+      protocol: 'Burrow (Rhea Lend)',
+      category: 'lending',
+      chain: 'near',
+      chainLabel: 'NEAR',
+      inSymbol: 'NEAR',
+      outSymbol: 'bNEAR',
+      decimals: 24,
+      isBurrowSupply: true,
+      isNativeWrapSupply: true,
+      apy: null,
+      rate: null,
+      tvlText: null,
+      stakersCount: null,
+      contract: 'contract.main.burrow.near',
+      tokenContract: 'wrap.near',
+      method: 'ft_transfer_call',
+      featured: false
+    },
+    {
+      id: 'burrow_near_usdt',
+      name: 'Burrow Finance USDT',
+      protocol: 'Burrow (Rhea Lend)',
+      category: 'lending',
+      chain: 'near',
+      chainLabel: 'NEAR',
+      inSymbol: 'USDT',
+      outSymbol: 'bUSDT',
+      decimals: 6,
+      isTokenStake: true,
+      isBurrowSupply: true,
+      apy: null,
+      rate: null,
+      tvlText: null,
+      stakersCount: null,
+      contract: 'contract.main.burrow.near',
+      tokenContract: 'usdt.tether-token.near',
+      method: 'ft_transfer_call',
+      featured: false
+    },
+    {
       id: 'jito_sol',
       legacyIds: ['jito'],
       name: 'Jito Liquid Staking',
@@ -418,6 +460,31 @@
       tvlText: null,
       stakersCount: null,
       contract: '0x794a61358D6845594F94dc1DB02A252b5b4814aD',
+      method: 'supply(address,uint256,address,uint16)',
+      featured: false
+    },
+    {
+      id: 'aave_eth_weth',
+      name: 'Aave V3 Ethereum ETH',
+      protocol: 'Aave V3',
+      category: 'lending',
+      chain: 'eth',
+      chainLabel: 'Ethereum',
+      inSymbol: 'ETH',
+      outSymbol: 'aEthWETH',
+      decimals: 18,
+      outDecimals: 18,
+      isTokenStake: true,
+      isAaveV3: true,
+      isNativeWrapSupply: true,
+      useNativeOrPrecompile: true,
+      tokenContract: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+      aTokenAddress: '0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8',
+      apy: null,
+      rate: null,
+      tvlText: null,
+      stakersCount: null,
+      contract: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2',
       method: 'supply(address,uint256,address,uint16)',
       featured: false
     },
@@ -3165,11 +3232,17 @@
     return hex && hex !== '0x' ? hex : null;
   }
 
+  let _llamaPoolsCache = { ts: 0, data: null };
+  let _stakingMetricsCache = { ts: 0, pools: null };
+
   /**
-   * Fetches live APY and conversion rates across all 16 staking/conversion pools from real RPCs and protocol APIs.
+   * Fetches live APY and conversion rates across all 21 staking/lending pools from real RPCs and protocol APIs.
    * Never populates fake values: keeps apy/rate as null when an upstream feed is unreachable.
    */
-  async function fetchLiveStakingMetrics() {
+  async function fetchLiveStakingMetrics(opts = {}) {
+    if (opts && opts.useCache === true && _stakingMetricsCache.pools && (Date.now() - _stakingMetricsCache.ts < 60_000)) {
+      return _stakingMetricsCache.pools;
+    }
     const setPool = (id, patch) => {
       const target = findStakingPool(id);
       if (target && patch && typeof patch === 'object') {
@@ -3197,6 +3270,8 @@
       const cUsd = usdAmt > 0 ? formatCompactNum(usdAmt) : null;
       return cUsd ? `${cTok} ${sym} ($${cUsd})` : `${cTok} ${sym}`;
     };
+
+    const useCachedLlama = Boolean(opts && opts.useCache === true && Array.isArray(_llamaPoolsCache.data) && (Date.now() - _llamaPoolsCache.ts < 60_000));
 
     const [
       narRes,
@@ -3231,7 +3306,15 @@
       aaveBaseInfoRes,
       aaveBaseSupplyRes,
       arcSteakAssetsRes,
-      khypeSupplyRes
+      khypeSupplyRes,
+      burrowWnearRes,
+      burrowUsdtRes,
+      burrowAccountsRes,
+      aaveEthUsdcInfoRes,
+      aaveEthWethInfoRes,
+      aaveArbUsdcInfoRes,
+      khypeInfoRes,
+      arcSteakInfoRes
     ] = await Promise.allSettled([
       fetchJsonWithTimeout('https://validators.narwallets.com/metrics_json', {}, 6000),
       viewNearContractCall('lst.rhealab.near', 'get_summary', {}),
@@ -3248,7 +3331,7 @@
       viewNearContractCall('v2-nearx.stader-labs.near', 'get_nearx_price', {}),
       viewNearContractCall('v2-nearx.stader-labs.near', 'get_total_staked_balance', {}),
       viewNearContractCall('v2-nearx.stader-labs.near', 'get_number_of_accounts', {}),
-      fetchJsonWithTimeout('https://yields.llama.fi/pools', {}, 7000),
+      useCachedLlama ? Promise.resolve({ data: _llamaPoolsCache.data }) : fetchJsonWithTimeout('https://yields.llama.fi/pools', {}, 7000),
       fetchJsonWithTimeout('https://extra-api.sanctum.so/v1/sol-value/current?lst=INF&lst=jupSOL&lst=mSOL&lst=JitoSOL', {}, 6000),
       fetchJsonWithTimeout('https://kobe.mainnet.jito.network/api/v1/stake_pool_stats', {}, 6000),
       fetchJsonWithTimeout(
@@ -3277,12 +3360,23 @@
       fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/base/tokens/0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB/info', {}, 6000),
       ethReadCall('base', '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', '0x18160ddd'),
       ethReadCall('arc', '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', '0x01e1d114'),
-      ethReadCall('hype', '0xfD739d4e423301CE9385c1fb8850539D657C296D', '0x18160ddd')
+      ethReadCall('hype', '0xfD739d4e423301CE9385c1fb8850539D657C296D', '0x18160ddd'),
+      viewNearContractCall('contract.main.burrow.near', 'get_asset', { token_id: 'wrap.near' }),
+      viewNearContractCall('contract.main.burrow.near', 'get_asset', { token_id: 'usdt.tether-token.near' }),
+      viewNearContractCall('contract.main.burrow.near', 'get_num_accounts', {}),
+      fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c', {}, 6000),
+      fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', {}, 6000),
+      fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/arbitrum/tokens/0x724dc807b04555b71ed48a6896b6f41593b8c637/info', {}, 6000),
+      fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/hyperevm/tokens/0xfd739d4e423301ce9385c1fb8850539d657c296d/info', {}, 6000),
+      fetchJsonWithTimeout('https://explorer.arc.io/api/v2/tokens/0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', {}, 5000)
     ]);
 
     const llamaPools = llamaRes.status === 'fulfilled' && llamaRes.value && Array.isArray(llamaRes.value.data)
       ? llamaRes.value.data
       : [];
+    if (!useCachedLlama && llamaPools.length > 0) {
+      _llamaPoolsCache = { ts: Date.now(), data: llamaPools };
+    }
     const findLlamaPool = (predicate) => {
       const matches = llamaPools.filter((p) => p && predicate(p));
       if (matches.length === 0) return null;
@@ -3609,6 +3703,10 @@
     // 13. Arc Mainnet Steakhouse Prime USDC (ERC-4626)
     const arcSteakApy = findLlamaApy((p) => String(p.chain || '').toLowerCase() === 'arc' && String(p.symbol || '').toUpperCase() === 'STEAKUSDC');
     if (arcSteakApy !== null) setPool('arc_steak_usdc', { apy: arcSteakApy });
+    if (arcSteakInfoRes.status === 'fulfilled' && arcSteakInfoRes.value) {
+      const hCount = Number(arcSteakInfoRes.value?.holders_count || arcSteakInfoRes.value?.holders);
+      if (Number.isFinite(hCount) && hCount > 0) setPool('arc_steak_usdc', { stakersCount: hCount });
+    }
     const arcUsd = findLlamaTvlUsd((p) => String(p.chain || '').toLowerCase() === 'arc' && String(p.symbol || '').toUpperCase() === 'STEAKUSDC');
     let arcTvlSet = false;
     if (arcSteakAssetsRes.status === 'fulfilled' && arcSteakAssetsRes.value) {
@@ -3664,6 +3762,10 @@
       const tvlText = formatTvlToken(ethAaveUsd, 'USDC', ethAaveUsd);
       if (tvlText) setPool('aave_eth_usdc', { tvlText });
     }
+    if (aaveEthUsdcInfoRes.status === 'fulfilled' && aaveEthUsdcInfoRes.value) {
+      const hCount = Number(aaveEthUsdcInfoRes.value?.holders_count || aaveEthUsdcInfoRes.value?.holders);
+      if (Number.isFinite(hCount) && hCount > 0) setPool('aave_eth_usdc', { stakersCount: hCount });
+    }
 
     // 14c. Aave V3 Arbitrum USDC
     const arbAaveApy = findLlamaApy((p) => p.chain === 'Arbitrum' && p.project === 'aave-v3' && p.symbol === 'USDC');
@@ -3673,6 +3775,88 @@
       const tvlText = formatTvlToken(arbAaveUsd, 'USDC', arbAaveUsd);
       if (tvlText) setPool('aave_arb_usdc', { tvlText });
     }
+    if (aaveArbUsdcInfoRes.status === 'fulfilled' && aaveArbUsdcInfoRes.value) {
+      const hCount = Number(aaveArbUsdcInfoRes.value?.data?.attributes?.holders?.count || aaveArbUsdcInfoRes.value?.holders_count);
+      if (Number.isFinite(hCount) && hCount > 0) setPool('aave_arb_usdc', { stakersCount: hCount });
+    }
+
+    // 14d. Aave V3 Ethereum ETH (WETH)
+    const ethWethApy = findLlamaApy((p) => p.chain === 'Ethereum' && p.project === 'aave-v3' && String(p.symbol || '').toUpperCase() === 'WETH');
+    if (ethWethApy !== null) setPool('aave_eth_weth', { apy: ethWethApy, rate: 1.0 });
+    const ethWethUsd = findLlamaTvlUsd((p) => p.chain === 'Ethereum' && p.project === 'aave-v3' && String(p.symbol || '').toUpperCase() === 'WETH');
+    let ethWethTvlSet = false;
+    if (aaveEthWethInfoRes.status === 'fulfilled' && aaveEthWethInfoRes.value) {
+      const hCount = Number(aaveEthWethInfoRes.value?.holders_count || aaveEthWethInfoRes.value?.holders);
+      if (Number.isFinite(hCount) && hCount > 0) setPool('aave_eth_weth', { stakersCount: hCount });
+      try {
+        const supRaw = aaveEthWethInfoRes.value?.total_supply;
+        const ethSupplied = supRaw ? Number(BigInt(String(supRaw)) / 10n ** 12n) / 1e6 : null;
+        if (Number.isFinite(ethSupplied) && ethSupplied > 0) {
+          const tvlText = formatTvlToken(ethSupplied, 'ETH', ethWethUsd);
+          if (tvlText) {
+            setPool('aave_eth_weth', { tvlText });
+            ethWethTvlSet = true;
+          }
+        }
+      } catch (_) {}
+    }
+    if (!ethWethTvlSet && ethWethUsd > 0) {
+      const tvlText = formatLlamaTvlTextOrUsd(ethWethUsd);
+      if (tvlText) setPool('aave_eth_weth', { tvlText });
+    }
+    function formatLlamaTvlTextOrUsd(usdVal) {
+      const c = formatCompactNum(usdVal);
+      return c ? `$${c}` : null;
+    }
+
+    // 14e. Burrow Finance (Rhea Lend) NEAR & USDT
+    const burrowAccountsCount = burrowAccountsRes.status === 'fulfilled' && Number(burrowAccountsRes.value) > 0
+      ? Number(burrowAccountsRes.value)
+      : null;
+    const applyBurrowAsset = (poolId, rpcRes, baseDec, sym, llamaSyms) => {
+      const isBurrowProj = (p) => String(p.chain || '').toLowerCase() === 'near' && /burrow|rhea-lend/i.test(String(p.project || ''));
+      const symMatch = (p) => llamaSyms.includes(String(p.symbol || '').toUpperCase());
+      let apy = findLlamaApy((p) => isBurrowProj(p) && symMatch(p));
+      const llamaUsd = findLlamaTvlUsd((p) => isBurrowProj(p) && symMatch(p));
+      const patch = {};
+      if (rpcRes.status === 'fulfilled' && rpcRes.value && typeof rpcRes.value === 'object') {
+        const asset = rpcRes.value;
+        patch.rate = 1.0;
+        const rpcApr = Number(asset.supply_apr) * 100;
+        if (apy === null && Number.isFinite(rpcApr) && rpcApr > 0) {
+          apy = Number(rpcApr.toFixed(2));
+        }
+        const supBal = asset.supplied && asset.supplied.balance;
+        if (supBal) {
+          try {
+            const totalDec = baseDec + Number(asset.config?.extra_decimals || 0);
+            const shift = Math.max(0, totalDec - 6);
+            const suppliedAmt = Number(BigInt(String(supBal)) / (10n ** BigInt(shift))) / 1e6;
+            if (Number.isFinite(suppliedAmt) && suppliedAmt > 0) {
+              const tvlText = formatTvlToken(suppliedAmt, sym, llamaUsd || (sym === 'USDT' ? suppliedAmt : null));
+              if (tvlText) patch.tvlText = tvlText;
+            }
+          } catch (_) {}
+        }
+      }
+      if (!patch.tvlText && llamaUsd > 0) {
+        if (sym === 'USDT') {
+          const tvlText = formatTvlToken(llamaUsd, 'USDT', llamaUsd);
+          if (tvlText) patch.tvlText = tvlText;
+        } else {
+          const c = formatCompactNum(llamaUsd);
+          if (c) patch.tvlText = `$${c}`;
+        }
+      }
+      if (apy !== null) {
+        patch.apy = apy;
+        if (!patch.rate) patch.rate = 1.0;
+      }
+      if (burrowAccountsCount) patch.stakersCount = burrowAccountsCount;
+      if (Object.keys(patch).length > 0) setPool(poolId, patch);
+    };
+    applyBurrowAsset('burrow_near_wnear', burrowWnearRes, 24, 'NEAR', ['WNEAR', 'NEAR']);
+    applyBurrowAsset('burrow_near_usdt', burrowUsdtRes, 6, 'USDT', ['USDT']);
 
     // 15. Ethena sUSDe (ETH ERC-4626)
     const susdeApy = findLlamaApy((p) => p.project === 'ethena-usde' && String(p.symbol || '').toUpperCase() === 'SUSDE');
@@ -3710,6 +3894,10 @@
     // 16. Kinetiq kHYPE (HyperEVM)
     const khypeApy = findLlamaApy((p) => p.project === 'kinetiq-khype' && String(p.symbol || '').toUpperCase() === 'KHYPE');
     if (khypeApy !== null) setPool('hyper_khype', { apy: khypeApy });
+    if (khypeInfoRes.status === 'fulfilled' && khypeInfoRes.value) {
+      const hCount = Number(khypeInfoRes.value?.data?.attributes?.holders?.count || khypeInfoRes.value?.holders_count);
+      if (Number.isFinite(hCount) && hCount > 0) setPool('hyper_khype', { stakersCount: hCount });
+    }
     if (hyperKhypeRes.status === 'fulfilled' && hyperKhypeRes.value && hyperKhypeRes.value.data?.routeSummary?.amountOut) {
       const r = Number(fromBaseUnits(String(hyperKhypeRes.value.data.routeSummary.amountOut), 18));
       if (Number.isFinite(r) && r > 0) setPool('hyper_khype', { rate: r });
@@ -3735,6 +3923,7 @@
       if (khypeTvl) setPool('hyper_khype', { tvlText: khypeTvl });
     }
 
+    _stakingMetricsCache = { ts: Date.now(), pools: STAKING_POOLS };
     return STAKING_POOLS;
   }
 
@@ -3786,27 +3975,132 @@
       ? tokenBalance
       : resolveWalletPoolTokenBalance(wallet, pool);
 
+    let effectiveIsNative = !pool.isTokenStake || Boolean(pool.useNativeOrPrecompile);
+    let effectiveTokenBal = resolvedTokenBal;
+    if (pool.isBurrowSupply && pool.isNativeWrapSupply) {
+      const wnearBal = Number(wallet.nearNep141Balances?.[pool.tokenContract]?.formatted || 0);
+      if (wnearBal >= Number(amount)) {
+        effectiveIsNative = false;
+        effectiveTokenBal = wnearBal;
+      } else {
+        effectiveIsNative = true;
+      }
+    }
+
     validateSufficientChainBalance({
       wallet,
       chain: pool.chain,
       tokenSymbol: pool.inSymbol,
       amount,
-      isNative: !pool.isTokenStake,
-      tokenBalance: pool.isTokenStake ? resolvedTokenBal : null
+      isNative: effectiveIsNative,
+      tokenBalance: effectiveIsNative ? null : effectiveTokenBal
     });
 
     await ensureWalletSigningKeysAsync(wallet);
 
-    // A. NEAR Native Staking & Rhea Token Staking/Conversion
+    // Helper: check explicit NEAR storage_balance_of === null (only when RPC succeeded, never on offline failure)
+    const ensureNearStorageIfExplicitlyNull = async (acctId, contractId, depositYoctoStr) => {
+      try {
+        const body = JSON.stringify({
+          jsonrpc: '2.0',
+          id: `${contractId}-storage_balance_of`,
+          method: 'query',
+          params: {
+            request_type: 'call_function',
+            finality: 'final',
+            account_id: contractId,
+            method_name: 'storage_balance_of',
+            args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify({ account_id: acctId })))
+          }
+        });
+        const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body };
+        let res = await fetchJsonWithTimeout(NEAR_RPC_URL, opts, 4000).catch(() => null);
+        let bytes = res && res.result && res.result.result;
+        if (!Array.isArray(bytes)) {
+          res = await fetchJsonWithTimeout('https://free.rpc.fastnear.com', opts, 4000).catch(() => null);
+          bytes = res && res.result && res.result.result;
+        }
+        if (Array.isArray(bytes)) {
+          const parsed = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes)));
+          if (parsed === null) {
+            await api.signAndSendNearFunctionCall({
+              accountId: acctId,
+              publicKeyStr: wallet.nearPublicKey,
+              privateKeyStr: wallet.nearPrivateKey,
+              receiverId: contractId,
+              methodName: 'storage_deposit',
+              argsJson: JSON.stringify({ account_id: acctId, registration_only: true }),
+              gas: '30000000000000',
+              depositYocto: depositYoctoStr
+            });
+          }
+        }
+      } catch (_) {}
+    };
+
+    // A. NEAR Native Staking & Rhea / Burrow Token Staking/Lending
     if (pool.chain === 'near') {
       const accountId = wallet.nearNamedAccount || wallet.nearAddress;
       if (!accountId || !wallet.nearPublicKey || !wallet.nearPrivateKey) {
         throw new Error(t('NEAR 私钥不可用', 'NEAR private key unavailable'));
       }
+      if (pool.isBurrowSupply && pool.isNativeWrapSupply) {
+        const nearGasAvail = resolveWalletChainBalance(wallet, 'near');
+        if (nearGasAvail < 0.05) {
+          throw new Error(t(`NEAR 余额不足以支付合约 Gas (当前: ${nearGasAvail.toFixed(4)} NEAR)`, `Insufficient NEAR for contract gas (Available: ${nearGasAvail.toFixed(4)} NEAR)`));
+        }
+        const rawAmt = toBaseUnits(amount, pool.decimals || 24);
+        let wnearRaw = 0n;
+        try {
+          const cachedRaw = wallet.nearNep141Balances?.[pool.tokenContract]?.raw;
+          if (cachedRaw) wnearRaw = BigInt(String(cachedRaw));
+          else {
+            const wStr = await viewNearContractCall(pool.tokenContract, 'ft_balance_of', { account_id: accountId });
+            if (wStr) wnearRaw = BigInt(String(wStr));
+          }
+        } catch (_) {}
+        const neededBig = BigInt(rawAmt);
+        if (wnearRaw < neededBig) {
+          const shortfall = (neededBig - wnearRaw).toString();
+          await ensureNearStorageIfExplicitlyNull(accountId, pool.tokenContract, '1250000000000000000000');
+          await api.signAndSendNearFunctionCall({
+            accountId,
+            publicKeyStr: wallet.nearPublicKey,
+            privateKeyStr: wallet.nearPrivateKey,
+            receiverId: pool.tokenContract,
+            methodName: 'near_deposit',
+            argsJson: '{}',
+            gas: '30000000000000',
+            depositYocto: shortfall
+          });
+        }
+        await ensureNearStorageIfExplicitlyNull(accountId, pool.contract, '100000000000000000000000');
+        const txHash = await api.signAndSendNearFunctionCall({
+          accountId,
+          publicKeyStr: wallet.nearPublicKey,
+          privateKeyStr: wallet.nearPrivateKey,
+          receiverId: pool.tokenContract,
+          methodName: 'ft_transfer_call',
+          argsJson: JSON.stringify({ receiver_id: pool.contract, amount: rawAmt, msg: '' }),
+          gas: '100000000000000',
+          depositYocto: '1'
+        });
+        return {
+          txHash,
+          explorerUrl: `${NEAR_EXPLORER_TX}${txHash}`,
+          poolId: pool.id,
+          inSymbol: pool.inSymbol,
+          outSymbol: pool.outSymbol,
+          amount: Number(amount)
+        };
+      }
       if (pool.isTokenStake && pool.tokenContract) {
         const nearGasAvail = resolveWalletChainBalance(wallet, 'near');
         if (nearGasAvail < 0.05) {
           throw new Error(t(`NEAR 余额不足以支付合约 Gas (当前: ${nearGasAvail.toFixed(4)} NEAR)`, `Insufficient NEAR for contract gas (Available: ${nearGasAvail.toFixed(4)} NEAR)`));
+        }
+        if (pool.isBurrowSupply) {
+          await ensureNearStorageIfExplicitlyNull(accountId, pool.contract, '100000000000000000000000');
         }
         const rawAmt = toBaseUnits(amount, pool.decimals || 18);
         const msg = pool.isLockConvert
@@ -3825,7 +4119,7 @@
           receiverId: pool.tokenContract,
           methodName: 'ft_transfer_call',
           argsJson: JSON.stringify({ receiver_id: pool.contract, amount: rawAmt, msg }),
-          gas: pool.isLockConvert ? '100000000000000' : '80000000000000',
+          gas: (pool.isLockConvert || pool.isBurrowSupply) ? '100000000000000' : '80000000000000',
           depositYocto: '1'
         });
         return {
@@ -4042,6 +4336,25 @@
         throw new Error(t(`${pool.chainLabel} ETH Gas 余额不足`, `Insufficient ETH gas on ${pool.chainLabel}`));
       }
       const rawAssets = toBaseUnits(amount, pool.decimals || 6);
+      if (pool.isNativeWrapSupply) {
+        const addrLower = String(pool.tokenContract || '').toLowerCase();
+        const wethBal = Number(
+          wallet.erc20Balances?.[`${pool.chain}_${addrLower}`] ??
+          wallet.erc20Balances?.[pool.chain]?.[addrLower] ??
+          0
+        );
+        if (wethBal < Number(amount)) {
+          const shortfallWei = toBaseUnits(Math.max(0, Number(amount) - Math.max(0, wethBal)), 18);
+          if (BigInt(shortfallWei) > 0n) {
+            await sendEvmContractCall({
+              chainKey: pool.chain,
+              to: pool.tokenContract,
+              data: '0xd0e30db0', // WETH9.deposit()
+              value: shortfallWei
+            });
+          }
+        }
+      }
       const iface = new ethersLib.Interface(['function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)']);
       const data = iface.encodeFunctionData('supply', [pool.tokenContract, rawAssets, evmSender, 0]);
       res = await sendEvmContractCall({

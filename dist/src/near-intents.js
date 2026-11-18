@@ -650,12 +650,17 @@
     }
   }
 
+  let _livePricesCache = { ts: 0, list: null };
+
   /**
    * Fetches live token catalog & prices from 1Click Defuse API plus DexScreener, Prlscan, Hyperliquid,
    * Ref Finance, CoinGecko & Jupiter V2 xStocks. Never uses hardcoded fake fallback prices.
    */
-  async function fetchLiveDefuseTokenPrices() {
+  async function fetchLiveDefuseTokenPrices(opts = {}) {
     try {
+      if (opts && opts.useCache === true && Array.isArray(_livePricesCache.list) && (Date.now() - _livePricesCache.ts < 60_000)) {
+        return _livePricesCache.list;
+      }
       const registryEarly = getTokenRegistry();
       const arcAddrsForDex = ((registryEarly && registryEarly.DEX_CHAIN_TOKENS && registryEarly.DEX_CHAIN_TOKENS.arc) || [])
         .map((t) => String(t && t.contractAddress || '').trim())
@@ -1196,6 +1201,10 @@
         } else {
           registry.LIVE_DEFUSE_TOKENS = normalizedList;
         }
+      }
+
+      if (Array.isArray(normalizedList) && normalizedList.length > 0) {
+        _livePricesCache = { ts: Date.now(), list: normalizedList };
       }
 
       return normalizedList;
@@ -2574,10 +2583,29 @@
     if (fromBc === 'near' && toBc === 'near') return quoteCrossChainWithDexRelayLegacy(params);
     if (fromBc === 'arc' || toBc === 'arc') return quoteCrossChainWithDexRelayLegacy(params);
 
-    const [smart, legacy] = await Promise.all([
-      quoteSmartHubRoute(params),
-      quoteCrossChainWithDexRelayLegacy(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'legacy failed' }))
-    ]);
+    const smartPromise = quoteSmartHubRoute(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'smart route failed' }));
+    const legacyPromise = quoteCrossChainWithDexRelayLegacy(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'legacy failed' }));
+
+    // Never let multi-stage Smart Hub route block swap quote > 1800ms after a direct/legacy route has succeeded
+    const cappedSmartPromise = new Promise((resolve) => {
+      let settled = false;
+      let timer = null;
+      const finish = (val) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve(val);
+      };
+      smartPromise.then(finish);
+      legacyPromise.then((leg) => {
+        const legOk = leg && leg.ok && /^\d+$/.test(String(leg.amountOut || '')) && BigInt(leg.amountOut) > 0n;
+        if (legOk && !settled) {
+          timer = setTimeout(() => finish({ ok: false, error: 'smart route timeout' }), 1800);
+        }
+      });
+    });
+
+    const [smart, legacy] = await Promise.all([cappedSmartPromise, legacyPromise]);
     const smartOk = smart && smart.ok;
     const legacyOk = legacy && legacy.ok && /^\d+$/.test(String(legacy.amountOut || '')) && BigInt(legacy.amountOut) > 0n;
     if (smartOk && legacyOk) {

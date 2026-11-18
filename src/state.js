@@ -13,6 +13,8 @@
   const LEGACY_CONTACTS_STORAGE_KEY = 'pearl_contacts_v1';
   const LANG_STORAGE_KEY = 'near_ca_lang_v1';
   const FAV_TOKENS_STORAGE_KEY = 'near_ca_fav_tokens_v1';
+  const LIVE_TOKENS_STORAGE_KEY = 'near_ca_live_tokens_v1';
+  const STAKING_METRICS_STORAGE_KEY = 'near_ca_staking_metrics_v1';
   const WC_PROJECT_ID_STORAGE_KEY = 'near_ca_wc_project_id';
   const LEGACY_WC_PROJECT_ID_KEY = 'pearl_wc_project_id';
 
@@ -349,7 +351,7 @@
       'earn.refreshBtn': '刷新利率',
       'earnSearchPlaceholder': '搜索质押代币、协议或合约 (如 RHEA, JUP, NEAR, SOL, USDC)...',
       'earn.filterFeatured': '🔥 热门大池',
-      'earn.filterAll': '全部质押池 (18)',
+      'earn.filterAll': '全部质押池 (21)',
       'earn.filterLending': '🏦 借贷与生息',
       'earn.filterNear': 'NEAR & Rhea',
       'earn.filterSol': 'Solana & JUP',
@@ -515,7 +517,7 @@
       'earn.refreshBtn': 'Refresh APY',
       'earnSearchPlaceholder': 'Search token, protocol, or contract (e.g. RHEA, JUP, NEAR, SOL, USDC)...',
       'earn.filterFeatured': 'Featured',
-      'earn.filterAll': 'All Pools (18)',
+      'earn.filterAll': 'All Pools (21)',
       'earn.filterLending': '🏦 Lending & Earn',
       'earn.filterNear': 'NEAR & Rhea',
       'earn.filterSol': 'Solana & JUP',
@@ -648,11 +650,12 @@
 
     staking: {
       selectedPoolId: 'rhea_rnear',
-      filter: 'featured', // 'featured' | 'all' | 'near' | 'sol' | 'evm'
+      filter: 'featured', // 'featured' | 'all' | 'lending' | 'near' | 'sol' | 'evm'
       search: '',
       lockDays: 181,
       amountIn: '',
       pools: null,
+      updatedAt: null,
       lastTx: null,
       loading: false
     },
@@ -818,6 +821,101 @@
     safeStorageSet(FAV_TOKENS_STORAGE_KEY, JSON.stringify(state.favoriteTokenIds || []));
   }
 
+  function loadCachedLiveTokens() {
+    const raw = safeStorageGet(LIVE_TOKENS_STORAGE_KEY);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.tokens) ? parsed.tokens : null);
+      if (Array.isArray(list) && list.length > 0) {
+        if (!Array.isArray(state.liveTokens) || state.liveTokens.length === 0) {
+          state.liveTokens = list;
+        }
+        if (parsed && typeof parsed.updatedAt === 'number' && !state.pricesUpdatedAt) {
+          state.pricesUpdatedAt = parsed.updatedAt;
+        }
+        const reg = (typeof globalThis !== 'undefined' && globalThis.NearCATokens) || (typeof window !== 'undefined' && window.NearCATokens);
+        if (reg && typeof reg.setLiveDefuseTokens === 'function') {
+          reg.setLiveDefuseTokens(list);
+        }
+        return list;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function saveCachedLiveTokens(tokensList) {
+    if (!Array.isArray(tokensList) || tokensList.length === 0) return;
+    try {
+      const payload = {
+        updatedAt: Date.now(),
+        tokens: tokensList.map((t) => ({
+          assetId: t.assetId,
+          symbol: t.symbol,
+          name: t.name,
+          blockchain: t.blockchain,
+          contractAddress: t.contractAddress || null,
+          decimals: t.decimals,
+          price: typeof t.price === 'number' ? t.price : null,
+          priceUpdatedAt: t.priceUpdatedAt || null,
+          logoURI: t.logoURI || ''
+        }))
+      };
+      safeStorageSet(LIVE_TOKENS_STORAGE_KEY, JSON.stringify(payload));
+    } catch (_) {}
+  }
+
+  function loadCachedStakingMetrics() {
+    const raw = safeStorageGet(STAKING_METRICS_STORAGE_KEY);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      const byId = parsed && parsed.pools && typeof parsed.pools === 'object' ? parsed.pools : null;
+      if (!byId) return null;
+      const contracts = (typeof globalThis !== 'undefined' && globalThis.NearCAContracts) || (typeof window !== 'undefined' && window.NearCAContracts);
+      const pools = (contracts && Array.isArray(contracts.STAKING_POOLS)) ? contracts.STAKING_POOLS : null;
+      if (pools) {
+        for (const p of pools) {
+          const cached = p && byId[p.id];
+          if (!cached || typeof cached !== 'object') continue;
+          if (p.apy === null && typeof cached.apy === 'number' && Number.isFinite(cached.apy)) p.apy = cached.apy;
+          if (p.rate === null && typeof cached.rate === 'number' && Number.isFinite(cached.rate)) p.rate = cached.rate;
+          if (!p.tvlText && typeof cached.tvlText === 'string' && cached.tvlText) p.tvlText = cached.tvlText;
+          if (p.stakersCount === null && typeof cached.stakersCount === 'number' && Number.isFinite(cached.stakersCount)) p.stakersCount = cached.stakersCount;
+          if (!p.lockTiers && Array.isArray(cached.lockTiers)) p.lockTiers = cached.lockTiers;
+          if (!p.rateRangeText && typeof cached.rateRangeText === 'string') p.rateRangeText = cached.rateRangeText;
+        }
+        if (!state.staking.pools) state.staking.pools = pools;
+      }
+      if (typeof parsed.updatedAt === 'number' && !state.staking.updatedAt) {
+        state.staking.updatedAt = parsed.updatedAt;
+      }
+      return byId;
+    } catch (_) {}
+    return null;
+  }
+
+  function saveCachedStakingMetrics(pools) {
+    if (!Array.isArray(pools) || pools.length === 0) return;
+    try {
+      const map = {};
+      for (const p of pools) {
+        if (!p || !p.id) continue;
+        map[p.id] = {
+          apy: typeof p.apy === 'number' && Number.isFinite(p.apy) ? p.apy : null,
+          rate: typeof p.rate === 'number' && Number.isFinite(p.rate) ? p.rate : null,
+          tvlText: p.tvlText || null,
+          stakersCount: typeof p.stakersCount === 'number' && Number.isFinite(p.stakersCount) ? p.stakersCount : null,
+          lockTiers: Array.isArray(p.lockTiers) ? p.lockTiers : null,
+          rateRangeText: p.rateRangeText || null
+        };
+      }
+      const now = Date.now();
+      state.staking.updatedAt = now;
+      safeStorageSet(STAKING_METRICS_STORAGE_KEY, JSON.stringify({ updatedAt: now, pools: map }));
+    } catch (_) {}
+  }
+
   function toggleFavoriteTokenId(assetId) {
     const id = String(assetId || '').trim();
     if (!id) return false;
@@ -884,6 +982,8 @@
     loadWallets();
     loadContacts();
     loadFavoriteTokens();
+    loadCachedLiveTokens();
+    loadCachedStakingMetrics();
     applyLanguage(state.lang);
     return state;
   }
@@ -893,6 +993,8 @@
   state.LEGACY_WALLETS_STORAGE_KEY = LEGACY_WALLETS_STORAGE_KEY;
   state.CONTACTS_STORAGE_KEY = CONTACTS_STORAGE_KEY;
   state.FAV_TOKENS_STORAGE_KEY = FAV_TOKENS_STORAGE_KEY;
+  state.LIVE_TOKENS_STORAGE_KEY = LIVE_TOKENS_STORAGE_KEY;
+  state.STAKING_METRICS_STORAGE_KEY = STAKING_METRICS_STORAGE_KEY;
   state.DEFAULT_FAVORITE_TOKEN_IDS = DEFAULT_FAVORITE_TOKEN_IDS;
   state.i18nDict = i18nDict;
   state.t = t;
@@ -906,6 +1008,10 @@
   state.saveContacts = saveContacts;
   state.loadFavoriteTokens = loadFavoriteTokens;
   state.saveFavoriteTokens = saveFavoriteTokens;
+  state.loadCachedLiveTokens = loadCachedLiveTokens;
+  state.saveCachedLiveTokens = saveCachedLiveTokens;
+  state.loadCachedStakingMetrics = loadCachedStakingMetrics;
+  state.saveCachedStakingMetrics = saveCachedStakingMetrics;
   state.toggleFavoriteTokenId = toggleFavoriteTokenId;
   state.normalizeWalletRecord = normalizeWalletRecord;
   state.recomputeWalletMpcAddresses = recomputeWalletMpcAddresses;

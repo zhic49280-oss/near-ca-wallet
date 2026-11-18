@@ -1228,13 +1228,33 @@
         { chainKey: 'eth', contract: '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', decimals: 18 }, // Lido stETH
         { chainKey: 'eth', contract: '0x4c9EDD5852cd905f086C759E8383e09bff1E68B3', decimals: 18 }, // Ethena USDe
         { chainKey: 'eth', contract: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', decimals: 18 }, // Ethena sUSDe
+        { chainKey: 'eth', contract: '0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c', decimals: 6 }, // Aave v3 aEthUSDC
+        { chainKey: 'eth', contract: '0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', decimals: 18 }, // Aave v3 aEthWETH
         { chainKey: 'base', contract: '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', decimals: 6 }, // Aave v3 aBasUSDC
         { chainKey: 'arb', contract: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', decimals: 6 }, // ARB USDT
         { chainKey: 'arb', contract: '0x912CE59144191C1204E64559FE8253a0e49E6548', decimals: 18 }, // ARB
+        { chainKey: 'arb', contract: '0x724dc807b04555b71ed48a6896b6f41593b8c637', decimals: 6 }, // Aave v3 aArbUSDCn
         { chainKey: 'bsc', contract: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', decimals: 18 }, // BSC USDC
         { chainKey: 'arc', contract: '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', decimals: 18 }, // Arc steakUSDC
         { chainKey: 'hype', contract: '0xfD739d4e423301CE9385c1fb8850539D657C296D', decimals: 18 } // HyperEVM kHYPE
       ];
+
+      let _progRenderTimer = null;
+      const scheduleProgressiveWalletRender = () => {
+        if (_progRenderTimer || typeof setTimeout !== 'function') return;
+        _progRenderTimer = setTimeout(() => {
+          _progRenderTimer = null;
+          st.syncWalletCompatBalances(wallet);
+          if (st.activeTab === 'wallet') {
+            renderHeaderAndHero();
+            renderUnifiedAssetList();
+          }
+          const ds = $('sheet-token-detail');
+          if (ds && ds.classList && ds.classList.contains('open')) {
+            renderTokenDetailSheet();
+          }
+        }, 80);
+      };
 
       const [
         pricesRes,
@@ -1248,20 +1268,59 @@
         arcBalRes,
         ...evmResList
       ] = await Promise.all([
-        intents.fetchLiveDefuseTokenPrices().catch(() => null),
-        nearAccountId ? intents.fetchNearNativeBalance(nearAccountId).catch(() => null) : Promise.resolve(null),
+        intents.fetchLiveDefuseTokenPrices({ useCache: !showFeedback }).then((res) => {
+          if (Array.isArray(res)) {
+            st.liveTokens = res;
+            st.pricesUpdatedAt = Date.now();
+            if (typeof st.saveCachedLiveTokens === 'function') st.saveCachedLiveTokens(res);
+            scheduleProgressiveWalletRender();
+          }
+          return res;
+        }).catch(() => null),
+        nearAccountId ? intents.fetchNearNativeBalance(nearAccountId).then((v) => {
+          if (typeof v === 'number' && Number.isFinite(v)) {
+            wallet.nativeBalances.near = v;
+            scheduleProgressiveWalletRender();
+          }
+          return v;
+        }).catch(() => null) : Promise.resolve(null),
         (nearAccountId && typeof intents.fetchNearNep141Balances === 'function')
-          ? intents.fetchNearNep141Balances(nearAccountId).catch(() => null)
+          ? intents.fetchNearNep141Balances(nearAccountId).then((map) => {
+              if (map && typeof map === 'object') {
+                wallet.nearNep141Balances = { ...(wallet.nearNep141Balances || {}), ...map };
+                scheduleProgressiveWalletRender();
+              }
+              return map;
+            }).catch(() => null)
           : Promise.resolve(null),
         (nearAccountId && typeof contracts.fetchNearAccountStakingPositionsAsync === 'function')
           ? contracts.fetchNearAccountStakingPositionsAsync(nearAccountId).catch(() => [])
           : Promise.resolve([]),
-        wallet.solAddress ? contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, solMints).catch(() => null) : Promise.resolve(null),
+        wallet.solAddress ? contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, solMints).then((res) => {
+          if (res && typeof res === 'object') {
+            if (typeof res.nativeSol === 'number') wallet.nativeBalances.sol = res.nativeSol;
+            if (res.tokens && typeof res.tokens === 'object') {
+              for (const [mint, info] of Object.entries(res.tokens)) {
+                if (info && typeof info.formatted === 'number' && Number.isFinite(info.formatted)) {
+                  wallet.splBalances[mint] = info.formatted;
+                }
+              }
+            }
+            scheduleProgressiveWalletRender();
+          }
+          return res;
+        }).catch(() => null) : Promise.resolve(null),
         (wallet.solAddress && typeof contracts.fetchSolanaAccountStakingPositionsAsync === 'function')
           ? contracts.fetchSolanaAccountStakingPositionsAsync(wallet.solAddress).catch(() => [])
           : Promise.resolve([]),
         wallet.address && mining
-          ? mining.queryMinerDeepStats(wallet.address, 'onchain').catch(() => null)
+          ? mining.queryMinerDeepStats(wallet.address, 'onchain').then((res) => {
+              if (res && typeof res.onChainBalancePrl === 'number' && Number.isFinite(res.onChainBalancePrl)) {
+                wallet.nativeBalances.prl = res.onChainBalancePrl;
+                scheduleProgressiveWalletRender();
+              }
+              return res;
+            }).catch(() => null)
           : Promise.resolve(null),
         wallet.btcAddress ? fetchBitcoinNativeBalance(wallet.btcAddress).catch(() => null) : Promise.resolve(null),
         wallet.evmAddress ? contracts.fetchEvmNativeAndErc20Balance('arc', wallet.evmAddress).catch(() => null) : Promise.resolve(null),
@@ -1277,9 +1336,15 @@
         )
       ]);
 
+      if (_progRenderTimer) {
+        clearTimeout(_progRenderTimer);
+        _progRenderTimer = null;
+      }
+
       if (Array.isArray(pricesRes)) {
         st.liveTokens = pricesRes;
         st.pricesUpdatedAt = Date.now();
+        if (typeof st.saveCachedLiveTokens === 'function') st.saveCachedLiveTokens(pricesRes);
       }
 
       if (typeof nearBalRes === 'number' && Number.isFinite(nearBalRes)) {
@@ -1889,6 +1954,7 @@
   }
 
   function openTokenDetailSheet(symbolKey, chainFilter = 'all') {
+    const st = getState();
     _tokenDetailState.symbolKey = String(symbolKey || '').toUpperCase();
     _tokenDetailState.chainFilter = String(chainFilter || 'all').toLowerCase();
     _tokenDetailState.historyLoading = true;
@@ -1896,6 +1962,12 @@
     renderTokenDetailSheet();
     openSheet('sheet-token-detail');
     fetchTokenDetailHistoryAsync();
+
+    // Ensure staking/lending APYs are hydrated even if user hasn't opened Earn tab yet
+    const stale = !st.staking.pools || !st.staking.updatedAt || (Date.now() - st.staking.updatedAt > 60_000);
+    if (stale && !st.staking.loading) {
+      refreshStakingMetrics(false);
+    }
   }
 
   function setTokenDetailChain(chainKey) {
@@ -2162,36 +2234,52 @@
 
       if (matchedPools.length > 0) {
         earnCard.classList.remove('hidden');
-        const stakingPools = matchedPools.filter((p) => !p.isErc4626 && !p.isAaveV3 && !p.isLockConvert);
-        const earnLendingPools = matchedPools.filter((p) => p.isErc4626 || p.isAaveV3 || p.isLockConvert);
+        const stakingPools = matchedPools.filter((p) => !p.isErc4626 && !p.isAaveV3 && !p.isLockConvert && !p.isBurrowSupply);
+        const earnLendingPools = matchedPools.filter((p) => p.isErc4626 || p.isAaveV3 || p.isLockConvert || p.isBurrowSupply);
 
-        const renderPoolRows = (poolList) => poolList.map((p) => `
-          <button type="button" class="detail-row-item detail-row-clickable" onclick="openTokenDetailPool('${escapeHtml(p.id)}')">
-            <div class="flex items-center gap-2" style="min-width:0;flex:1;">
-              ${tokens.renderTokenIconWithBadge({ symbol: p.outSymbol, blockchain: p.chain }, 26, true)}
-              <div class="flex flex-col" style="min-width:0;">
-                <span style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(p.name)}</span>
-                <span style="font-size:11px;color:var(--text-secondary);">${escapeHtml(p.protocol || p.chainLabel || '')} · ${escapeHtml(p.inSymbol)} ➔ ${escapeHtml(p.outSymbol)}</span>
+        const renderPoolRows = (poolList) => poolList.map((p) => {
+          const catMeta = getPoolCategoryMeta(p);
+          return `
+            <button type="button" class="detail-row-item detail-row-clickable" onclick="openTokenDetailPool('${escapeHtml(p.id)}')">
+              <div class="flex items-center gap-2" style="min-width:0;flex:1;">
+                ${tokens.renderTokenIconWithBadge({ symbol: p.outSymbol, blockchain: p.chain }, 26, true)}
+                <div class="flex flex-col" style="min-width:0;">
+                  <div class="flex items-center gap-1" style="flex-wrap:wrap;">
+                    <span style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(p.name)}</span>
+                    <span class="pool-cat-badge ${catMeta.cls}">${escapeHtml(catMeta.label)}</span>
+                  </div>
+                  <span style="font-size:11px;color:var(--text-secondary);">${escapeHtml(p.protocol || p.chainLabel || '')} · ${escapeHtml(p.inSymbol)} ➔ ${escapeHtml(p.outSymbol)}</span>
+                </div>
               </div>
-            </div>
-            <span class="mono text-emerald" style="font-weight:800;font-size:13px;flex-shrink:0;">${escapeHtml(formatPoolApyText(p))}</span>
-          </button>
-        `).join('');
+              <span class="mono text-emerald" style="font-weight:800;font-size:13px;flex-shrink:0;">${escapeHtml(formatPoolApyText(p))}</span>
+            </button>
+          `;
+        }).join('');
 
-        const sections = [];
+        const cards = [];
         if (stakingPools.length > 0) {
-          sections.push(`
-            <div class="detail-earn-subheader">${escapeHtml(t('链上质押 (Liquid / DAO Staking)', 'Liquid & DAO Staking'))}</div>
-            ${renderPoolRows(stakingPools)}
+          cards.push(`
+            <div class="ios-glass-card flex flex-col gap-2">
+              <div class="flex items-center justify-between">
+                <span style="font-weight:700;font-size:13px;color:#fff;">⚡ ${escapeHtml(t('链上质押 (Staking)', 'Staking'))}</span>
+                <span class="pool-cat-badge cat-staking">${escapeHtml(t('质押', 'Staking'))}</span>
+              </div>
+              <div class="flex flex-col gap-2">${renderPoolRows(stakingPools)}</div>
+            </div>
           `);
         }
         if (earnLendingPools.length > 0) {
-          sections.push(`
-            <div class="detail-earn-subheader">${escapeHtml(t('赚币 · 借贷生息 (Earn & Lending)', 'Earn & Lending Vaults'))}</div>
-            ${renderPoolRows(earnLendingPools)}
+          cards.push(`
+            <div class="ios-glass-card flex flex-col gap-2">
+              <div class="flex items-center justify-between">
+                <span style="font-weight:700;font-size:13px;color:#fff;">🏦 ${escapeHtml(t('借贷与存款生息 (Lending & Earn)', 'Lending & Earn'))}</span>
+                <span class="pool-cat-badge cat-lending">${escapeHtml(t('借贷', 'Lending'))}</span>
+              </div>
+              <div class="flex flex-col gap-2">${renderPoolRows(earnLendingPools)}</div>
+            </div>
           `);
         }
-        earnList.innerHTML = sections.join('');
+        earnList.innerHTML = cards.join('');
       } else {
         earnCard.classList.add('hidden');
         earnList.innerHTML = '';
@@ -5219,11 +5307,17 @@
   async function refreshStakingMetrics(showFeedback = false) {
     const st = getState();
     const contracts = getContracts();
+    if (st.staking.loading && !showFeedback) return;
     st.staking.loading = true;
     try {
-      const pools = await contracts.fetchLiveStakingMetrics();
+      const pools = await contracts.fetchLiveStakingMetrics({ useCache: !showFeedback && Boolean(st.staking.pools) });
       st.staking.pools = pools;
+      if (typeof st.saveCachedStakingMetrics === 'function') st.saveCachedStakingMetrics(pools);
       renderEarnView();
+      const detailSheet = $('sheet-token-detail');
+      if (detailSheet && detailSheet.classList && detailSheet.classList.contains('open')) {
+        renderTokenDetailSheet();
+      }
       if (showFeedback) showToast(t('已同步实时质押年化', 'Staking APY synced'));
     } catch (_) {
       if (showFeedback) showToast(t('获取质押利率失败', 'Failed to fetch APY'));
@@ -5231,10 +5325,27 @@
       st.staking.loading = false;
     }
   }
+  const refreshEarnMetricsAsync = refreshStakingMetrics;
 
   function getEarnPoolAvailableBalance(wallet, pool) {
     if (!wallet || !pool) return null;
     const contracts = getContracts();
+    if (pool.isBurrowSupply && pool.isNativeWrapSupply) {
+      const nativeNear = wallet.nativeBalances ? wallet.nativeBalances.near : null;
+      const wnear = wallet.nearNep141Balances?.[pool.tokenContract]?.formatted;
+      if (typeof nativeNear !== 'number' && typeof wnear !== 'number') return null;
+      return (typeof nativeNear === 'number' && Number.isFinite(nativeNear) ? nativeNear : 0) +
+        (typeof wnear === 'number' && Number.isFinite(wnear) ? wnear : 0);
+    }
+    if (pool.isAaveV3 && pool.isNativeWrapSupply) {
+      const nativeEth = wallet.nativeBalances ? wallet.nativeBalances[pool.chain] : null;
+      const weth = contracts && typeof contracts.resolveWalletPoolTokenBalance === 'function'
+        ? contracts.resolveWalletPoolTokenBalance(wallet, { ...pool, useNativeOrPrecompile: false })
+        : 0;
+      if (typeof nativeEth !== 'number' && !(weth > 0)) return null;
+      return (typeof nativeEth === 'number' && Number.isFinite(nativeEth) ? nativeEth : 0) +
+        (typeof weth === 'number' && Number.isFinite(weth) ? weth : 0);
+    }
     if (contracts && typeof contracts.resolveWalletPoolTokenBalance === 'function' && (pool.isTokenStake && !pool.useNativeOrPrecompile)) {
       return contracts.resolveWalletPoolTokenBalance(wallet, pool);
     }
@@ -5258,8 +5369,8 @@
     }
     const f = String(filterKey || 'featured').toLowerCase();
     if (f === 'all') return list;
-    if (f === 'lending') return list.filter((p) => p.category === 'lending' || p.isAaveV3 || p.isErc4626 || p.isLockConvert);
-    if (f === 'staking') return list.filter((p) => p.category === 'staking' || (!p.isAaveV3 && !p.isErc4626 && !p.isLockConvert));
+    if (f === 'lending') return list.filter((p) => p.category === 'lending' || p.isAaveV3 || p.isBurrowSupply || p.isErc4626 || p.isLockConvert);
+    if (f === 'staking') return list.filter((p) => p.category === 'staking' || (!p.isAaveV3 && !p.isBurrowSupply && !p.isErc4626 && !p.isLockConvert));
     if (f === 'near') return list.filter((p) => p.chain === 'near');
     if (f === 'sol') return list.filter((p) => p.chain === 'sol');
     if (f === 'evm') return list.filter((p) => p.chain !== 'near' && p.chain !== 'sol');
@@ -5268,7 +5379,7 @@
 
   function getPoolCategoryMeta(pool) {
     if (!pool) return { label: '', cls: 'cat-staking' };
-    if (pool.isAaveV3) {
+    if (pool.isAaveV3 || pool.isBurrowSupply) {
       return { label: t('借贷 Lending', 'Lending'), cls: 'cat-lending' };
     }
     if (pool.isErc4626 || pool.isLockConvert || pool.category === 'lending') {
@@ -5433,7 +5544,10 @@
       const evmStakingPositions = [
         { chain: 'eth', contract: '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', sym: 'stETH', title: 'Lido Staked ETH', subtitle: 'Ethereum · Lido' },
         { chain: 'eth', contract: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', sym: 'sUSDe', title: 'Ethena Staked USDe', subtitle: 'Ethereum · Ethena' },
+        { chain: 'eth', contract: '0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c', sym: 'aEthUSDC', title: 'Aave V3 Ethereum USDC', subtitle: 'Ethereum · Aave V3' },
+        { chain: 'eth', contract: '0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', sym: 'aEthWETH', title: 'Aave V3 Ethereum ETH', subtitle: 'Ethereum · Aave V3' },
         { chain: 'base', contract: '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', sym: 'aBasUSDC', title: 'Aave V3 Base USDC', subtitle: 'Base · Aave V3' },
+        { chain: 'arb', contract: '0x724dc807b04555b71ed48a6896b6F41593b8C637', sym: 'aArbUSDCn', title: 'Aave V3 Arbitrum USDC', subtitle: 'Arbitrum · Aave V3' },
         { chain: 'arc', contract: '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', sym: 'steakUSDC', title: 'Steakhouse Prime USDC', subtitle: 'Arc · Morpho' },
         { chain: 'hype', contract: '0xfD739d4e423301CE9385c1fb8850539D657C296D', sym: 'kHYPE', title: 'Kinetiq Staked HYPE', subtitle: 'HyperEVM · Kinetiq' }
       ];
@@ -6542,6 +6656,7 @@
     renderAll();
     if (st.getActiveWallet()) {
       refreshAllBalancesAsync(false);
+      refreshStakingMetrics(false);
     }
     startAutoPriceAndBalanceSync();
     if (st.wc.projectId) {
@@ -6597,6 +6712,7 @@
     renderTokenPickerList,
     executeActiveSwap,
     refreshStakingMetrics,
+    refreshEarnMetricsAsync,
     renderEarnView,
     setEarnPoolFilter,
     handleEarnPoolSearch,

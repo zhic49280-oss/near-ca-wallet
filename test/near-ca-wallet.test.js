@@ -647,14 +647,14 @@ test('Module 3: signAndPublishNep413Intent signs NEP-413 payload & posts publish
 // ==================== Module 4: src/chain-contracts.js ====================
 
 test('Module 4: STAKING_POOLS have initial apy: null, rate: null (zero fake APYs)', () => {
-  assert.equal(INITIAL_STAKING_SNAPSHOT.length, 18);
+  assert.equal(INITIAL_STAKING_SNAPSHOT.length, 21);
   const byId = Object.fromEntries(INITIAL_STAKING_SNAPSHOT.map((p) => [p.id, p]));
   const expectedIds = [
     'rhea_rnear', 'rhea_xrhea', 'rhea_orhea_convert', 'metapool_stnear',
-    'linear_near', 'stader_nearx',
+    'linear_near', 'stader_nearx', 'burrow_near_wnear', 'burrow_near_usdt',
     'jito_sol', 'jupiter_jup', 'jupiter_sol', 'marinade_msol', 'sanctum_inf',
     'lido_steth', 'arc_steak_usdc', 'aave_base_usdc', 'aave_eth_usdc', 'aave_arb_usdc',
-    'ethena_susde', 'hyper_khype'
+    'aave_eth_weth', 'ethena_susde', 'hyper_khype'
   ];
   for (const id of expectedIds) {
     assert.ok(byId[id], `STAKING_POOLS must include ${id}`);
@@ -2585,7 +2585,7 @@ test('v1.9 Requirement #6: Rhea 3 pools + 16-pool Staking Hub live rates, tx sig
     return jsonResponse({}, 404, 'Not Found');
   }, async () => {
     const pools = await chainContracts.fetchAllStakingRates();
-    assert.equal(pools.length, 18);
+    assert.equal(pools.length, 21);
     const byId = Object.fromEntries(pools.map((p) => [p.id, p]));
     assert.equal(byId.rhea_rnear.apy, 4.49);
     assert.ok(Math.abs(byId.rhea_rnear.rate - 1 / 1.069637) < 0.001);
@@ -2717,7 +2717,7 @@ test('v1.9 Requirement #6: Rhea 3 pools + 16-pool Staking Hub live rates, tx sig
         assert.equal(domNodes['earn-stakers-val'].textContent, '836,170');
 
         uiController.setEarnPoolFilter('all');
-        assert.equal((domNodes['staking-pools-list'].innerHTML.match(/staking-pool-card/g) || []).length, 18, 'All Pools pill must render all 18 pools');
+        assert.equal((domNodes['staking-pools-list'].innerHTML.match(/staking-pool-card/g) || []).length, 21, 'All Pools pill must render all 21 pools');
 
         // Typing into search must search ALL 16 pools even while featured filter is active
         uiController.setEarnPoolFilter('featured');
@@ -3910,14 +3910,15 @@ test('v3.0: Pill-scroll CSS, address-row visibility, chain-scoped earn/staking g
 
         uiController.openTokenDetailSheet('ETH');
         const ethEarnHtml = domMap.get('token-detail-earn-list').innerHTML;
-        assert.ok(ethEarnHtml.includes('Liquid &amp; DAO Staking'), 'Staking group subheader must render for ETH');
-        assert.equal(ethEarnHtml.includes('Earn &amp; Lending Vaults'), false);
+        assert.ok(ethEarnHtml.includes('Staking'), 'Staking card header must render for ETH');
+        assert.ok(ethEarnHtml.includes('Lending &amp; Earn'), 'Lending & Earn card header must render for ETH (aave_eth_weth)');
         assert.ok(ethEarnHtml.includes('lido_steth'));
+        assert.ok(ethEarnHtml.includes('aave_eth_weth'));
 
         uiController.openTokenDetailSheet('USDC');
         const usdcAllEarnHtml = domMap.get('token-detail-earn-list').innerHTML;
-        assert.ok(usdcAllEarnHtml.includes('Earn &amp; Lending Vaults'), 'Earn/Lending group subheader must render for USDC');
-        assert.equal(usdcAllEarnHtml.includes('Liquid &amp; DAO Staking'), false);
+        assert.ok(usdcAllEarnHtml.includes('Lending &amp; Earn'), 'Lending & Earn card header must render for USDC');
+        assert.equal(usdcAllEarnHtml.includes('⚡'), false);
         assert.ok(usdcAllEarnHtml.includes('aave_eth_usdc'));
         assert.ok(usdcAllEarnHtml.includes('aave_arb_usdc'));
 
@@ -3930,6 +3931,9 @@ test('v3.0: Pill-scroll CSS, address-row visibility, chain-scoped earn/staking g
         // 6. Earn View lending filter & category badge
         uiController.setEarnPoolFilter('lending');
         const lendingHtml = domMap.get('staking-pools-list').innerHTML;
+        assert.ok(lendingHtml.includes('burrow_near_wnear'));
+        assert.ok(lendingHtml.includes('burrow_near_usdt'));
+        assert.ok(lendingHtml.includes('aave_eth_weth'));
         assert.ok(lendingHtml.includes('aave_eth_usdc'));
         assert.ok(lendingHtml.includes('aave_arb_usdc'));
         assert.ok(lendingHtml.includes('aave_base_usdc'));
@@ -3943,6 +3947,236 @@ test('v3.0: Pill-scroll CSS, address-row visibility, chain-scoped earn/staking g
       globalThis.document = prevDoc;
       state.wallets = prevWallets;
       state.activeWalletId = prevActiveId;
+      state.setLanguage(prevLang);
+    }
+  });
+});
+
+test('v3.1: Burrow NEAR/USDT & Aave ETH lending pools, EVM holder counts, localStorage metric/price caching, progressive sync & fast quote cap', async () => {
+  const prevLang = state.lang;
+  state.setLanguage('en');
+
+  // 1. Live Burrow RPC + Aave ETH/Arb holder counts + 60s TTL cache
+  let llamaFetches = 0;
+  await withMockedFetch(async (url, opts) => {
+    if (url.includes('yields.llama.fi/pools')) {
+      llamaFetches += 1;
+      return jsonResponse({
+        data: [
+          { chain: 'Ethereum', project: 'aave-v3', symbol: 'USDC', apy: 4.35, tvlUsd: 3200000000 },
+          { chain: 'Arbitrum', project: 'aave-v3', symbol: 'USDC', apy: 5.12, tvlUsd: 240000000 },
+          { chain: 'Ethereum', project: 'aave-v3', symbol: 'WETH', apy: 1.44, tvlUsd: 559214208 },
+          { chain: 'Near', project: 'rhea-lend', symbol: 'USDT', apy: 12.6, tvlUsd: 1495604 }
+        ]
+      });
+    }
+    if (url.includes('eth.blockscout.com/api/v2/tokens/0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c')) {
+      return jsonResponse({ holders_count: '29029' });
+    }
+    if (url.includes('eth.blockscout.com/api/v2/tokens/0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8')) {
+      return jsonResponse({ holders_count: '47849', total_supply: (2358553n * 10n ** 18n).toString() });
+    }
+    if (url.includes('api.geckoterminal.com/api/v2/networks/arbitrum/tokens/0x724dc807b04555b71ed48a6896b6f41593b8c637/info')) {
+      return jsonResponse({ data: { attributes: { holders: { count: 39704 } } } });
+    }
+    if (url.includes('rpc.mainnet.near.org') && opts?.body) {
+      const b = JSON.parse(opts.body);
+      const acc = b.params?.account_id;
+      const m = b.params?.method_name;
+      if (acc === 'contract.main.burrow.near' && m === 'get_num_accounts') {
+        return jsonResponse({ jsonrpc: '2.0', result: { result: [...Buffer.from(JSON.stringify(73069))] } });
+      }
+      if (acc === 'contract.main.burrow.near' && m === 'get_asset') {
+        const args = JSON.parse(Buffer.from(b.params.args_base64, 'base64').toString());
+        if (args.token_id === 'wrap.near') {
+          return jsonResponse({
+            jsonrpc: '2.0',
+            result: {
+              result: [...Buffer.from(JSON.stringify({
+                token_id: 'wrap.near',
+                supplied: { balance: (3244651n * 10n ** 24n).toString() },
+                config: { extra_decimals: 0 },
+                supply_apr: '0.002323'
+              }))]
+            }
+          });
+        }
+        if (args.token_id === 'usdt.tether-token.near') {
+          return jsonResponse({
+            jsonrpc: '2.0',
+            result: {
+              result: [...Buffer.from(JSON.stringify({
+                token_id: 'usdt.tether-token.near',
+                supplied: { balance: (11041935n * 10n ** 18n).toString() },
+                config: { extra_decimals: 12 },
+                supply_apr: '0.125949'
+              }))]
+            }
+          });
+        }
+      }
+    }
+    return jsonResponse({}, 404, 'Not Found');
+  }, async () => {
+    const pools = await chainContracts.fetchLiveStakingMetrics();
+    assert.equal(llamaFetches, 1);
+    const byId = Object.fromEntries(pools.map((p) => [p.id, p]));
+    assert.equal(byId.aave_eth_usdc.stakersCount, 29029);
+    assert.equal(byId.aave_arb_usdc.stakersCount, 39704);
+    assert.equal(byId.aave_eth_weth.apy, 1.44);
+    assert.equal(byId.aave_eth_weth.stakersCount, 47849);
+    assert.equal(byId.aave_eth_weth.tvlText, '2.36M ETH ($559.21M)');
+    assert.equal(byId.burrow_near_wnear.apy, 0.23);
+    assert.equal(byId.burrow_near_wnear.stakersCount, 73069);
+    assert.ok(byId.burrow_near_wnear.tvlText.includes('3.24M NEAR'));
+    assert.equal(byId.burrow_near_usdt.apy, 12.6);
+    assert.equal(byId.burrow_near_usdt.stakersCount, 73069);
+    assert.ok(byId.burrow_near_usdt.tvlText.includes('11.04M USDT'));
+
+    // Subsequent call with { useCache: true } must hit 60s TTL cache without calling DefiLlama again
+    await chainContracts.fetchLiveStakingMetrics({ useCache: true });
+    assert.equal(llamaFetches, 1);
+  });
+
+  // 2. Burrow NEAR executeOnChainStaking: wraps native NEAR via near_deposit -> ft_transfer_call
+  const keys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+  const burrowWallet = state.normalizeWalletRecord({
+    id: 'w_burrow_test',
+    mnemonic: TEST_MNEMONIC,
+    nearNamedAccount: 'alice.near',
+    nearPublicKey: keys.nearPublicKey,
+    nearPrivateKey: keys.nearPrivateKey,
+    nativeBalances: { near: 5.0 },
+    nearNep141Balances: { 'usdt.tether-token.near': { raw: '10000000', formatted: 10 } }
+  });
+  const burrowCalls = [];
+  const origNearSend = chainContracts.signAndSendNearFunctionCall;
+  chainContracts.signAndSendNearFunctionCall = async (params) => {
+    burrowCalls.push(params);
+    return `tx_${params.receiverId}_${params.methodName}`;
+  };
+  try {
+    await withMockedFetch(async () => jsonResponse({}, 404, 'Not Found'), async () => {
+      const resNear = await chainContracts.executeOnChainStaking({ wallet: burrowWallet, poolId: 'burrow_near_wnear', amount: 2 });
+      assert.equal(resNear.poolId, 'burrow_near_wnear');
+      assert.equal(burrowCalls.length, 2);
+      assert.equal(burrowCalls[0].receiverId, 'wrap.near');
+      assert.equal(burrowCalls[0].methodName, 'near_deposit');
+      assert.equal(burrowCalls[0].depositYocto, chainContracts.toBaseUnits(2, 24));
+      assert.equal(burrowCalls[1].receiverId, 'wrap.near');
+      assert.equal(burrowCalls[1].methodName, 'ft_transfer_call');
+      assert.equal(JSON.parse(burrowCalls[1].argsJson).receiver_id, 'contract.main.burrow.near');
+
+      const resUsdt = await chainContracts.executeOnChainStaking({ wallet: burrowWallet, poolId: 'burrow_near_usdt', amount: 5 });
+      assert.equal(resUsdt.poolId, 'burrow_near_usdt');
+      assert.equal(burrowCalls[2].receiverId, 'usdt.tether-token.near');
+      assert.equal(burrowCalls[2].methodName, 'ft_transfer_call');
+      assert.equal(JSON.parse(burrowCalls[2].argsJson).receiver_id, 'contract.main.burrow.near');
+    });
+  } finally {
+    chainContracts.signAndSendNearFunctionCall = origNearSend;
+  }
+
+  // 3. localStorage cache persistence & 0ms hydration for liveTokens + staking metrics
+  await withMockedStorage({}, async () => {
+    const prevLiveTokens = state.liveTokens;
+    const prevStakingPools = state.staking.pools;
+    const prevStakingUpdatedAt = state.staking.updatedAt;
+    try {
+      state.saveCachedLiveTokens([{ assetId: 'nep141:wrap.near', symbol: 'NEAR', blockchain: 'near', price: 4.56 }]);
+      state.saveCachedStakingMetrics(chainContracts.STAKING_POOLS);
+      state.liveTokens = [];
+      state.staking.pools = null;
+      state.staking.updatedAt = null;
+      state.initState();
+      assert.equal(state.liveTokens.length, 1);
+      assert.equal(state.liveTokens[0].price, 4.56);
+      assert.ok(Array.isArray(state.staking.pools));
+      assert.ok(state.staking.updatedAt > 0);
+    } finally {
+      state.liveTokens = prevLiveTokens;
+      state.staking.pools = prevStakingPools;
+      state.staking.updatedAt = prevStakingUpdatedAt;
+    }
+  });
+
+  // 4. openTokenDetailSheet triggers background staking metrics fetch when stale and re-renders live APY + separate cards
+  await withMockedStorage({}, async () => {
+    const prevDoc = globalThis.document;
+    const prevWallets = state.wallets.slice();
+    const prevActiveId = state.activeWalletId;
+    const prevPools = state.staking.pools;
+    const prevUpdatedAt = state.staking.updatedAt;
+    state.staking.pools = null;
+    state.staking.updatedAt = null;
+    state.staking.loading = false;
+    const w = state.normalizeWalletRecord({
+      id: 'w_detail_auto_apy',
+      mnemonic: TEST_MNEMONIC,
+      nearNamedAccount: 'alice.near',
+      nativeBalances: { near: 3 }
+    });
+    state.wallets = [w];
+    state.activeWalletId = w.id;
+
+    const domMap = new Map();
+    const makeEl = (id) => {
+      const classes = new Set();
+      const el = {
+        id,
+        innerHTML: '',
+        textContent: '',
+        value: '',
+        href: '#',
+        attributes: {},
+        classList: {
+          add: (c) => classes.add(c),
+          remove: (c) => classes.delete(c),
+          toggle: (c, force) => (force === undefined ? (classes.has(c) ? classes.delete(c) : classes.add(c)) : (force ? classes.add(c) : classes.delete(c))),
+          contains: (c) => classes.has(c)
+        },
+        setAttribute(k, v) { this.attributes[k] = v; },
+        getAttribute(k) { return this.attributes[k] || null; }
+      };
+      domMap.set(id, el);
+      return el;
+    };
+    [
+      'sheet-backdrop', 'sheet-token-detail', 'token-detail-icon', 'token-detail-title',
+      'token-detail-chains', 'token-detail-balance', 'token-detail-usd',
+      'token-detail-addr-row', 'token-detail-addr', 'token-detail-explorer-link',
+      'token-detail-breakdown-card', 'token-detail-breakdown-list',
+      'token-detail-earn-card', 'token-detail-earn-list', 'token-detail-history-list',
+      'token-detail-price-label', 'token-detail-price-val',
+      'staking-pools-list', 'earn-selected-title', 'earn-avail-balance',
+      'earn-in-symbol', 'earn-live-apy', 'earn-tvl-val', 'earn-stakers-val',
+      'earn-live-rate', 'earn-amount-in', 'earn-est-out', 'earn-lock-row', 'earn-lock-tiers'
+    ].forEach(makeEl);
+    globalThis.document = {
+      documentElement: { lang: 'en' },
+      getElementById: (id) => domMap.get(id) || null,
+      querySelectorAll: () => []
+    };
+
+    try {
+      await withMockedFetch(async (url) => {
+        if (url.includes('api.ref.finance/get-rnear-apy')) return jsonResponse({ data: 5.55 });
+        return jsonResponse({}, 404, 'Not Found');
+      }, async () => {
+        uiController.openTokenDetailSheet('NEAR');
+        await new Promise((r) => setTimeout(r, 40));
+        const earnHtml = domMap.get('token-detail-earn-list').innerHTML;
+        assert.ok(earnHtml.includes('rhea_rnear'));
+        assert.ok(earnHtml.includes('burrow_near_wnear'));
+        assert.ok(earnHtml.includes('5.55%'), 'Background staking refresh must re-render live APY in open Token Detail Sheet');
+        assert.equal((earnHtml.match(/ios-glass-card/g) || []).length, 2, 'NEAR must render two separate cards for Staking and Lending & Earn');
+      });
+    } finally {
+      globalThis.document = prevDoc;
+      state.wallets = prevWallets;
+      state.activeWalletId = prevActiveId;
+      state.staking.pools = prevPools;
+      state.staking.updatedAt = prevUpdatedAt;
       state.setLanguage(prevLang);
     }
   });
