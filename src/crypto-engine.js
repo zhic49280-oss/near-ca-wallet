@@ -1225,13 +1225,79 @@
     return curr;
   }
 
-  function tapTweakHash(pubKeyXBytes) {
-    const tagHash = sha256Bytes('TapTweak');
-    const combined = new Uint8Array(64 + pubKeyXBytes.length);
+  function taggedHash(tag, msgBytes) {
+    const tagHash = sha256Bytes(tag);
+    const combined = new Uint8Array(64 + msgBytes.length);
     combined.set(tagHash, 0);
     combined.set(tagHash, 32);
-    combined.set(pubKeyXBytes, 64);
+    combined.set(msgBytes, 64);
     return sha256Bytes(combined);
+  }
+
+  function tapTweakHash(pubKeyXBytes) {
+    return taggedHash('TapTweak', pubKeyXBytes);
+  }
+
+  function signSchnorrBip340(msg32Bytes, privKeyInput, auxRand32 = null) {
+    const msgBytes = msg32Bytes instanceof Uint8Array ? msg32Bytes : hexToBytes(String(msg32Bytes || ''));
+    if (msgBytes.length !== 32) throw new Error('BIP-340 message must be 32 bytes');
+    const privHex = typeof privKeyInput === 'string'
+      ? privKeyInput.replace(/^0x/i, '').padStart(64, '0')
+      : bytesToHex(privKeyInput).padStart(64, '0');
+    const d0 = BigInt('0x' + privHex);
+    if (d0 <= 0n || d0 >= SECP256K1_N) throw new Error('Invalid BIP-340 private key');
+    const P = secpPointMultiply(d0);
+    const d = (P.y % 2n === 0n) ? d0 : (SECP256K1_N - d0);
+    const dBytes = hexToBytes(d.toString(16).padStart(64, '0'));
+    const pXBytes = hexToBytes(P.x.toString(16).padStart(64, '0'));
+
+    const aux = auxRand32 instanceof Uint8Array && auxRand32.length === 32
+      ? auxRand32
+      : getRandomBytes(32);
+    const auxHash = taggedHash('BIP0340/aux', aux);
+    const t = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) t[i] = dBytes[i] ^ auxHash[i];
+
+    const rand = taggedHash('BIP0340/nonce', concatUint8Arrays([t, pXBytes, msgBytes]));
+    const k0 = BigInt('0x' + bytesToHex(rand)) % SECP256K1_N;
+    if (k0 === 0n) throw new Error('BIP-340 nonce generation failed');
+    const R = secpPointMultiply(k0);
+    const k = (R.y % 2n === 0n) ? k0 : (SECP256K1_N - k0);
+    const rXBytes = hexToBytes(R.x.toString(16).padStart(64, '0'));
+
+    const eHash = taggedHash('BIP0340/challenge', concatUint8Arrays([rXBytes, pXBytes, msgBytes]));
+    const e = BigInt('0x' + bytesToHex(eHash)) % SECP256K1_N;
+    const s = secpMod(k + e * d, SECP256K1_N);
+    const sBytes = hexToBytes(s.toString(16).padStart(64, '0'));
+    return concatUint8Arrays([rXBytes, sBytes]);
+  }
+
+  function liftXSecp256k1(x) {
+    if (x < 0n || x >= SECP256K1_P) return null;
+    const ySq = secpMod(edPow(x, 3n, SECP256K1_P) + 7n, SECP256K1_P);
+    const y = edPow(ySq, (SECP256K1_P + 1n) / 4n, SECP256K1_P);
+    if (secpMod(y * y, SECP256K1_P) !== ySq) return null;
+    return { x, y: (y % 2n === 0n) ? y : (SECP256K1_P - y) };
+  }
+
+  function verifySchnorrBip340(sig64Bytes, msg32Bytes, pubKeyX32Bytes) {
+    const sig = sig64Bytes instanceof Uint8Array ? sig64Bytes : hexToBytes(String(sig64Bytes || ''));
+    const msg = msg32Bytes instanceof Uint8Array ? msg32Bytes : hexToBytes(String(msg32Bytes || ''));
+    const pkX = pubKeyX32Bytes instanceof Uint8Array ? pubKeyX32Bytes : hexToBytes(String(pubKeyX32Bytes || ''));
+    if (sig.length !== 64 || msg.length !== 32 || pkX.length !== 32) return false;
+    const P = liftXSecp256k1(BigInt('0x' + bytesToHex(pkX)));
+    if (!P) return false;
+    const r = BigInt('0x' + bytesToHex(sig.slice(0, 32)));
+    const s = BigInt('0x' + bytesToHex(sig.slice(32, 64)));
+    if (r >= SECP256K1_P || s >= SECP256K1_N) return false;
+    const eHash = taggedHash('BIP0340/challenge', concatUint8Arrays([sig.slice(0, 32), pkX, msg]));
+    const e = BigInt('0x' + bytesToHex(eHash)) % SECP256K1_N;
+    const sG = secpPointMultiply(s);
+    const eP = secpPointMultiply(e, P);
+    const negEP = { x: eP.x, y: secpMod(SECP256K1_P - eP.y, SECP256K1_P) };
+    const R = secpPointAdd(sG, negEP);
+    if (!R || R.y % 2n !== 0n || R.x !== r) return false;
+    return true;
   }
 
   function privateKeyToTaprootAddress(privBytes, useTapTweak = true, path = "m/86'/808276'/0'/0/0") {
@@ -2091,6 +2157,9 @@
     derivePearlFromSeed,
     deriveCandidatePearlAddressesAsync,
     deriveAllChainKeysAsync,
+    taggedHash,
+    signSchnorrBip340,
+    verifySchnorrBip340,
 
     // 4. Ed25519, Borsh & NEP-413 Intent Signing
     ed25519PublicKeyFromSeedAsync,

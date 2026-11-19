@@ -245,37 +245,44 @@
     const accountId = String(nearAccountId || '').trim();
     if (!accountId) return 0;
 
-    try {
-      const resp = await fetchJsonWithTimeout(
-        NEAR_RPC_URL,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 'near-view-account',
-            method: 'query',
-            params: {
-              request_type: 'view_account',
-              finality: 'final',
-              account_id: accountId
-            }
-          })
-        },
-        DEFAULT_TIMEOUT_MS
-      );
+    const endpoints = [
+      NEAR_RPC_URL,
+      'https://free.rpc.fastnear.com',
+      'https://1rpc.io/near'
+    ];
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'near-view-account',
+      method: 'query',
+      params: {
+        request_type: 'view_account',
+        finality: 'final',
+        account_id: accountId
+      }
+    });
 
-      if (!resp.ok || !resp.data) return null;
-      if (resp.data.error) {
-        return isUnknownNearAccountError(resp.data.error) ? 0 : null;
-      }
-      if (resp.data.result && resp.data.result.amount !== undefined) {
-        return Number(fromBaseUnits(String(resp.data.result.amount), 24));
-      }
-      return null;
-    } catch (_) {
-      return null;
+    for (const rpcUrl of endpoints) {
+      try {
+        const resp = await fetchJsonWithTimeout(
+          rpcUrl,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body
+          },
+          DEFAULT_TIMEOUT_MS
+        );
+        if (!resp.ok || !resp.data) continue;
+        if (resp.data.error) {
+          if (isUnknownNearAccountError(resp.data.error)) return 0;
+          continue;
+        }
+        if (resp.data.result && resp.data.result.amount !== undefined) {
+          return Number(fromBaseUnits(String(resp.data.result.amount), 24));
+        }
+      } catch (_) {}
     }
+    return null;
   }
 
   const DEFAULT_NEAR_NEP141_CONTRACTS = {
@@ -669,33 +676,48 @@
         ? `https://api.dexscreener.com/latest/dex/tokens/${arcAddrsForDex.join(',')}`
         : null;
 
-      const [oneClickRes, dexRes, prlRes, hlRes, refListRes, cgRes, xStockRes, kyberTokRes, arcscanTokRes, refPriceRes, arcDexRes] = await Promise.allSettled([
-        fetchJsonWithTimeout(`${ONECLICK_API_URL}/tokens`, {}, DEFAULT_TIMEOUT_MS),
+      const settleWithSoftCap = (promises, capMs = 1500) => Promise.all(
+        promises.map((p) => Promise.race([
+          Promise.resolve(p).then((v) => ({ status: 'fulfilled', value: v })).catch((e) => ({ status: 'rejected', reason: e })),
+          new Promise((resolve) => setTimeout(() => resolve({ status: 'fulfilled', value: null }), capMs))
+        ]))
+      );
+
+      const oneClickPromise = fetchJsonWithTimeout(`${ONECLICK_API_URL}/tokens`, {}, 5000);
+      const auxPromises = [
         fetchJsonWithTimeout(
           `https://api.dexscreener.com/latest/dex/tokens/${SOL_DEXSCREENER_MINTS.join(',')}`,
           {},
-          DEFAULT_TIMEOUT_MS
+          4500
         ).catch(() => null),
-        fetchJsonWithTimeout('https://api.prlscan.com/v1/market/prl', {}, DEFAULT_TIMEOUT_MS).catch(() => null),
+        fetchJsonWithTimeout('https://api.prlscan.com/v1/market/prl', {}, 4500).catch(() => null),
         fetchJsonWithTimeout(
           'https://api.hyperliquid.xyz/info',
           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'allMids' }) },
-          DEFAULT_TIMEOUT_MS
+          4500
         ).catch(() => null),
-        fetchJsonWithTimeout('https://indexer.ref.finance/list-token', {}, DEFAULT_TIMEOUT_MS).catch(() => null),
-        fetchJsonWithTimeout('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=250&page=1', {}, DEFAULT_TIMEOUT_MS).catch(() => null),
-        fetchJsonWithTimeout('https://lite-api.jup.ag/tokens/v2/search?query=xStock', {}, DEFAULT_TIMEOUT_MS).catch(() => null),
+        fetchJsonWithTimeout('https://indexer.ref.finance/list-token', {}, 4500).catch(() => null),
+        fetchJsonWithTimeout('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=250&page=1', {}, 4500).catch(() => null),
+        fetchJsonWithTimeout('https://lite-api.jup.ag/tokens/v2/search?query=xStock', {}, 4500).catch(() => null),
         fetchJsonWithTimeout(
           'https://ks-setting.kyberswap.com/api/v1/tokens?chainIds=5042,1,8453,42161,56,999&page=1&pageSize=100&isWhitelisted=true',
           {},
-          5000
+          4500
         ).catch(() => null),
-        fetchJsonWithTimeout('https://li.quest/v1/tokens?chains=5042', {}, 5000).catch(() => null),
-        fetchJsonWithTimeout('https://indexer.ref.finance/list-token-price', {}, DEFAULT_TIMEOUT_MS).catch(() => null),
-        arcDexUrl ? fetchJsonWithTimeout(arcDexUrl, {}, 5000).catch(() => null) : Promise.resolve(null)
-      ]);
+        fetchJsonWithTimeout('https://li.quest/v1/tokens?chains=5042', {}, 4500).catch(() => null),
+        fetchJsonWithTimeout('https://indexer.ref.finance/list-token-price', {}, 4500).catch(() => null),
+        arcDexUrl ? fetchJsonWithTimeout(arcDexUrl, {}, 4500).catch(() => null) : Promise.resolve(null)
+      ];
 
-      const resp = oneClickRes.status === 'fulfilled' ? oneClickRes.value : null;
+      const [resp, auxResults] = await Promise.all([
+        oneClickPromise.catch(() => null),
+        oneClickPromise.then(
+          () => settleWithSoftCap(auxPromises, 1500),
+          () => Promise.resolve(auxPromises.map(() => ({ status: 'fulfilled', value: null })))
+        )
+      ]);
+      const [dexRes, prlRes, hlRes, refListRes, cgRes, xStockRes, kyberTokRes, arcscanTokRes, refPriceRes, arcDexRes] = auxResults;
+
       if (!resp || !resp.ok || !Array.isArray(resp.data)) {
         return null;
       }
@@ -792,13 +814,43 @@
       const nearCuratedList = (registry && registry.DEX_CHAIN_TOKENS && Array.isArray(registry.DEX_CHAIN_TOKENS.near))
         ? registry.DEX_CHAIN_TOKENS.near
         : [];
-      const nearFtMetaIcons = await fetchNearFtMetadataIcons(
-        [
-          ...normalizedList.filter((item) => item && item.blockchain === 'near' && item.contractAddress),
-          ...nearCuratedList.filter((item) => item && item.blockchain === 'near' && item.contractAddress)
-        ],
-        sanitizeImg
-      ).catch(() => ({ byContract: Object.create(null), bySymbol: Object.create(null) }));
+      let nearFtMetaIcons = { byContract: Object.create(null), bySymbol: Object.create(null) };
+      const ftIconCacheKey = 'near_ca_near_ft_icons_v1';
+      let hasFreshFtIconCache = false;
+      try {
+        if (typeof localStorage !== 'undefined') {
+          const rawCache = localStorage.getItem(ftIconCacheKey);
+          if (rawCache) {
+            const parsed = JSON.parse(rawCache);
+            if (parsed && parsed.ts && (Date.now() - parsed.ts < 6 * 3600 * 1000) && parsed.data) {
+              nearFtMetaIcons = parsed.data;
+              hasFreshFtIconCache = true;
+            }
+          }
+        }
+      } catch (_) {}
+
+      if (!hasFreshFtIconCache) {
+        const ftMetaPromise = fetchNearFtMetadataIcons(
+          [
+            ...normalizedList.filter((item) => item && item.blockchain === 'near' && item.contractAddress),
+            ...nearCuratedList.filter((item) => item && item.blockchain === 'near' && item.contractAddress)
+          ],
+          sanitizeImg
+        ).then((icons) => {
+          try {
+            if (typeof localStorage !== 'undefined' && icons) {
+              localStorage.setItem(ftIconCacheKey, JSON.stringify({ ts: Date.now(), data: icons }));
+            }
+          } catch (_) {}
+          return icons;
+        }).catch(() => ({ byContract: Object.create(null), bySymbol: Object.create(null) }));
+
+        nearFtMetaIcons = await Promise.race([
+          ftMetaPromise,
+          new Promise((resolve) => setTimeout(() => resolve(nearFtMetaIcons), 800))
+        ]);
+      }
 
       const refPriceByContract = Object.create(null);
       const refPriceData = refPriceRes.status === 'fulfilled' && refPriceRes.value?.ok ? refPriceRes.value.data : null;
@@ -2377,6 +2429,7 @@
 
       // ---- Entry options (asset sitting on NEAR before the swap leg)
       let entries = [];
+      let bridgeInErr = '';
       if (fromBc === 'near') {
         entries.push({ contract: fromNearContract, decimals: fromDec, symbol: fromToken.symbol, out: amtStr, bridgeIn: null, hubAsset: fromAsset });
       } else {
@@ -2394,13 +2447,14 @@
             depositType: 'ORIGIN_CHAIN',
             recipientType: 'DESTINATION_CHAIN',
             dry: true
-          }).catch(() => null);
+          }).catch((err) => ({ ok: false, error: err && err.message ? err.message : '' }));
+          if (!okAmt(q) && q && q.error && !bridgeInErr) bridgeInErr = q.error;
           return okAmt(q) ? { contract: h.contract, decimals: h.decimals, symbol: h.symbol, out: String(q.amountOut), bridgeIn: q, hubAsset: h.asset } : null;
         }));
         entries = bridged.filter(Boolean);
       }
       if (entries.length === 0) {
-        return { ok: false, error: t('该来源资产暂无法跨入 NEAR 流动性', 'Origin asset cannot be bridged into NEAR liquidity') };
+        return { ok: false, error: bridgeInErr || t('该来源资产暂无法跨入 NEAR 流动性', 'Origin asset cannot be bridged into NEAR liquidity') };
       }
 
       // ---- Exit options
@@ -2586,7 +2640,7 @@
     const smartPromise = quoteSmartHubRoute(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'smart route failed' }));
     const legacyPromise = quoteCrossChainWithDexRelayLegacy(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'legacy failed' }));
 
-    // Never let multi-stage Smart Hub route block swap quote > 1800ms after a direct/legacy route has succeeded
+    // Never let multi-stage Smart Hub route block swap quote > 600ms after a direct/legacy route has succeeded
     const cappedSmartPromise = new Promise((resolve) => {
       let settled = false;
       let timer = null;
@@ -2600,7 +2654,7 @@
       legacyPromise.then((leg) => {
         const legOk = leg && leg.ok && /^\d+$/.test(String(leg.amountOut || '')) && BigInt(leg.amountOut) > 0n;
         if (legOk && !settled) {
-          timer = setTimeout(() => finish({ ok: false, error: 'smart route timeout' }), 1800);
+          timer = setTimeout(() => finish({ ok: false, error: 'smart route timeout' }), 600);
         }
       });
     });

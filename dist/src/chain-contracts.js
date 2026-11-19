@@ -2,6 +2,11 @@
   'use strict';
 
   const NEAR_RPC_URL = 'https://rpc.mainnet.near.org';
+  const NEAR_RPC_ENDPOINTS = [
+    NEAR_RPC_URL,
+    'https://free.rpc.fastnear.com',
+    'https://1rpc.io/near'
+  ];
   const NEAR_EXPLORER_TX = 'https://nearblocks.io/txns/';
   const SOLANA_RPC_ENDPOINTS = ['https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com'];
   const SOLSCAN_TX = 'https://solscan.io/tx/';
@@ -1443,58 +1448,89 @@
     throw lastErr || new Error('Solana RPC call failed');
   }
 
+  /**
+   * 通用竞速聚合器：并发发起多个异步请求，一旦首个有效结果到达，
+   * 仅再等待 graceMs 毫秒让其余更快候选参与比价，超时立即返回当前已到达的结果数组。
+   */
+  async function raceWithGraceWindow(promises, isValidFn = (v) => Boolean(v), graceMs = 600) {
+    const list = Array.isArray(promises) ? promises : [];
+    if (list.length === 0) return [];
+    return new Promise((resolve) => {
+      const results = new Array(list.length).fill(null);
+      const settled = new Array(list.length).fill(false);
+      let remaining = list.length;
+      let done = false;
+      let graceTimer = null;
+
+      const finish = () => {
+        if (done) return;
+        done = true;
+        if (graceTimer) clearTimeout(graceTimer);
+        resolve(results);
+      };
+
+      list.forEach((p, idx) => {
+        Promise.resolve(p)
+          .then((val) => {
+            results[idx] = { status: 'fulfilled', value: val };
+            if (!done && isValidFn(val) && !graceTimer && remaining > 1) {
+              graceTimer = setTimeout(finish, graceMs);
+            }
+          })
+          .catch((err) => {
+            results[idx] = { status: 'rejected', reason: err };
+          })
+          .finally(() => {
+            settled[idx] = true;
+            remaining -= 1;
+            if (remaining <= 0) finish();
+          });
+      });
+    });
+  }
+
   async function fetchSolanaNativeAndSplBalances(solAddress, mintAddresses = []) {
     const addr = String(solAddress || '').trim();
     if (!addr) return null;
 
     try {
-      const requests = [
-        callSolanaRpc('getBalance', [addr]),
-        callSolanaRpc('getTokenAccountsByOwner', [addr, { programId: SPL_TOKEN_PROGRAM_ID }, { encoding: 'jsonParsed' }]).catch(() => null)
-      ];
-      const [balRes, splRes] = await Promise.all(requests);
+      const needT22 = Array.isArray(mintAddresses) && mintAddresses.length > 0;
+      const [balRes, splRes, t22Res] = await Promise.all([
+        callSolanaRpc('getBalance', [addr], 5000),
+        callSolanaRpc('getTokenAccountsByOwner', [addr, { programId: SPL_TOKEN_PROGRAM_ID }, { encoding: 'jsonParsed' }], 5000).catch(() => null),
+        needT22
+          ? callSolanaRpc('getTokenAccountsByOwner', [addr, { programId: SPL_TOKEN_2022_PROGRAM_ID }, { encoding: 'jsonParsed' }], 5000).catch(() => null)
+          : Promise.resolve(null)
+      ]);
 
       const lamports = balRes && typeof balRes.value === 'number' ? balRes.value : 0;
       const nativeSol = Number(fromBaseUnits(String(lamports), 9));
 
       const tokens = {};
-      const list = splRes && Array.isArray(splRes.value) ? splRes.value : [];
-      for (const item of list) {
-        const info = item && item.account && item.account.data && item.account.data.parsed && item.account.data.parsed.info;
-        if (!info || !info.mint || !info.tokenAmount) continue;
-        const mint = info.mint;
-        const decimals = Number(info.tokenAmount.decimals) || 0;
-        const rawAmt = BigInt(info.tokenAmount.amount || '0');
-        if (!tokens[mint]) {
-          tokens[mint] = { raw: rawAmt.toString(), decimals, formatted: Number(fromBaseUnits(rawAmt.toString(), decimals)) };
-        } else {
-          const sumRaw = BigInt(tokens[mint].raw) + rawAmt;
-          tokens[mint] = { raw: sumRaw.toString(), decimals, formatted: Number(fromBaseUnits(sumRaw.toString(), decimals)) };
+      const parseSplAccounts = (res) => {
+        const list = res && Array.isArray(res.value) ? res.value : [];
+        for (const item of list) {
+          const info = item && item.account && item.account.data && item.account.data.parsed && item.account.data.parsed.info;
+          if (!info || !info.mint || !info.tokenAmount) continue;
+          const mint = info.mint;
+          const decimals = Number(info.tokenAmount.decimals) || 0;
+          const rawAmt = BigInt(info.tokenAmount.amount || '0');
+          if (!tokens[mint]) {
+            tokens[mint] = { raw: rawAmt.toString(), decimals, formatted: Number(fromBaseUnits(rawAmt.toString(), decimals)) };
+          } else {
+            const sumRaw = BigInt(tokens[mint].raw) + rawAmt;
+            tokens[mint] = { raw: sumRaw.toString(), decimals, formatted: Number(fromBaseUnits(sumRaw.toString(), decimals)) };
+          }
         }
-      }
+      };
+
+      parseSplAccounts(splRes);
+      parseSplAccounts(t22Res);
 
       if (Array.isArray(mintAddresses)) {
-        const missingMints = mintAddresses.filter((m) => m && !tokens[m]);
-        if (missingMints.length > 0) {
-          // Best-effort check Token-2022 program accounts if requested mints were not in standard SPL program
-          const t22Res = await callSolanaRpc('getTokenAccountsByOwner', [
-            addr,
-            { programId: SPL_TOKEN_2022_PROGRAM_ID },
-            { encoding: 'jsonParsed' }
-          ]).catch(() => null);
-          const t22List = t22Res && Array.isArray(t22Res.value) ? t22Res.value : [];
-          for (const item of t22List) {
-            const info = item && item.account && item.account.data && item.account.data.parsed && item.account.data.parsed.info;
-            if (!info || !info.mint || !info.tokenAmount) continue;
-            const mint = info.mint;
-            const decimals = Number(info.tokenAmount.decimals) || 0;
-            const rawAmt = BigInt(info.tokenAmount.amount || '0');
-            tokens[mint] = { raw: rawAmt.toString(), decimals, formatted: Number(fromBaseUnits(rawAmt.toString(), decimals)) };
-          }
-          for (const m of mintAddresses) {
-            if (m && !tokens[m]) {
-              tokens[m] = { raw: '0', decimals: 0, formatted: 0 };
-            }
+        for (const m of mintAddresses) {
+          if (m && !tokens[m]) {
+            tokens[m] = { raw: '0', decimals: 0, formatted: 0 };
           }
         }
       }
@@ -1548,10 +1584,14 @@
     const jupUrl = `${JUPITER_API_URL}/quote?inputMint=${encodeURIComponent(inputMint)}&outputMint=${encodeURIComponent(outputMint)}&amount=${encodeURIComponent(amtStr)}&slippageBps=${slip}${feeParam}`;
     const rayUrl = `${RAYDIUM_API_URL}/compute/swap-base-in?inputMint=${encodeURIComponent(inputMint)}&outputMint=${encodeURIComponent(outputMint)}&amount=${encodeURIComponent(amtStr)}&slippageBps=${slip}&txVersion=V0`;
 
-    const [jRes, rRes] = await Promise.allSettled([
-      fetchJsonWithTimeout(jupUrl, {}, 12000),
-      fetchJsonWithTimeout(rayUrl, {}, 8000).catch(() => null)
-    ]);
+    const [jRes, rRes] = await raceWithGraceWindow(
+      [
+        fetchJsonWithTimeout(jupUrl, {}, 5000),
+        fetchJsonWithTimeout(rayUrl, {}, 5000).catch(() => null)
+      ],
+      (v) => Boolean(v && (v.outAmount || (v.success && v.data && v.data.outputAmount))),
+      600
+    );
 
     const jQuote = jRes.status === 'fulfilled' && jRes.value && jRes.value.outAmount ? jRes.value : null;
     const rResp = rRes.status === 'fulfilled' && rRes.value && rRes.value.success && rRes.value.data && rRes.value.data.outputAmount
@@ -2006,6 +2046,494 @@
     };
   }
 
+  /**
+   * Solana SPL / Token-2022 代币同链/存款转账：
+   * 自动识别 Mint 所属 Token Program，幂等创建接收方 ATA，构建 TransferChecked 指令并签名广播。
+   */
+  async function executeSolanaSplTransfer({
+    wallet,
+    mintAddress,
+    toAddress,
+    amount,
+    decimals = 6,
+    programId = null,
+    tokenBalance = null
+  } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const mintStr = String(mintAddress || '').trim();
+    const destStr = String(toAddress || '').trim();
+    if (!mintStr) throw new Error(t('缺少 Solana 代币 Mint 地址', 'Missing Solana token mint address'));
+    const mintPubkey = base58Decode(mintStr);
+    const toPubkey = base58Decode(destStr);
+    if (mintPubkey.length !== 32) throw new Error(t('Solana Mint 地址无效', 'Invalid Solana mint address'));
+    if (toPubkey.length !== 32) throw new Error(t('Solana 收款地址无效', 'Invalid Solana recipient address'));
+
+    await ensureWalletSigningKeysAsync(wallet);
+    const hasNearMpc = Boolean((wallet.nearNamedAccount || wallet.nearAddress) && wallet.nearPublicKey && wallet.nearPrivateKey);
+    if (!wallet.solAddress || (!wallet.solPrivateSeedHex && !hasNearMpc)) {
+      throw new Error(t('NEAR 主账户或 MPC Solana 地址不可用', 'NEAR Master Account or MPC Solana address unavailable'));
+    }
+
+    const dec = Number.isFinite(Number(decimals)) ? Number(decimals) : 6;
+    const rawAmtStr = toBaseUnits(amount, dec);
+    if (!/^\d+$/.test(rawAmtStr) || BigInt(rawAmtStr) <= 0n) {
+      throw new Error(t('转账数量过小', 'Transfer amount too small'));
+    }
+
+    validateSufficientChainBalance({
+      wallet,
+      chain: 'sol',
+      tokenSymbol: 'SPL',
+      amount,
+      isNative: false,
+      tokenBalance: tokenBalance !== null && tokenBalance !== undefined
+        ? tokenBalance
+        : (wallet.splBalances && typeof wallet.splBalances[mintStr] === 'number' ? wallet.splBalances[mintStr] : null)
+    });
+
+    const solGasAvail = resolveWalletChainBalance(wallet, 'sol');
+    if (solGasAvail < 0.00001) {
+      throw new Error(t(`SOL 余额不足以支付交易费 (当前: ${solGasAvail.toFixed(6)} SOL)`, `Insufficient SOL for gas (Available: ${solGasAvail.toFixed(6)} SOL)`));
+    }
+
+    let tokProg = programId ? String(programId).trim() : '';
+    if (!tokProg) {
+      const mintAccInfo = await callSolanaRpc('getAccountInfo', [mintStr, { encoding: 'jsonParsed' }], 5000).catch(() => null);
+      const ownerProg = mintAccInfo && mintAccInfo.value && mintAccInfo.value.owner ? String(mintAccInfo.value.owner) : '';
+      tokProg = ownerProg === SPL_TOKEN_2022_PROGRAM_ID ? SPL_TOKEN_2022_PROGRAM_ID : SPL_TOKEN_PROGRAM_ID;
+    }
+
+    const ownerStr = wallet.solAddress;
+    const ataProg = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+    const sysProg = '11111111111111111111111111111111';
+
+    const sourceAta = await findSolanaPdaAsync(
+      [base58Decode(ownerStr), base58Decode(tokProg), mintPubkey],
+      base58Decode(ataProg)
+    );
+    const destAta = await findSolanaPdaAsync(
+      [toPubkey, base58Decode(tokProg), mintPubkey],
+      base58Decode(ataProg)
+    );
+
+    const instructions = [];
+    // 幂等创建接收方 ATA（若已存在则合约无操作且不报错）
+    instructions.push({
+      programId: ataProg,
+      keys: [
+        { pubkey: ownerStr, isSigner: true, isWritable: true },
+        { pubkey: destAta.address, isSigner: false, isWritable: true },
+        { pubkey: destStr, isSigner: false, isWritable: false },
+        { pubkey: mintStr, isSigner: false, isWritable: false },
+        { pubkey: sysProg, isSigner: false, isWritable: false },
+        { pubkey: tokProg, isSigner: false, isWritable: false }
+      ],
+      data: new Uint8Array([1]) // AssociatedTokenAccount::CreateIdempotent
+    });
+
+    // SPL Token Instruction::TransferChecked (opcode 12, u64 amount, u8 decimals)
+    const ixData = concatUint8Arrays([
+      new Uint8Array([12]),
+      encodeU64LE(rawAmtStr),
+      new Uint8Array([dec & 0xff])
+    ]);
+    instructions.push({
+      programId: tokProg,
+      keys: [
+        { pubkey: sourceAta.address, isSigner: false, isWritable: true },
+        { pubkey: mintStr, isSigner: false, isWritable: false },
+        { pubkey: destAta.address, isSigner: false, isWritable: true },
+        { pubkey: ownerStr, isSigner: true, isWritable: false }
+      ],
+      data: ixData
+    });
+
+    return buildAndBroadcastSolanaInstructionsAsync({ wallet, instructions });
+  }
+
+  /**
+   * Build SPL Token / Token-2022 Burn (opcode 8) + CloseAccount (opcode 9) instructions
+   * to reclaim ATA rent lamports.
+   */
+  function buildSolanaCloseOrBurnInstructions({ ownerAddress, accounts = [] } = {}) {
+    const ownerStr = String(ownerAddress || '').trim();
+    if (!ownerStr) throw new Error(t('缺少 Solana 地址', 'Missing Solana address'));
+    const instructions = [];
+    for (const acc of accounts) {
+      if (!acc || !acc.ataAddress || !acc.mint) continue;
+      const tokProg = acc.programId === SPL_TOKEN_2022_PROGRAM_ID ? SPL_TOKEN_2022_PROGRAM_ID : SPL_TOKEN_PROGRAM_ID;
+      const rawAmt = BigInt(String(acc.rawAmount || '0'));
+      if (rawAmt > 0n) {
+        instructions.push({
+          programId: tokProg,
+          keys: [
+            { pubkey: acc.ataAddress, isSigner: false, isWritable: true },
+            { pubkey: acc.mint, isSigner: false, isWritable: true },
+            { pubkey: ownerStr, isSigner: true, isWritable: false }
+          ],
+          data: concatUint8Arrays([new Uint8Array([8]), encodeU64LE(rawAmt.toString())])
+        });
+      }
+      instructions.push({
+        programId: tokProg,
+        keys: [
+          { pubkey: acc.ataAddress, isSigner: false, isWritable: true },
+          { pubkey: ownerStr, isSigner: false, isWritable: true },
+          { pubkey: ownerStr, isSigner: true, isWritable: false }
+        ],
+        data: new Uint8Array([9])
+      });
+    }
+    return instructions;
+  }
+
+  /**
+   * Scan all SPL & Token-2022 accounts for an address to identify empty ATAs and dust (< $0.01) accounts.
+   */
+  async function scanSolanaReclaimableAccounts(solAddress, options = {}) {
+    const addr = String(solAddress || '').trim();
+    if (!addr) throw new Error(t('当前钱包未绑定 Solana 地址', 'Solana address unavailable'));
+    const priceResolver = typeof options.priceResolver === 'function' ? options.priceResolver : null;
+
+    const raceSolanaTokenRpc = (progId) =>
+      Promise.any(
+        SOLANA_RPC_ENDPOINTS.map(async (rpcUrl) => {
+          const res = await fetchJsonWithTimeout(
+            rpcUrl,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'getTokenAccountsByOwner',
+                params: [addr, { programId: progId }, { encoding: 'jsonParsed' }]
+              })
+            },
+            4500
+          );
+          if (res && !res.error && res.result !== undefined) return res.result;
+          throw new Error((res && res.error && res.error.message) || 'Solana RPC error');
+        })
+      ).catch(() => null);
+
+    const [splRes, t22Res] = await Promise.all([
+      raceSolanaTokenRpc(SPL_TOKEN_PROGRAM_ID),
+      raceSolanaTokenRpc(SPL_TOKEN_2022_PROGRAM_ID)
+    ]);
+
+    if (!splRes && !t22Res) {
+      throw new Error(t('Solana RPC 扫描失败，请稍后重试', 'Solana RPC scan failed, please retry'));
+    }
+
+    const accounts = [];
+    const collect = (res, fallbackProg) => {
+      const list = res && Array.isArray(res.value) ? res.value : [];
+      for (const item of list) {
+        const parsed = item?.account?.data?.parsed;
+        const info = parsed && parsed.info;
+        if (!info || !info.mint || !info.tokenAmount) continue;
+        if (info.state === 'frozen') continue;
+        const lamports = Number(item?.account?.lamports || 0);
+        const rentSol = lamports / 1e9;
+        const decimals = Number(info.tokenAmount.decimals || 0);
+        const rawAmount = String(info.tokenAmount.amount || '0');
+        const uiAmount = Number(fromBaseUnits(rawAmount, decimals));
+        const isEmpty = BigInt(rawAmount) === 0n;
+        const priceUsd = !isEmpty && priceResolver ? priceResolver(info.mint) : null;
+        const usdValue = priceUsd !== null && Number.isFinite(Number(priceUsd)) ? uiAmount * Number(priceUsd) : null;
+        const isDust = !isEmpty && usdValue !== null && usdValue < 0.01;
+        accounts.push({
+          ataAddress: item.pubkey,
+          programId: item?.account?.owner || fallbackProg,
+          mint: info.mint,
+          lamports,
+          rentSol,
+          decimals,
+          rawAmount,
+          uiAmount,
+          isEmpty,
+          usdValue,
+          isDust
+        });
+      }
+    };
+
+    collect(splRes, SPL_TOKEN_PROGRAM_ID);
+    collect(t22Res, SPL_TOKEN_2022_PROGRAM_ID);
+
+    accounts.sort((a, b) => {
+      const rank = (x) => (x.isEmpty ? 0 : x.isDust ? 1 : 2);
+      return rank(a) - rank(b) || b.lamports - a.lamports;
+    });
+
+    const emptyCount = accounts.filter((a) => a.isEmpty).length;
+    const dustCount = accounts.filter((a) => a.isDust).length;
+    const totalReclaimableSol = accounts
+      .filter((a) => a.isEmpty || a.isDust)
+      .reduce((sum, a) => sum + a.rentSol, 0);
+
+    return { ok: true, accounts, emptyCount, dustCount, totalReclaimableSol };
+  }
+
+  /**
+   * Reclaim SOL rent by closing empty ATAs and optionally burning dust tokens first.
+   */
+  async function executeSolanaRentReclaim({ wallet, accounts = [] } = {}) {
+    if (!wallet || !wallet.solAddress) {
+      throw new Error(t('Solana 地址不可用', 'Solana address unavailable'));
+    }
+    const list = Array.isArray(accounts) ? accounts.filter((a) => a && a.ataAddress && a.mint) : [];
+    if (list.length === 0) {
+      throw new Error(t('请选择至少一个可回收账户', 'Select at least one account to reclaim'));
+    }
+
+    await ensureWalletSigningKeysAsync(wallet);
+    validateSufficientChainBalance({
+      wallet,
+      chain: 'sol',
+      tokenSymbol: 'SOL',
+      amount: 0.00001,
+      isNative: false,
+      tokenBalance: resolveWalletChainBalance(wallet, 'sol')
+    });
+
+    const txHashes = [];
+    const batchSize = 8;
+    for (let i = 0; i < list.length; i += batchSize) {
+      const chunk = list.slice(i, i + batchSize);
+      const instructions = buildSolanaCloseOrBurnInstructions({
+        ownerAddress: wallet.solAddress,
+        accounts: chunk
+      });
+      if (instructions.length === 0) continue;
+      const res = await buildAndBroadcastSolanaInstructionsAsync({ wallet, instructions });
+      if (res && res.txHash) txHashes.push(res.txHash);
+    }
+
+    const closedCount = list.length;
+    const burnedCount = list.filter((a) => BigInt(String(a.rawAmount || '0')) > 0n).length;
+    const reclaimedSol = list.reduce((s, a) => s + Number(a.rentSol || 0), 0);
+    return { ok: true, txHashes, closedCount, burnedCount, reclaimedSol };
+  }
+
+  // ==================== Pearl Network (Taproot UTXO) Execution ====================
+
+  async function pearlBlockbookRequest(apiPath, options = {}) {
+    const isNativeCap = Boolean(
+      typeof window !== 'undefined' &&
+      window.Capacitor &&
+      typeof window.Capacitor.isNativePlatform === 'function' &&
+      window.Capacitor.isNativePlatform()
+    );
+    const directUrl = `https://blockbook.pearlresearch.ai${apiPath}`;
+    if (isNativeCap && window.Capacitor?.Plugins?.CapacitorHttp?.request) {
+      const res = await window.Capacitor.Plugins.CapacitorHttp.request({
+        url: directUrl,
+        method: options.method || 'GET',
+        headers: options.headers || {},
+        data: options.body || undefined,
+        connectTimeout: 10000,
+        readTimeout: 10000
+      });
+      if (res && res.status >= 200 && res.status < 300) {
+        return typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+      }
+      throw new Error((res && res.data && res.data.error) || `Blockbook HTTP ${res ? res.status : 'error'}`);
+    }
+    const isDevServer =
+      !isNativeCap &&
+      typeof window !== 'undefined' &&
+      window.location &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+      Boolean(window.location.port);
+    const url = isDevServer ? `/pearl-proxy?path=${encodeURIComponent(apiPath)}` : directUrl;
+    return fetchJsonWithTimeout(url, options, 10000);
+  }
+
+  function encodeVarInt(n) {
+    const v = Number(n);
+    if (v < 0xfd) return new Uint8Array([v]);
+    if (v <= 0xffff) return new Uint8Array([0xfd, v & 0xff, (v >> 8) & 0xff]);
+    return new Uint8Array([0xfe, v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff]);
+  }
+
+  function reverseHexBytes(hexStr) {
+    const clean = String(hexStr || '').replace(/^0x/i, '');
+    const out = new Uint8Array(clean.length / 2);
+    for (let i = 0; i < out.length; i++) {
+      out[out.length - 1 - i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+    }
+    return out;
+  }
+
+  function pearlTaprootScriptPubKey(cryptoEngine, prlAddress) {
+    const decoded = cryptoEngine.decodeBech32m(String(prlAddress || '').trim());
+    if (!decoded || !decoded.valid || decoded.hrp !== 'prl' || decoded.witnessVersion !== 1 || !decoded.programBytes || decoded.programBytes.length !== 32) {
+      throw new Error(t('Pearl Taproot 地址无效', 'Invalid Pearl Taproot address'));
+    }
+    const spk = new Uint8Array(34);
+    spk[0] = 0x51; // OP_1 (SegWit v1)
+    spk[1] = 0x20; // push 32 bytes
+    spk.set(Uint8Array.from(decoded.programBytes), 2);
+    return spk;
+  }
+
+  function buildSignedPearlTaprootTx({
+    fromAddress,
+    toAddress,
+    amountGrains,
+    feeGrains,
+    utxos = [],
+    tweakedPrivateKeyHex
+  }) {
+    const cryptoEngine = getCryptoEngine();
+    if (!cryptoEngine || typeof cryptoEngine.signSchnorrBip340 !== 'function') {
+      throw new Error(t('BIP-340 Schnorr 签名引擎不可用', 'BIP-340 Schnorr signer unavailable'));
+    }
+    const sendAmt = BigInt(String(amountGrains || '0'));
+    const feeAmt = BigInt(String(feeGrains || '0'));
+    if (sendAmt <= 0n) throw new Error(t('转账金额必须大于 0', 'Transfer amount must be positive'));
+
+    const sortedUtxos = [...utxos]
+      .filter((u) => u && u.txid && u.vout !== undefined && BigInt(String(u.value || '0')) > 0n)
+      .sort((a, b) => (BigInt(String(b.value)) > BigInt(String(a.value)) ? 1 : -1));
+
+    const selected = [];
+    let totalIn = 0n;
+    const needed = sendAmt + feeAmt;
+    for (const u of sortedUtxos) {
+      selected.push(u);
+      totalIn += BigInt(String(u.value));
+      if (totalIn >= needed) break;
+    }
+    if (totalIn < needed) {
+      const availPrl = Number(fromBaseUnits(totalIn.toString(), 8));
+      const needPrl = Number(fromBaseUnits(needed.toString(), 8));
+      throw new Error(`${t('PRL UTXO 可用余额不足', 'Insufficient PRL UTXO balance')} (${availPrl.toFixed(6)} < ${needPrl.toFixed(6)} PRL)`);
+    }
+
+    const fromSpk = pearlTaprootScriptPubKey(cryptoEngine, fromAddress);
+    const toSpk = pearlTaprootScriptPubKey(cryptoEngine, toAddress);
+    const changeAmt = totalIn - sendAmt - feeAmt;
+    const outputs = [{ value: sendAmt, spk: toSpk }];
+    if (changeAmt >= 546n) {
+      outputs.push({ value: changeAmt, spk: fromSpk });
+    }
+
+    const versionBytes = encodeU32LE(2);
+    const locktimeBytes = encodeU32LE(0);
+    const seqBytes = new Uint8Array([0xfd, 0xff, 0xff, 0xff]); // RBF 0xfffffffd
+
+    const prevoutsBuf = concatUint8Arrays(selected.map((u) => concatUint8Arrays([reverseHexBytes(u.txid), encodeU32LE(u.vout)])));
+    const amountsBuf = concatUint8Arrays(selected.map((u) => encodeU64LE(String(u.value))));
+    const spksBuf = concatUint8Arrays(selected.map(() => concatUint8Arrays([encodeVarInt(fromSpk.length), fromSpk])));
+    const seqsBuf = concatUint8Arrays(selected.map(() => seqBytes));
+    const outsBuf = concatUint8Arrays(outputs.map((o) => concatUint8Arrays([encodeU64LE(o.value.toString()), encodeVarInt(o.spk.length), o.spk])));
+
+    const shaPrevouts = cryptoEngine.sha256Bytes(prevoutsBuf);
+    const shaAmounts = cryptoEngine.sha256Bytes(amountsBuf);
+    const shaSpks = cryptoEngine.sha256Bytes(spksBuf);
+    const shaSeqs = cryptoEngine.sha256Bytes(seqsBuf);
+    const shaOuts = cryptoEngine.sha256Bytes(outsBuf);
+
+    const witnesses = [];
+    for (let i = 0; i < selected.length; i++) {
+      const sigMsg = concatUint8Arrays([
+        new Uint8Array([0x00]), // epoch
+        new Uint8Array([0x00]), // SIGHASH_DEFAULT
+        versionBytes,
+        locktimeBytes,
+        shaPrevouts,
+        shaAmounts,
+        shaSpks,
+        shaSeqs,
+        shaOuts,
+        new Uint8Array([0x00]), // spend_type (key-path, no annex)
+        encodeU32LE(i)
+      ]);
+      const sighash = cryptoEngine.taggedHash('TapSighash', sigMsg);
+      const sig64 = cryptoEngine.signSchnorrBip340(sighash, tweakedPrivateKeyHex);
+      witnesses.push(concatUint8Arrays([new Uint8Array([0x01, 0x40]), sig64]));
+    }
+
+    const rawBytes = concatUint8Arrays([
+      versionBytes,
+      new Uint8Array([0x00, 0x01]), // SegWit marker & flag
+      encodeVarInt(selected.length),
+      ...selected.map((u) => concatUint8Arrays([reverseHexBytes(u.txid), encodeU32LE(u.vout), new Uint8Array([0x00]), seqBytes])),
+      encodeVarInt(outputs.length),
+      ...outputs.map((o) => concatUint8Arrays([encodeU64LE(o.value.toString()), encodeVarInt(o.spk.length), o.spk])),
+      ...witnesses,
+      locktimeBytes
+    ]);
+
+    const rawHex = Array.from(rawBytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+    return { rawHex, feeGrains: feeAmt.toString(), changeGrains: changeAmt >= 546n ? changeAmt.toString() : '0', inputCount: selected.length, outputCount: outputs.length };
+  }
+
+  async function executePearlTransfer({ wallet, toAddress, amountPrl, feeDeductMode = 'extra' } = {}) {
+    if (!wallet || !wallet.address) {
+      throw new Error(t('Pearl 地址不可用', 'Pearl address unavailable'));
+    }
+    await ensureWalletSigningKeysAsync(wallet);
+    if (!wallet.tweakedPrivateKeyHex) {
+      throw new Error(t('缺少 Pearl Taproot 签名私钥', 'Pearl Taproot signing key unavailable'));
+    }
+
+    const reqAmt = Number(amountPrl);
+    if (!Number.isFinite(reqAmt) || reqAmt <= 0) {
+      throw new Error(t('请输入有效 PRL 数量', 'Enter a valid PRL amount'));
+    }
+
+    const [utxos, feeEst] = await Promise.all([
+      pearlBlockbookRequest(`/api/v2/utxo/${encodeURIComponent(wallet.address)}?confirmed=false`),
+      pearlBlockbookRequest('/api/v2/estimatefee/2').catch(() => null)
+    ]);
+
+    if (!Array.isArray(utxos) || utxos.length === 0) {
+      throw new Error(t('Pearl 钱包暂无可用 UTXO', 'No spendable PRL UTXOs found'));
+    }
+
+    const feePerKbPrl = feeEst && feeEst.result && Number(feeEst.result) > 0 ? Number(feeEst.result) : 0.0066;
+    const estVbytes = 12 + Math.min(utxos.length, 4) * 58 + 2 * 43;
+    const feeGrainsBig = BigInt(Math.max(10000, Math.ceil((feePerKbPrl * 1e8 * estVbytes) / 1000)));
+    const reqGrainsBig = BigInt(toBaseUnits(String(reqAmt), 8));
+    const sendGrainsBig = feeDeductMode === 'internal'
+      ? (reqGrainsBig > feeGrainsBig ? reqGrainsBig - feeGrainsBig : 0n)
+      : reqGrainsBig;
+
+    if (sendGrainsBig <= 0n) {
+      throw new Error(t('转账金额不足以支付矿工费', 'Amount too small to cover miner fee'));
+    }
+
+    const built = buildSignedPearlTaprootTx({
+      fromAddress: wallet.address,
+      toAddress: String(toAddress || '').trim(),
+      amountGrains: sendGrainsBig.toString(),
+      feeGrains: feeGrainsBig.toString(),
+      utxos,
+      tweakedPrivateKeyHex: wallet.tweakedPrivateKeyHex
+    });
+
+    const broadcastRes = await pearlBlockbookRequest('/api/v2/sendtx/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: built.rawHex
+    });
+
+    if (!broadcastRes || !broadcastRes.result) {
+      throw new Error((broadcastRes && broadcastRes.error) || t('Pearl 交易广播失败', 'Pearl transaction broadcast failed'));
+    }
+
+    return {
+      ok: true,
+      txHash: broadcastRes.result,
+      amountPrl: Number(fromBaseUnits(sendGrainsBig.toString(), 8)),
+      feePrl: Number(fromBaseUnits(built.feeGrains, 8))
+    };
+  }
+
   // ==================== EVM RPC & Smart Contract Execution ====================
 
   async function fetchEvmNativeAndErc20Balance(chainKey, evmAddress, tokenContract = null, decimals = 18) {
@@ -2062,6 +2590,123 @@
         tokenRaw,
         tokenFormatted
       };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * 批量查询单条 EVM 链的原生余额与多个 ERC20 balanceOf：
+   * 优先使用单次 JSON-RPC Batch 请求（1 次 HTTP 请求完成整条链所有代币查询），
+   * 若节点不支持 Batch 则自动降级为 1 次 eth_getBalance + 并发 eth_call。
+   */
+  async function fetchEvmChainBalancesBatch(chainKey, evmAddress, tokenQueries = []) {
+    const key = String(chainKey || '').toLowerCase();
+    const cfg = EVM_CHAINS[key];
+    const addr = String(evmAddress || '').trim();
+    if (!cfg || !addr) return null;
+
+    const validTokens = (Array.isArray(tokenQueries) ? tokenQueries : [])
+      .filter((q) => q && q.contract && String(q.contract).trim().toLowerCase() !== NATIVE_EVM_SENTINEL)
+      .map((q) => ({
+        contract: String(q.contract).trim(),
+        decimals: Number.isFinite(Number(q.decimals)) ? Number(q.decimals) : 18
+      }));
+
+    const paddedAddr = addr.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+    const batchPayload = [
+      { jsonrpc: '2.0', id: 0, method: 'eth_getBalance', params: [addr, 'latest'] },
+      ...validTokens.map((q, idx) => ({
+        jsonrpc: '2.0',
+        id: idx + 1,
+        method: 'eth_call',
+        params: [{ to: q.contract, data: '0x70a08231' + paddedAddr }, 'latest']
+      }))
+    ];
+
+    let nativeFormatted = null;
+    let nativeRaw = null;
+    const tokens = Object.create(null);
+
+    try {
+      const batchRes = await fetchJsonWithTimeout(
+        cfg.rpc,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(batchPayload)
+        },
+        5500
+      ).catch(() => null);
+
+      if (Array.isArray(batchRes) && batchRes.length > 0) {
+        const byId = new Map();
+        for (const item of batchRes) {
+          if (item && item.id !== undefined) byId.set(item.id, item);
+        }
+        const natItem = byId.get(0);
+        if (natItem && typeof natItem.result === 'string' && natItem.result.startsWith('0x')) {
+          nativeRaw = BigInt(natItem.result === '0x' ? '0x0' : natItem.result).toString();
+          nativeFormatted = Number(fromBaseUnits(nativeRaw, 18));
+        }
+        validTokens.forEach((q, idx) => {
+          const item = byId.get(idx + 1);
+          if (item && typeof item.result === 'string' && item.result.startsWith('0x')) {
+            const raw = BigInt(item.result === '0x' ? '0x0' : item.result).toString();
+            tokens[q.contract.toLowerCase()] = {
+              contract: q.contract,
+              raw,
+              formatted: Number(fromBaseUnits(raw, q.decimals))
+            };
+          }
+        });
+        if (nativeFormatted !== null) {
+          return { chainKey: key, chainId: cfg.chainId, nativeRaw, nativeFormatted, tokens };
+        }
+      }
+
+      // 降级路径：并发发起 1 次 eth_getBalance + N 次 eth_call（无重复原生查询）
+      const [natRes, ...ercResults] = await Promise.all([
+        fetchJsonWithTimeout(
+          cfg.rpc,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(batchPayload[0])
+          },
+          5500
+        ).catch(() => null),
+        ...validTokens.map((q, idx) =>
+          fetchJsonWithTimeout(
+            cfg.rpc,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(batchPayload[idx + 1])
+            },
+            5500
+          ).catch(() => null)
+        )
+      ]);
+
+      if (!natRes || typeof natRes.result !== 'string' || !natRes.result.startsWith('0x')) {
+        return null;
+      }
+      nativeRaw = BigInt(natRes.result === '0x' ? '0x0' : natRes.result).toString();
+      nativeFormatted = Number(fromBaseUnits(nativeRaw, 18));
+      validTokens.forEach((q, idx) => {
+        const res = ercResults[idx];
+        if (res && typeof res.result === 'string' && res.result.startsWith('0x')) {
+          const raw = BigInt(res.result === '0x' ? '0x0' : res.result).toString();
+          tokens[q.contract.toLowerCase()] = {
+            contract: q.contract,
+            raw,
+            formatted: Number(fromBaseUnits(raw, q.decimals))
+          };
+        }
+      });
+
+      return { chainKey: key, chainId: cfg.chainId, nativeRaw, nativeFormatted, tokens };
     } catch (_) {
       return null;
     }
@@ -2148,14 +2793,25 @@
       ? `${LIFI_API_URL}/quote?fromChain=${cfg.chainId}&toChain=${cfg.chainId}&fromToken=${encodeURIComponent(effSrc)}&toToken=${encodeURIComponent(effDest)}&fromAmount=${encodeURIComponent(effAmtStr)}&fromAddress=${ARC_QUOTE_PLACEHOLDER_ADDR}&slippage=${lifiSlip}`
       : null;
 
-    const [kRes, pRes, oRes, lRes] = await Promise.allSettled([
-      kyberUrl ? fetchJsonWithTimeout(kyberUrl, {}, 12000) : Promise.resolve(null),
-      cfg.chainId === 999 || cfg.chainId === 4663 || cfg.chainId === 5042
-        ? Promise.resolve(null)
-        : fetchJsonWithTimeout(paraUrl, {}, 10000),
-      ooUrl ? fetchJsonWithTimeout(ooUrl, {}, 8000).catch(() => null) : Promise.resolve(null),
-      lifiUrl ? fetchJsonWithTimeout(lifiUrl, {}, 10000).catch(() => null) : Promise.resolve(null)
-    ]);
+    const [kRes, pRes, oRes, lRes] = await raceWithGraceWindow(
+      [
+        kyberUrl ? fetchJsonWithTimeout(kyberUrl, {}, 5000) : Promise.resolve(null),
+        cfg.chainId === 999 || cfg.chainId === 4663 || cfg.chainId === 5042
+          ? Promise.resolve(null)
+          : fetchJsonWithTimeout(paraUrl, {}, 5000),
+        ooUrl ? fetchJsonWithTimeout(ooUrl, {}, 4500).catch(() => null) : Promise.resolve(null),
+        lifiUrl ? fetchJsonWithTimeout(lifiUrl, {}, 5000).catch(() => null) : Promise.resolve(null)
+      ],
+      (v) => Boolean(
+        v && (
+          (v.code === 0 && v.data && v.data.routeSummary && v.data.routeSummary.amountOut) ||
+          (v.priceRoute && v.priceRoute.destAmount) ||
+          (Number(v.code) === 200 && v.data && v.data.outAmount) ||
+          (v.estimate && v.estimate.toAmount)
+        )
+      ),
+      650
+    );
 
     const scaleArcOut = (rawOutStr) => {
       const b = BigInt(rawOutStr);
@@ -2771,6 +3427,29 @@
     };
   }
 
+  async function nearRpcPostAsync(payload, timeoutMs = 8000) {
+    let lastErr = null;
+    for (const url of NEAR_RPC_ENDPOINTS) {
+      try {
+        const res = await fetchJsonWithTimeout(
+          url,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          },
+          timeoutMs
+        );
+        if (res && typeof res === 'object' && (res.result !== undefined || res.error !== undefined)) {
+          return res;
+        }
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr || new Error(t('NEAR RPC 网络请求失败', 'NEAR RPC request failed'));
+  }
+
   function encodeNearPublicKeyBorsh(publicKeyStr) {
     const raw = String(publicKeyStr || '').trim();
     const cryptoEngine = getCryptoEngine();
@@ -2810,22 +3489,17 @@
     }
 
     async function queryAccessKey(pkQuery) {
-      return fetchJsonWithTimeout(
-        NEAR_RPC_URL,
+      return nearRpcPostAsync(
         {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 'ak',
-            method: 'query',
-            params: {
-              request_type: 'view_access_key',
-              finality: 'final',
-              account_id: accountId,
-              public_key: pkQuery
-            }
-          })
+          jsonrpc: '2.0',
+          id: 'ak',
+          method: 'query',
+          params: {
+            request_type: 'view_access_key',
+            finality: 'final',
+            account_id: accountId,
+            public_key: pkQuery
+          }
         },
         8000
       );
@@ -2877,17 +3551,12 @@
     }
     const signedB64 = bytesToBase64(signedTxBytes);
 
-    const txRes = await fetchJsonWithTimeout(
-      NEAR_RPC_URL,
+    const txRes = await nearRpcPostAsync(
       {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 'tx',
-          method: 'broadcast_tx_commit',
-          params: [signedB64]
-        })
+        jsonrpc: '2.0',
+        id: 'tx',
+        method: 'broadcast_tx_commit',
+        params: [signedB64]
       },
       15000
     );
@@ -3126,27 +3795,23 @@
     if (!cleanId) {
       throw new Error(t('缺少 NEAR 账户 ID', 'Missing NEAR account ID'));
     }
-    const res = await fetchJsonWithTimeout(
-      NEAR_RPC_URL,
+    const res = await nearRpcPostAsync(
       {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 'ak-list',
-          method: 'query',
-          params: {
-            request_type: 'view_access_key_list',
-            finality: 'final',
-            account_id: cleanId
-          }
-        })
+        jsonrpc: '2.0',
+        id: 'ak-list',
+        method: 'query',
+        params: {
+          request_type: 'view_access_key_list',
+          finality: 'final',
+          account_id: cleanId
+        }
       },
       8000
     );
     if (!res || res.error || !res.result) {
+      const errCause = res && res.error && res.error.cause ? String(res.error.cause.name || '') : '';
       const msg = (res && res.error && (res.error.data || res.error.message)) || '';
-      if (/does not exist|unknown account/i.test(String(msg))) {
+      if (errCause === 'UNKNOWN_ACCOUNT' || /does not exist|unknown account/i.test(String(msg))) {
         return { accountId: cleanId, exists: false, keys: [] };
       }
       throw new Error(msg || t('查询 NEAR Access Keys 失败', 'Failed to query NEAR Access Keys'));
@@ -5489,8 +6154,142 @@
     };
   }
 
+  /**
+   * NEAR 验证节点全额解质押 (unstake_all)
+   */
+  async function unstakeFromNearValidator({ wallet, validatorId } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const vid = String(validatorId || '').trim();
+    if (!vid) throw new Error(t('缺少验证节点合约地址', 'Missing validator contract ID'));
+    await ensureWalletSigningKeysAsync(wallet);
+    const accountId = wallet.nearNamedAccount || wallet.nearAddress;
+    if (!accountId || !wallet.nearPublicKey || !wallet.nearPrivateKey) {
+      throw new Error(t('NEAR 签名凭据不可用', 'NEAR signing credentials unavailable'));
+    }
+    const nearGas = resolveWalletChainBalance(wallet, 'near');
+    if (nearGas < 0.02) {
+      throw new Error(t(`NEAR 余额不足以支付 Gas (当前: ${nearGas.toFixed(4)} NEAR)`, `Insufficient NEAR for gas (Available: ${nearGas.toFixed(4)} NEAR)`));
+    }
+    const txHash = await api.signAndSendNearFunctionCall({
+      accountId,
+      publicKeyStr: wallet.nearPublicKey,
+      privateKeyStr: wallet.nearPrivateKey,
+      receiverId: vid,
+      methodName: 'unstake_all',
+      argsJson: '{}',
+      gas: '80000000000000',
+      depositYocto: '0'
+    });
+    return { txHash, explorerUrl: `${NEAR_EXPLORER_TX}${txHash}`, validatorId: vid };
+  }
+
+  /**
+   * NEAR 验证节点提取已冷却余额 (withdraw_all)
+   */
+  async function withdrawFromNearValidator({ wallet, validatorId } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const vid = String(validatorId || '').trim();
+    if (!vid) throw new Error(t('缺少验证节点合约地址', 'Missing validator contract ID'));
+    await ensureWalletSigningKeysAsync(wallet);
+    const accountId = wallet.nearNamedAccount || wallet.nearAddress;
+    if (!accountId || !wallet.nearPublicKey || !wallet.nearPrivateKey) {
+      throw new Error(t('NEAR 签名凭据不可用', 'NEAR signing credentials unavailable'));
+    }
+    const nearGas = resolveWalletChainBalance(wallet, 'near');
+    if (nearGas < 0.02) {
+      throw new Error(t(`NEAR 余额不足以支付 Gas (当前: ${nearGas.toFixed(4)} NEAR)`, `Insufficient NEAR for gas (Available: ${nearGas.toFixed(4)} NEAR)`));
+    }
+    const txHash = await api.signAndSendNearFunctionCall({
+      accountId,
+      publicKeyStr: wallet.nearPublicKey,
+      privateKeyStr: wallet.nearPrivateKey,
+      receiverId: vid,
+      methodName: 'withdraw_all',
+      argsJson: '{}',
+      gas: '80000000000000',
+      depositYocto: '0'
+    });
+    return { txHash, explorerUrl: `${NEAR_EXPLORER_TX}${txHash}`, validatorId: vid };
+  }
+
+  /**
+   * Aave V3 借贷池提取本息 (withdraw(address asset, uint256 amount, address to))
+   */
+  async function withdrawFromAaveV3({ wallet, poolId, amount = 'max' } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const pool = findStakingPool(poolId);
+    if (!pool || !pool.isAaveV3) {
+      throw new Error(t('未找到对应的 Aave V3 借贷池', 'Aave V3 pool not found'));
+    }
+    await ensureWalletSigningKeysAsync(wallet);
+    const hasNearMpc = Boolean((wallet.nearNamedAccount || wallet.nearAddress) && wallet.nearPublicKey && wallet.nearPrivateKey);
+    if (!wallet.evmPrivateKey && !hasNearMpc) {
+      throw new Error(t('EVM 签名凭据不可用', 'EVM signing credentials unavailable'));
+    }
+    const gasBal = resolveWalletChainBalance(wallet, pool.chain);
+    const minGas = DEFAULT_GAS_BUFFERS[pool.chain] || 0.001;
+    if (gasBal < minGas) {
+      throw new Error(t(`${pool.chainLabel} 原生 Gas 不足 (当前: ${gasBal.toFixed(5)})`, `Insufficient native gas on ${pool.chainLabel} (Available: ${gasBal.toFixed(5)})`));
+    }
+    const ethersLib = getEthersLib();
+    if (!ethersLib) throw new Error(t('EVM 签名库不可用', 'EVM signer library unavailable'));
+    const evmSender = wallet.mpcEvmAddress || wallet.evmAddress;
+    const rawAmt = String(amount).toLowerCase() === 'max'
+      ? ethersLib.MaxUint256
+      : toBaseUnits(amount, pool.decimals || 6);
+    const iface = new ethersLib.Interface(['function withdraw(address asset, uint256 amount, address to) returns (uint256)']);
+    const data = iface.encodeFunctionData('withdraw', [pool.tokenContract, rawAmt, evmSender]);
+    const res = wallet.evmPrivateKey
+      ? await sendEvmSignedTransaction({ chainKey: pool.chain, privateKey: wallet.evmPrivateKey, to: pool.contract, data, value: '0' })
+      : await sendEvmMpcSignedTransaction({ wallet, chainKey: pool.chain, to: pool.contract, data, value: '0', path: 'ethereum-1' });
+    return { ...res, poolId: pool.id };
+  }
+
+  /**
+   * Burrow (contract.main.burrow.near) 借贷池提取 (execute Withdraw)
+   */
+  async function withdrawFromBurrow({ wallet, tokenContract, amount, decimals = 24 } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const tokenId = String(tokenContract || '').trim();
+    if (!tokenId) throw new Error(t('缺少 Burrow 代币合约地址', 'Missing Burrow token contract'));
+    await ensureWalletSigningKeysAsync(wallet);
+    const accountId = wallet.nearNamedAccount || wallet.nearAddress;
+    if (!accountId || !wallet.nearPublicKey || !wallet.nearPrivateKey) {
+      throw new Error(t('NEAR 签名凭据不可用', 'NEAR signing credentials unavailable'));
+    }
+    const nearGas = resolveWalletChainBalance(wallet, 'near');
+    if (nearGas < 0.05) {
+      throw new Error(t(`NEAR 余额不足以支付 Gas (当前: ${nearGas.toFixed(4)} NEAR)`, `Insufficient NEAR for gas (Available: ${nearGas.toFixed(4)} NEAR)`));
+    }
+    // Burrow 内部固定使用 18 位小数计数（对大于 18 位的代币如 wrap.near 24位或小于 18 位的如 usdt 6位统一按 extra_decimals 缩放至 18 位）
+    const extraDec = Number(decimals) === 24 ? 18 : 18;
+    const rawBurrowAmt = toBaseUnits(amount, extraDec);
+    if (!/^\d+$/.test(rawBurrowAmt) || BigInt(rawBurrowAmt) <= 0n) {
+      throw new Error(t('提取数量必须大于 0', 'Withdraw amount must be positive'));
+    }
+    const txHash = await api.signAndSendNearFunctionCall({
+      accountId,
+      publicKeyStr: wallet.nearPublicKey,
+      privateKeyStr: wallet.nearPrivateKey,
+      receiverId: 'contract.main.burrow.near',
+      methodName: 'execute',
+      argsJson: JSON.stringify({
+        actions: [{
+          Withdraw: {
+            token_id: tokenId,
+            max_amount: rawBurrowAmt
+          }
+        }]
+      }),
+      gas: '120000000000000',
+      depositYocto: '1'
+    });
+    return { txHash, explorerUrl: `${NEAR_EXPLORER_TX}${txHash}`, tokenContract: tokenId };
+  }
+
   const api = {
     NEAR_RPC_URL,
+    nearRpcPostAsync,
     SOLANA_RPC_ENDPOINTS,
     EVM_CHAINS,
     STAKING_POOLS,
@@ -5506,11 +6305,19 @@
     ensureWalletSigningKeysAsync,
     deriveMpcEvmAddressAsync,
     validateSufficientChainBalance,
+    raceWithGraceWindow,
     fetchSolanaNativeAndSplBalances,
     quoteSolanaJupiterSwap,
     executeSolanaJupiterSwap,
     executeSolanaNativeTransfer,
+    executeSolanaSplTransfer,
+    buildSolanaCloseOrBurnInstructions,
+    scanSolanaReclaimableAccounts,
+    executeSolanaRentReclaim,
+    buildSignedPearlTaprootTx,
+    executePearlTransfer,
     fetchEvmNativeAndErc20Balance,
+    fetchEvmChainBalancesBatch,
     quoteArcNetworkDexSwap,
     quoteEvmDexSwap,
     executeEvmDexSwap,
@@ -5541,6 +6348,10 @@
     fetchAllStakingRates,
     executeOnChainStaking,
     executePoolStake,
+    unstakeFromNearValidator,
+    withdrawFromNearValidator,
+    withdrawFromAaveV3,
+    withdrawFromBurrow,
     toBaseUnits,
     fromBaseUnits
   };

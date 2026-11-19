@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#06080F" />
   <title>NEAR Chain Abstraction Wallet</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=3.6" />
+  <link rel="stylesheet" href="style.css?v=5.3" />
 </head>
 <body>
   <div class="ambient-bg" aria-hidden="true"></div>
@@ -208,16 +208,32 @@
               <span class="meta-key" data-i18n="swap.rateLabel">参考汇率</span>
               <span id="swap-quote-rate" class="meta-val">--</span>
             </div>
-            <div class="meta-row">
-              <span class="meta-key" data-i18n="swap.routeLabel">执行路由</span>
-              <span id="swap-quote-route" class="meta-val">--</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-key" data-i18n="swap.slippageLabel">滑点容差</span>
-              <div class="flex gap-1">
-                <button type="button" class="filter-pill" data-bps="50" onclick="setSwapSlippage(50)">0.5%</button>
-                <button type="button" class="filter-pill active" data-bps="100" onclick="setSwapSlippage(100)">1%</button>
-                <button type="button" class="filter-pill" data-bps="300" onclick="setSwapSlippage(300)">3%</button>
+            <button type="button" id="swap-details-toggle" class="meta-toggle-btn" onclick="toggleSwapDetails()" aria-expanded="false">
+              <span class="meta-key" data-i18n="swap.detailsLabel">更多设置</span>
+              <span class="flex items-center gap-1">
+                <span id="swap-details-summary" class="meta-summary">滑点 1%</span>
+                <span id="swap-details-chevron" class="meta-chevron">▾</span>
+              </span>
+            </button>
+            <div id="swap-details-body" class="meta-details-body hidden">
+              <div class="meta-row">
+                <span class="meta-key" data-i18n="swap.routeLabel">执行路由</span>
+                <span id="swap-quote-route" class="meta-val">--</span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-key" data-i18n="swap.slippageLabel">滑点容差</span>
+                <div class="flex gap-1">
+                  <button type="button" class="filter-pill" data-bps="50" onclick="setSwapSlippage(50)">0.5%</button>
+                  <button type="button" class="filter-pill active" data-bps="100" onclick="setSwapSlippage(100)">1%</button>
+                  <button type="button" class="filter-pill" data-bps="300" onclick="setSwapSlippage(300)">3%</button>
+                </div>
+              </div>
+              <div id="swap-gas-reserve-row" class="meta-row hidden">
+                <span id="swap-gas-reserve-label" class="meta-key" data-i18n="swap.gasReserveLabel">目标链 Gas 预留</span>
+                <div class="flex gap-1 items-center">
+                  <button type="button" class="filter-pill active" data-gas-mode="auto" onclick="setSwapGasReserveMode('auto')" data-i18n="swap.gasModeAuto">默认</button>
+                  <button type="button" class="filter-pill" data-gas-mode="extra" onclick="setSwapGasReserveMode('extra')" data-i18n="swap.gasModeExtra">多留</button>
+                </div>
               </div>
             </div>
           </div>
@@ -344,6 +360,7 @@
             <span id="hub-near-current-id" class="mono text-emerald" style="font-size: 11.5px; max-width: 210px; overflow: hidden; text-overflow: ellipsis;">--</span>
           </div>
           <input id="hub-near-domain-input" type="text" class="input-field mono" data-i18n-placeholder="hub.nearDomainPlaceholder" placeholder="输入期望域名，如 alice.near" />
+          <input id="hub-near-bind-auth-input" type="text" class="input-field mono" data-i18n-placeholder="hub.nearDomainAuthPlaceholder" placeholder="绑定其他钱包的 .near 时，可填原助记词/私钥自动授权（可选）" />
           <div class="flex gap-2">
             <button type="button" class="btn-primary flex-1" onclick="registerNearDomainFromHub()" data-i18n="hub.nearDomainRegisterBtn">链上注册 (0.1 NEAR)</button>
             <button type="button" class="btn-secondary" onclick="bindNearDomainFromHub()" data-i18n="hub.nearDomainBindBtn">绑定已有账号</button>
@@ -407,6 +424,10 @@
           <div class="flex items-center justify-between">
             <span style="font-weight: 700; font-size: 13.5px;" data-i18n="hub.wcTitle">WalletConnect v2 授权</span>
             <button type="button" class="btn-secondary" onclick="openWalletConnectSheet()" data-i18n="hub.wcOpenBtn">管理 DApp 连接</button>
+          </div>
+          <div class="flex items-center justify-between">
+            <span style="font-weight: 700; font-size: 13.5px;" data-i18n="hub.solRentTitle">Solana 租金回收与粉尘粉碎</span>
+            <button type="button" class="btn-secondary" onclick="openSolRentReclaimSheet()" data-i18n="hub.solRentOpenBtn">扫描回收</button>
           </div>
           <div class="flex items-center justify-between">
             <span style="font-weight: 700; font-size: 13.5px;" data-i18n="hub.securityTitle">安全与偏好设置</span>
@@ -821,9 +842,31 @@
         <textarea id="near-keys-rotate-mnemonic" class="input-field mono" style="min-height: 64px;" data-i18n-placeholder="sheet.keysRotatePlaceholder" placeholder="点击下方生成新助记词，或粘贴已有助记词"></textarea>
         <div class="flex gap-2">
           <button type="button" class="btn-secondary flex-1" onclick="generateRotateMnemonicInSheet()" data-i18n="sheet.keysGenSeedBtn">生成新助记词</button>
-          <button type="button" class="btn-primary flex-1" onclick="confirmRotateNearAccountKey()" data-i18n="sheet.keysRotateConfirmBtn">确认更换并删除旧密钥</button>
+          <button type="button" class="btn-secondary flex-1" onclick="addNearMnemonicKeyOnlyFromSheet()" data-i18n="sheet.keysAddOnlyBtn">仅添加密钥 (保留旧密钥)</button>
+        </div>
+        <button type="button" class="btn-primary" onclick="confirmRotateNearAccountKey()" data-i18n="sheet.keysRotateConfirmBtn">确认更换并删除旧密钥</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sheet: Solana Rent Reclaim & Dust Burn -->
+  <div id="sheet-sol-rent" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.solRentTitle">Solana 租金回收与粉碎</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div class="meta-row" style="font-size: 12px;">
+        <span class="meta-key" data-i18n="sheet.solRentSummaryLabel">扫描结果</span>
+        <div class="flex items-center gap-2">
+          <span id="sol-rent-summary" class="meta-val">--</span>
+          <button type="button" class="btn-ghost-sm" onclick="scanSolRentReclaimUI()" data-i18n="common.refresh">刷新</button>
         </div>
       </div>
+      <div id="sol-rent-list" class="flex flex-col gap-2" style="max-height: 290px; overflow-y: auto;"></div>
+      <div style="font-size: 11.5px; color: var(--text-secondary);" data-i18n="sheet.solRentNote">仅关闭空账户或销毁勾选的微额粉尘代币以退回 SOL 租金，销毁后代币不可恢复。</div>
+      <button type="button" id="btn-execute-sol-rent" class="btn-primary" onclick="executeSolRentReclaimUI()" data-i18n="sheet.solRentExecuteBtn">一键回收并领取</button>
     </div>
   </div>
 
@@ -874,12 +917,12 @@
   <script src="ethers.umd.min.js"></script>
   <script src="walletconnect.umd.min.js"></script>
   <script src="ml-dsa-65.umd.min.js"></script>
-  <script src="src/crypto-engine.js?v=3.6"></script>
-  <script src="src/token-registry.js?v=3.6"></script>
-  <script src="src/near-intents.js?v=3.6"></script>
-  <script src="src/chain-contracts.js?v=3.6"></script>
-  <script src="src/mining-pro.js?v=3.6"></script>
-  <script src="src/state.js?v=3.6"></script>
-  <script src="src/ui-controller.js?v=3.6"></script>
+  <script src="src/crypto-engine.js?v=5.3"></script>
+  <script src="src/token-registry.js?v=5.3"></script>
+  <script src="src/near-intents.js?v=5.3"></script>
+  <script src="src/chain-contracts.js?v=5.3"></script>
+  <script src="src/mining-pro.js?v=5.3"></script>
+  <script src="src/state.js?v=5.3"></script>
+  <script src="src/ui-controller.js?v=5.3"></script>
 </body>
 </html>

@@ -4524,3 +4524,227 @@ test('v3.4 Post-Quantum: ML-DSA-65 24-word derivation, 0u Universal Account ID, 
     globalThis.fetch = origFetch;
   }
 });
+
+test('v4.0 Optimization: raceWithGraceWindow, fetchEvmChainBalancesBatch, executeSolanaSplTransfer & Earn Withdrawals', async () => {
+  // 1. raceWithGraceWindow returns fast winner + grace window without waiting for hanging promise
+  const start = Date.now();
+  const fast = new Promise((r) => setTimeout(() => r({ ok: true, out: 100 }), 15));
+  const medium = new Promise((r) => setTimeout(() => r({ ok: true, out: 120 }), 35));
+  const hanging = new Promise((r) => setTimeout(() => r({ ok: true, out: 999 }), 3000));
+  const raced = await chainContracts.raceWithGraceWindow([fast, medium, hanging], (v) => Boolean(v && v.ok), 80);
+  const elapsed = Date.now() - start;
+  assert.ok(elapsed < 400, `Expected raceWithGraceWindow < 400ms, got ${elapsed}ms`);
+  assert.equal(raced[0]?.value?.out, 100);
+  assert.equal(raced[1]?.value?.out, 120);
+  assert.equal(raced[2], null);
+
+  // 2. fetchEvmChainBalancesBatch batches eth_getBalance + multiple eth_call in 1 HTTP call
+  const origFetch = globalThis.fetch;
+  try {
+    let rpcCallCount = 0;
+    globalThis.fetch = async (url, init) => {
+      rpcCallCount += 1;
+      const payload = JSON.parse(init.body);
+      assert.ok(Array.isArray(payload), 'Expected JSON-RPC batch array');
+      assert.equal(payload.length, 3);
+      return new Response(JSON.stringify([
+        { jsonrpc: '2.0', id: 0, result: '0xde0b6b3a7640000' }, // 1 ETH
+        { jsonrpc: '2.0', id: 1, result: '0x0000000000000000000000000000000000000000000000000000000005f5e100' }, // 100 USDC (6 dec)
+        { jsonrpc: '2.0', id: 2, result: '0x00000000000000000000000000000000000000000000000000000000004c4b40' }  // 5 USDT (6 dec)
+      ]), { status: 200 });
+    };
+    const batchRes = await chainContracts.fetchEvmChainBalancesBatch(
+      'eth',
+      '0x1111111111111111111111111111111111111111',
+      [
+        { contract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
+        { contract: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 }
+      ]
+    );
+    assert.equal(rpcCallCount, 1);
+    assert.equal(batchRes.nativeFormatted, 1);
+    assert.equal(batchRes.tokens['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'].formatted, 100);
+    assert.equal(batchRes.tokens['0xdac17f958d2ee523a2206206994597c13d831ec7'].formatted, 5);
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+
+  // 3. executeSolanaSplTransfer pre-validation blocks 0 balance & builds signed SPL TransferChecked tx
+  const derived = await cryptoEngine.deriveAllChainKeysAsync(
+    'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
+  );
+  const zeroSolWallet = {
+    ...derived,
+    nativeBalances: { near: 0, sol: 0, eth: 0 },
+    splBalances: { EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: 0 }
+  };
+  await assert.rejects(
+    chainContracts.executeSolanaSplTransfer({
+      wallet: zeroSolWallet,
+      mintAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+      toAddress: '11111111111111111111111111111111',
+      amount: 10,
+      decimals: 6
+    }),
+    /余额不足|Insufficient/
+  );
+
+  // 4. Earn withdrawal functions pre-validate gas before network calls
+  await assert.rejects(
+    chainContracts.unstakeFromNearValidator({ wallet: zeroSolWallet, validatorId: 'astro-stakers.poolv1.near' }),
+    /NEAR 余额不足|Insufficient NEAR/
+  );
+  await assert.rejects(
+    chainContracts.withdrawFromAaveV3({ wallet: zeroSolWallet, poolId: 'aave_eth_usdc', amount: 'max' }),
+    /Gas 不足|Insufficient native gas/
+  );
+});
+
+
+test('v4.0 Swap Target Gas & Solana ATA Rent Reserve: zero-latency detection for new vs existing SPL ATA & Extra/None modes', () => {
+  const newSplMint = 'XsoNr11111111111111111111111111111111111111';
+  const existingSplMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  const nearTok = { blockchain: 'near', symbol: 'NEAR', contractAddress: 'wrap.near' };
+  const newSplTok = { blockchain: 'sol', symbol: 'STONK', contractAddress: newSplMint };
+  const existingSplTok = { blockchain: 'sol', symbol: 'USDC', contractAddress: existingSplMint };
+  const hoodTok = { blockchain: 'hood', symbol: 'PONS', contractAddress: '0x1111111111111111111111111111111111111111' };
+
+  const emptyWallet = {
+    accountType: 'standard',
+    nativeBalances: { sol: 0, hood: 0 },
+    splBalances: { [existingSplMint]: { formatted: 0 } }
+  };
+
+  const destSolQuote = { compositeType: 'SMART_HUB_ROUTE', stages: [{ type: 'BRIDGE_OUT' }, { type: 'DEST_DEX', chain: 'sol' }] };
+  const destHoodQuote = { compositeType: 'SMART_HUB_ROUTE', stages: [{ type: 'BRIDGE_OUT' }, { type: 'DEST_DEX', chain: 'hood' }] };
+
+  // Without resolved quoteData for cross-chain, never guess target gas reserve
+  assert.equal(uiController.getTargetChainGasReserveInfo(emptyWallet, nearTok, newSplTok, 'auto').showSelector, false);
+
+  // New SPL token with 0 SOL & DEST_DEX quote -> recommends 0.0035 SOL (0.0025 ATA rent + 0.001 gas)
+  const rNew = uiController.getTargetChainGasReserveInfo(emptyWallet, nearTok, newSplTok, 'auto', destSolQuote);
+  assert.equal(rNew.showSelector, true);
+  assert.equal(rNew.isNewSolAta, true);
+  assert.equal(rNew.recommendedReserve, 0.0035);
+  assert.equal(rNew.selectedReserve, 0.0035);
+
+  // Extra mode -> 0.01 SOL (never allows 0 reserve when target lacks gas)
+  assert.equal(uiController.getTargetChainGasReserveInfo(emptyWallet, nearTok, newSplTok, 'extra', destSolQuote).selectedReserve, 0.01);
+  assert.equal(uiController.getTargetChainGasReserveInfo(emptyWallet, nearTok, newSplTok, 'none', destSolQuote).selectedReserve, 0.0035);
+
+  // Existing SPL ATA with 0 SOL -> recommends 0.001 SOL (gas only, no ATA rent)
+  const rOld = uiController.getTargetChainGasReserveInfo(emptyWallet, nearTok, existingSplTok, 'auto', destSolQuote);
+  assert.equal(rOld.isNewSolAta, false);
+  assert.equal(rOld.recommendedReserve, 0.001);
+
+  // When wallet already has >= 0.005 SOL -> auto reserve drops to 0
+  const fundedWallet = {
+    accountType: 'standard',
+    nativeBalances: { sol: 0.05, hood: 0.01 },
+    splBalances: {}
+  };
+  assert.equal(uiController.getTargetChainGasReserveInfo(fundedWallet, nearTok, newSplTok, 'auto', destSolQuote).selectedReserve, 0);
+  assert.equal(uiController.getTargetChainGasReserveInfo(fundedWallet, nearTok, hoodTok, 'auto', destHoodQuote).selectedReserve, 0);
+
+  // Native EVM target (e.g. NVDAx -> Base ETH) or direct 1Click route without DEST_DEX -> no gas reserve needed
+  const baseEthTok = { blockchain: 'base', symbol: 'ETH', contractAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE' };
+  const baseUsdcTok = { blockchain: 'base', symbol: 'USDC', contractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' };
+  const rBaseEth = uiController.getTargetChainGasReserveInfo(emptyWallet, newSplTok, baseEthTok, 'auto');
+  assert.equal(rBaseEth.showSelector, false);
+  assert.equal(rBaseEth.selectedReserve, 0);
+  const directQuoteNoDestDex = { compositeType: 'ONECLICK_DIRECT', stages: [{ type: 'ONECLICK' }] };
+  const rDirectUsdc = uiController.getTargetChainGasReserveInfo(emptyWallet, nearTok, baseUsdcTok, 'auto', directQuoteNoDestDex);
+  assert.equal(rDirectUsdc.showSelector, false);
+  assert.equal(rDirectUsdc.selectedReserve, 0);
+
+  // Net swap output deducts selectedReserve proportionally from DEST_DEX stage
+  const multiStageQuote = {
+    compositeType: 'SMART_HUB_ROUTE',
+    amountOutFormatted: '100',
+    stages: [
+      { type: 'BRIDGE_OUT', expectedOut: '1000000000' }, // 1.0 SOL
+      { type: 'DEST_DEX', chain: 'sol' }
+    ]
+  };
+  const rExtra = uiController.getTargetChainGasReserveInfo(emptyWallet, nearTok, newSplTok, 'extra', multiStageQuote);
+  const netExtra = uiController.computeNetSwapOutput(multiStageQuote, newSplTok, rExtra, 100);
+  assert.ok(Math.abs(netExtra.netOutNum - 99) < 1e-6);
+  const netFunded = uiController.computeNetSwapOutput(
+    multiStageQuote,
+    newSplTok,
+    uiController.getTargetChainGasReserveInfo(fundedWallet, nearTok, newSplTok, 'auto', multiStageQuote),
+    100
+  );
+  assert.equal(netFunded.netOutNum, 100);
+});
+
+test('v4.4 Solana ATA Rent Reclaim & Dust Burn Instructions', () => {
+  const owner = 'CDKfRrFcfgiMsNeyzUjGr9hEtnzWeSy2Gz5WmJj5xBK';
+  const mint1 = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  const mint2 = 'XsoNr11111111111111111111111111111111111111';
+  const ata1 = '5B3v3n5r5V6n6X7x8Y9yAzB1c2d3e4f5g6h7i8j9k1l2';
+  const ata2 = '6C4w4o6s6W7o7Y8y9Z0zB1C2d3e4f5g6h7i8j9k1l2m3';
+
+  const ixs = chainContracts.buildSolanaCloseOrBurnInstructions({
+    ownerAddress: owner,
+    accounts: [
+      { ataAddress: ata1, mint: mint1, programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', rawAmount: '0' },
+      { ataAddress: ata2, mint: mint2, programId: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb', rawAmount: '500' }
+    ]
+  });
+
+  // Empty account -> 1 CloseAccount ix (opcode 9); Dust account -> Burn (opcode 8) + CloseAccount (opcode 9)
+  assert.equal(ixs.length, 3);
+  assert.equal(ixs[0].programId, 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+  assert.equal(ixs[0].data[0], 9);
+  assert.equal(ixs[1].programId, 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
+  assert.equal(ixs[1].data[0], 8);
+  assert.equal(ixs[1].data[1], 500 & 0xff);
+  assert.equal(ixs[1].data[2], (500 >> 8) & 0xff);
+  assert.equal(ixs[2].programId, 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
+  assert.equal(ixs[2].data[0], 9);
+});
+
+test('v5.2 Pearl Network Taproot (BIP-340 Schnorr + BIP-341 SegWit v1) UTXO Signing & Builder', async () => {
+  const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+  const pearl = await cryptoEngine.derivePearlFromSeedAsync(mnemonic, "m/86'/808276'/0'/0/0", true);
+  assert.ok(pearl.address.startsWith('prl1p'));
+  assert.ok(pearl.tweakedPrivateKeyHex);
+
+  // BIP-340 Schnorr sign & verify round-trip
+  const msg32 = cryptoEngine.sha256Bytes('pearl-taproot-test-msg');
+  const sig64 = cryptoEngine.signSchnorrBip340(msg32, pearl.tweakedPrivateKeyHex);
+  assert.equal(sig64.length, 64);
+  assert.equal(cryptoEngine.verifySchnorrBip340(sig64, msg32, pearl.pubkeyHex), true);
+
+  // Build real SegWit v1 Taproot transaction
+  const recipient = (await cryptoEngine.derivePearlFromSeedAsync(mnemonic, "m/86'/808276'/0'/0/1", true)).address;
+  const built = chainContracts.buildSignedPearlTaprootTx({
+    fromAddress: pearl.address,
+    toAddress: recipient,
+    amountGrains: '500000000', // 5 PRL
+    feeGrains: '100000', // 0.001 PRL
+    utxos: [
+      { txid: '11'.repeat(32), vout: 0, value: '1049344800' } // 10.493448 PRL
+    ],
+    tweakedPrivateKeyHex: pearl.tweakedPrivateKeyHex
+  });
+
+  assert.equal(built.inputCount, 1);
+  assert.equal(built.outputCount, 2); // recipient + change
+  assert.equal(built.changeGrains, String(1049344800 - 500000000 - 100000));
+  // Version 2 LE (02000000) + SegWit marker/flag (0001)
+  assert.ok(built.rawHex.startsWith('020000000001'));
+
+  // Insufficient UTXOs throws locally before broadcast
+  assert.throws(() => {
+    chainContracts.buildSignedPearlTaprootTx({
+      fromAddress: pearl.address,
+      toAddress: recipient,
+      amountGrains: '2000000000',
+      feeGrains: '100000',
+      utxos: [{ txid: '22'.repeat(32), vout: 0, value: '100000000' }],
+      tweakedPrivateKeyHex: pearl.tweakedPrivateKeyHex
+    });
+  }, /PRL UTXO/);
+});

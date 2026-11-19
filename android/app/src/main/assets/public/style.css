@@ -819,6 +819,14 @@ textarea.input-field {
   cursor: not-allowed;
 }
 
+.btn-primary.is-error {
+  background: rgba(251, 113, 133, 0.14);
+  color: var(--rose-alert);
+  border: 1px solid rgba(251, 113, 133, 0.28);
+  box-shadow: none;
+  font-weight: 700;
+}
+
 .btn-secondary {
   padding: 10px 14px;
   border-radius: 12px;
@@ -890,6 +898,45 @@ textarea.input-field {
   color: var(--text-primary);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+.meta-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 2px 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.meta-summary {
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.meta-chevron {
+  display: inline-block;
+  color: var(--text-secondary);
+  font-size: 11px;
+  transition: transform 0.18s ease;
+}
+
+.meta-toggle-btn[aria-expanded="true"] .meta-chevron {
+  transform: rotate(180deg);
+}
+
+.meta-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 /* Staking Cards */

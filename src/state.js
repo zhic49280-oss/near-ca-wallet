@@ -15,6 +15,7 @@
   const FAV_TOKENS_STORAGE_KEY = 'near_ca_fav_tokens_v1';
   const LIVE_TOKENS_STORAGE_KEY = 'near_ca_live_tokens_v1';
   const STAKING_METRICS_STORAGE_KEY = 'near_ca_staking_metrics_v3';
+  const SWAP_PAIR_STORAGE_KEY = 'near_ca_swap_pair_v1';
   const WC_PROJECT_ID_STORAGE_KEY = 'near_ca_wc_project_id';
   const LEGACY_WC_PROJECT_ID_KEY = 'pearl_wc_project_id';
 
@@ -356,8 +357,13 @@
       'swap.recipientLabel': '目标链收款地址',
       'swap.recipientPlaceholder': '自动匹配当前主账户对应链地址',
       'swap.rateLabel': '参考汇率',
+      'swap.detailsLabel': '更多设置',
       'swap.routeLabel': '执行路由',
       'swap.slippageLabel': '滑点容差',
+      'swap.gasReserveLabel': '目标链 Gas 预留',
+      'swap.gasModeAuto': '默认',
+      'swap.gasModeExtra': '多留',
+      'swap.gasModeNone': '0',
       'swap.executeBtn': '确认闪兑',
       'swap.orderTitle': '跨链订单跟踪',
       'swap.orderDepositAddr': '充值地址',
@@ -389,6 +395,7 @@
       'hub.nearDomainTitle': 'NEAR .near 账户注册与绑定',
       'hub.nearDomainCurrent': '当前主账户',
       'hub.nearDomainPlaceholder': '输入期望域名，如 alice.near',
+      'hub.nearDomainAuthPlaceholder': '绑定其他钱包的 .near 时，可填原助记词/私钥自动授权（可选）',
       'hub.nearDomainRegisterBtn': '链上注册 (0.1 NEAR)',
       'hub.nearDomainBindBtn': '绑定已有账号',
       'hub.mpcTitle': 'NEAR MPC 链签名 (v1.signer)',
@@ -406,6 +413,8 @@
       'hub.contactsOpenBtn': '管理联系人',
       'hub.wcTitle': 'WalletConnect v2 授权',
       'hub.wcOpenBtn': '管理 DApp 连接',
+      'hub.solRentTitle': 'Solana 租金回收与粉尘粉碎',
+      'hub.solRentOpenBtn': '扫描回收',
       'hub.securityTitle': '安全与偏好设置',
       'hub.pinBtn': '设置 / 修改 PIN 密码',
       'hub.langBtn': '切换语言 (中/EN)',
@@ -464,7 +473,12 @@
       'sheet.keysRotatePqBtn': '后量子密钥 (24词)',
       'sheet.keysRotatePlaceholder': '点击下方生成新助记词，或粘贴已有助记词',
       'sheet.keysGenSeedBtn': '生成新助记词',
+      'sheet.keysAddOnlyBtn': '仅添加密钥 (保留旧密钥)',
       'sheet.keysRotateConfirmBtn': '确认更换并删除旧密钥',
+      'sheet.solRentTitle': 'Solana 租金回收与粉碎',
+      'sheet.solRentSummaryLabel': '扫描结果',
+      'sheet.solRentNote': '仅关闭空账户或销毁勾选的微额粉尘代币以退回 SOL 租金，销毁后代币不可恢复。',
+      'sheet.solRentExecuteBtn': '一键回收并领取',
       'sheet.backupTitle': '助记词与 NEAR 主密钥备份',
       'sheet.pinTitle': '安全密码设置',
       'sheet.pinPlaceholder': '输入 4-6 位数字密码',
@@ -542,8 +556,13 @@
       'swap.recipientLabel': 'Destination Address',
       'swap.recipientPlaceholder': 'Auto-filled for destination chain',
       'swap.rateLabel': 'Rate',
+      'swap.detailsLabel': 'Trade Details',
       'swap.routeLabel': 'Route',
       'swap.slippageLabel': 'Slippage',
+      'swap.gasReserveLabel': 'Target Gas Reserve',
+      'swap.gasModeAuto': 'Default',
+      'swap.gasModeExtra': 'Extra',
+      'swap.gasModeNone': '0',
       'swap.executeBtn': 'Execute Swap',
       'swap.orderTitle': 'Cross-Chain Order Status',
       'swap.orderDepositAddr': 'Deposit Address',
@@ -575,6 +594,7 @@
       'hub.nearDomainTitle': 'NEAR (.near) Account Registration & Binding',
       'hub.nearDomainCurrent': 'Active Master Account',
       'hub.nearDomainPlaceholder': 'Enter desired name, e.g. alice.near',
+      'hub.nearDomainAuthPlaceholder': 'Optional: original phrase/key of that .near to auto-authorize',
       'hub.nearDomainRegisterBtn': 'Register On-Chain (0.1 NEAR)',
       'hub.nearDomainBindBtn': 'Bind Existing',
       'hub.mpcTitle': 'NEAR MPC Chain Signatures (v1.signer)',
@@ -592,6 +612,8 @@
       'hub.contactsOpenBtn': 'Manage Contacts',
       'hub.wcTitle': 'WalletConnect v2',
       'hub.wcOpenBtn': 'Manage DApp Sessions',
+      'hub.solRentTitle': 'Solana Rent & Dust Reclaim',
+      'hub.solRentOpenBtn': 'Scan & Reclaim',
       'hub.securityTitle': 'Security & Preferences',
       'hub.pinBtn': 'Set / Change PIN',
       'hub.langBtn': 'Language (中/EN)',
@@ -650,7 +672,12 @@
       'sheet.keysRotatePqBtn': 'Post-Quantum (24 Words)',
       'sheet.keysRotatePlaceholder': 'Generate a new phrase below or paste an existing one',
       'sheet.keysGenSeedBtn': 'Generate Phrase',
+      'sheet.keysAddOnlyBtn': 'Add Key Only (Keep Old)',
       'sheet.keysRotateConfirmBtn': 'Rotate Key & Delete Old',
+      'sheet.solRentTitle': 'Solana Rent & Dust Reclaim',
+      'sheet.solRentSummaryLabel': 'Scan Result',
+      'sheet.solRentNote': 'Closes empty token accounts or burns checked dust tokens to reclaim SOL rent. Burned tokens cannot be recovered.',
+      'sheet.solRentExecuteBtn': 'Reclaim Selected SOL',
       'sheet.backupTitle': 'Seed Phrase & NEAR Master Key',
       'sheet.pinTitle': 'Security PIN',
       'sheet.pinPlaceholder': 'Enter 4-6 digit PIN',
@@ -693,6 +720,7 @@
       amountIn: '',
       amountOut: '',
       slippageBps: 100,
+      gasReserveMode: 'auto',
       recipientAddress: '',
       quoteData: null,
       quoteSource: null,
@@ -1036,12 +1064,35 @@
     return applyLanguage(lang);
   }
 
+  function saveSwapPair() {
+    safeStorageSet(
+      SWAP_PAIR_STORAGE_KEY,
+      JSON.stringify({
+        fromAssetId: state.swap.fromAssetId || '',
+        toAssetId: state.swap.toAssetId || ''
+      })
+    );
+  }
+
+  function loadSwapPair() {
+    try {
+      const raw = safeStorageGet(SWAP_PAIR_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.fromAssetId) state.swap.fromAssetId = String(parsed.fromAssetId);
+        if (parsed.toAssetId) state.swap.toAssetId = String(parsed.toAssetId);
+      }
+    } catch (_) {}
+  }
+
   function initState() {
     loadWallets();
     loadContacts();
     loadFavoriteTokens();
     loadCachedLiveTokens();
     loadCachedStakingMetrics();
+    loadSwapPair();
     applyLanguage(state.lang);
     return state;
   }
@@ -1062,6 +1113,8 @@
   state.getActiveWallet = getActiveWallet;
   state.saveWallets = saveWallets;
   state.loadWallets = loadWallets;
+  state.saveSwapPair = saveSwapPair;
+  state.loadSwapPair = loadSwapPair;
   state.loadContacts = loadContacts;
   state.saveContacts = saveContacts;
   state.loadFavoriteTokens = loadFavoriteTokens;

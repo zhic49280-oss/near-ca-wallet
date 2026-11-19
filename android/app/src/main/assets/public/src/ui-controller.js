@@ -1247,6 +1247,44 @@
     showToast(t('已移除钱包', 'Wallet removed'));
   }
 
+  let _backupRevealActive = false;
+
+  function setBackupRevealState(revealed) {
+    _backupRevealActive = Boolean(revealed);
+    const btn = $('btn-backup-reveal-toggle');
+    if (btn) {
+      btn.textContent = _backupRevealActive ? t('隐藏助记词与私钥', 'Hide Phrase & Keys') : t('显示助记词与私钥', 'Reveal Phrase & Keys');
+    }
+    document.querySelectorAll('#backup-keys-content .backup-secret-val').forEach((el) => {
+      const realVal = el.dataset.secret || '';
+      if (_backupRevealActive) {
+        el.textContent = realVal || '--';
+        el.style.filter = 'none';
+        el.style.userSelect = 'text';
+      } else {
+        el.textContent = realVal ? '•••• •••• •••• •••• •••• ••••' : '--';
+        el.style.filter = 'blur(4px)';
+        el.style.userSelect = 'none';
+      }
+    });
+  }
+
+  function toggleBackupKeysReveal() {
+    setBackupRevealState(!_backupRevealActive);
+  }
+
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    const hideSecretsOnLeave = () => {
+      if (_backupRevealActive) setBackupRevealState(false);
+    };
+    window.addEventListener('blur', hideSecretsOnLeave);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) hideSecretsOnLeave();
+      });
+    }
+  }
+
   async function openBackupKeysSheet() {
     const st = getState();
     const contracts = getContracts();
@@ -1259,31 +1297,42 @@
     const isPq = wallet.accountType === 'post_quantum';
     const rows = isPq
       ? [
-          { label: t('助记词 (24词)', 'Recovery Phrase (24 Words)'), val: wallet.mnemonic || t('由原始私钥导入', 'Imported via Secret Key') },
-          { label: t('NEAR 后量子账户', 'NEAR PQ Account'), val: wallet.nearNamedAccount || wallet.nearUniversalAddress || wallet.nearAddress },
-          { label: t('ML-DSA-65 公钥摘要', 'ML-DSA-65 Key Handle'), val: wallet.nearMlDsa65PublicKeyHandle },
-          { label: t('ML-DSA-65 私钥', 'ML-DSA-65 Secret Key'), val: wallet.nearMlDsa65PrivateKey }
+          { label: t('助记词 (24词)', 'Recovery Phrase (24 Words)'), val: wallet.mnemonic || t('由原始私钥导入', 'Imported via Secret Key'), secret: Boolean(wallet.mnemonic) },
+          { label: t('NEAR 后量子账户', 'NEAR PQ Account'), val: wallet.nearNamedAccount || wallet.nearUniversalAddress || wallet.nearAddress, secret: false },
+          { label: t('ML-DSA-65 公钥摘要', 'ML-DSA-65 Key Handle'), val: wallet.nearMlDsa65PublicKeyHandle, secret: false },
+          { label: t('ML-DSA-65 私钥', 'ML-DSA-65 Secret Key'), val: wallet.nearMlDsa65PrivateKey, secret: true }
         ]
       : [
-          { label: t('助记词 (12/24词)', 'Recovery Phrase'), val: wallet.mnemonic },
-          { label: t('NEAR 主账户', 'NEAR Master Account'), val: wallet.nearNamedAccount || wallet.nearAddress },
-          { label: t('NEAR 主私钥', 'NEAR Master Private Key'), val: wallet.nearPrivateKey },
-          { label: t('Pearl (PRL) 地址', 'Pearl (PRL) Address'), val: wallet.address },
-          { label: t('Pearl (PRL) 私钥', 'Pearl (PRL) Private Key'), val: wallet.privateKeyHex }
+          { label: t('助记词 (12/24词)', 'Recovery Phrase'), val: wallet.mnemonic, secret: true },
+          { label: t('NEAR 主账户', 'NEAR Master Account'), val: wallet.nearNamedAccount || wallet.nearAddress, secret: false },
+          { label: t('NEAR 主私钥', 'NEAR Master Private Key'), val: wallet.nearPrivateKey, secret: true },
+          { label: t('Pearl (PRL) 地址', 'Pearl (PRL) Address'), val: wallet.address, secret: false },
+          { label: t('Pearl (PRL) 私钥', 'Pearl (PRL) Private Key'), val: wallet.privateKeyHex, secret: true }
         ];
 
     const container = $('backup-keys-content');
     if (container) {
+      _backupRevealActive = false;
+      const warnBox = `
+        <div class="ios-glass-card flex flex-col gap-1" style="padding:10px 12px;border-color:rgba(251,113,133,0.45);background:rgba(251,113,133,0.08);">
+          <div style="font-size:12.5px;font-weight:700;color:var(--rose-alert);">⚠️ ${escapeHtml(t('最高安全等级提醒：切勿截图或泄露', 'High Security Warning: Never Screenshot or Share'))}</div>
+          <div style="font-size:11.5px;color:var(--text-secondary);line-height:1.5;">
+            ${escapeHtml(t('• 请使用纸笔或金属板离线抄写，切勿截图、录屏或存入微信/网盘/备忘录。', '• Write down offline on paper/metal. Never screenshot, record, or save in cloud/chat apps.'))}<br/>
+            ${escapeHtml(t('• 任何索要助记词或私钥的人都是骗子，一旦泄露资产将永久被盗且无法追回。', '• Anyone asking for your phrase or key is a scammer. Leaked assets cannot be recovered.'))}
+          </div>
+          <button type="button" id="btn-backup-reveal-toggle" class="btn-secondary" style="margin-top:6px;padding:7px 12px;font-size:12px;" onclick="toggleBackupKeysReveal()">${escapeHtml(t('显示助记词与私钥', 'Reveal Phrase & Keys'))}</button>
+        </div>
+      `;
       const hint = isPq
-        ? `<div style="font-size:11.5px;color:var(--text-secondary);padding:6px 2px;">${escapeHtml(t('此账户为独立 ML-DSA-65 后量子金库，仅用于 NEAR 链上资产。请妥善离线保管 24 词或后量子私钥。', 'Independent ML-DSA-65 post-quantum vault for NEAR assets. Back up the 24-word phrase or secret key offline.'))}</div>`
-        : `<div style="font-size:11.5px;color:var(--text-secondary);padding:6px 2px;">${escapeHtml(t('EVM、Solana、Bitcoin、Pearl 均由当前 NEAR 主账户通过 v1.signer MPC 统一控制，无额外链本地私钥。', 'EVM, Solana, Bitcoin & Pearl accounts are all controlled by this NEAR Master Account via v1.signer MPC.'))}</div>`;
-      container.innerHTML = hint + rows.map((r) => `
+        ? `<div style="font-size:11.5px;color:var(--text-secondary);padding:4px 2px;">${escapeHtml(t('此账户为独立 ML-DSA-65 后量子金库，仅用于 NEAR 链上资产。', 'Independent ML-DSA-65 post-quantum vault for NEAR assets.'))}</div>`
+        : `<div style="font-size:11.5px;color:var(--text-secondary);padding:4px 2px;">${escapeHtml(t('EVM、Solana、Bitcoin、Pearl 均由当前 NEAR 主账户通过 v1.signer MPC 统一控制。', 'EVM, Solana, Bitcoin & Pearl accounts are controlled by this NEAR Master Account via v1.signer MPC.'))}</div>`;
+      container.innerHTML = warnBox + hint + rows.map((r) => `
         <div class="meta-list">
           <div class="meta-row">
             <span class="meta-key">${escapeHtml(r.label)}</span>
             <button type="button" class="btn-ghost-sm" onclick="copyTextValue(this.dataset.val, this.dataset.label)" data-val="${escapeHtml(r.val || '')}" data-label="${escapeHtml(r.label)}">${t('复制', 'Copy')}</button>
           </div>
-          <div class="mono" style="font-size:11px;word-break:break-all;color:#fff;">${escapeHtml(r.val || '--')}</div>
+          <div class="mono ${r.secret ? 'backup-secret-val' : ''}" data-secret="${escapeHtml(r.val || '')}" style="font-size:11px;word-break:break-all;color:#fff;${r.secret ? 'filter:blur(4px);user-select:none;' : ''}">${escapeHtml(r.secret ? (r.val ? '•••• •••• •••• •••• •••• ••••' : '--') : (r.val || '--'))}</div>
         </div>
       `).join('');
     }
@@ -1445,31 +1494,42 @@
       const solTokens = (tokens.DEX_CHAIN_TOKENS && tokens.DEX_CHAIN_TOKENS.sol) || [];
       const solMints = solTokens.map((x) => x.contractAddress).filter((m) => m && m !== 'So11111111111111111111111111111111111111112');
 
-      const evmChainKeys = ['eth', 'base', 'arb', 'bsc', 'hype', 'hood'];
-      const evmPrimaryErc20 = {
-        eth: { contract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
-        base: { contract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6 },
-        arb: { contract: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', decimals: 6 },
-        bsc: { contract: '0x55d398326f99059fF775485246999027B3197955', decimals: 18 },
-        hype: { contract: '0xb88339CB7199b77E23DB6E890353E22632Ba630f', decimals: 6 },
-        hood: { contract: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168', decimals: 6 }
+      const evmAllChainKeys = ['eth', 'base', 'arb', 'bsc', 'hype', 'hood', 'arc'];
+      const evmBatchQueriesByChain = {
+        eth: [
+          { contract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
+          { contract: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 },
+          { contract: '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', decimals: 18 },
+          { contract: '0x4c9EDD5852cd905f086C759E8383e09bff1E68B3', decimals: 18 },
+          { contract: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', decimals: 18 },
+          { contract: '0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c', decimals: 6 },
+          { contract: '0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', decimals: 18 }
+        ],
+        base: [
+          { contract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6 },
+          { contract: '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', decimals: 6 }
+        ],
+        arb: [
+          { contract: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', decimals: 6 },
+          { contract: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', decimals: 6 },
+          { contract: '0x912CE59144191C1204E64559FE8253a0e49E6548', decimals: 18 },
+          { contract: '0x724dc807b04555b71ed48a6896b6F41593b8C637', decimals: 6 }
+        ],
+        bsc: [
+          { contract: '0x55d398326f99059fF775485246999027B3197955', decimals: 18 },
+          { contract: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', decimals: 18 }
+        ],
+        hype: [
+          { contract: '0xb88339CB7199b77E23DB6E890353E22632Ba630f', decimals: 6 },
+          { contract: '0xfD739d4e423301CE9385c1fb8850539D657C296D', decimals: 18 }
+        ],
+        hood: [
+          { contract: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168', decimals: 6 }
+        ],
+        arc: [
+          { contract: '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', decimals: 18 }
+        ]
       };
-
-      const extraEvmQueries = [
-        { chainKey: 'eth', contract: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 }, // ETH USDT
-        { chainKey: 'eth', contract: '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', decimals: 18 }, // Lido stETH
-        { chainKey: 'eth', contract: '0x4c9EDD5852cd905f086C759E8383e09bff1E68B3', decimals: 18 }, // Ethena USDe
-        { chainKey: 'eth', contract: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', decimals: 18 }, // Ethena sUSDe
-        { chainKey: 'eth', contract: '0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c', decimals: 6 }, // Aave v3 aEthUSDC
-        { chainKey: 'eth', contract: '0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', decimals: 18 }, // Aave v3 aEthWETH
-        { chainKey: 'base', contract: '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', decimals: 6 }, // Aave v3 aBasUSDC
-        { chainKey: 'arb', contract: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', decimals: 6 }, // ARB USDT
-        { chainKey: 'arb', contract: '0x912CE59144191C1204E64559FE8253a0e49E6548', decimals: 18 }, // ARB
-        { chainKey: 'arb', contract: '0x724dc807b04555b71ed48a6896b6f41593b8c637', decimals: 6 }, // Aave v3 aArbUSDCn
-        { chainKey: 'bsc', contract: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', decimals: 18 }, // BSC USDC
-        { chainKey: 'arc', contract: '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', decimals: 18 }, // Arc steakUSDC
-        { chainKey: 'hype', contract: '0xfD739d4e423301CE9385c1fb8850539D657C296D', decimals: 18 } // HyperEVM kHYPE
-      ];
 
       let _progRenderTimer = null;
       const scheduleProgressiveWalletRender = () => {
@@ -1488,17 +1548,51 @@
         }, 80);
       };
 
+      if (nearAccountId && typeof contracts.fetchNearAccountStakingPositionsAsync === 'function') {
+        contracts.fetchNearAccountStakingPositionsAsync(nearAccountId).then((list) => {
+          if (Array.isArray(list)) {
+            wallet.nearStakingPositions = list;
+            st.saveWallets();
+            if (st.activeTab === 'earn') renderEarnView();
+          }
+        }).catch(() => {});
+      }
+      if (wallet.solAddress && typeof contracts.fetchSolanaAccountStakingPositionsAsync === 'function') {
+        contracts.fetchSolanaAccountStakingPositionsAsync(wallet.solAddress).then((list) => {
+          if (Array.isArray(list)) {
+            wallet.solStakingPositions = list;
+            st.saveWallets();
+            if (st.activeTab === 'earn') renderEarnView();
+          }
+        }).catch(() => {});
+      }
+      if (wallet.address && mining) {
+        mining.queryMinerDeepStats(wallet.address, 'onchain').then((res) => {
+          if (res && typeof res.onChainBalancePrl === 'number' && Number.isFinite(res.onChainBalancePrl)) {
+            wallet.nativeBalances.prl = res.onChainBalancePrl;
+            st.syncWalletCompatBalances(wallet);
+            st.saveWallets();
+            scheduleProgressiveWalletRender();
+          }
+        }).catch(() => {});
+      }
+      if (wallet.btcAddress) {
+        fetchBitcoinNativeBalance(wallet.btcAddress).then((bal) => {
+          if (typeof bal === 'number' && Number.isFinite(bal)) {
+            wallet.nativeBalances.btc = bal;
+            st.syncWalletCompatBalances(wallet);
+            st.saveWallets();
+            scheduleProgressiveWalletRender();
+          }
+        }).catch(() => {});
+      }
+
       const [
         pricesRes,
         nearBalRes,
         nep141BalRes,
-        nearStakingRes,
         solBalRes,
-        solStakingRes,
-        prlRes,
-        btcBalRes,
-        arcBalRes,
-        ...evmResList
+        ...evmBatchResults
       ] = await Promise.all([
         intents.fetchLiveDefuseTokenPrices({ useCache: !showFeedback }).then((res) => {
           if (Array.isArray(res)) {
@@ -1525,9 +1619,6 @@
               return map;
             }).catch(() => null)
           : Promise.resolve(null),
-        (nearAccountId && typeof contracts.fetchNearAccountStakingPositionsAsync === 'function')
-          ? contracts.fetchNearAccountStakingPositionsAsync(nearAccountId).catch(() => [])
-          : Promise.resolve([]),
         wallet.solAddress ? contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, solMints).then((res) => {
           if (res && typeof res === 'object') {
             if (typeof res.nativeSol === 'number') wallet.nativeBalances.sol = res.nativeSol;
@@ -1542,30 +1633,31 @@
           }
           return res;
         }).catch(() => null) : Promise.resolve(null),
-        (wallet.solAddress && typeof contracts.fetchSolanaAccountStakingPositionsAsync === 'function')
-          ? contracts.fetchSolanaAccountStakingPositionsAsync(wallet.solAddress).catch(() => [])
-          : Promise.resolve([]),
-        wallet.address && mining
-          ? mining.queryMinerDeepStats(wallet.address, 'onchain').then((res) => {
-              if (res && typeof res.onChainBalancePrl === 'number' && Number.isFinite(res.onChainBalancePrl)) {
-                wallet.nativeBalances.prl = res.onChainBalancePrl;
-                scheduleProgressiveWalletRender();
+        ...evmAllChainKeys.map((ck) => {
+          if (!wallet.evmAddress) return Promise.resolve(null);
+          const qList = evmBatchQueriesByChain[ck] || [];
+          const p = typeof contracts.fetchEvmChainBalancesBatch === 'function'
+            ? contracts.fetchEvmChainBalancesBatch(ck, wallet.evmAddress, qList)
+            : contracts.fetchEvmNativeAndErc20Balance(ck, wallet.evmAddress, qList[0]?.contract || null, qList[0]?.decimals || 18);
+          return p.then((res) => {
+            if (res) {
+              if (typeof res.nativeFormatted === 'number' && Number.isFinite(res.nativeFormatted)) {
+                wallet.nativeBalances[ck] = res.nativeFormatted;
               }
-              return res;
-            }).catch(() => null)
-          : Promise.resolve(null),
-        wallet.btcAddress ? fetchBitcoinNativeBalance(wallet.btcAddress).catch(() => null) : Promise.resolve(null),
-        wallet.evmAddress ? contracts.fetchEvmNativeAndErc20Balance('arc', wallet.evmAddress).catch(() => null) : Promise.resolve(null),
-        ...evmChainKeys.map((ck) =>
-          wallet.evmAddress
-            ? contracts.fetchEvmNativeAndErc20Balance(ck, wallet.evmAddress, evmPrimaryErc20[ck].contract, evmPrimaryErc20[ck].decimals).catch(() => null)
-            : Promise.resolve(null)
-        ),
-        ...extraEvmQueries.map((q) =>
-          wallet.evmAddress
-            ? contracts.fetchEvmNativeAndErc20Balance(q.chainKey, wallet.evmAddress, q.contract, q.decimals).catch(() => null)
-            : Promise.resolve(null)
-        )
+              if (res.tokens && typeof res.tokens === 'object') {
+                for (const info of Object.values(res.tokens)) {
+                  if (info && info.contract && typeof info.formatted === 'number' && Number.isFinite(info.formatted)) {
+                    st.setWalletErc20Balance(wallet, ck, info.contract, info.formatted);
+                  }
+                }
+              } else if (typeof res.tokenFormatted === 'number' && Number.isFinite(res.tokenFormatted) && qList[0]) {
+                st.setWalletErc20Balance(wallet, ck, qList[0].contract, res.tokenFormatted);
+              }
+              scheduleProgressiveWalletRender();
+            }
+            return res;
+          }).catch(() => null);
+        })
       ]);
 
       if (_progRenderTimer) {
@@ -1587,14 +1679,6 @@
         wallet.nearNep141Balances = { ...(wallet.nearNep141Balances || {}), ...nep141BalRes };
       }
 
-      if (Array.isArray(nearStakingRes)) {
-        wallet.nearStakingPositions = nearStakingRes;
-      }
-
-      if (Array.isArray(solStakingRes)) {
-        wallet.solStakingPositions = solStakingRes;
-      }
-
       if (solBalRes && typeof solBalRes === 'object') {
         if (typeof solBalRes.nativeSol === 'number') {
           wallet.nativeBalances.sol = solBalRes.nativeSol;
@@ -1608,34 +1692,18 @@
         }
       }
 
-      if (prlRes && typeof prlRes.onChainBalancePrl === 'number' && Number.isFinite(prlRes.onChainBalancePrl)) {
-        wallet.nativeBalances.prl = prlRes.onChainBalancePrl;
-      }
-
-      if (typeof btcBalRes === 'number' && Number.isFinite(btcBalRes)) {
-        wallet.nativeBalances.btc = btcBalRes;
-      }
-
-      if (arcBalRes && typeof arcBalRes.nativeFormatted === 'number' && Number.isFinite(arcBalRes.nativeFormatted)) {
-        wallet.nativeBalances.arc = arcBalRes.nativeFormatted;
-      }
-
-      evmChainKeys.forEach((ck, i) => {
-        const res = evmResList[i];
-        if (res) {
-          if (typeof res.nativeFormatted === 'number' && Number.isFinite(res.nativeFormatted)) {
-            wallet.nativeBalances[ck] = res.nativeFormatted;
-          }
-          if (typeof res.tokenFormatted === 'number' && Number.isFinite(res.tokenFormatted)) {
-            st.setWalletErc20Balance(wallet, ck, evmPrimaryErc20[ck].contract, res.tokenFormatted);
-          }
+      evmAllChainKeys.forEach((ck, i) => {
+        const res = evmBatchResults[i];
+        if (!res) return;
+        if (typeof res.nativeFormatted === 'number' && Number.isFinite(res.nativeFormatted)) {
+          wallet.nativeBalances[ck] = res.nativeFormatted;
         }
-      });
-
-      extraEvmQueries.forEach((q, i) => {
-        const res = evmResList[evmChainKeys.length + i];
-        if (res && typeof res.tokenFormatted === 'number' && Number.isFinite(res.tokenFormatted)) {
-          st.setWalletErc20Balance(wallet, q.chainKey, q.contract, res.tokenFormatted);
+        if (res.tokens && typeof res.tokens === 'object') {
+          for (const info of Object.values(res.tokens)) {
+            if (info && info.contract && typeof info.formatted === 'number' && Number.isFinite(info.formatted)) {
+              st.setWalletErc20Balance(wallet, ck, info.contract, info.formatted);
+            }
+          }
         }
       });
 
@@ -2658,9 +2726,11 @@
           let type = '';
           let title = '';
           if (methods.includes('deposit_and_stake') || methods.includes('stake')) {
+            if (symKey !== 'NEAR') continue;
             type = 'stake';
             title = tx.receiver_account_id || 'NEAR Stake';
           } else if (methods.includes('unstake') || methods.includes('unstake_all') || methods.includes('withdraw_all')) {
+            if (symKey !== 'NEAR') continue;
             type = 'unstake';
             title = tx.receiver_account_id || 'NEAR Unstake';
           } else if (methods.includes('ft_transfer_call') || methods.includes('swap')) {
@@ -3092,6 +3162,7 @@
 
     const reserves = { near: 0.005, sol: 0.002, eth: 0.0015, base: 0.0002, arb: 0.0002, bsc: 0.0005, hype: 0.0005, hood: 0.0002, arc: 0.02, prl: 0.001, btc: 0.0001 };
     const isNativeGas = !asset.contractAddress ||
+      asset.blockchain === 'prl' ||
       asset.contractAddress === 'So11111111111111111111111111111111111111112' ||
       asset.contractAddress.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' ||
       asset.contractAddress === 'wrap.near';
@@ -3185,6 +3256,7 @@
 
     const avail = getSendSourceAvailable();
     const isNativeGas = !asset.contractAddress ||
+      asset.blockchain === 'prl' ||
       asset.contractAddress === 'So11111111111111111111111111111111111111112' ||
       asset.contractAddress.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' ||
       asset.contractAddress === 'wrap.near';
@@ -3249,10 +3321,25 @@
           return;
         }
 
-        if (asset.blockchain === 'sol' && (!asset.contractAddress || asset.contractAddress === 'So11111111111111111111111111111111111111112')) {
-          const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: recipient, amountSol: amountNum });
+        if (asset.blockchain === 'sol') {
+          if (!asset.contractAddress || asset.contractAddress === 'So11111111111111111111111111111111111111112') {
+            const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: recipient, amountSol: amountNum });
+            recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
+            showToast(`✅ SOL ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
+            closeAllSheets();
+            refreshAllBalancesAsync(false);
+            return;
+          }
+          const res = await contracts.executeSolanaSplTransfer({
+            wallet,
+            mintAddress: asset.contractAddress,
+            toAddress: recipient,
+            amount: amountNum,
+            decimals: asset.decimals || 6,
+            tokenBalance: avail
+          });
           recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
-          showToast(`✅ SOL ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
+          showToast(`✅ ${asset.symbol} (Solana) ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
           closeAllSheets();
           refreshAllBalancesAsync(false);
           return;
@@ -3276,7 +3363,17 @@
         }
 
         if (asset.blockchain === 'prl') {
-          throw new Error(t('Pearl 原生 UTXO 网络暂不支持浏览器直接转账，请在闪兑页使用跨链路由或操作 NEAR 链上的 PRL', 'Pearl native UTXO send is unsupported in browser; use NEAR PRL or cross-chain Swap'));
+          const res = await contracts.executePearlTransfer({
+            wallet,
+            toAddress: recipient,
+            amountPrl: amountNum,
+            feeDeductMode: 'extra'
+          });
+          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
+          showToast(`✅ PRL ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
+          closeAllSheets();
+          refreshAllBalancesAsync(false);
+          return;
         }
         if (asset.blockchain === 'btc') {
           throw new Error(t('Bitcoin 原生 UTXO 转账需专用 UTXO 构造节点，暂不支持直接发送', 'Bitcoin UTXO broadcast is unsupported directly'));
@@ -3287,7 +3384,8 @@
       // Case 2: Cross-chain L1 -> L1 transfer via 1Click ORIGIN_CHAIN -> DESTINATION_CHAIN
       const canBroadcastOrigin =
         asset.blockchain === 'near' ||
-        (asset.blockchain === 'sol' && (!asset.contractAddress || asset.contractAddress === 'So11111111111111111111111111111111111111112')) ||
+        asset.blockchain === 'sol' ||
+        asset.blockchain === 'prl' ||
         (isEvmOrigin && asset.blockchain !== 'arc');
 
       if (!canBroadcastOrigin) {
@@ -3330,8 +3428,20 @@
         });
         depositTxHash = res.txHash;
       } else if (asset.blockchain === 'sol') {
-        const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: quote.depositAddress, amountSol: amountNum });
-        depositTxHash = res.txHash;
+        if (!asset.contractAddress || asset.contractAddress === 'So11111111111111111111111111111111111111112') {
+          const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: quote.depositAddress, amountSol: amountNum });
+          depositTxHash = res.txHash;
+        } else {
+          const res = await contracts.executeSolanaSplTransfer({
+            wallet,
+            mintAddress: asset.contractAddress,
+            toAddress: quote.depositAddress,
+            amount: amountNum,
+            decimals: asset.decimals || 6,
+            tokenBalance: avail
+          });
+          depositTxHash = res.txHash;
+        }
       } else if (isEvmOrigin) {
         const res = await contracts.executeEvmTransfer({
           wallet,
@@ -3572,6 +3682,173 @@
     return '';
   }
 
+  function getTargetChainGasReserveInfo(wallet, fromToken, toToken, mode = 'auto', quoteData = null) {
+    const empty = {
+      showSelector: false,
+      chainKey: '',
+      gasSymbol: '',
+      isNewSolAta: false,
+      currentGasBal: 0,
+      recommendedReserve: 0,
+      extraReserve: 0,
+      selectedReserve: 0
+    };
+    if (!wallet || !fromToken || !toToken || wallet.accountType === 'post_quantum') return empty;
+
+    const toChain = String(toToken.blockchain || '').toLowerCase();
+    const fromChain = String(fromToken.blockchain || '').toLowerCase();
+    const sameChain = fromChain === toChain;
+    const solNativeMint = 'So11111111111111111111111111111111111111112';
+    const toContractLower = String(toToken.contractAddress || '').toLowerCase();
+    const isBuyingSolToken = toChain === 'sol' && toToken.contractAddress && toToken.contractAddress !== solNativeMint;
+    const isSolNative = toChain === 'sol' && (!toToken.contractAddress || toToken.contractAddress === solNativeMint);
+    const isEvmNative = toChain !== 'sol' && (
+      !toContractLower ||
+      toContractLower === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' ||
+      toContractLower === '0x0000000000000000000000000000000000000000' ||
+      toContractLower === 'native' ||
+      (toChain === 'arc' && toContractLower === '0x3600000000000000000000000000000000000000')
+    );
+    if (isSolNative || isEvmNative) return empty;
+    const isNewSolAta = Boolean(
+      isBuyingSolToken &&
+        !(wallet.splBalances && Object.prototype.hasOwnProperty.call(wallet.splBalances, toToken.contractAddress))
+    );
+
+    // Cross-chain target gas reserve ONLY applies when a resolved route actually contains a DEST_DEX stage
+    if (!(sameChain && toChain === 'sol' && isNewSolAta)) {
+      const hasDestDex = Boolean(quoteData && Array.isArray(quoteData.stages) && quoteData.stages.some((s) => s && s.type === 'DEST_DEX'));
+      if (!hasDestDex) return empty;
+    }
+
+    const nb = (wallet && wallet.nativeBalances) || {};
+    const currentGasBal = Number(nb[toChain] || 0);
+    const gasSymbolMap = { sol: 'SOL', eth: 'ETH', base: 'ETH', arb: 'ETH', hood: 'ETH', bsc: 'BNB', hype: 'HYPE', arc: 'USDC', near: 'NEAR' };
+    const gasSymbol = gasSymbolMap[toChain] || toChain.toUpperCase();
+
+    let minReq = 0;
+    let extraReserve = 0;
+    if (toChain === 'sol' && !isSolNative) {
+      minReq = isNewSolAta ? 0.0035 : 0.001;
+      extraReserve = 0.01;
+    } else if (['eth', 'base', 'arb', 'hood', 'bsc', 'hype', 'arc'].includes(toChain) && !sameChain) {
+      const defaults = { eth: 0.0015, base: 0.0003, arb: 0.0003, hood: 0.0003, bsc: 0.0005, hype: 0.0005, arc: 0.02 };
+      const extras = { eth: 0.005, base: 0.002, arb: 0.002, hood: 0.002, bsc: 0.002, hype: 0.005, arc: 0.05 };
+      minReq = defaults[toChain] || 0.0005;
+      extraReserve = extras[toChain] || 0.002;
+    } else {
+      return empty;
+    }
+
+    // Show selector when cross-chain to a non-native token (likely 2-stage DEX) or same-chain SOL -> new SPL token
+    const isCrossToDexToken = !sameChain && (isBuyingSolToken || !isEvmNative);
+    const showSelector = isCrossToDexToken || (sameChain && toChain === 'sol' && isNewSolAta);
+    if (!showSelector) return empty;
+
+    const missingGas = currentGasBal >= minReq ? 0 : minReq;
+    const normalizedMode = mode === 'extra' ? 'extra' : 'auto';
+    const selectedReserve = normalizedMode === 'extra' ? extraReserve : missingGas;
+
+    return {
+      showSelector: true,
+      chainKey: toChain,
+      gasSymbol,
+      isNewSolAta,
+      currentGasBal,
+      recommendedReserve: missingGas,
+      extraReserve,
+      selectedReserve
+    };
+  }
+
+  function computeNetSwapOutput(quoteData, toToken, gasReserveInfo, grossOutNumOverride = null) {
+    const intents = getIntents();
+    const toDec = toToken && typeof toToken.decimals === 'number' ? toToken.decimals : 18;
+    const grossNum = grossOutNumOverride !== null && Number.isFinite(Number(grossOutNumOverride))
+      ? Number(grossOutNumOverride)
+      : Number((quoteData && (quoteData.amountOutFormatted || intents.fromBaseUnits(String(quoteData.amountOut || '0'), toDec))) || 0);
+    if (!Number.isFinite(grossNum) || grossNum <= 0) return { netOutNum: 0, ratio: 1 };
+    if (!quoteData || !gasReserveInfo || !gasReserveInfo.showSelector || !(gasReserveInfo.selectedReserve > 0)) {
+      return { netOutNum: grossNum, ratio: 1 };
+    }
+    const stages = Array.isArray(quoteData.stages) ? quoteData.stages : [];
+    const destIdx = stages.findIndex((s) => s && s.type === 'DEST_DEX');
+    if (destIdx > 0 && stages[destIdx - 1] && stages[destIdx - 1].expectedOut) {
+      const nativeDecimals = gasReserveInfo.chainKey === 'sol' ? 9 : 18;
+      const bridgeNativeHuman = Number(intents.fromBaseUnits(String(stages[destIdx - 1].expectedOut), nativeDecimals));
+      if (Number.isFinite(bridgeNativeHuman) && bridgeNativeHuman > 0) {
+        if (gasReserveInfo.selectedReserve >= bridgeNativeHuman) {
+          return { netOutNum: 0, ratio: 0 };
+        }
+        const ratio = (bridgeNativeHuman - gasReserveInfo.selectedReserve) / bridgeNativeHuman;
+        return { netOutNum: grossNum * ratio, ratio };
+      }
+    }
+    return { netOutNum: grossNum, ratio: 1 };
+  }
+
+  function updateSwapDetailsSummary() {
+    const st = getState();
+    const sumEl = $('swap-details-summary');
+    if (!sumEl) return;
+    const bps = Number(st.swap.slippageBps || 100);
+    sumEl.textContent = `${t('滑点', 'Slippage')} ${(bps / 100).toString()}%`;
+  }
+
+  function toggleSwapDetails() {
+    const body = $('swap-details-body');
+    const btn = $('swap-details-toggle');
+    if (!body || !btn) return;
+    const isHidden = body.classList.toggle('hidden');
+    btn.setAttribute('aria-expanded', isHidden ? 'false' : 'true');
+  }
+
+  function renderSwapGasReserveRow(wallet, fromToken, toToken) {
+    const st = getState();
+    const row = $('swap-gas-reserve-row');
+    const info = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
+    updateSwapDetailsSummary(wallet, fromToken, toToken, info);
+    if (!row) return;
+    if (!info.showSelector) {
+      row.classList.add('hidden');
+      return;
+    }
+    row.classList.remove('hidden');
+    const lbl = $('swap-gas-reserve-label');
+    if (lbl) {
+      const tag = info.isNewSolAta ? t(' (含开户租金)', ' (+ATA rent)') : '';
+      lbl.textContent = `${t('目标链 Gas 预留', 'Target Gas Reserve')}${tag}`;
+    }
+    const autoBtn = row.querySelector('[data-gas-mode="auto"]');
+    const extraBtn = row.querySelector('[data-gas-mode="extra"]');
+    if (autoBtn) autoBtn.textContent = `${t('默认', 'Auto')} (${info.recommendedReserve} ${info.gasSymbol})`;
+    if (extraBtn) extraBtn.textContent = `${t('多留', 'Extra')} (${info.extraReserve} ${info.gasSymbol})`;
+    row.querySelectorAll('[data-gas-mode]').forEach((b) => {
+      b.classList.toggle('active', b.getAttribute('data-gas-mode') === (st.swap.gasReserveMode === 'extra' ? 'extra' : 'auto'));
+    });
+  }
+
+  function setSwapGasReserveMode(mode) {
+    const st = getState();
+    st.swap.gasReserveMode = mode === 'extra' ? 'extra' : 'auto';
+    const wallet = st.getActiveWallet();
+    const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
+    const toToken = resolveSwapToken(st.swap.toAssetId, 1);
+    renderSwapGasReserveRow(wallet, fromToken, toToken);
+    if (st.swap.quoteData && fromToken && toToken) {
+      const info = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode, st.swap.quoteData);
+      const { netOutNum, ratio } = computeNetSwapOutput(st.swap.quoteData, toToken, info);
+      const amtOutText = formatBal(netOutNum, 6);
+      st.swap.amountOut = amtOutText;
+      if ($('swap-amount-out')) $('swap-amount-out').value = amtOutText;
+      const outPrice = getSymbolPrice(toToken.symbol);
+      const usdOut = st.swap.quoteData.amountOutUsd
+        ? formatUsd(Number(st.swap.quoteData.amountOutUsd) * ratio)
+        : (outPrice !== null && Number.isFinite(netOutNum) ? formatUsd(netOutNum * outPrice) : '--');
+      if ($('swap-usd-out')) $('swap-usd-out').textContent = usdOut;
+    }
+  }
+
   function renderSwapView() {
     const st = getState();
     const tokens = getTokens();
@@ -3606,7 +3883,6 @@
     if (amtInputEl) amtInputEl.disabled = false;
     if (fromPickerBtn) fromPickerBtn.disabled = false;
     if (toPickerBtn) toPickerBtn.disabled = false;
-    setSwapError('');
 
     const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
     const toToken = resolveSwapToken(st.swap.toAssetId, 1);
@@ -3673,6 +3949,7 @@
     if ($('swap-amount-out')) {
       $('swap-amount-out').value = st.swap.amountOut || '';
     }
+    renderSwapGasReserveRow(wallet, fromToken, toToken);
 
     if (typeof document !== 'undefined') {
       document.querySelectorAll('#swap-quote-meta [data-bps]').forEach((b) => {
@@ -3703,13 +3980,19 @@
     if ($('swap-quote-route')) $('swap-quote-route').textContent = '--';
     if ($('swap-usd-in')) $('swap-usd-in').textContent = '--';
     if ($('swap-usd-out')) $('swap-usd-out').textContent = '--';
+    const wallet = st.getActiveWallet();
+    const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
+    const toToken = resolveSwapToken(st.swap.toAssetId, 1);
+    if (wallet && fromToken && toToken) {
+      renderSwapGasReserveRow(wallet, fromToken, toToken);
+    }
   }
 
   function handleSwapAmountInput() {
     const st = getState();
     st.swap.amountIn = ($('swap-amount-in')?.value || '').trim();
     resetSwapQuoteDisplay();
-    $('swap-error-banner')?.classList.add('hidden');
+    if (!st.swap.amountIn || Number(st.swap.amountIn) <= 0) setSwapError('');
     scheduleSwapQuote();
   }
 
@@ -3721,6 +4004,7 @@
 
     const reserves = { sol: 0.002, eth: 0.0015, base: 0.0002, arb: 0.0002, bsc: 0.0005, hype: 0.0005, hood: 0.0002, arc: 0.02, near: 0.005, prl: 0.001, btc: 0.0001 };
     const isNative = !fromToken.contractAddress ||
+      fromToken.blockchain === 'prl' ||
       fromToken.contractAddress === 'So11111111111111111111111111111111111111112' ||
       fromToken.contractAddress.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' ||
       fromToken.contractAddress === 'wrap.near' ||
@@ -3737,26 +4021,42 @@
     st.swap.fromAssetId = st.swap.toAssetId;
     st.swap.toAssetId = tmp;
     st.swap.recipientAddress = '';
+    if (typeof st.saveSwapPair === 'function') st.saveSwapPair();
+    setSwapError('');
     resetSwapQuoteDisplay();
     renderSwapView();
     if (st.swap.amountIn) scheduleSwapQuote();
   }
 
+  const _swapQuoteCache = new Map();
+
   function scheduleSwapQuote() {
     if (_swapQuoteTimer) clearTimeout(_swapQuoteTimer);
     resetSwapQuoteDisplay();
-    _swapQuoteTimer = setTimeout(() => { fetchLiveSwapQuoteAsync(); }, 380);
+    _swapQuoteTimer = setTimeout(() => { fetchLiveSwapQuoteAsync(); }, 220);
   }
 
   function setSwapError(msg) {
     const el = $('swap-error-banner');
-    if (!el) return;
-    if (!msg) {
+    if (el) {
       el.classList.add('hidden');
       el.textContent = '';
+    }
+    const btn = $('btn-execute-swap');
+    const routeEl = $('swap-quote-route');
+    if (!msg) {
+      if (btn) {
+        btn.classList.remove('is-error');
+        btn.textContent = t('确认闪兑', 'Execute Swap');
+      }
     } else {
-      el.textContent = msg;
-      el.classList.remove('hidden');
+      if (routeEl && (!routeEl.textContent || routeEl.textContent === '--' || routeEl.textContent.includes('比价') || routeEl.textContent.includes('Comparing'))) {
+        routeEl.textContent = msg;
+      }
+      if (btn) {
+        btn.classList.add('is-error');
+        btn.textContent = msg;
+      }
     }
   }
 
@@ -3768,13 +4068,15 @@
     if (!wallet) return;
 
     const amt = Number(st.swap.amountIn);
-    if (!Number.isFinite(amt) || amt <= 0) return;
+    if (!Number.isFinite(amt) || amt <= 0) {
+      setSwapError('');
+      return;
+    }
 
     const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
     const toToken = resolveSwapToken(st.swap.toAssetId, 1);
     if (!fromToken || !toToken || fromToken.assetId === toToken.assetId) return;
 
-    setSwapError('');
     const sameChainDex = isSameChainContractSwap(fromToken, toToken);
     const amountRaw = intents.toBaseUnits(st.swap.amountIn, fromToken.decimals);
     if (amountRaw === '0') return;
@@ -3785,6 +4087,56 @@
       toId: toToken.assetId
     };
     const isStaleReq = () => st.swap.amountIn !== reqSnapshot.amountIn || st.swap.fromAssetId !== reqSnapshot.fromId || st.swap.toAssetId !== reqSnapshot.toId;
+
+    const cacheKey = `${fromToken.assetId}|${toToken.assetId}|${amountRaw}|${st.swap.slippageBps || 100}|${st.swap.recipientAddress || ''}`;
+    const cached = _swapQuoteCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts < 8000)) {
+      setSwapError('');
+      st.swap.quoteData = cached.quoteData;
+      st.swap.quoteSource = cached.quoteSource;
+      const gInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', cached.quoteData);
+      const { netOutNum, ratio } = computeNetSwapOutput(cached.quoteData, toToken, gInfo, cached.grossOutNum);
+      const netOutText = formatBal(netOutNum, 6);
+      const outPrice = getSymbolPrice(toToken.symbol);
+      const netUsdOut = cached.usdOutRaw
+        ? formatUsd(Number(cached.usdOutRaw) * ratio)
+        : (outPrice !== null && Number.isFinite(netOutNum) ? formatUsd(netOutNum * outPrice) : (cached.usdOut || '--'));
+      st.swap.amountOut = netOutText;
+      if ($('swap-amount-out')) $('swap-amount-out').value = netOutText;
+      if ($('swap-quote-route')) $('swap-quote-route').textContent = cached.quoteSource;
+      if ($('swap-auto-route-badge')) $('swap-auto-route-badge').textContent = cached.quoteSource;
+      if ($('swap-quote-rate') && cached.rateText) $('swap-quote-rate').textContent = cached.rateText;
+      if ($('swap-usd-in') && cached.usdIn) $('swap-usd-in').textContent = cached.usdIn;
+      if ($('swap-usd-out')) $('swap-usd-out').textContent = netUsdOut;
+      renderSwapGasReserveRow(wallet, fromToken, toToken);
+      return;
+    }
+
+    const applyAndCacheQuote = (quoteData, quoteSource, outHumanNum, usdInRaw, usdOutRaw) => {
+      setSwapError('');
+      const gInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', quoteData);
+      const { netOutNum, ratio } = computeNetSwapOutput(quoteData, toToken, gInfo, outHumanNum);
+      const amtOutText = formatBal(netOutNum, 6);
+      const rateText = outHumanNum > 0 ? `1 ${fromToken.symbol} ≈ ${formatBal(outHumanNum / amt, 5)} ${toToken.symbol}` : '';
+      const inPrice = getSymbolPrice(fromToken.symbol);
+      const outPrice = getSymbolPrice(toToken.symbol);
+      const usdIn = usdInRaw ? formatUsd(Number(usdInRaw)) : (inPrice !== null ? formatUsd(amt * inPrice) : '--');
+      const usdOut = usdOutRaw
+        ? formatUsd(Number(usdOutRaw) * ratio)
+        : (outPrice !== null && Number.isFinite(netOutNum) ? formatUsd(netOutNum * outPrice) : '--');
+      st.swap.quoteData = quoteData;
+      st.swap.quoteSource = quoteSource;
+      st.swap.amountOut = amtOutText;
+      if ($('swap-amount-out')) $('swap-amount-out').value = amtOutText;
+      if ($('swap-quote-route')) $('swap-quote-route').textContent = quoteSource;
+      if ($('swap-auto-route-badge')) $('swap-auto-route-badge').textContent = quoteSource;
+      if ($('swap-quote-rate') && rateText) $('swap-quote-rate').textContent = rateText;
+      if ($('swap-usd-in')) $('swap-usd-in').textContent = usdIn;
+      if ($('swap-usd-out')) $('swap-usd-out').textContent = usdOut;
+      renderSwapGasReserveRow(wallet, fromToken, toToken);
+      if (_swapQuoteCache.size > 40) _swapQuoteCache.clear();
+      _swapQuoteCache.set(cacheKey, { ts: Date.now(), quoteData, quoteSource, grossOutNum: outHumanNum, amountOut: amtOutText, rateText, usdIn, usdOutRaw, usdOut });
+    };
 
     if ($('swap-quote-route')) $('swap-quote-route').textContent = t('多池比价中...', 'Comparing pools...');
 
@@ -3891,24 +4243,7 @@
       st.swap.quoteData = q;
       st.swap.quoteSource = routeText;
       st.swap.amountOut = formatBal(Number(outHuman), 6);
-      if ($('swap-amount-out')) $('swap-amount-out').value = st.swap.amountOut;
-      if ($('swap-quote-route')) $('swap-quote-route').textContent = routeText;
-      if ($('swap-auto-route-badge')) $('swap-auto-route-badge').textContent = routeText;
-      if ($('swap-quote-rate') && Number(outHuman) > 0) {
-        $('swap-quote-rate').textContent = `1 ${fromToken.symbol} ≈ ${formatBal(Number(outHuman) / amt, 5)} ${toToken.symbol}`;
-      }
-      const inPrice = getSymbolPrice(fromToken.symbol);
-      const outPrice = getSymbolPrice(toToken.symbol);
-      if ($('swap-usd-in')) {
-        $('swap-usd-in').textContent = q.amountInUsd
-          ? formatUsd(Number(q.amountInUsd))
-          : (inPrice !== null ? formatUsd(amt * inPrice) : '--');
-      }
-      if ($('swap-usd-out')) {
-        $('swap-usd-out').textContent = q.amountOutUsd
-          ? formatUsd(Number(q.amountOutUsd))
-          : (outPrice !== null ? formatUsd(Number(outHuman) * outPrice) : '--');
-      }
+      applyAndCacheQuote(q, routeText, Number(outHuman), q.amountInUsd, q.amountOutUsd);
     } catch (e) {
       resetSwapQuoteDisplay();
       setSwapError(e && e.message ? e.message : t('询价失败', 'Quote failed'));
@@ -3934,6 +4269,9 @@
     }
     if (bc === 'sol' && (!fromToken.contractAddress || fromToken.contractAddress === 'So11111111111111111111111111111111111111112') && fromToken.symbol === 'SOL') {
       return contracts.executeSolanaNativeTransfer({ wallet, toAddress: depositAddress, amountSol: amt });
+    }
+    if (bc === 'prl') {
+      return contracts.executePearlTransfer({ wallet, toAddress: depositAddress, amountPrl: amt, feeDeductMode: 'extra' });
     }
     if (['eth', 'base', 'arb', 'bsc', 'hype', 'hood'].includes(bc)) {
       return contracts.executeEvmTransfer({
@@ -3975,6 +4313,7 @@
 
     const avail = getSwapTokenAvailableBalance(fromToken);
     const isNative = !fromToken.contractAddress ||
+      fromToken.blockchain === 'prl' ||
       fromToken.contractAddress === 'So11111111111111111111111111111111111111112' ||
       fromToken.contractAddress.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' ||
       fromToken.contractAddress === 'wrap.near' ||
@@ -3982,13 +4321,17 @@
 
     // Strict Local Balance Pre-Validation BEFORE firing RPC / quotes
     try {
+      const gasReserveInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto');
       contracts.validateSufficientChainBalance({
         wallet,
         chain: fromToken.blockchain,
         tokenSymbol: fromToken.symbol,
         amount: amt,
         isNative,
-        tokenBalance: avail !== null ? avail : 0
+        tokenBalance: avail !== null ? avail : 0,
+        gasBuffer: isNative && fromToken.blockchain === 'sol' && gasReserveInfo.selectedReserve > 0
+          ? gasReserveInfo.selectedReserve
+          : null
       });
     } catch (err) {
       setSwapError(err.message);
@@ -4213,6 +4556,7 @@
                 toSymbol: toToken.symbol,
                 expectedSolRaw: String(expectedInRaw || '0'),
                 preSolLamports: String(preSol?.nativeLamports || '0'),
+                reserveSol: getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto').selectedReserve,
                 slippageBps: st.swap.slippageBps
               }
             };
@@ -4227,6 +4571,7 @@
               toSymbol: toToken.symbol,
               expectedInRaw: String(expectedInRaw || '0'),
               preNativeWei: String(preEvm?.nativeRaw || '0'),
+              reserveNative: getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto').selectedReserve,
               slippageBps: st.swap.slippageBps
             }
           };
@@ -5245,7 +5590,8 @@
               const availLamports = BigInt(balRes?.nativeLamports || '0');
               const preLamports = BigInt(follow.preSolLamports || '0');
               const expectedLamports = BigInt(follow.expectedSolRaw || '0');
-              const reserveLamports = 3000000n;
+              const reserveSolVal = typeof follow.reserveSol === 'number' && Number.isFinite(follow.reserveSol) ? follow.reserveSol : 0.0035;
+              const reserveLamports = BigInt(intents.toBaseUnits(String(reserveSolVal), 9));
               const maxSpendable = availLamports > reserveLamports ? availLamports - reserveLamports : 0n;
               const deltaLamports = availLamports > preLamports ? availLamports - preLamports : 0n;
               let swapInLamports = deltaLamports > 0n ? deltaLamports : expectedLamports;
@@ -5283,7 +5629,9 @@
               const availWei = BigInt(balRes?.nativeRaw || '0');
               const preWei = BigInt(follow.preNativeWei || '0');
               const expectedWei = BigInt(follow.expectedInRaw || '0');
-              const reserveHuman = (contracts.CHAIN_MIN_GAS_RESERVES && contracts.CHAIN_MIN_GAS_RESERVES[follow.chainKey]) || 0.0005;
+              const reserveHuman = typeof follow.reserveNative === 'number' && Number.isFinite(follow.reserveNative)
+                ? follow.reserveNative
+                : ((contracts.CHAIN_MIN_GAS_RESERVES && contracts.CHAIN_MIN_GAS_RESERVES[follow.chainKey]) || 0.0005);
               const reserveWei = BigInt(intents.toBaseUnits(String(reserveHuman), 18));
               const maxSpendable = availWei > reserveWei ? availWei - reserveWei : 0n;
               const deltaWei = availWei > preWei ? availWei - preWei : 0n;
@@ -5577,6 +5925,7 @@
       st.swap.recipientAddress = '';
     }
     resetSwapQuoteDisplay();
+    if (typeof st.saveSwapPair === 'function') st.saveSwapPair();
     setSwapError('');
     closeAllSheets();
     renderSwapView();
@@ -5753,7 +6102,10 @@
           chain: 'near',
           title: vp.poolId,
           subtitle: statusText,
-          amountText: `${formatBal(vp.totalNear, 4)} NEAR`
+          amountText: `${formatBal(vp.totalNear, 4)} NEAR`,
+          actionType: vp.canWithdraw ? 'near_withdraw' : (vp.stakedNear > 0 ? 'near_unstake' : ''),
+          actionTarget: vp.poolId,
+          actionLabel: vp.canWithdraw ? t('提取', 'Withdraw') : (vp.stakedNear > 0 ? t('解质押', 'Unstake') : '')
         });
       }
       const nepMap = wallet.nearNep141Balances || {};
@@ -5825,10 +6177,10 @@
       const evmStakingPositions = [
         { chain: 'eth', contract: '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', sym: 'stETH', title: 'Lido Staked ETH', subtitle: 'Ethereum · Lido' },
         { chain: 'eth', contract: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', sym: 'sUSDe', title: 'Ethena Staked USDe', subtitle: 'Ethereum · Ethena' },
-        { chain: 'eth', contract: '0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c', sym: 'aEthUSDC', title: 'Aave V3 Ethereum USDC', subtitle: 'Ethereum · Aave V3' },
-        { chain: 'eth', contract: '0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', sym: 'aEthWETH', title: 'Aave V3 Ethereum ETH', subtitle: 'Ethereum · Aave V3' },
-        { chain: 'base', contract: '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', sym: 'aBasUSDC', title: 'Aave V3 Base USDC', subtitle: 'Base · Aave V3' },
-        { chain: 'arb', contract: '0x724dc807b04555b71ed48a6896b6F41593b8C637', sym: 'aArbUSDCn', title: 'Aave V3 Arbitrum USDC', subtitle: 'Arbitrum · Aave V3' },
+        { chain: 'eth', contract: '0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c', sym: 'aEthUSDC', title: 'Aave V3 Ethereum USDC', subtitle: 'Ethereum · Aave V3', poolId: 'aave_eth_usdc' },
+        { chain: 'eth', contract: '0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', sym: 'aEthWETH', title: 'Aave V3 Ethereum ETH', subtitle: 'Ethereum · Aave V3', poolId: 'aave_eth_weth' },
+        { chain: 'base', contract: '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', sym: 'aBasUSDC', title: 'Aave V3 Base USDC', subtitle: 'Base · Aave V3', poolId: 'aave_base_usdc' },
+        { chain: 'arb', contract: '0x724dc807b04555b71ed48a6896b6F41593b8C637', sym: 'aArbUSDCn', title: 'Aave V3 Arbitrum USDC', subtitle: 'Arbitrum · Aave V3', poolId: 'aave_arb_usdc' },
         { chain: 'arc', contract: '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', sym: 'steakUSDC', title: 'Steakhouse Prime USDC', subtitle: 'Arc · Morpho' },
         { chain: 'hype', contract: '0xfD739d4e423301CE9385c1fb8850539D657C296D', sym: 'kHYPE', title: 'Kinetiq Staked HYPE', subtitle: 'HyperEVM · Kinetiq' }
       ];
@@ -5840,7 +6192,10 @@
             chain: ep.chain,
             title: ep.title,
             subtitle: ep.subtitle,
-            amountText: `${formatBal(b, 4)} ${ep.sym}`
+            amountText: `${formatBal(b, 4)} ${ep.sym}`,
+            actionType: ep.poolId ? 'aave_withdraw' : '',
+            actionTarget: ep.poolId || '',
+            actionLabel: ep.poolId ? t('提取', 'Withdraw') : ''
           });
         }
       }
@@ -5848,7 +6203,7 @@
         myPosCard.classList.remove('hidden');
         if (myPosCount) myPosCount.textContent = String(posItems.length);
         myPosList.innerHTML = posItems.map((it) => `
-          <div class="flex items-center justify-between" style="padding:6px 8px;border-radius:10px;background:rgba(255,255,255,0.03);">
+          <div class="flex items-center justify-between gap-2" style="padding:6px 8px;border-radius:10px;background:rgba(255,255,255,0.03);">
             <div class="flex items-center gap-2">
               ${tokens.renderTokenIconWithBadge({ symbol: it.symbol, blockchain: it.chain }, 28, true)}
               <div class="flex flex-col">
@@ -5856,7 +6211,10 @@
                 <span style="font-size:11px;color:var(--text-secondary);">${escapeHtml(it.subtitle)}</span>
               </div>
             </div>
-            <span class="mono text-emerald" style="font-weight:700;font-size:12.5px;">${escapeHtml(it.amountText)}</span>
+            <div class="flex items-center gap-2">
+              <span class="mono text-emerald" style="font-weight:700;font-size:12.5px;">${escapeHtml(it.amountText)}</span>
+              ${it.actionType && it.actionTarget ? `<button type="button" class="mini-action-btn" style="padding:4px 8px;font-size:11px;" onclick="executeEarnPositionAction('${escapeHtml(it.actionType)}','${escapeHtml(it.actionTarget)}')">${escapeHtml(it.actionLabel)}</button>` : ''}
+            </div>
           </div>
         `).join('');
       } else {
@@ -6077,6 +6435,56 @@
     }
   }
 
+  async function executeEarnPositionAction(actionType, actionTarget) {
+    const st = getState();
+    const contracts = getContracts();
+    const wallet = st.getActiveWallet();
+    if (!wallet) return;
+    if (!(await verifySecurityAuthAsync(wallet, t('确认质押赎回操作', 'Confirm Stake Redemption')))) return;
+
+    try {
+      showToast(t('正在签名并广播赎回交易...', 'Signing & broadcasting redemption...'));
+      let res = null;
+      if (actionType === 'near_unstake') {
+        res = await contracts.unstakeFromNearValidator({ wallet, validatorId: actionTarget });
+        recordWalletActivity(wallet, {
+          type: 'unstake',
+          symbol: 'NEAR',
+          chain: 'near',
+          amount: 0,
+          txHash: res.txHash,
+          title: `${t('解质押', 'Unstake')} · ${actionTarget}`
+        });
+        showToast(`✅ ${t('已提交解质押 (冷却约 4 Epochs)', 'Unstake submitted')}: ${shortenAddr(res.txHash)}`);
+      } else if (actionType === 'near_withdraw') {
+        res = await contracts.withdrawFromNearValidator({ wallet, validatorId: actionTarget });
+        recordWalletActivity(wallet, {
+          type: 'unstake',
+          symbol: 'NEAR',
+          chain: 'near',
+          amount: 0,
+          txHash: res.txHash,
+          title: `${t('提取质押', 'Withdraw')} · ${actionTarget}`
+        });
+        showToast(`✅ ${t('已提取至 NEAR 余额', 'Withdrawn to NEAR balance')}: ${shortenAddr(res.txHash)}`);
+      } else if (actionType === 'aave_withdraw') {
+        res = await contracts.withdrawFromAaveV3({ wallet, poolId: actionTarget, amount: 'max' });
+        recordWalletActivity(wallet, {
+          type: 'unstake',
+          symbol: 'AAVE',
+          chain: 'evm',
+          amount: 0,
+          txHash: res.txHash,
+          title: `${t('Aave V3 全额提取', 'Aave V3 Withdraw')} · ${actionTarget}`
+        });
+        showToast(`✅ ${t('Aave 本息提取已广播', 'Aave V3 withdraw broadcast')}: ${shortenAddr(res.txHash)}`);
+      }
+      refreshAllBalancesAsync(false);
+    } catch (err) {
+      showToast(err && err.message ? err.message : t('赎回失败', 'Redemption failed'));
+    }
+  }
+
   // ==================== Hub: .near Domain, MPC v1.signer, Contacts, WC ====================
 
   // ==================== NEAR Access Keys & Key Rotation Sheet ====================
@@ -6105,6 +6513,7 @@
     const st = getState();
     const wallet = st.getActiveWallet();
     if (!wallet) return;
+    if (!(await verifySecurityAuthAsync(wallet, t('管理 NEAR 密钥与更换助记词', 'Manage NEAR Access Keys')))) return;
     setRotateKeyMode(wallet.accountType === 'post_quantum' ? 'post_quantum' : 'standard');
     if ($('near-keys-rotate-mnemonic')) $('near-keys-rotate-mnemonic').value = '';
     openSheet('sheet-near-keys');
@@ -6189,6 +6598,37 @@
       await refreshNearAccessKeysSheet();
     } catch (e) {
       showToast(e && e.message ? e.message : t('删除失败', 'Delete failed'));
+    }
+  }
+
+  async function addNearMnemonicKeyOnlyFromSheet() {
+    const st = getState();
+    const crypto = getCrypto();
+    const contracts = getContracts();
+    const wallet = st.getActiveWallet();
+    if (!wallet || !contracts || !crypto) return;
+    const rawPhrase = ($('near-keys-rotate-mnemonic')?.value || '').trim();
+    const check = crypto.validateMnemonic(rawPhrase);
+    if (!check.valid) {
+      showToast(check.error || t('请先生成或输入有效助记词', 'Generate or enter a valid mnemonic'));
+      return;
+    }
+    if (!(await verifySecurityAuthAsync(wallet, t('为 NEAR 账户添加新密钥', 'Add New Key to NEAR Account')))) return;
+
+    const addPq = _rotateKeyMode === 'post_quantum';
+    try {
+      showToast(t('正在执行 AddKey 添加密钥...', 'Broadcasting AddKey...'));
+      const res = await contracts.rotateNearAccountKeyAsync({
+        wallet,
+        newMnemonic: check.words.join(' '),
+        upgradeToMlDsa65: addPq,
+        deleteOldKey: false
+      });
+      showToast(`✅ ${t('已添加新密钥（旧密钥保留有效）', 'New key added (old key kept)')}: ${shortenAddr(res.addTxHash, 8, 6)}`);
+      if ($('near-keys-rotate-mnemonic')) $('near-keys-rotate-mnemonic').value = '';
+      await refreshNearAccessKeysSheet();
+    } catch (e) {
+      showToast(e && e.message ? e.message : t('添加密钥失败', 'AddKey failed'));
     }
   }
 
@@ -6386,8 +6826,7 @@
         wallet.evmAddress = wallet.mpcEvmAddress;
       }
       st.saveWallets();
-      _isAddingAdditionalWallet = false;
-      st.activeTab = 'wallet';
+      st.saveWallets();
       renderAll();
       showToast(`✅ ${res.accountId} ${t('注册成功，MPC 全链地址已切换', 'registered & MPC addresses updated')}`);
       refreshAllBalancesAsync(true);
@@ -6398,6 +6837,7 @@
 
   async function bindNearDomainFromHub() {
     const st = getState();
+    const crypto = getCrypto();
     const contracts = getContracts();
     const wallet = st.getActiveWallet();
     if (!wallet) return;
@@ -6406,39 +6846,84 @@
       showToast(t('请输入有效的 .near / .tg 账号', 'Enter a valid .near / .tg account'));
       return;
     }
+    const authSecret = ($('hub-near-bind-auth-input')?.value || '').trim();
     try {
       await contracts.ensureWalletSigningKeysAsync(wallet);
-      const res = await fetch(contracts.NEAR_RPC_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 'bind-check',
-          method: 'query',
-          params: {
-            request_type: 'view_access_key',
-            finality: 'final',
-            account_id: domain,
-            public_key: wallet.nearPublicKey
-          }
-        })
-      });
-      const json = await res.json();
+      const creds = contracts.getWalletNearSignerCredentials(wallet);
+      const targetPub = creds.publicKeyStr;
+      const targetHandle = creds.publicKeyHandleStr;
+
+      const queryKeyOnDomain = async (pk) => contracts.nearRpcPostAsync({
+        jsonrpc: '2.0',
+        id: 'bind-check',
+        method: 'query',
+        params: {
+          request_type: 'view_access_key',
+          finality: 'final',
+          account_id: domain,
+          public_key: pk
+        }
+      }, 8000);
+
+      let json = await queryKeyOnDomain(targetPub);
+      if ((!json || json.error || !json.result) && targetHandle) {
+        json = await queryKeyOnDomain(targetHandle);
+      }
+
       if (!json || json.error || !json.result) {
-        throw new Error(t('当前钱包公钥尚未授权给该 .near 账号', 'Current public key is not an access key on this account'));
+        if (!authSecret) {
+          throw new Error(t('该 .near 账号尚未授权当前钱包公钥；请在下方填入该 .near 的原助记词或私钥以自动授权绑定', 'Current wallet key is not authorized on this .near account. Paste its original mnemonic or private key below to auto-authorize.'));
+        }
+        let authPub = '';
+        let authPriv = '';
+        if (authSecret.startsWith('ml-dsa-65:')) {
+          const pqAuth = crypto.importNearMlDsa65FromSecretKey(authSecret);
+          authPub = pqAuth.publicKey;
+          authPriv = pqAuth.secretKey;
+        } else if (authSecret.startsWith('ed25519:') || /^[1-9A-HJ-NP-Za-km-z]{60,95}$/.test(authSecret)) {
+          const cleanB58 = authSecret.replace(/^ed25519:/, '');
+          const rawBytes = crypto.base58Decode(cleanB58);
+          if (rawBytes.length < 64) throw new Error(t('Ed25519 私钥格式无效', 'Invalid Ed25519 private key'));
+          const pubB58 = crypto.base58Encode(rawBytes.slice(32, 64));
+          authPub = `ed25519:${pubB58}`;
+          authPriv = `ed25519:${cleanB58}`;
+        } else {
+          const check = crypto.validateMnemonic(authSecret);
+          if (!check.valid) throw new Error(check.error || t('原助记词或私钥格式无效', 'Invalid original mnemonic or private key'));
+          const d = await crypto.deriveNearFromSeedAsync(check.words.join(' '), 0);
+          authPub = d.nearPublicKey;
+          authPriv = d.nearPrivateKey;
+        }
+
+        showToast(t('正在授权当前钱包绑定该 .near 账号...', 'Authorizing current wallet on .near account...'));
+        await contracts.addNearAccessKeyAsync({
+          wallet: {
+            accountType: authPub.startsWith('ml-dsa-65:') ? 'post_quantum' : 'standard',
+            nearNamedAccount: domain,
+            nearAddress: domain,
+            nearPublicKey: authPub.startsWith('ed25519:') ? authPub : '',
+            nearPrivateKey: authPriv.startsWith('ed25519:') ? authPriv : '',
+            nearMlDsa65PublicKey: authPub.startsWith('ml-dsa-65:') ? authPub : '',
+            nearMlDsa65PrivateKey: authPriv.startsWith('ml-dsa-65:') ? authPriv : '',
+            nearBalance: 1
+          },
+          newPublicKeyStr: targetPub
+        });
       }
+
       wallet.nearNamedAccount = domain;
-      if (typeof st.recomputeWalletMpcAddresses === 'function') {
-        st.recomputeWalletMpcAddresses(wallet);
-      } else {
-        wallet.mpcEvmAddress = await contracts.deriveMpcEvmAddressAsync(domain, 'ethereum-1');
-        wallet.evmAddress = wallet.mpcEvmAddress;
+      if (wallet.accountType !== 'post_quantum') {
+        if (typeof st.recomputeWalletMpcAddresses === 'function') {
+          st.recomputeWalletMpcAddresses(wallet);
+        } else {
+          wallet.mpcEvmAddress = await contracts.deriveMpcEvmAddressAsync(domain, 'ethereum-1');
+          wallet.evmAddress = wallet.mpcEvmAddress;
+        }
       }
+      if ($('hub-near-bind-auth-input')) $('hub-near-bind-auth-input').value = '';
       st.saveWallets();
-      _isAddingAdditionalWallet = false;
-      st.activeTab = 'wallet';
       renderAll();
-      showToast(`✅ ${t('已绑定主账户，MPC 全链地址已同步', 'Bound master account & MPC addresses synced')}: ${domain}`);
+      showToast(`✅ ${t('已绑定主账户', 'Bound master account')}: ${domain}`);
       refreshAllBalancesAsync(true);
     } catch (err) {
       showToast(err && err.message ? err.message : t('绑定失败', 'Bind failed'));
@@ -6692,6 +7177,161 @@
           </div>
         `).join('');
       }
+    }
+  }
+
+  // ==================== Solana Rent Reclaim & Dust Burn ====================
+
+  let _solRentScanAccounts = [];
+  let _solRentSelectedAtas = new Set();
+
+  function openSolRentReclaimSheet() {
+    const st = getState();
+    const wallet = st.getActiveWallet();
+    if (!wallet || !wallet.solAddress || wallet.accountType === 'post_quantum') {
+      showToast(t('当前账户暂不支持 Solana 租金回收', 'Solana rent reclaim is not available for this account'));
+      return;
+    }
+    _solRentScanAccounts = [];
+    _solRentSelectedAtas = new Set();
+    openSheet('sheet-sol-rent');
+    scanSolRentReclaimUI();
+  }
+
+  async function scanSolRentReclaimUI() {
+    const st = getState();
+    const wallet = st.getActiveWallet();
+    const contracts = getContracts();
+    const listEl = $('sol-rent-list');
+    const sumEl = $('sol-rent-summary');
+    if (!wallet || !wallet.solAddress || !contracts || typeof contracts.scanSolanaReclaimableAccounts !== 'function') return;
+
+    if (sumEl) sumEl.textContent = t('扫描中...', 'Scanning...');
+    if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:12px;text-align:center;">${t('正在扫描 Solana 代币账户...', 'Scanning Solana token accounts...')}</div>`;
+
+    const solTokens = getTokens().filter((tk) => String(tk.blockchain || '').toLowerCase() === 'sol' && tk.contractAddress);
+    const tokenByMint = new Map();
+    for (const tk of solTokens) tokenByMint.set(tk.contractAddress, tk);
+
+    try {
+      const scanPromise = contracts.scanSolanaReclaimableAccounts(wallet.solAddress, {
+        priceResolver: (mint) => {
+          const tk = tokenByMint.get(mint);
+          if (!tk) return null;
+          const p = getSymbolPrice(tk.symbol);
+          return p !== null && Number.isFinite(Number(p)) ? Number(p) : null;
+        }
+      });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(t('Solana 节点响应超时，请点击刷新重试', 'Solana RPC timed out, please tap Refresh'))), 7000)
+      );
+      const res = await Promise.race([scanPromise, timeoutPromise]);
+      _solRentScanAccounts = (res.accounts || []).map((acc) => {
+        const tk = tokenByMint.get(acc.mint);
+        return {
+          ...acc,
+          symbol: tk ? tk.symbol : shortenAddr(acc.mint)
+        };
+      });
+      _solRentSelectedAtas = new Set(
+        _solRentScanAccounts
+          .filter((acc) => acc.isEmpty || acc.isDust)
+          .map((acc) => acc.ataAddress)
+      );
+      renderSolRentList();
+    } catch (err) {
+      if (sumEl) sumEl.textContent = '--';
+      if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:12px;text-align:center;">${escapeHtml(err && err.message ? err.message : t('扫描失败', 'Scan failed'))}</div>`;
+    }
+  }
+
+  function renderSolRentList() {
+    const listEl = $('sol-rent-list');
+    const sumEl = $('sol-rent-summary');
+    const execBtn = $('btn-execute-sol-rent');
+    if (!listEl) return;
+
+    const emptyCount = _solRentScanAccounts.filter((a) => a.isEmpty).length;
+    const dustCount = _solRentScanAccounts.filter((a) => a.isDust).length;
+    const selectedList = _solRentScanAccounts.filter((a) => _solRentSelectedAtas.has(a.ataAddress));
+    const selectedSol = selectedList.reduce((s, a) => s + Number(a.rentSol || 0), 0);
+
+    if (sumEl) {
+      sumEl.textContent = `${t('空账户', 'Empty')}: ${emptyCount} · ${t('粉尘', 'Dust')}: ${dustCount}`;
+    }
+    if (execBtn) {
+      execBtn.disabled = selectedList.length === 0;
+      execBtn.textContent = selectedList.length > 0
+        ? `${t('一键回收并领取', 'Reclaim Selected')} (+${selectedSol.toFixed(4)} SOL)`
+        : t('无可回收账户', 'Nothing Selected');
+    }
+
+    if (_solRentScanAccounts.length === 0) {
+      listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:16px;text-align:center;">${t('当前钱包没有可回收的 Solana 代币账户', 'No reclaimable Solana token accounts found')}</div>`;
+      return;
+    }
+
+    listEl.innerHTML = _solRentScanAccounts.map((acc) => {
+      const checked = _solRentSelectedAtas.has(acc.ataAddress) ? 'checked' : '';
+      const badgeHtml = acc.isEmpty
+        ? `<span class="ca-badge" style="font-size:10px;">${t('空账户', 'Empty')}</span>`
+        : (acc.isDust
+            ? `<span class="ca-badge" style="font-size:10px;border-color:rgba(251,113,133,0.4);color:var(--rose-alert);">${t('粉尘粉碎', 'Burn Dust')}</span>`
+            : `<span class="ca-badge" style="font-size:10px;border-color:rgba(251,191,36,0.4);color:#fbbf24;">${t('有余额 (慎选)', 'Has Balance')}</span>`);
+      const balInfo = acc.isEmpty
+        ? t('余额: 0', 'Bal: 0')
+        : `${t('余额', 'Bal')}: ${formatBal(acc.uiAmount, 6)}${acc.usdValue !== null ? ` (~$${acc.usdValue.toFixed(4)})` : ''}`;
+      return `
+        <label class="ios-glass-card flex items-center justify-between gap-2" style="padding:10px 12px;cursor:pointer;">
+          <div class="flex items-center gap-2" style="min-width:0;">
+            <input type="checkbox" ${checked} onchange="toggleSolRentItem('${escapeHtml(acc.ataAddress)}', this.checked)" />
+            <div class="flex flex-col" style="min-width:0;">
+              <div class="flex items-center gap-1">
+                <span style="font-weight:700;font-size:12.5px;">${escapeHtml(acc.symbol)}</span>
+                ${badgeHtml}
+              </div>
+              <span style="font-size:11px;color:var(--text-secondary);">${escapeHtml(balInfo)}</span>
+            </div>
+          </div>
+          <span class="mono" style="font-size:12px;font-weight:700;color:var(--mint-accent);white-space:nowrap;">+${acc.rentSol.toFixed(4)} SOL</span>
+        </label>
+      `;
+    }).join('');
+  }
+
+  function toggleSolRentItem(ataAddress, isChecked) {
+    if (isChecked) _solRentSelectedAtas.add(ataAddress);
+    else _solRentSelectedAtas.delete(ataAddress);
+    renderSolRentList();
+  }
+
+  async function executeSolRentReclaimUI() {
+    const st = getState();
+    const wallet = st.getActiveWallet();
+    const contracts = getContracts();
+    const selected = _solRentScanAccounts.filter((a) => _solRentSelectedAtas.has(a.ataAddress));
+    if (!wallet || selected.length === 0 || !contracts || typeof contracts.executeSolanaRentReclaim !== 'function') return;
+
+    const totalSol = selected.reduce((s, a) => s + Number(a.rentSol || 0), 0);
+    const hasBurn = selected.some((a) => !a.isEmpty);
+    const promptText = hasBurn
+      ? `${t('回收租金并粉碎', 'Reclaim & burn')} ${selected.length} ${t('个账户', 'accounts')} (+${totalSol.toFixed(4)} SOL)`
+      : `${t('回收', 'Reclaim')} ${selected.length} ${t('个空账户租金', 'empty accounts')} (+${totalSol.toFixed(4)} SOL)`;
+
+    if (!(await verifySecurityAuthAsync(wallet, promptText))) return;
+
+    const btn = $('btn-execute-sol-rent');
+    if (btn) btn.disabled = true;
+    try {
+      const res = await contracts.executeSolanaRentReclaim({ wallet, accounts: selected });
+      const firstHash = res.txHashes && res.txHashes[0] ? `: ${shortenAddr(res.txHashes[0])}` : '';
+      showToast(`✅ ${t('已回收', 'Reclaimed')} +${res.reclaimedSol.toFixed(4)} SOL (${res.closedCount} ${t('个账户', 'accounts')})${firstHash}`);
+      await scanSolRentReclaimUI();
+      if (typeof refreshAllBalances === 'function') refreshAllBalances().catch(() => {});
+    } catch (err) {
+      showToast(err && err.message ? err.message : t('租金回收失败', 'Rent reclaim failed'));
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
 
@@ -7152,7 +7792,14 @@
       ensureWcReady().catch(() => {});
     }
     if (typeof navigator !== 'undefined' && navigator.serviceWorker && typeof location !== 'undefined' && /^https?:/.test(location.protocol)) {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
+      const isLocalDev = /^(localhost|127\.0\.0\.1)$/i.test(location.hostname);
+      if (isLocalDev) {
+        navigator.serviceWorker.getRegistrations().then((regs) => {
+          regs.forEach((r) => r.unregister().catch(() => {}));
+        }).catch(() => {});
+      } else {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      }
     }
   }
 
@@ -7196,6 +7843,10 @@
     executeUnifiedSend,
     openReceiveSheet,
     renderSwapView,
+    getTargetChainGasReserveInfo,
+    computeNetSwapOutput,
+    toggleSwapDetails,
+    setSwapGasReserveMode,
     fetchLiveSwapQuoteAsync,
     toggleFavoriteSwapToken,
     renderTokenPickerList,
@@ -7208,12 +7859,14 @@
     selectEarnLockTier,
     selectStakingPool,
     executeSelectedStake,
+    executeEarnPositionAction,
     openMiningProSheet,
     runMiningDeepQuery,
     openWalletConnectSheet,
     openContactsSheet,
     openWalletSwitcherSheet,
     openBackupKeysSheet,
+    toggleBackupKeysReveal,
     openPinSheet,
     openCreatePqWalletFlow,
     setOnboardImportMode,
@@ -7223,6 +7876,7 @@
     deleteNearAccessKeyFromSheet,
     setRotateKeyMode,
     generateRotateMnemonicInSheet,
+    addNearMnemonicKeyOnlyFromSheet,
     confirmRotateNearAccountKey,
     activateUniversalAccountFromSheet
   };
@@ -7246,11 +7900,13 @@
     startAdditionalPqWalletCreate,
     startAdditionalWalletImport,
     openBackupKeysSheet,
+    toggleBackupKeysReveal,
     openNearAccessKeysSheet,
     refreshNearAccessKeysSheet,
     deleteNearAccessKeyFromSheet,
     setRotateKeyMode,
     generateRotateMnemonicInSheet,
+    addNearMnemonicKeyOnlyFromSheet,
     confirmRotateNearAccountKey,
     activateUniversalAccountFromSheet,
     openPinSheet,
@@ -7288,6 +7944,8 @@
     selectReceiveNetwork,
     copyReceiveAddress,
     setSwapSlippage,
+    toggleSwapDetails,
+    setSwapGasReserveMode,
     handleSwapRecipientInput,
     handleSwapAmountInput,
     setSwapMaxAmount,
@@ -7310,6 +7968,7 @@
     setEarnMaxAmount,
     updateEarnEstimatedOut,
     executeSelectedStake,
+    executeEarnPositionAction,
     registerNearDomainFromHub,
     bindNearDomainFromHub,
     recomputeHubMpcAddress,
@@ -7323,6 +7982,10 @@
     runMiningDeepQuery,
     openContactsSheet,
     openContactsPicker,
+    openSolRentReclaimSheet,
+    scanSolRentReclaimUI,
+    toggleSolRentItem,
+    executeSolRentReclaimUI,
     addContactFromSheet,
     deleteContactById,
     pickContactAddress,

@@ -15,6 +15,49 @@ const MIME_TYPES = {
 };
 
 const server = http.createServer((req, res) => {
+  if (req.url.startsWith('/pearl-proxy')) {
+    const parsed = new URL(req.url, 'http://localhost');
+    const pathParam = parsed.searchParams.get('path');
+    if (!pathParam || !pathParam.startsWith('/api/v2/')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid path parameter' }));
+      return;
+    }
+    const targetUrl = new URL(`https://blockbook.pearlresearch.ai${pathParam}`);
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const bodyBuf = Buffer.concat(chunks);
+      const opts = {
+        method: req.method || 'GET',
+        hostname: targetUrl.hostname,
+        path: `${targetUrl.pathname}${targetUrl.search}`,
+        headers: {
+          'User-Agent': 'NearCAWallet/1.0',
+          'Accept': 'application/json,text/plain,*/*'
+        }
+      };
+      if (bodyBuf.length > 0) {
+        opts.headers['Content-Type'] = req.headers['content-type'] || 'text/plain';
+        opts.headers['Content-Length'] = bodyBuf.length;
+      }
+      const proxyReq = https.request(opts, (proxyRes) => {
+        res.writeHead(proxyRes.statusCode || 200, {
+          'Content-Type': proxyRes.headers['content-type'] || 'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*'
+        });
+        proxyRes.pipe(res);
+      });
+      proxyReq.on('error', (err) => {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      });
+      if (bodyBuf.length > 0) proxyReq.write(bodyBuf);
+      proxyReq.end();
+    });
+    return;
+  }
+
   if (req.url.startsWith('/kryptex-proxy')) {
     const parsed = new URL(req.url, 'http://localhost');
     const pathParam = parsed.searchParams.get('path');
