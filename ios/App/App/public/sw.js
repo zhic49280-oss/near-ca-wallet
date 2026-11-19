@@ -1,20 +1,17 @@
-﻿const CACHE_NAME = 'near-ca-wallet-v5.5';
+﻿const CACHE_NAME = 'nexus-wallet-v6.3';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './style.css?v=5.5',
-  './bip39-wordlist.js',
-  './qrcode.min.js',
-  './ethers.umd.min.js',
-  './walletconnect.umd.min.js',
-  './ml-dsa-65.umd.min.js',
-  './src/crypto-engine.js?v=5.5',
-  './src/token-registry.js?v=5.5',
-  './src/near-intents.js?v=5.5',
-  './src/chain-contracts.js?v=5.5',
-  './src/mining-pro.js?v=5.5',
-  './src/state.js?v=5.5',
-  './src/ui-controller.js?v=5.5'
+  './style.css?v=6.3',
+  './assets/favicon.png?v=6.3',
+  './assets/nexus-logo-192.png?v=6.3',
+  './bip39-wordlist.js?v=6.3',
+  './src/crypto-engine.js?v=6.3',
+  './src/token-registry.js?v=6.3',
+  './src/near-intents.js?v=6.3',
+  './src/chain-contracts.js?v=6.3',
+  './src/state.js?v=6.3',
+  './src/ui-controller.js?v=6.3'
 ];
 
 self.addEventListener('install', (event) => {
@@ -34,9 +31,13 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
-  const reqUrl = new URL(event.request.url);
+  let reqUrl;
+  try {
+    reqUrl = new URL(event.request.url);
+  } catch (_) {
+    return;
+  }
   if (reqUrl.origin !== self.location.origin) {
-    event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
     return;
   }
   if (reqUrl.pathname.startsWith('/pearl-proxy') || reqUrl.pathname.startsWith('/kryptex-proxy')) {

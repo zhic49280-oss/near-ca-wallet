@@ -1,4 +1,4 @@
-package io.pearl.wallet;
+package io.nexus.wallet;
 
 import android.app.Activity;
 import android.app.KeyguardManager;
@@ -26,6 +26,20 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  */
 @CapacitorPlugin(name = "NativeSecurity")
 public class NativeSecurityPlugin extends Plugin {
+
+    private CancellationSignal activeSignal = null;
+
+    @Override
+    protected void handleOnDestroy() {
+        if (activeSignal != null) {
+            try {
+                activeSignal.cancel();
+            } catch (Exception ignored) {
+            }
+            activeSignal = null;
+        }
+        super.handleOnDestroy();
+    }
 
     private String resolveBrandFamily(String manufacturer, String brand) {
         String combined = (manufacturer + " " + brand).toLowerCase();
@@ -67,6 +81,17 @@ public class NativeSecurityPlugin extends Plugin {
                 && pm.hasSystemFeature(PackageManager.FEATURE_IRIS);
         boolean hasDeviceCredential = km != null && km.isDeviceSecure();
 
+        boolean supportsStrongBio = hasFingerprint || hasFace || hasIris;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            BiometricManager bm = (BiometricManager) ctx.getSystemService(Context.BIOMETRIC_SERVICE);
+            if (bm != null) {
+                supportsStrongBio = bm.canAuthenticate(
+                        BiometricManager.Authenticators.BIOMETRIC_STRONG
+                                | BiometricManager.Authenticators.BIOMETRIC_WEAK
+                ) == BiometricManager.BIOMETRIC_SUCCESS;
+            }
+        }
+
         String biometryType = "none";
         if (hasFingerprint && hasFace) {
             biometryType = "fingerprint_and_face";
@@ -92,26 +117,46 @@ public class NativeSecurityPlugin extends Plugin {
         res.put("hasIris", hasIris);
         res.put("hasDeviceCredential", hasDeviceCredential);
         res.put("biometryType", biometryType);
-        res.put("supportsBiometrics", hasFingerprint || hasFace || hasIris);
+        res.put("supportsBiometrics", supportsStrongBio);
         res.put("supportsPasscode", hasDeviceCredential);
         call.resolve(res);
     }
 
     @PluginMethod
     public void authenticateWithBiometrics(PluginCall call) {
+        String title = call.getString("title", "安全验证 / Security Verification");
+        String subtitle = call.getString("subtitle", "");
         String reason = call.getString("reason", "验证身份以授权交易或查看密钥 / Verify identity");
+        String effectiveSubtitle = (subtitle != null && !subtitle.isEmpty()) ? subtitle : reason;
+
         Activity activity = getActivity();
-        if (activity == null) {
+        if (activity == null || activity.isFinishing() || activity.isDestroyed()) {
             call.reject("Activity unavailable", "AUTH_UNAVAILABLE");
             return;
         }
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            BiometricManager bm = (BiometricManager) activity.getSystemService(Context.BIOMETRIC_SERVICE);
+            int allowed = BiometricManager.Authenticators.BIOMETRIC_STRONG
+                    | BiometricManager.Authenticators.BIOMETRIC_WEAK
+                    | BiometricManager.Authenticators.DEVICE_CREDENTIAL;
+            if (bm != null && bm.canAuthenticate(allowed) != BiometricManager.BIOMETRIC_SUCCESS) {
+                call.reject("Biometric or device credential authentication unavailable", "AUTH_UNAVAILABLE");
+                return;
+            }
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             activity.runOnUiThread(() -> {
+                if (activity.isFinishing() || activity.isDestroyed()) {
+                    call.reject("Activity destroyed", "AUTH_UNAVAILABLE");
+                    return;
+                }
+                final CancellationSignal mySignal = new CancellationSignal();
                 try {
                     BiometricPrompt.Builder builder = new BiometricPrompt.Builder(ctxOrActivity(activity))
-                            .setTitle("安全验证 / Security Verification")
-                            .setSubtitle(reason);
+                            .setTitle(title)
+                            .setSubtitle(effectiveSubtitle);
 
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                         builder.setAllowedAuthenticators(
@@ -122,24 +167,44 @@ public class NativeSecurityPlugin extends Plugin {
                     } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         builder.setDeviceCredentialAllowed(true);
                     } else {
-                        builder.setNegativeButton("使用锁屏密码 / Passcode", activity.getMainExecutor(), (dialog, which) ->
-                                launchKeyguardFallback(activity, reason, call));
+                        String fallbackBtn = call.getString("fallbackTitle", "使用锁屏密码 / Passcode");
+                        builder.setNegativeButton(fallbackBtn, activity.getMainExecutor(), (dialog, which) ->
+                                launchKeyguardFallback(activity, title, effectiveSubtitle, call));
                     }
 
                     BiometricPrompt prompt = builder.build();
-                    CancellationSignal signal = new CancellationSignal();
-                    prompt.authenticate(signal, activity.getMainExecutor(), new BiometricPrompt.AuthenticationCallback() {
+                    if (activeSignal != null) {
+                        try {
+                            activeSignal.cancel();
+                        } catch (Exception ignored) {
+                        }
+                    }
+                    activeSignal = mySignal;
+                    prompt.authenticate(mySignal, activity.getMainExecutor(), new BiometricPrompt.AuthenticationCallback() {
                         @Override
                         public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
+                            if (activeSignal == mySignal) activeSignal = null;
+                            String authType = "biometric";
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && result != null
+                                    && result.getAuthenticationType() == BiometricPrompt.AUTHENTICATION_RESULT_TYPE_DEVICE_CREDENTIAL) {
+                                authType = "passcode";
+                            }
                             JSObject out = new JSObject();
                             out.put("authenticated", true);
-                            out.put("type", "biometric");
+                            out.put("type", authType);
                             call.resolve(out);
                         }
 
                         @Override
                         public void onAuthenticationError(int errorCode, CharSequence errString) {
-                            call.reject(errString != null ? errString.toString() : "Biometric error", "AUTH_FAILED");
+                            if (activeSignal == mySignal) activeSignal = null;
+                            boolean isCancel = errorCode == BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED
+                                    || errorCode == BiometricPrompt.BIOMETRIC_ERROR_CANCELED
+                                    || errorCode == BiometricPrompt.BIOMETRIC_ERROR_NEGATIVE_BUTTON;
+                            call.reject(
+                                    errString != null ? errString.toString() : "Biometric error",
+                                    isCancel ? "AUTH_CANCELLED" : "AUTH_FAILED"
+                            );
                         }
 
                         @Override
@@ -148,13 +213,14 @@ public class NativeSecurityPlugin extends Plugin {
                         }
                     });
                 } catch (Exception ex) {
-                    launchKeyguardFallback(activity, reason, call);
+                    if (activeSignal == mySignal) activeSignal = null;
+                    launchKeyguardFallback(activity, title, effectiveSubtitle, call);
                 }
             });
             return;
         }
 
-        launchKeyguardFallback(activity, reason, call);
+        launchKeyguardFallback(activity, title, effectiveSubtitle, call);
     }
 
     private Context ctxOrActivity(Activity activity) {
@@ -162,13 +228,17 @@ public class NativeSecurityPlugin extends Plugin {
     }
 
     @SuppressWarnings("deprecation")
-    private void launchKeyguardFallback(Activity activity, String reason, PluginCall call) {
+    private void launchKeyguardFallback(Activity activity, String title, String reason, PluginCall call) {
+        if (activity == null || activity.isFinishing() || activity.isDestroyed()) {
+            call.reject("Activity unavailable", "AUTH_UNAVAILABLE");
+            return;
+        }
         KeyguardManager km = (KeyguardManager) activity.getSystemService(Context.KEYGUARD_SERVICE);
         if (km == null || !km.isDeviceSecure()) {
             call.reject("Device credential lockscreen not configured", "AUTH_UNAVAILABLE");
             return;
         }
-        Intent intent = km.createConfirmDeviceCredentialIntent("安全验证 / Security Verification", reason);
+        Intent intent = km.createConfirmDeviceCredentialIntent(title, reason);
         if (intent == null) {
             call.reject("Device credential intent unavailable", "AUTH_UNAVAILABLE");
             return;
@@ -179,7 +249,7 @@ public class NativeSecurityPlugin extends Plugin {
     @ActivityCallback
     private void onDeviceCredentialResult(PluginCall call, ActivityResult result) {
         if (call == null) return;
-        if (result.getResultCode() == Activity.RESULT_OK) {
+        if (result != null && result.getResultCode() == Activity.RESULT_OK) {
             JSObject out = new JSObject();
             out.put("authenticated", true);
             out.put("type", "passcode");

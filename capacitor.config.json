@@ -1,16 +1,14 @@
 {
-  "appId": "io.near.cawallet",
-  "appName": "NEAR CA Wallet",
+  "appId": "io.nexus.wallet",
+  "appName": "Nexus Wallet",
   "webDir": "dist",
   "server": {
     "androidScheme": "https",
     "iosScheme": "capacitor"
   },
   "plugins": {
-    "LocalAuthentication": {
-      "allowDeviceCredential": true,
-      "biometricsPromptTitle": "安全验证 / Security Verification",
-      "biometricsPromptSubtitle": "验证身份以签名交易或保护助记词"
+    "CapacitorHttp": {
+      "enabled": true
     }
   }
 }

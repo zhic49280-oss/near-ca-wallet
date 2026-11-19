@@ -7,16 +7,16 @@
 
     <application
         android:allowBackup="false"
-        android:label="NEAR CA Wallet"
+        android:label="Nexus Wallet"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
 
         <activity
-            android:name="io.pearl.wallet.MainActivity"
+            android:name="io.nexus.wallet.MainActivity"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:exported="true"
-            android:label="NEAR CA Wallet"
+            android:label="Nexus Wallet"
             android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

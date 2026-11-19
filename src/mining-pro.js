@@ -22,7 +22,7 @@
   const HEROMINERS_API_BASE = 'https://pearl.herominers.com/api';
   const KRYPTEX_API_BASE = 'https://pool.kryptex.com';
   const ONECLICK_QUOTE_URL = 'https://1click.chaindefuser.com/v0/quote';
-  const PRLSCAN_TX_EXPLORER_BASE = 'https://prlscan.com/tx/';
+  const PRLSCAN_TX_EXPLORER_BASE = 'https://explorer.prlscan.com/tx/';
   const SAVED_MINERS_STORAGE_KEY = 'near_ca_saved_miners_v1';
 
   const PRL_ORIGIN_ASSET_ID = 'nep141:prl.omft.near';
@@ -338,25 +338,27 @@
     }
   }
 
-  function getBrowserKryptexProxyUrls(apiPath) {
-    const encoded = encodeURIComponent(apiPath);
-    const urls = [];
-    if (typeof window === 'undefined') return urls;
+  function isNativeCapacitorRuntime() {
+    return Boolean(
+      typeof window !== 'undefined' &&
+      window.Capacitor &&
+      typeof window.Capacitor.isNativePlatform === 'function' &&
+      window.Capacitor.isNativePlatform()
+    );
+  }
 
+  function getBrowserKryptexProxyUrls(apiPath) {
+    if (typeof window === 'undefined' || isNativeCapacitorRuntime()) return [];
     const origin = window.location && window.location.origin ? window.location.origin : '';
-    const isHttpOrigin = /^https?:\/\//i.test(origin);
-    if (isHttpOrigin) {
-      urls.push(`/kryptex-proxy?path=${encoded}`);
+    const hostname = window.location && window.location.hostname ? window.location.hostname : '';
+    if (/^https?:\/\//i.test(origin) && (hostname === 'localhost' || hostname === '127.0.0.1')) {
+      return [`/kryptex-proxy?path=${encodeURIComponent(apiPath)}`];
     }
-    if (!origin.includes('localhost:3334') && !origin.includes('127.0.0.1:3334')) {
-      urls.push(`http://localhost:3334/kryptex-proxy?path=${encoded}`);
-      urls.push(`http://127.0.0.1:3334/kryptex-proxy?path=${encoded}`);
-    }
-    return urls;
+    return [];
   }
 
   /**
-   * Fetch Kryptex JSON or HTML via direct pool.kryptex.com with browser /kryptex-proxy fallback.
+   * Fetch Kryptex JSON or HTML via CapacitorHttp (on native mobile) or direct pool.kryptex.com with local dev /kryptex-proxy fallback.
    */
   async function fetchKryptexResource(apiPath, expectType = 'json') {
     const directUrl = `${KRYPTEX_API_BASE}${apiPath}`;
@@ -366,6 +368,25 @@
       if (expectType === 'html') return await res.text();
       return await res.json();
     };
+
+    if (isNativeCapacitorRuntime() && typeof window !== 'undefined' && window.Capacitor?.Plugins?.CapacitorHttp?.request) {
+      try {
+        const res = await window.Capacitor.Plugins.CapacitorHttp.request({
+          url: directUrl,
+          method: 'GET',
+          headers: { Accept: acceptHeader },
+          connectTimeout: KRYPTEX_TIMEOUT_MS,
+          readTimeout: KRYPTEX_TIMEOUT_MS
+        });
+        if (res && res.status >= 200 && res.status < 300) {
+          if (expectType === 'html') return typeof res.data === 'string' ? res.data : String(res.data || '');
+          return typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+        }
+        return null;
+      } catch (_) {
+        return null;
+      }
+    }
 
     try {
       const res = await fetchWithTimeout(
@@ -533,20 +554,54 @@
     return points;
   }
 
+  const _telemetryCache = new Map();
+  const _telemetryInFlight = new Map();
+  const _minerStatsCache = new Map();
+  const _minerStatsInFlight = new Map();
+
+  function _settledValue(res) {
+    return res && res.status === 'fulfilled' ? res.value : null;
+  }
+
   /**
    * Fetch live Pearl mainnet telemetry and pool statistics from prlscan, HeroMiners, and Kryptex.
    * All missing or failed fields strictly remain null (never fabricated fallback numbers).
    */
-  async function fetchNetworkAndPoolTelemetry(rpcGatewayUrl = DEFAULT_RPC_GATEWAY) {
+  async function fetchNetworkAndPoolTelemetry(rpcGatewayUrl = DEFAULT_RPC_GATEWAY, options = {}) {
     const baseUrl = String(rpcGatewayUrl || DEFAULT_RPC_GATEWAY).replace(/\/+$/, '');
+    if (options && options.useCache === true) {
+      const cached = _telemetryCache.get(baseUrl);
+      if (cached && (Date.now() - cached.ts < 60_000)) {
+        return cached.data;
+      }
+    }
+    if (_telemetryInFlight.has(baseUrl)) {
+      return _telemetryInFlight.get(baseUrl);
+    }
+    const job = (async () => {
+      const settled = await Promise.allSettled([
+        fetchJsonSafe(`${baseUrl}/status`),
+        fetchJsonSafe(`${baseUrl}/blocks?limit=20`),
+        fetchJsonSafe(`${baseUrl}/pools`),
+        fetchJsonSafe(`${HEROMINERS_API_BASE}/stats`),
+        fetchKryptexResource('/prl/api/v1/pool/info', 'json')
+      ]);
+      const statusRes = _settledValue(settled[0]) || { ok: false, data: null };
+      const blocksRes = _settledValue(settled[1]) || { ok: false, data: null };
+      const poolsRes = _settledValue(settled[2]) || { ok: false, data: null };
+      const heroRes = _settledValue(settled[3]) || { ok: false, data: null };
+      const kryptexData = _settledValue(settled[4]);
+      const result = _assembleNetworkAndPoolTelemetry(statusRes, blocksRes, poolsRes, heroRes, kryptexData);
+      _telemetryCache.set(baseUrl, { ts: Date.now(), data: result });
+      return result;
+    })().finally(() => {
+      _telemetryInFlight.delete(baseUrl);
+    });
+    _telemetryInFlight.set(baseUrl, job);
+    return job;
+  }
 
-    const [statusRes, blocksRes, poolsRes, heroRes, kryptexData] = await Promise.all([
-      fetchJsonSafe(`${baseUrl}/status`),
-      fetchJsonSafe(`${baseUrl}/blocks?limit=20`),
-      fetchJsonSafe(`${baseUrl}/pools`),
-      fetchJsonSafe(`${HEROMINERS_API_BASE}/stats`),
-      fetchKryptexResource('/prl/api/v1/pool/info', 'json')
-    ]);
+  function _assembleNetworkAndPoolTelemetry(statusRes, blocksRes, poolsRes, heroRes, kryptexData) {
 
     const statusData = statusRes.ok ? statusRes.data : null;
     const blockItems = blocksRes.ok && blocksRes.data && Array.isArray(blocksRes.data.items)
@@ -796,13 +851,16 @@
   }
 
   async function fetchKryptexMinerRaw(cleanAddr) {
-    // Query REST endpoints + optional unified stats path concurrently
-    const [balData, workersData, payoutsData, statsData] = await Promise.all([
+    // Query REST endpoints concurrently (note: /prl/api/v1/miner/stats returns 404 on Kryptex, avoid noise/latency)
+    const settled = await Promise.allSettled([
       fetchKryptexResource(`/prl/api/v1/miner/balance/${encodeURIComponent(cleanAddr)}`, 'json'),
       fetchKryptexResource(`/prl/api/v3/miner/workers/${encodeURIComponent(cleanAddr)}`, 'json'),
-      fetchKryptexResource(`/prl/api/v1/miner/payouts/${encodeURIComponent(cleanAddr)}`, 'json'),
-      fetchKryptexResource(`/prl/api/v1/miner/stats?address=${encodeURIComponent(cleanAddr)}`, 'json')
+      fetchKryptexResource(`/prl/api/v1/miner/payouts/${encodeURIComponent(cleanAddr)}`, 'json')
     ]);
+    const balData = _settledValue(settled[0]);
+    const workersData = _settledValue(settled[1]);
+    const payoutsData = _settledValue(settled[2]);
+    const statsData = null;
 
     let ssrData = null;
     if (!balData && !workersData && !payoutsData && !statsData) {
@@ -843,10 +901,11 @@
           fetchKryptexResource(`/prl/api/v1/miner/payouts/${encodeURIComponent(cleanAddr)}?page=${page}`, 'json')
         );
       }
-      const extraPages = await Promise.all(extraPromises);
-      for (let i = 0; i < extraPages.length; i++) {
-        if (extraPages[i] && Array.isArray(extraPages[i].results)) {
-          rawPayouts = rawPayouts.concat(extraPages[i].results);
+      const extraSettled = await Promise.allSettled(extraPromises);
+      for (let i = 0; i < extraSettled.length; i++) {
+        const pg = _settledValue(extraSettled[i]);
+        if (pg && Array.isArray(pg.results)) {
+          rawPayouts = rawPayouts.concat(pg.results);
         }
       }
     }
@@ -967,7 +1026,9 @@
   }
 
   function mapHeroWorker(w, nowSec) {
-    const h30m = normalizeHeroHashrateHps(w.realHashrate ?? w.hashrate);
+    const h30m = (w.realHashrate !== undefined && w.realHashrate !== null)
+      ? toPositiveOrZeroNumber(w.realHashrate)
+      : normalizeHeroHashrateHps(w.hashrate);
     const h3h = normalizeHeroHashrateHps(w.hashrate_3h ?? w.hashrate_6h ?? w.hashrate_1h);
     const h24h = normalizeHeroHashrateHps(w.hashrate_24h);
     const lastShareSec = toPositiveOrZeroNumber(w.lastShare);
@@ -1011,7 +1072,9 @@
       : [];
     const payoutHistory = parseHeroPayments(data.payments);
 
-    const hashrateCurrent = normalizeHeroHashrateHps(stats.realHashrate ?? stats.hashrate);
+    const hashrateCurrent = (stats.realHashrate !== undefined && stats.realHashrate !== null)
+      ? toPositiveOrZeroNumber(stats.realHashrate)
+      : normalizeHeroHashrateHps(stats.hashrate);
     const hashrateAvg3h = normalizeHeroHashrateHps(stats.hashrate_3h ?? stats.hashrate_6h ?? stats.hashrate_1h);
     const hashrateAvg24h = normalizeHeroHashrateHps(stats.hashrate_24h);
 
@@ -1019,7 +1082,9 @@
     const totalPaidPrl = grainsToPrl(stats.paid);
 
     let payoutThresholdPrl = toPositiveOrZeroNumber(stats.minPaymentThreshold);
-    if (payoutThresholdPrl !== null && payoutThresholdPrl > 1e5) {
+    if (payoutThresholdPrl === 0) {
+      payoutThresholdPrl = null;
+    } else if (payoutThresholdPrl !== null && payoutThresholdPrl >= 1e5) {
       payoutThresholdPrl = grainsToPrl(payoutThresholdPrl);
     }
     if (payoutThresholdPrl === null) {
@@ -1070,10 +1135,12 @@
 
   async function fetchOnChainMinerRaw(cleanAddr, rpcGatewayUrl = DEFAULT_RPC_GATEWAY) {
     const baseUrl = String(rpcGatewayUrl || DEFAULT_RPC_GATEWAY).replace(/\/+$/, '');
-    const [addrRes, txsRes] = await Promise.all([
+    const settled = await Promise.allSettled([
       fetchJsonSafe(`${baseUrl}/addresses/${encodeURIComponent(cleanAddr)}`),
       fetchJsonSafe(`${baseUrl}/addresses/${encodeURIComponent(cleanAddr)}/txs?limit=30`)
     ]);
+    const addrRes = _settledValue(settled[0]) || { ok: false, status: 0, data: null };
+    const txsRes = _settledValue(settled[1]) || { ok: false, status: 0, data: null };
 
     let onChainBalancePrl = null;
     let totalReceivedPrl = null;
@@ -1189,47 +1256,58 @@
     const cleanAddr = rawClean.toLowerCase();
     const normalizedPool = String(poolKey || 'auto').trim().toLowerCase();
     const rpcGatewayUrl = options.rpcGatewayUrl || DEFAULT_RPC_GATEWAY;
+    const cacheKey = `${cleanAddr}|${normalizedPool}|${rpcGatewayUrl}`;
 
-    const onChainPromise = fetchOnChainMinerRaw(cleanAddr, rpcGatewayUrl);
-
-    if (normalizedPool === 'onchain') {
-      const onChainData = await onChainPromise;
-      return buildUnifiedMinerTelemetry(cleanAddr, null, onChainData);
+    if (options && options.useCache === true) {
+      const cached = _minerStatsCache.get(cacheKey);
+      if (cached && (Date.now() - cached.ts < 60_000)) {
+        return cached.data;
+      }
+    }
+    if (_minerStatsInFlight.has(cacheKey)) {
+      return _minerStatsInFlight.get(cacheKey);
     }
 
-    if (normalizedPool === 'kryptex') {
-      const [kryptexData, onChainData] = await Promise.all([
-        fetchKryptexMinerRaw(cleanAddr),
-        onChainPromise
-      ]);
-      const chosen = kryptexData || null;
-      return buildUnifiedMinerTelemetry(cleanAddr, chosen, onChainData);
-    }
+    const job = (async () => {
+      const onChainPromise = fetchOnChainMinerRaw(cleanAddr, rpcGatewayUrl);
+      let result;
 
-    if (normalizedPool === 'herominers') {
-      const [heroData, onChainData] = await Promise.all([
-        fetchHeroMinersMinerRaw(cleanAddr),
-        onChainPromise
-      ]);
-      const chosen = heroData || null;
-      return buildUnifiedMinerTelemetry(cleanAddr, chosen, onChainData);
-    }
+      if (normalizedPool === 'onchain') {
+        const onChainData = await onChainPromise;
+        result = buildUnifiedMinerTelemetry(cleanAddr, null, onChainData);
+      } else if (normalizedPool === 'kryptex') {
+        const settled = await Promise.allSettled([fetchKryptexMinerRaw(cleanAddr), onChainPromise]);
+        result = buildUnifiedMinerTelemetry(cleanAddr, _settledValue(settled[0]), _settledValue(settled[1]));
+      } else if (normalizedPool === 'herominers') {
+        const settled = await Promise.allSettled([fetchHeroMinersMinerRaw(cleanAddr), onChainPromise]);
+        result = buildUnifiedMinerTelemetry(cleanAddr, _settledValue(settled[0]), _settledValue(settled[1]));
+      } else {
+        // 'auto' mode: concurrently probe Kryptex, HeroMiners, and on-chain prlscan
+        const settled = await Promise.allSettled([
+          fetchKryptexMinerRaw(cleanAddr),
+          fetchHeroMinersMinerRaw(cleanAddr),
+          onChainPromise
+        ]);
+        const kryptexData = _settledValue(settled[0]);
+        const heroData = _settledValue(settled[1]);
+        const onChainData = _settledValue(settled[2]);
 
-    // 'auto' mode: concurrently probe Kryptex, HeroMiners, and on-chain prlscan
-    const [kryptexData, heroData, onChainData] = await Promise.all([
-      fetchKryptexMinerRaw(cleanAddr),
-      fetchHeroMinersMinerRaw(cleanAddr),
-      onChainPromise
-    ]);
+        const kScore = scorePoolCandidate(kryptexData);
+        const hScore = scorePoolCandidate(heroData);
+        let chosen = null;
+        if (kScore >= 0 || hScore >= 0) {
+          chosen = kScore >= hScore ? kryptexData : heroData;
+        }
+        result = buildUnifiedMinerTelemetry(cleanAddr, chosen, onChainData);
+      }
 
-    const kScore = scorePoolCandidate(kryptexData);
-    const hScore = scorePoolCandidate(heroData);
-    let chosen = null;
-    if (kScore >= 0 || hScore >= 0) {
-      chosen = kScore >= hScore ? kryptexData : heroData;
-    }
-
-    return buildUnifiedMinerTelemetry(cleanAddr, chosen, onChainData);
+      _minerStatsCache.set(cacheKey, { ts: Date.now(), data: result });
+      return result;
+    })().finally(() => {
+      _minerStatsInFlight.delete(cacheKey);
+    });
+    _minerStatsInFlight.set(cacheKey, job);
+    return job;
   }
 
   // ======================== Saved Miner Watchlist Management ========================
@@ -1407,27 +1485,34 @@
     // Step 1: Pre-validate live prl1p... mainnet balance BEFORE requesting 1Click quote
     const baseUrl = String(rpcGatewayUrl || DEFAULT_RPC_GATEWAY).replace(/\/+$/, '');
     const addrRes = await fetchJsonSafe(`${baseUrl}/addresses/${encodeURIComponent(sourcePrlAddress)}`);
-    let onChainBalancePrl = null;
+    let balanceGrains = null;
     if (addrRes.ok && addrRes.data) {
-      onChainBalancePrl = grainsToPrl(addrRes.data.balance_grains);
+      const rawBg = String(addrRes.data.balance_grains ?? '0').trim();
+      if (/^\d+$/.test(rawBg)) {
+        balanceGrains = BigInt(rawBg);
+      } else {
+        const parsedBg = toBaseUnits(Number(rawBg) / GRAINS_PER_PRL, 8);
+        balanceGrains = /^\d+$/.test(parsedBg) ? BigInt(parsedBg) : 0n;
+      }
     } else if (addrRes.status === 404) {
-      onChainBalancePrl = 0;
+      balanceGrains = 0n;
     }
 
-    if (onChainBalancePrl === null) {
+    if (balanceGrains === null) {
       const err = new Error('Unable to verify Pearl mainnet balance before sweep / 无法获取 Pearl 主网可用余额');
       err.code = 'BALANCE_CHECK_FAILED';
       throw err;
     }
 
+    const onChainBalancePrl = Number(balanceGrains) / GRAINS_PER_PRL;
     const buffer = Number.isFinite(Number(feeBufferPrl)) && Number(feeBufferPrl) >= 0
       ? Number(feeBufferPrl)
       : DEFAULT_PRL_FEE_BUFFER;
-    const balanceGrains = BigInt(Math.round(onChainBalancePrl * GRAINS_PER_PRL));
     const amountGrainsBig = BigInt(amountGrainsStr);
-    const bufferGrainsBig = BigInt(Math.round(buffer * GRAINS_PER_PRL));
+    const bufferGrainsStr = toBaseUnits(buffer, 8);
+    const bufferGrainsBig = /^\d+$/.test(bufferGrainsStr) ? BigInt(bufferGrainsStr) : 0n;
     const requiredGrainsBig = amountGrainsBig + bufferGrainsBig;
-    const requiredPrl = Number((Number(requiredGrainsBig) / GRAINS_PER_PRL).toFixed(8));
+    const requiredPrl = Number(requiredGrainsBig) / GRAINS_PER_PRL;
 
     if (balanceGrains < requiredGrainsBig) {
       const err = new Error(
@@ -1523,6 +1608,8 @@
     SAVED_MINERS_STORAGE_KEY,
     PRL_ORIGIN_ASSET_ID,
     PRL_ON_NEAR_ASSET_ID,
+    PRLSCAN_TX_EXPLORER_BASE,
+    buildExplorerTxUrl,
     fetchNetworkAndPoolTelemetry,
     queryMinerDeepStats,
     formatHashrate,

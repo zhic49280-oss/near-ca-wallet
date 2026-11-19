@@ -11,6 +11,13 @@
   const DEFAULT_REFERRAL_ACCOUNT = 'zhic49280.near';
   const DEFAULT_TIMEOUT_MS = 8000;
   const _rpc429Until = Object.create(null);
+  const _rpcInFlight = new Map();
+  const _quoteCache = new Map();
+  const _quoteInFlight = new Map();
+  const _auxSourceCooldown = Object.create(null);
+  const _arcKyberPriceCache = new Map();
+  const _oneClickQuoteCache = new Map();
+  const _oneClickQuoteInFlight = new Map();
 
   const NETWORK_LABELS = {
     near: 'NEAR Protocol',
@@ -23,7 +30,7 @@
     btc: 'Bitcoin',
     hood: 'Robinhood Chain',
     arc: 'Arc Network',
-    qtc: 'Quantus Mainnet (需填 qz... 地址)',
+    qtc: 'Quantus Network',
     hypercore: 'Hyperliquid',
     op: 'Optimism',
     pol: 'Polygon',
@@ -162,15 +169,43 @@
     if (!fetchFn) {
       throw new Error('fetch API unavailable');
     }
+    const extSignal = options && options.signal ? options.signal : null;
+    if (extSignal && extSignal.aborted) {
+      const abortErr = new Error(t('请求已取消', 'Request aborted'));
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    let timedOut = false;
+    const timer = controller
+      ? setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, timeoutMs)
+      : null;
+    let combinedSignal = controller ? controller.signal : extSignal || undefined;
+    let onExtAbort = null;
+    if (extSignal && controller) {
+      if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function') {
+        try {
+          combinedSignal = AbortSignal.any([extSignal, controller.signal]);
+        } catch (_) {
+          onExtAbort = () => controller.abort();
+          extSignal.addEventListener('abort', onExtAbort, { once: true });
+        }
+      } else {
+        onExtAbort = () => controller.abort();
+        extSignal.addEventListener('abort', onExtAbort, { once: true });
+      }
+    }
     try {
+      const { signal: _ignoredSignal, ...restOptions } = options || {};
       const res = await fetchFn(url, {
-        ...options,
-        signal: options.signal || (controller ? controller.signal : undefined),
+        ...restOptions,
+        signal: combinedSignal,
         headers: {
           Accept: 'application/json',
-          ...(options.headers || {})
+          ...((options && options.headers) || {})
         }
       });
       const text = typeof res.text === 'function' ? await res.text() : '';
@@ -187,24 +222,27 @@
       return { ok: !!res.ok, status: res.status || 0, statusText: res.statusText || '', data: parsed, rawText: text };
     } catch (err) {
       if (err && (err.name === 'AbortError' || String(err.message || '').includes('abort'))) {
-        const timeoutErr = new Error(t('网络请求超时', 'Request timeout'));
+        const timeoutErr = new Error(timedOut ? t('网络请求超时', 'Request timeout') : t('请求已取消', 'Request aborted'));
         timeoutErr.name = 'AbortError';
         throw timeoutErr;
       }
       throw err;
     } finally {
       if (timer) clearTimeout(timer);
+      if (extSignal && onExtAbort) {
+        try { extSignal.removeEventListener('abort', onExtAbort); } catch (_) {}
+      }
     }
   }
 
-  function resolveTokenDecimals(assetId) {
+  function resolveTokenDecimals(assetId, blockchainHint = '') {
     const idStr = String(assetId || '');
     const idLower = idStr.toLowerCase();
     const registry = getTokenRegistry();
     if (registry) {
       const lookupFn = registry.findTokenByAssetId || registry.getTokenByAssetId;
       if (typeof lookupFn === 'function') {
-        const found = lookupFn(idStr);
+        const found = blockchainHint ? lookupFn(idStr, blockchainHint) : lookupFn(idStr);
         if (found && typeof found.decimals === 'number') return found.decimals;
       }
       const collections = [
@@ -216,7 +254,13 @@
       ];
       for (const col of collections) {
         if (Array.isArray(col)) {
-          const hit = col.find((item) => item && String(item.assetId || '').toLowerCase() === idLower);
+          const hit = col.find((item) => {
+            if (!item || String(item.assetId || '').toLowerCase() !== idLower) return false;
+            if (blockchainHint && item.blockchain) {
+              return String(item.blockchain).toLowerCase() === String(blockchainHint).toLowerCase();
+            }
+            return true;
+          });
           if (hit && typeof hit.decimals === 'number') return hit.decimals;
         }
       }
@@ -225,10 +269,14 @@
     if (cachedHit && typeof cachedHit.decimals === 'number') return cachedHit.decimals;
 
     if (idLower === 'nep141:wrap.near' || idLower === 'near') return 24;
+    if (idLower.includes('prl.omft.near')) return 8;
+    if (idLower.includes('qtc.omft.near')) return 12;
     if (idLower.includes('btc.omft.near')) return 8;
     if (idLower.includes('sol.omft.near')) return 9;
     if (idLower.includes('eth.omft.near') || idLower.includes('eth.bridge.near')) return 18;
-    if (idLower.includes('usdt') || idLower.includes('usdc') || idLower.includes('tron-')) return 6;
+    if (idLower.includes('tron-') || idLower === 'nep141:usdt.tether-token.near' || idLower === NEAR_USDC_ASSET_ID || (idLower.startsWith('nep141:') && (idLower.includes('usdt') || idLower.includes('usdc')))) {
+      return 6;
+    }
     return 18;
   }
 
@@ -240,48 +288,80 @@
     return serialized.includes('UNKNOWN_ACCOUNT') || serialized.includes('does not exist while viewing');
   }
 
-  async function nearRpcQueryWithFallback(payloadObj, timeoutMs = 4500, signal = null) {
-    const body = typeof payloadObj === 'string' ? payloadObj : JSON.stringify(payloadObj);
+  function isDeterministicNearRpcError(rpcError) {
+    if (!rpcError) return false;
+    if (isUnknownNearAccountError(rpcError)) return true;
+    const serialized = JSON.stringify(rpcError);
+    return /MethodNotFound|ExecutionError|ContractExecutionError|AccountDoesNotExist|HostError/i.test(serialized);
+  }
+
+  async function _execNearRpcQueryWithFallback(body, timeoutMs) {
     const now = Date.now();
     let ordered = NEAR_RPC_ENDPOINTS.filter((u) => !(_rpc429Until[u] > now));
     if (ordered.length === 0) ordered = NEAR_RPC_ENDPOINTS.slice();
     let lastResp = null;
     for (const rpcUrl of ordered) {
-      if (signal && signal.aborted) {
-        const abortErr = new Error(t('请求已取消', 'Request aborted'));
-        abortErr.name = 'AbortError';
-        throw abortErr;
-      }
       try {
         const resp = await fetchJsonWithTimeout(
           rpcUrl,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body,
-            signal
+            body
           },
           timeoutMs
         );
-        if (resp && resp.status === 429) {
-          _rpc429Until[rpcUrl] = Date.now() + 60_000;
+        if (resp && (resp.status === 401 || resp.status === 403 || resp.status === 408 || resp.status === 410 || resp.status === 429 || resp.status >= 500)) {
+          _rpc429Until[rpcUrl] = Date.now() + 90_000;
+          lastResp = resp;
           continue;
         }
         if (!resp || !resp.ok || !resp.data) {
+          if (resp && !resp.ok) _rpc429Until[rpcUrl] = Date.now() + 30_000;
           lastResp = resp;
           continue;
         }
         if (resp.data.error) {
-          if (isUnknownNearAccountError(resp.data.error)) return resp;
+          if (isDeterministicNearRpcError(resp.data.error)) return resp;
+          _rpc429Until[rpcUrl] = Date.now() + 30_000;
           lastResp = resp;
           continue;
         }
         return resp;
-      } catch (err) {
-        if (signal && signal.aborted) throw err;
+      } catch (_) {
+        _rpc429Until[rpcUrl] = Date.now() + 90_000;
       }
     }
     return lastResp;
+  }
+
+  async function nearRpcQueryWithFallback(payloadObj, timeoutMs = 4500, signal = null) {
+    if (signal && signal.aborted) {
+      const abortErr = new Error(t('请求已取消', 'Request aborted'));
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
+    const body = typeof payloadObj === 'string' ? payloadObj : JSON.stringify(payloadObj);
+    let inflight = _rpcInFlight.get(body);
+    if (!inflight) {
+      inflight = _execNearRpcQueryWithFallback(body, timeoutMs).finally(() => {
+        if (_rpcInFlight.get(body) === inflight) _rpcInFlight.delete(body);
+      });
+      _rpcInFlight.set(body, inflight);
+    }
+    if (!signal) return inflight;
+    return Promise.race([
+      inflight,
+      new Promise((_, reject) => {
+        const onAbort = () => {
+          const abortErr = new Error(t('请求已取消', 'Request aborted'));
+          abortErr.name = 'AbortError';
+          reject(abortErr);
+        };
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      })
+    ]);
   }
 
   /**
@@ -366,6 +446,58 @@
     return { ...DEFAULT_NEAR_NEP141_CONTRACTS };
   }
 
+  const _nearFtMetaCache = new Map();
+
+  async function fetchNearTokenMetadataOnChain(contractId) {
+    const cid = String(contractId || '').trim().toLowerCase();
+    if (!cid) return null;
+    if (_nearFtMetaCache.has(cid)) return _nearFtMetaCache.get(cid);
+    const payload = {
+      jsonrpc: '2.0',
+      id: `ft_meta_info_${cid}`,
+      method: 'query',
+      params: {
+        request_type: 'call_function',
+        finality: 'final',
+        account_id: cid,
+        method_name: 'ft_metadata',
+        args_base64: 'e30='
+      }
+    };
+    const resp = await nearRpcQueryWithFallback(payload, 3500).catch(() => null);
+    const rawBytes = resp && resp.ok && resp.data && resp.data.result && Array.isArray(resp.data.result.result)
+      ? resp.data.result.result
+      : null;
+    if (!rawBytes) return null;
+    try {
+      const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(rawBytes)));
+      if (!meta || typeof meta !== 'object') return null;
+      const registry = getTokenRegistry();
+      const sanitizeImg = (registry && typeof registry.sanitizeImageUrl === 'function')
+        ? registry.sanitizeImageUrl
+        : (() => '');
+      const out = {
+        symbol: String(meta.symbol || '').trim().slice(0, 24),
+        decimals: Number.isFinite(Number(meta.decimals)) ? Number(meta.decimals) : 18,
+        name: String(meta.name || '').trim().slice(0, 48),
+        icon: sanitizeImg(meta.icon)
+      };
+      _nearFtMetaCache.set(cid, out);
+      return out;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function isExcludedAutoNearContract(contractId) {
+    const cid = String(contractId || '').trim().toLowerCase();
+    if (!cid) return true;
+    if (cid === 'aa-harvest-moon.near') return true;
+    if (/DEPRECATED|TESTNEBULA/i.test(cid)) return true;
+    if (/^(shadow|receipt|lp-|farm-|lockup)/i.test(cid)) return true;
+    return false;
+  }
+
   /**
    * Queries real NEP-141 token contracts on the NEAR blockchain via FastNear aggregated `/ft` API
    * (1 HTTP request for multi-token queries) with automatic fallback to `ft_balance_of` RPC calls.
@@ -373,6 +505,7 @@
    */
   async function fetchNearNep141Balances(nearAccountId, contractsMap = DEFAULT_NEAR_NEP141_CONTRACTS) {
     const accountId = String(nearAccountId || '').trim();
+    const isDefaultQuery = contractsMap === DEFAULT_NEAR_NEP141_CONTRACTS || !contractsMap;
     const map = normalizeNep141ContractsInput(contractsMap);
     const entries = Object.entries(map);
     if (!accountId || entries.length === 0) return {};
@@ -391,6 +524,46 @@
       }
     };
 
+    const queryDirectFtBalance = async (contractId, decimals) => {
+      const argsBase64 = utf8ToBase64(JSON.stringify({ account_id: accountId }));
+      try {
+        const resp = await nearRpcQueryWithFallback(
+          {
+            jsonrpc: '2.0',
+            id: `nep141-bal-${contractId}`,
+            method: 'query',
+            params: {
+              request_type: 'call_function',
+              finality: 'final',
+              account_id: contractId,
+              method_name: 'ft_balance_of',
+              args_base64: argsBase64
+            }
+          },
+          5000
+        );
+        if (!resp || !resp.ok || !resp.data) return;
+        if (resp.data.error) {
+          if (isUnknownNearAccountError(resp.data.error)) {
+            anySuccess = true;
+            results[contractId] = { raw: '0', formatted: 0 };
+          }
+          return;
+        }
+        const rawByteArray = resp.data.result && resp.data.result.result;
+        if (!Array.isArray(rawByteArray)) return;
+        const decodedText = new TextDecoder().decode(new Uint8Array(rawByteArray));
+        const parsedVal = JSON.parse(decodedText);
+        const raw = parsedVal !== null && parsedVal !== undefined ? String(parsedVal) : '0';
+        const formatted = Number(fromBaseUnits(raw, decimals));
+        anySuccess = true;
+        results[contractId] = {
+          raw,
+          formatted: Number.isFinite(formatted) ? formatted : 0
+        };
+      } catch (_) {}
+    };
+
     if (entries.length > 2) {
       try {
         const fnResp = await fetchJsonWithTimeout(
@@ -400,18 +573,86 @@
         );
         if (fnResp && fnResp.ok && fnResp.data && Array.isArray(fnResp.data.tokens)) {
           const balByContract = Object.create(null);
+          const missingBalContracts = new Set();
           for (const tok of fnResp.data.tokens) {
             if (tok && tok.contract_id) {
-              balByContract[String(tok.contract_id).trim().toLowerCase()] = String(tok.balance || '0');
+              const cidLow = String(tok.contract_id).trim().toLowerCase();
+              if (tok.balance === null || tok.balance === undefined || String(tok.balance).trim() === '') {
+                missingBalContracts.add(cidLow);
+              } else {
+                balByContract[cidLow] = String(tok.balance);
+              }
             }
           }
+          const directFallbacks = [];
           for (const [contractId, decimals] of entries) {
-            const raw = balByContract[String(contractId).trim().toLowerCase()] || '0';
+            const cidLow = String(contractId).trim().toLowerCase();
+            if (missingBalContracts.has(cidLow)) {
+              directFallbacks.push([contractId, decimals]);
+              continue;
+            }
+            const raw = balByContract[cidLow] || '0';
             const formatted = Number(fromBaseUnits(raw, decimals));
             results[contractId] = {
               raw,
               formatted: Number.isFinite(formatted) ? formatted : 0
             };
+          }
+          if (directFallbacks.length > 0) {
+            await Promise.all(directFallbacks.map(([cid, dec]) => queryDirectFtBalance(cid, dec)));
+          }
+          if (isDefaultQuery) {
+            const seenLower = new Set(Object.keys(results).map((k) => k.toLowerCase()));
+            const registry = getTokenRegistry();
+            const unknownDynamic = [];
+            for (const tok of fnResp.data.tokens) {
+              if (!tok || !tok.contract_id) continue;
+              const rawCid = String(tok.contract_id).trim();
+              const cidLow = rawCid.toLowerCase();
+              if (seenLower.has(cidLow) || isExcludedAutoNearContract(cidLow)) continue;
+              const rawStr = tok.balance !== null && tok.balance !== undefined ? String(tok.balance).trim() : '';
+              if (!/^\d+$/.test(rawStr)) continue;
+              let posBal = false;
+              try { posBal = BigInt(rawStr) > 0n; } catch (_) {}
+              if (!posBal) continue;
+              const liveMatch = (Array.isArray(_cachedDefuseTokens) ? _cachedDefuseTokens : []).find(
+                (t) => t && String(t.blockchain || '').toLowerCase() === 'near' && String(t.contractAddress || '').toLowerCase() === cidLow
+              );
+              const regMatch = !liveMatch && registry && typeof registry.findTokenByAssetId === 'function'
+                ? registry.findTokenByAssetId(`nep141:${rawCid}`, 'near')
+                : null;
+              const metaKnown = liveMatch || regMatch;
+              if (metaKnown) {
+                const dec = typeof metaKnown.decimals === 'number' ? metaKnown.decimals : resolveTokenDecimals(`nep141:${rawCid}`);
+                const formatted = Number(fromBaseUnits(rawStr, dec));
+                results[rawCid] = {
+                  raw: rawStr,
+                  formatted: Number.isFinite(formatted) ? formatted : 0,
+                  symbol: metaKnown.symbol || undefined,
+                  decimals: dec,
+                  icon: metaKnown.logoURI || undefined
+                };
+                seenLower.add(cidLow);
+              } else {
+                unknownDynamic.push({ cid: rawCid, raw: rawStr });
+                seenLower.add(cidLow);
+              }
+            }
+            if (unknownDynamic.length > 0) {
+              await Promise.all(unknownDynamic.slice(0, 8).map(async (item) => {
+                const meta = await fetchNearTokenMetadataOnChain(item.cid);
+                if (!meta || !meta.symbol || /DEPRECATED|TESTNEBULA/i.test(`${meta.symbol} ${meta.name}`)) return;
+                const formatted = Number(fromBaseUnits(item.raw, meta.decimals));
+                if (!(formatted > 0)) return;
+                results[item.cid] = {
+                  raw: item.raw,
+                  formatted: Number.isFinite(formatted) ? formatted : 0,
+                  symbol: meta.symbol,
+                  decimals: meta.decimals,
+                  icon: meta.icon || undefined
+                };
+              }));
+            }
           }
           applyAliases();
           return results;
@@ -419,49 +660,7 @@
       } catch (_) {}
     }
 
-    const argsBase64 = utf8ToBase64(JSON.stringify({ account_id: accountId }));
-    await Promise.all(
-      entries.map(async ([contractId, decimals]) => {
-        try {
-          const resp = await nearRpcQueryWithFallback(
-            {
-              jsonrpc: '2.0',
-              id: `nep141-bal-${contractId}`,
-              method: 'query',
-              params: {
-                request_type: 'call_function',
-                finality: 'final',
-                account_id: contractId,
-                method_name: 'ft_balance_of',
-                args_base64: argsBase64
-              }
-            },
-            5000
-          );
-
-          if (!resp || !resp.ok || !resp.data) return;
-          if (resp.data.error) {
-            if (isUnknownNearAccountError(resp.data.error)) {
-              anySuccess = true;
-              results[contractId] = { raw: '0', formatted: 0 };
-            }
-            return;
-          }
-          const rawByteArray = resp.data.result && resp.data.result.result;
-          if (!Array.isArray(rawByteArray)) return;
-
-          const decodedText = new TextDecoder().decode(new Uint8Array(rawByteArray));
-          const parsedVal = JSON.parse(decodedText);
-          const raw = parsedVal !== null && parsedVal !== undefined ? String(parsedVal) : '0';
-          const formatted = Number(fromBaseUnits(raw, decimals));
-          anySuccess = true;
-          results[contractId] = {
-            raw,
-            formatted: Number.isFinite(formatted) ? formatted : 0
-          };
-        } catch (_) {}
-      })
-    );
+    await Promise.all(entries.map(([contractId, decimals]) => queryDirectFtBalance(contractId, decimals)));
 
     applyAliases();
     return anySuccess ? results : null;
@@ -597,12 +796,14 @@
     ]);
 
     const pending = [];
+    const seenCids = new Set();
     for (const tok of nearTokens) {
       if (!tok || !tok.contractAddress) continue;
       const cid = String(tok.contractAddress).trim();
       const cidLower = cid.toLowerCase();
       const symUpper = String(tok.symbol || '').trim().replace(/^\$/, '').toUpperCase();
-      if (!cid || skipContracts.has(cidLower)) continue;
+      if (!cid || skipContracts.has(cidLower) || seenCids.has(cidLower)) continue;
+      seenCids.add(cidLower);
       if (_nearFtIconCache.has(cidLower)) {
         const cachedIcon = _nearFtIconCache.get(cidLower);
         if (cachedIcon) {
@@ -616,8 +817,8 @@
 
     if (pending.length > 0) {
       await Promise.allSettled(
-        pending.map(async ({ cid, cidLower, symUpper }) => {
-          const payload = JSON.stringify({
+        pending.slice(0, 24).map(async ({ cid, cidLower, symUpper }) => {
+          const payload = {
             jsonrpc: '2.0',
             id: `ft_meta_${cidLower}`,
             method: 'query',
@@ -628,19 +829,8 @@
               method_name: 'ft_metadata',
               args_base64: 'e30='
             }
-          });
-          let resp = await fetchJsonWithTimeout(
-            FASTNEAR_RPC_URL,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload },
-            5000
-          ).catch(() => null);
-          if (!resp || !resp.ok || !resp.data?.result?.result) {
-            resp = await fetchJsonWithTimeout(
-              NEAR_RPC_URL,
-              { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload },
-              5000
-            ).catch(() => null);
-          }
+          };
+          const resp = await nearRpcQueryWithFallback(payload, 3500).catch(() => null);
           const rawBytes = resp && resp.ok && resp.data && resp.data.result && Array.isArray(resp.data.result.result)
             ? resp.data.result.result
             : null;
@@ -712,16 +902,64 @@
   }
 
   let _livePricesCache = { ts: 0, list: null };
+  let _livePricesInFlight = null;
+  let _ftIconBgStarted = false;
+
+  const CANONICAL_PRICE_SYMBOLS = new Set([
+    'NEAR', 'WNEAR', 'ETH', 'WETH', 'BTC', 'WBTC', 'BTCB', 'CBBTC', 'CIRBTC',
+    'SOL', 'WSOL', 'BNB', 'WBNB', 'USDC', 'USDT', 'USDBC', 'WUSDC', 'EURC',
+    'DAI', 'USYC', 'PRL', 'HYPE', 'WHYPE', 'TRX', 'XRP', 'DOGE', 'SUI',
+    'TON', 'APT', 'AVAX', 'POL', 'ARB', 'OP'
+  ]);
+
+  function seedLivePricesCache(cachedData, maybeTs = null) {
+    if (!cachedData) return;
+    const list = Array.isArray(cachedData) ? cachedData : (Array.isArray(cachedData.list) ? cachedData.list : null);
+    if (!Array.isArray(list) || list.length === 0) return;
+    const ts = (maybeTs !== null && Number(maybeTs) > 0)
+      ? Number(maybeTs)
+      : ((!Array.isArray(cachedData) && Number(cachedData.ts) > 0) ? Number(cachedData.ts) : Date.now());
+    const curFetch = (typeof globalThis !== 'undefined' && globalThis.fetch) || null;
+    _livePricesCache = { ts, list, fetchRef: curFetch };
+    _cachedDefuseTokens = list;
+    const registry = getTokenRegistry();
+    if (registry) {
+      if (typeof registry.setLiveDefuseTokens === 'function') {
+        try { registry.setLiveDefuseTokens(list); } catch (_) {}
+      } else {
+        registry.LIVE_DEFUSE_TOKENS = list;
+      }
+    }
+  }
 
   /**
    * Fetches live token catalog & prices from 1Click Defuse API plus DexScreener, Prlscan, Hyperliquid,
    * Ref Finance, CoinGecko & Jupiter V2 xStocks. Never uses hardcoded fake fallback prices.
    */
   async function fetchLiveDefuseTokenPrices(opts = {}) {
+    const curFetch = (typeof globalThis !== 'undefined' && globalThis.fetch) || null;
+    if (
+      opts &&
+      opts.useCache === true &&
+      Array.isArray(_livePricesCache.list) &&
+      _livePricesCache.fetchRef === curFetch &&
+      (Date.now() - _livePricesCache.ts < 90_000)
+    ) {
+      return _livePricesCache.list;
+    }
+    if (_livePricesInFlight && _livePricesInFlight.fetchRef === curFetch) {
+      return _livePricesInFlight.promise;
+    }
+    const promise = _execFetchLiveDefuseTokenPrices(opts).finally(() => {
+      if (_livePricesInFlight && _livePricesInFlight.promise === promise) _livePricesInFlight = null;
+    });
+    _livePricesInFlight = { fetchRef: curFetch, promise };
+    return promise;
+  }
+
+  async function _execFetchLiveDefuseTokenPrices(opts = {}) {
     try {
-      if (opts && opts.useCache === true && Array.isArray(_livePricesCache.list) && (Date.now() - _livePricesCache.ts < 90_000)) {
-        return _livePricesCache.list;
-      }
+      const curFetch = (typeof globalThis !== 'undefined' && globalThis.fetch) || null;
       const registryEarly = getTokenRegistry();
       const arcAddrsForDex = ((registryEarly && registryEarly.DEX_CHAIN_TOKENS && registryEarly.DEX_CHAIN_TOKENS.arc) || [])
         .map((t) => String(t && t.contractAddress || '').trim())
@@ -730,76 +968,129 @@
         ? `https://api.dexscreener.com/latest/dex/tokens/${arcAddrsForDex.join(',')}`
         : null;
 
-      const settleWithSoftCap = (promises, capMs = 1000) => Promise.all(
-        promises.map((p) => Promise.race([
-          Promise.resolve(p).then((v) => ({ status: 'fulfilled', value: v })).catch((e) => ({ status: 'rejected', reason: e })),
-          new Promise((resolve) => setTimeout(() => resolve({ status: 'fulfilled', value: null }), capMs))
-        ]))
-      );
+      const isSourceCooling = (name) => {
+        const c = _auxSourceCooldown[name];
+        return Boolean(c && c.fetchRef === curFetch && c.until > Date.now());
+      };
+      const markSourceCool = (name, ms = 180_000) => {
+        _auxSourceCooldown[name] = { until: Date.now() + ms, fetchRef: curFetch };
+      };
 
-      const oneClickPromise = fetchJsonWithTimeout(`${ONECLICK_API_URL}/tokens`, {}, 4500);
-      const auxPromises = [
-        fetchJsonWithTimeout(
-          `https://api.dexscreener.com/latest/dex/tokens/${SOL_DEXSCREENER_MINTS.join(',')}`,
-          {},
-          4000
-        ).catch(() => null),
-        fetchJsonWithTimeout('https://api.prlscan.com/v1/market/prl', {}, 3500).catch(() => null),
-        fetchJsonWithTimeout(
-          'https://api.hyperliquid.xyz/info',
-          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'allMids' }) },
-          3500
-        ).catch(() => null),
-        fetchJsonWithTimeout('https://indexer.ref.finance/list-token', {}, 4000).catch(() => null),
-        fetchJsonWithTimeout('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=250&page=1', {}, 4000).catch(() => null),
-        fetchJsonWithTimeout('https://lite-api.jup.ag/tokens/v2/search?query=xStock', {}, 4000).catch(() => null),
-        fetchJsonWithTimeout(
-          'https://ks-setting.kyberswap.com/api/v1/tokens?chainIds=5042,1,8453,42161,56,999&page=1&pageSize=100&isWhitelisted=true',
-          {},
-          4000
-        ).catch(() => null),
-        fetchJsonWithTimeout('https://li.quest/v1/tokens?chains=5042', {}, 4000).catch(() => null),
-        fetchJsonWithTimeout('https://indexer.ref.finance/list-token-price', {}, 4000).catch(() => null),
-        arcDexUrl ? fetchJsonWithTimeout(arcDexUrl, {}, 4000).catch(() => null) : Promise.resolve(null)
+      const settleWithSoftCap = (factories, capMs = 2400) => {
+        const capCtrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const capSig = capCtrl ? capCtrl.signal : undefined;
+        let timer = null;
+        const capPromise = new Promise((resolve) => {
+          timer = setTimeout(() => {
+            if (capCtrl && !capCtrl.signal.aborted) {
+              try { capCtrl.abort(); } catch (_) {}
+            }
+            resolve('CAP_TIMEOUT');
+          }, capMs);
+        });
+        const wrapped = factories.map((makeP) =>
+          Promise.race([
+            Promise.resolve()
+              .then(() => makeP(capSig))
+              .then((v) => ({ status: 'fulfilled', value: v }))
+              .catch((e) => ({ status: 'rejected', reason: e })),
+            capPromise.then(() => ({ status: 'fulfilled', value: null }))
+          ])
+        );
+        return Promise.all(wrapped).finally(() => {
+          if (timer) clearTimeout(timer);
+          if (capCtrl && !capCtrl.signal.aborted) {
+            try { capCtrl.abort(); } catch (_) {}
+          }
+        });
+      };
+
+      const fetchAux = (name, url, reqOpts = {}, timeoutMs = 2400) => (sig) => {
+        if (!url || isSourceCooling(name)) return Promise.resolve(null);
+        return fetchJsonWithTimeout(url, { ...reqOpts, signal: sig }, timeoutMs)
+          .then((res) => {
+            if (!res || !res.ok) markSourceCool(name, 90_000);
+            return res;
+          })
+          .catch(() => {
+            markSourceCool(name, 180_000);
+            return null;
+          });
+      };
+
+      const oneClickPromise = fetchJsonWithTimeout(`${ONECLICK_API_URL}/tokens`, {}, 4500).catch(() => null);
+      const auxFactories = [
+        fetchAux('dex_sol', `https://api.dexscreener.com/latest/dex/tokens/${SOL_DEXSCREENER_MINTS.join(',')}`, {}, 2400),
+        fetchAux('prlscan', 'https://api.prlscan.com/v1/market/prl', {}, 2400),
+        fetchAux('hyperliquid', 'https://api.hyperliquid.xyz/info', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'allMids' }) }, 2400),
+        fetchAux('ref_list', 'https://indexer.ref.finance/list-token', {}, 2400),
+        fetchAux('coingecko', 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=250&page=1', {}, 2400),
+        fetchAux('jup_xstock', 'https://lite-api.jup.ag/tokens/v2/search?query=xStock', {}, 2400),
+        fetchAux('kyber_tokens', 'https://ks-setting.kyberswap.com/api/v1/tokens?chainIds=5042,1,8453,42161,56,999&page=1&pageSize=100&isWhitelisted=true', {}, 2400),
+        fetchAux('lifi_arc', 'https://li.quest/v1/tokens?chains=5042', {}, 2400),
+        (sig) => {
+          const idxCall = isSourceCooling('ref_price_idx')
+            ? Promise.resolve(null)
+            : fetchJsonWithTimeout('https://indexer.ref.finance/list-token-price', { signal: sig }, 2400)
+                .then((r) => { if (!r || !r.ok) markSourceCool('ref_price_idx', 180_000); return r; })
+                .catch(() => { markSourceCool('ref_price_idx', 180_000); return null; });
+          const apiCall = isSourceCooling('ref_price_api')
+            ? Promise.resolve(null)
+            : fetchJsonWithTimeout('https://api.ref.finance/list-token-price', { signal: sig }, 2400)
+                .then((r) => { if (!r || !r.ok) markSourceCool('ref_price_api', 180_000); return r; })
+                .catch(() => { markSourceCool('ref_price_api', 180_000); return null; });
+          return Promise.all([idxCall, apiCall]).then(([a, b]) => {
+            if (a && a.ok && a.data && b && b.ok && b.data) return { ok: true, status: 200, data: { ...b.data, ...a.data } };
+            return (a && a.ok && a.data) ? a : (b && b.ok && b.data ? b : null);
+          });
+        },
+        arcDexUrl ? fetchAux('dex_arc', arcDexUrl, {}, 2400) : () => Promise.resolve(null)
       ];
 
       const [resp, auxResults] = await Promise.all([
-        oneClickPromise.catch(() => null),
-        oneClickPromise.then(
-          () => settleWithSoftCap(auxPromises, 1000),
-          () => Promise.resolve(auxPromises.map(() => ({ status: 'fulfilled', value: null })))
-        )
+        oneClickPromise,
+        settleWithSoftCap(auxFactories, 2400)
       ]);
       const [dexRes, prlRes, hlRes, refListRes, cgRes, xStockRes, kyberTokRes, arcscanTokRes, refPriceRes, arcDexRes] = auxResults;
 
-      if (!resp || !resp.ok || !Array.isArray(resp.data)) {
+      const oneClickOk = Boolean(resp && resp.ok && Array.isArray(resp.data));
+      const anyAuxOk = auxResults.some((r) => r && r.status === 'fulfilled' && r.value && r.value.ok);
+      if (!oneClickOk && !anyAuxOk && _cachedDefuseTokens.length === 0) {
         return null;
       }
 
+      const rawBaseList = oneClickOk
+        ? resp.data
+        : (_cachedDefuseTokens.length > 0
+            ? _cachedDefuseTokens
+            : (registryEarly && Array.isArray(registryEarly.UNIFIED_CORE_TOKENS) ? registryEarly.UNIFIED_CORE_TOKENS : []));
+
       const normalizedList = [];
       const byAssetId = new Map();
-      const byContract = new Map();
-      const bySymbol = new Map();
+      const byChainContract = new Map();
+      const byCanonicalSymbol = new Map();
 
-      for (const rawItem of resp.data) {
+      for (const rawItem of rawBaseList) {
         if (!rawItem || !rawItem.assetId) continue;
         const rawSym = String(rawItem.symbol || '').trim();
         if (/DEPRECATED|TESTNEBULA/i.test(`${rawSym} ${rawItem.assetId || ''} ${rawItem.name || ''}`)) {
           continue;
         }
         if (DEAD_ONECLICK_SYMBOL_REGEX.test(rawSym)) continue;
-        const norm = normalizeDefuseToken(rawItem);
+        const norm = oneClickOk ? normalizeDefuseToken(rawItem) : { ...rawItem };
         normalizedList.push(norm);
         byAssetId.set(String(norm.assetId).toLowerCase(), norm);
 
+        const bcLow = String(norm.blockchain || '').trim().toLowerCase();
         const contractLower = String(norm.contractAddress || '').trim().toLowerCase();
-        if (contractLower && contractLower !== EVM_NATIVE_SENTINEL_LOWER && !byContract.has(contractLower)) {
-          byContract.set(contractLower, norm);
+        if (bcLow && contractLower && contractLower !== EVM_NATIVE_SENTINEL_LOWER) {
+          const ccKey = `${bcLow}:${contractLower}`;
+          if (!byChainContract.has(ccKey)) byChainContract.set(ccKey, norm);
         }
 
         const symUpper = String(norm.symbol || '').trim().replace(/^\$/, '').toUpperCase();
-        if (symUpper && norm.price !== null && norm.price > 0 && !bySymbol.has(symUpper)) {
-          bySymbol.set(symUpper, norm);
+        if (CANONICAL_PRICE_SYMBOLS.has(symUpper) && norm.price !== null && norm.price > 0 && !byCanonicalSymbol.has(symUpper)) {
+          byCanonicalSymbol.set(symUpper, norm);
         }
       }
 
@@ -884,26 +1175,51 @@
         }
       } catch (_) {}
 
-      if (!hasFreshFtIconCache) {
-        const ftMetaPromise = fetchNearFtMetadataIcons(
+      if (!hasFreshFtIconCache && !_ftIconBgStarted) {
+        _ftIconBgStarted = true;
+        const ftPromise = fetchNearFtMetadataIcons(
           [
             ...normalizedList.filter((item) => item && item.blockchain === 'near' && item.contractAddress),
             ...nearCuratedList.filter((item) => item && item.blockchain === 'near' && item.contractAddress)
           ],
           sanitizeImg
         ).then((icons) => {
-          try {
-            if (typeof localStorage !== 'undefined' && icons) {
-              localStorage.setItem(ftIconCacheKey, JSON.stringify({ ts: Date.now(), data: icons }));
+          const hasAny = icons && (Object.keys(icons.byContract || {}).length > 0 || Object.keys(icons.bySymbol || {}).length > 0);
+          if (hasAny) {
+            if (registry && typeof registry.registerDynamicTokenIcons === 'function') {
+              registry.registerDynamicTokenIcons(icons.bySymbol || {}, icons.byContract || {});
             }
-          } catch (_) {}
+            for (const tok of normalizedList) {
+              if (!tok || tok.logoURI) continue;
+              const bcLow = String(tok.blockchain || '').toLowerCase();
+              const cidLow = String(tok.contractAddress || '').toLowerCase();
+              const symUp = String(tok.symbol || '').trim().replace(/^\$/, '').toUpperCase();
+              const hit = (bcLow === 'near' && cidLow && icons.byContract?.[cidLow]) || (symUp && icons.bySymbol?.[symUp]);
+              if (hit) tok.logoURI = hit;
+            }
+            try {
+              if (typeof localStorage !== 'undefined') {
+                localStorage.setItem(ftIconCacheKey, JSON.stringify({ ts: Date.now(), data: icons }));
+              }
+            } catch (_) {}
+          }
           return icons;
-        }).catch(() => ({ byContract: Object.create(null), bySymbol: Object.create(null) }));
+        }).catch(() => null).finally(() => {
+          _ftIconBgStarted = false;
+        });
 
-        nearFtMetaIcons = await Promise.race([
-          ftMetaPromise,
-          new Promise((resolve) => setTimeout(() => resolve(nearFtMetaIcons), 800))
-        ]);
+        let ftTimer = null;
+        const ftFast = await Promise.race([
+          ftPromise,
+          new Promise((r) => {
+            ftTimer = setTimeout(() => r(null), 500);
+          })
+        ]).finally(() => {
+          if (ftTimer) clearTimeout(ftTimer);
+        });
+        if (ftFast) {
+          nearFtMetaIcons = ftFast;
+        }
       }
 
       const refPriceByContract = Object.create(null);
@@ -1009,7 +1325,7 @@
           const dKey = `${bc}:${addrLower}`;
           if (!seenDiscoveryKeys.has(dKey)) {
             seenDiscoveryKeys.add(dKey);
-            const liveRef = bySymbol.get(symUpper);
+            const liveRef = byChainContract.get(dKey) || (CANONICAL_PRICE_SYMBOLS.has(symUpper) ? byCanonicalSymbol.get(symUpper) : null);
             extraDiscoveryTokens.push({
               symbol: rawSym,
               name: String(kt.name || rawSym).trim(),
@@ -1118,21 +1434,22 @@
         for (const token of allTargetTokens) {
           if (!token || !token.assetId) continue;
           const assetLower = String(token.assetId).toLowerCase();
+          const tokenBc = String(token.blockchain || '').trim().toLowerCase();
           const contractLower = String(token.contractAddress || '').trim().toLowerCase();
-          const lookupContract = contractLower && contractLower !== EVM_NATIVE_SENTINEL_LOWER
-            ? contractLower
-            : assetLower;
+          const ccKey = tokenBc && contractLower && contractLower !== EVM_NATIVE_SENTINEL_LOWER
+            ? `${tokenBc}:${contractLower}`
+            : '';
           const symUpper = String(token.symbol || '').trim().replace(/^\$/, '').toUpperCase();
-          const symPriceLookup = token.blockchain === 'arc' && symUpper === 'WUSDC'
+          const symPriceLookup = tokenBc === 'arc' && symUpper === 'WUSDC'
             ? 'USDC'
-            : (token.blockchain === 'arc' && symUpper === 'CIRBTC' ? 'BTC' : symUpper);
+            : (tokenBc === 'arc' && symUpper === 'CIRBTC' ? 'BTC' : symUpper);
 
           let live = byAssetId.get(assetLower)
-            || byContract.get(lookupContract)
-            || (token.blockchain === 'arc' ? (['USDC', 'USDT', 'EURC', 'USYC', 'BTC'].includes(symPriceLookup) ? bySymbol.get(symPriceLookup) : null) : bySymbol.get(symUpper))
+            || (ccKey ? byChainContract.get(ccKey) : null)
+            || (CANONICAL_PRICE_SYMBOLS.has(symPriceLookup) ? byCanonicalSymbol.get(symPriceLookup) : null)
             || null;
-          if (live && (live.price === null || !(live.price > 0)) && symUpper && token.blockchain !== 'arc') {
-            const symFallback = bySymbol.get(symUpper);
+          if (live && (live.price === null || !(live.price > 0)) && CANONICAL_PRICE_SYMBOLS.has(symPriceLookup)) {
+            const symFallback = byCanonicalSymbol.get(symPriceLookup);
             if (symFallback && symFallback.price > 0) live = symFallback;
           }
 
@@ -1154,7 +1471,7 @@
               token.logoURI = live.logoURI;
             }
           }
-          if (token.blockchain === 'near' && !(token.price > 0) && contractLower && refPriceByContract[contractLower] > 0) {
+          if (tokenBc === 'near' && !(token.price > 0) && contractLower && refPriceByContract[contractLower] > 0) {
             token.price = refPriceByContract[contractLower];
           }
 
@@ -1162,36 +1479,41 @@
           if (resolvedLogo) token.logoURI = resolvedLogo;
 
           // Fallback to DexScreener for Solana DEX mints if price still absent
-          const dsPrice = dexPriceByMint.get(contractLower) || dexPriceByMint.get(assetLower);
-          if (dsPrice > 0 && (!(token.price > 0))) {
-            token.price = dsPrice;
+          if (tokenBc === 'sol') {
+            const dsPrice = dexPriceByMint.get(contractLower) || dexPriceByMint.get(assetLower);
+            if (dsPrice > 0 && !(token.price > 0)) {
+              token.price = dsPrice;
+            }
           }
 
           // Fallback to Jupiter V2 live prices for Solana xStocks
-          const xsPrice = jupXStockByMint[contractLower] || jupXStockByMint[assetLower] || jupXStockBySym[symUpper];
-          if (xsPrice > 0 && (!(token.price > 0))) {
-            token.price = xsPrice;
+          if (tokenBc === 'sol') {
+            const xsPrice = jupXStockByMint[contractLower] || jupXStockByMint[assetLower] || jupXStockBySym[symUpper];
+            if (xsPrice > 0 && !(token.price > 0)) {
+              token.price = xsPrice;
+            }
           }
           if (!token.logoURI && jupXStockIcons[symUpper]) {
             token.logoURI = sanitizeImg(jupXStockIcons[symUpper]);
           }
 
           // Ensure PRL gets live market price even if 1Click omits it
-          if (symUpper === 'PRL' && prlLivePrice > 0 && (!(token.price > 0))) {
+          if (symUpper === 'PRL' && prlLivePrice > 0 && !(token.price > 0)) {
             token.price = prlLivePrice;
           }
 
           // Ensure HYPE / WHYPE get live market price from Hyperliquid if absent in 1Click
-          if ((symUpper === 'HYPE' || symUpper === 'WHYPE') && hypeLivePrice > 0 && (!(token.price > 0))) {
+          if ((symUpper === 'HYPE' || symUpper === 'WHYPE') && hypeLivePrice > 0 && !(token.price > 0)) {
             token.price = hypeLivePrice;
           }
 
           // Fallback to CoinGecko top-250 live price or canonical base symbol price (WBNB->BNB, BTCB->BTC, USDbC->USDC)
-          if (!(token.price > 0) && token.blockchain !== 'arc') {
+          if (!(token.price > 0) && CANONICAL_PRICE_SYMBOLS.has(symPriceLookup)) {
             const aliasSym = symUpper === 'WBNB' ? 'BNB'
-              : (symUpper === 'BTCB' ? 'BTC'
-              : (symUpper === 'USDBC' ? 'USDC' : symUpper));
-            const aliasLive = bySymbol.get(aliasSym);
+              : (symUpper === 'BTCB' || symUpper === 'CBBTC' || symUpper === 'CIRBTC' ? 'BTC'
+              : (symUpper === 'USDBC' || symUpper === 'WUSDC' ? 'USDC'
+              : (symUpper === 'WETH' ? 'ETH' : symPriceLookup)));
+            const aliasLive = byCanonicalSymbol.get(aliasSym);
             const cgHit = cgPriceBySymbol[symUpper] || cgPriceBySymbol[aliasSym];
             if (aliasLive && aliasLive.price > 0) {
               token.price = aliasLive.price;
@@ -1200,10 +1522,10 @@
             }
           }
 
-          // Hydrate Arc Mainnet token live price & icon from Li.Fi / KyberSwap when present
-          if (token.blockchain === 'arc') {
+          // Hydrate Arc Mainnet token live price & icon from Li.Fi / KyberSwap / DexScreener when present
+          if (tokenBc === 'arc') {
             const arcP = arcLivePriceByContract[contractLower];
-            if (arcP > 0 && (!(token.price > 0))) token.price = arcP;
+            if (arcP > 0 && !(token.price > 0)) token.price = arcP;
             if (!token.logoURI && arcLiveLogoByContract[contractLower]) {
               token.logoURI = arcLiveLogoByContract[contractLower];
             }
@@ -1215,7 +1537,7 @@
         }
 
         if (registry.PEARL_DEFUSE_TOKEN && registry.PEARL_DEFUSE_TOKEN.assetId) {
-          const livePrl = byAssetId.get(String(registry.PEARL_DEFUSE_TOKEN.assetId).toLowerCase()) || bySymbol.get('PRL');
+          const livePrl = byAssetId.get(String(registry.PEARL_DEFUSE_TOKEN.assetId).toLowerCase()) || byCanonicalSymbol.get('PRL');
           if (livePrl && livePrl.price > 0) {
             registry.PEARL_DEFUSE_TOKEN.price = livePrl.price;
             registry.PEARL_DEFUSE_TOKEN.priceUpdatedAt = livePrl.priceUpdatedAt;
@@ -1233,16 +1555,13 @@
           try { opts.onFastUpdate(normalizedList); } catch (_) {}
         }
 
-        // Batch DexScreener + KyberSwap Arc Mainnet fallbacks concurrently with 1500ms soft cap
+        // Batch DexScreener for non-Arc EVM/Solana DEX tokens + Arc KyberSwap background pricing
         const remainingDexTokens = allTargetTokens.filter(
           (t) => t && t.blockchain !== 'arc' && t.contractAddress
             && t.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL_LOWER
             && !(t.price > 0)
         );
-        const arcTokensNeedingPrice = ((registry.DEX_CHAIN_TOKENS && registry.DEX_CHAIN_TOKENS.arc) || []).filter(
-          (t) => t && t.contractAddress && t.contractAddress.toLowerCase() !== ARC_USDC_CONTRACT && !(t.price > 0)
-        );
-        const fallbackTasks = [];
+        const fallbackFactories = [];
         if (remainingDexTokens.length > 0) {
           const uniqueAddrs = Array.from(new Set(remainingDexTokens.map((t) => String(t.contractAddress).trim())));
           const extraPriceMap = Object.create(null);
@@ -1251,9 +1570,9 @@
           for (let i = 0; i < uniqueAddrs.length; i += 25) {
             chunks.push(uniqueAddrs.slice(i, i + 25));
           }
-          chunks.forEach((chunk) => {
-            fallbackTasks.push(
-              fetchJsonWithTimeout(`https://api.dexscreener.com/latest/dex/tokens/${chunk.join(',')}`, {}, 3500)
+          for (const chunk of chunks) {
+            fallbackFactories.push((sig) =>
+              fetchJsonWithTimeout(`https://api.dexscreener.com/latest/dex/tokens/${chunk.join(',')}`, { signal: sig }, 2200)
                 .then((dsResp) => {
                   const pairs = dsResp && dsResp.ok && dsResp.data && Array.isArray(dsResp.data.pairs) ? dsResp.data.pairs : [];
                   for (const pair of pairs) {
@@ -1271,50 +1590,76 @@
                     const foundP = extraPriceMap[addrLow];
                     if (foundP > 0 && !(tok.price > 0)) {
                       tok.price = foundP;
-                      const symU = String(tok.symbol || '').trim().toUpperCase();
-                      for (const other of allTargetTokens) {
-                        if (other && !(other.price > 0) && String(other.symbol || '').trim().toUpperCase() === symU) {
-                          other.price = foundP;
-                        }
-                      }
                     }
                   }
                 })
                 .catch(() => null)
             );
-          });
+          }
         }
-        if (arcTokensNeedingPrice.length > 0) {
-          arcTokensNeedingPrice.forEach((arcTok) => {
-            const qUrl = `https://aggregator-api.kyberswap.com/arc/api/v1/routes?tokenIn=${ARC_USDC_CONTRACT}&tokenOut=${encodeURIComponent(arcTok.contractAddress)}&amountIn=10000000`;
-            fallbackTasks.push(
-              fetchJsonWithTimeout(qUrl, {}, 3000)
-                .then((qRes) => {
-                  const rs = qRes && qRes.ok && qRes.data && qRes.data.data && qRes.data.data.routeSummary;
-                  if (!rs || !rs.amountOut || !/^\d+$/.test(String(rs.amountOut))) return;
-                  const outQty = Number(fromBaseUnits(String(rs.amountOut), typeof arcTok.decimals === 'number' ? arcTok.decimals : 18));
-                  if (!(outQty > 0)) return;
-                  const usdIn = Number(rs.amountInUsd) > 0 ? Number(rs.amountInUsd) : 10;
-                  const unitPrice = usdIn / outQty;
-                  if (Number.isFinite(unitPrice) && unitPrice > 0) {
-                    arcTok.price = unitPrice;
-                    const extraHit = normalizedList.find(
-                      (x) => x.blockchain === 'arc' && String(x.contractAddress || '').toLowerCase() === arcTok.contractAddress.toLowerCase()
+        const remainingArcTokens = allTargetTokens.filter(
+          (t) => t && t.blockchain === 'arc' && t.contractAddress
+            && t.contractAddress.toLowerCase() !== ARC_USDC_CONTRACT
+            && t.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL_LOWER
+            && !(t.price > 0)
+        );
+        if (remainingArcTokens.length > 0) {
+          const arcByAddr = new Map();
+          const nowMs = Date.now();
+          for (const tok of remainingArcTokens) {
+            const addrLow = String(tok.contractAddress || '').trim().toLowerCase();
+            if (!addrLow) continue;
+            const cachedArc = _arcKyberPriceCache.get(addrLow);
+            if (cachedArc && cachedArc.fetchRef === curFetch && nowMs - cachedArc.ts < 600_000) {
+              if (cachedArc.price > 0 && !(tok.price > 0)) tok.price = cachedArc.price;
+              continue;
+            }
+            if (!arcByAddr.has(addrLow)) arcByAddr.set(addrLow, []);
+            arcByAddr.get(addrLow).push(tok);
+          }
+          const arcEntries = Array.from(arcByAddr.entries());
+          if (arcEntries.length > 0) {
+            fallbackFactories.push(async (sig) => {
+              let idx = 0;
+              const workerCount = Math.min(4, arcEntries.length);
+              const runWorker = async () => {
+                while (idx < arcEntries.length && !(sig && sig.aborted)) {
+                  const [addrLow, tokGroup] = arcEntries[idx++];
+                  const sample = tokGroup[0];
+                  try {
+                    const kResp = await fetchJsonWithTimeout(
+                      `https://aggregator-api.kyberswap.com/arc/api/v1/routes?tokenIn=${ARC_USDC_CONTRACT}&tokenOut=${encodeURIComponent(sample.contractAddress)}&amountIn=10000000`,
+                      { signal: sig },
+                      1600
                     );
-                    if (extraHit) extraHit.price = unitPrice;
-                  }
-                })
-                .catch(() => null)
-            );
-          });
+                    const rs = kResp && kResp.ok && kResp.data && kResp.data.code === 0 && kResp.data.data && kResp.data.data.routeSummary
+                      ? kResp.data.data.routeSummary
+                      : null;
+                    if (!rs || !rs.amountOut) continue;
+                    const dec = typeof sample.decimals === 'number' ? sample.decimals : 18;
+                    const outHuman = Number(fromBaseUnits(String(rs.amountOut), dec));
+                    const inUsd = Number(rs.amountInUsd || 10);
+                    if (Number.isFinite(outHuman) && outHuman > 0 && Number.isFinite(inUsd) && inUsd > 0) {
+                      const unitPrice = inUsd / outHuman;
+                      _arcKyberPriceCache.set(addrLow, { price: unitPrice, ts: Date.now(), fetchRef: curFetch });
+                      for (const t of tokGroup) {
+                        if (!(t.price > 0)) t.price = unitPrice;
+                      }
+                    }
+                  } catch (_) {}
+                }
+              };
+              await Promise.all(Array.from({ length: workerCount }, runWorker));
+            });
+          }
         }
-        if (fallbackTasks.length > 0) {
-          await settleWithSoftCap(fallbackTasks, 1500);
+        if (fallbackFactories.length > 0) {
+          await settleWithSoftCap(fallbackFactories, 1500);
         }
       }
 
       if (Array.isArray(normalizedList) && normalizedList.length > 0) {
-        _livePricesCache = { ts: Date.now(), list: normalizedList };
+        _livePricesCache = { ts: Date.now(), list: normalizedList, fetchRef: curFetch };
       }
 
       return normalizedList;
@@ -1519,6 +1864,12 @@
     if (low === 'nep141:usdt.tether-token.near' || low === 'usdt.tether-token.near') return 'usdt.tether-token.near';
     if (low === NEAR_USDC_ASSET_ID || low === NEAR_USDC_CONTRACT) return NEAR_USDC_CONTRACT;
     if (s.startsWith('1cs_v1:near:nep141:')) return s.slice('1cs_v1:near:nep141:'.length);
+    if (low.startsWith('nep141:')) {
+      const inner = s.slice('nep141:'.length);
+      if (inner && !inner.toLowerCase().endsWith('.omft.near') && !inner.toLowerCase().endsWith('.omdep.near')) {
+        return inner;
+      }
+    }
     return null;
   }
 
@@ -1567,14 +1918,16 @@
   function resolveOneClickAssetId(tokenOrAssetId, blockchainHint = '') {
     const isObj = tokenOrAssetId && typeof tokenOrAssetId === 'object';
     const rawId = String(isObj ? (tokenOrAssetId.assetId || '') : (tokenOrAssetId || '')).trim();
-    if (/^(nep141:|1cs_v1:)/i.test(rawId)) return rawId;
+    if (/^(nep141:|nep245:|1cs_v1:)/i.test(rawId)) return rawId;
 
     const bc = String(blockchainHint || (isObj ? tokenOrAssetId.blockchain : '') || '').trim().toLowerCase();
     const contractRaw = String(isObj ? (tokenOrAssetId.contractAddress || rawId) : rawId).trim().toLowerCase();
     const symUpper = String(isObj ? (tokenOrAssetId.symbol || '') : '').trim().replace(/^\$/, '').toUpperCase();
     const isNativeSentinel = contractRaw === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
       || contractRaw === 'sol1111111111111111111111111111111111111111'
-      || contractRaw === 'so11111111111111111111111111111111111111112';
+      || contractRaw === 'so11111111111111111111111111111111111111112'
+      || contractRaw.includes(':native:')
+      || ((contractRaw === '' || contractRaw === 'native') && ['ETH', 'BNB', 'POL', 'MATIC', 'AVAX', 'OP', 'SOL', 'NEAR', 'HYPE'].includes(symUpper));
 
     const registry = getTokenRegistry();
     const pools = [];
@@ -1586,7 +1939,7 @@
 
     for (const list of pools) {
       for (const item of list) {
-        if (!item || !/^(nep141:|1cs_v1:)/i.test(String(item.assetId || ''))) continue;
+        if (!item || !/^(nep141:|nep245:|1cs_v1:)/i.test(String(item.assetId || ''))) continue;
         const itemBc = String(item.blockchain || '').toLowerCase();
         if (bc && itemBc !== bc) continue;
         const itemContract = String(item.contractAddress || '').trim().toLowerCase();
@@ -1599,13 +1952,17 @@
     if (bc && symUpper) {
       for (const list of pools) {
         for (const item of list) {
-          if (!item || !/^(nep141:|1cs_v1:)/i.test(String(item.assetId || ''))) continue;
+          if (!item || !/^(nep141:|nep245:|1cs_v1:)/i.test(String(item.assetId || ''))) continue;
           if (String(item.blockchain || '').toLowerCase() !== bc) continue;
           if (String(item.symbol || '').trim().toUpperCase() === symUpper) {
             return item.assetId;
           }
         }
       }
+    }
+
+    if (isNativeSentinel && bc && typeof EVM_NATIVE_1CLICK_MAP !== 'undefined' && EVM_NATIVE_1CLICK_MAP[bc]) {
+      return EVM_NATIVE_1CLICK_MAP[bc];
     }
 
     return rawId;
@@ -1640,9 +1997,34 @@
     const resolvedRefundTo = refundTo || recipient;
     const resolvedReferral = referral || DEFAULT_REFERRAL_ACCOUNT;
     const feeBps = Number.isFinite(Number(appFeeBps)) ? Math.max(0, Math.round(Number(appFeeBps))) : 25;
+    const isDry = Boolean(dry);
+    const curFetch = (typeof globalThis !== 'undefined' && globalThis.fetch) || null;
+    const ocKey = isDry
+      ? `oc:${resolvedOriginAsset}|${resolvedDestAsset}|${amountRaw}|${slippageBps}|${resolvedDepositType}|${recipientType}|${recipient}|${resolvedRefundTo}|${feeBps}`
+      : '';
+    if (isDry) {
+      const hit = _oneClickQuoteCache.get(ocKey);
+      if (hit && hit.fetchRef === curFetch && Date.now() - hit.ts < 10_000) {
+        return { ...hit.val };
+      }
+      const inflight = _oneClickQuoteInFlight.get(ocKey);
+      if (inflight && inflight.fetchRef === curFetch) {
+        const res = await (signal
+          ? Promise.race([
+              inflight.promise,
+              new Promise((r) => {
+                const onA = () => r({ ok: false, aborted: true, error: t('请求已取消', 'Request aborted') });
+                if (signal.aborted) onA();
+                else signal.addEventListener('abort', onA, { once: true });
+              })
+            ])
+          : inflight.promise);
+        return res && typeof res === 'object' ? { ...res } : res;
+      }
+    }
 
     const body = {
-      dry: Boolean(dry),
+      dry: isDry,
       swapType: 'EXACT_INPUT',
       slippageTolerance: Number(slippageBps) || 100,
       originAsset: resolvedOriginAsset,
@@ -1670,9 +2052,9 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(reqBody),
-          signal
+          signal: isDry && _oneClickQuoteInFlight.has(ocKey) ? undefined : signal
         },
-        dry ? 6000 : DEFAULT_TIMEOUT_MS
+        dry ? 5500 : DEFAULT_TIMEOUT_MS
       );
       const json = resp.data;
       if (resp.ok && json && json.quote) {
@@ -1696,73 +2078,72 @@
       return { ok: false, status: resp.status, error: String(errMsg) };
     };
 
-    const firstTry = await postQuote(body);
-    if (firstTry.ok || firstTry.aborted || (signal && signal.aborted)) return firstTry;
+    const runOneClick = async () => {
+      const firstTry = await postQuote(body);
+      if (firstTry.ok || firstTry.aborted || (signal && signal.aborted)) return firstTry;
 
-    // On dry preview quotes, if an external destinationAsset fails validation with a NEAR recipient,
-    // automatically retry via NEAR wrapped 1cs_v1:near:* or INTENTS recipient so preview quotes succeed.
-    const isNearAddr = (s) => /\.near$/i.test(String(s || '').trim()) || /^[0-9a-f]{64}$/i.test(String(s || '').trim());
-    const nearAcct = params.nearAccountId
-      || (isNearAddr(recipient) ? recipient : '')
-      || (isNearAddr(resolvedRefundTo) ? resolvedRefundTo : '');
+      const isNearAddr = (s) => /\.near$/i.test(String(s || '').trim()) || /^[0-9a-f]{64}$/i.test(String(s || '').trim());
+      const nearAcct = params.nearAccountId
+        || (isNearAddr(recipient) ? recipient : '')
+        || (isNearAddr(resolvedRefundTo) ? resolvedRefundTo : '');
 
-    if (
-      Boolean(dry) &&
-      firstTry.status === 400 &&
-      nearAcct &&
-      /recipient is not valid|refundTo is not valid|No liquidity available/i.test(firstTry.error || '')
-    ) {
-      if (String(destinationAsset).startsWith('nep141:') && !String(destinationAsset).startsWith('1cs_v1:near:')) {
-        const nearWrappedDest = `1cs_v1:near:${destinationAsset}`;
+      if (
+        isDry &&
+        firstTry.status === 400 &&
+        nearAcct &&
+        String(destinationAsset).startsWith('nep141:') &&
+        !String(destinationAsset).startsWith('1cs_v1:near:') &&
+        /recipient is not valid|refundTo is not valid|No liquidity available/i.test(firstTry.error || '')
+      ) {
         const retryNear = await postQuote({
           ...body,
-          destinationAsset: nearWrappedDest,
+          destinationAsset: `1cs_v1:near:${destinationAsset}`,
           recipient: nearAcct,
           recipientType: 'DESTINATION_CHAIN'
         });
         if (retryNear.ok || (signal && signal.aborted)) return retryNear;
       }
 
-      const retryIntents = await postQuote({
-        ...body,
-        recipient: nearAcct,
-        recipientType: 'INTENTS'
-      });
-      if (retryIntents.ok || (signal && signal.aborted)) return retryIntents;
-      if (/refundTo is not valid/i.test(firstTry.error || '')) {
-        const retryRefund = await postQuote({
-          ...body,
-          refundTo: nearAcct,
-          refundType: 'INTENTS'
-        });
-        if (retryRefund.ok || (signal && signal.aborted)) return retryRefund;
+      let finalError = firstTry.error;
+      const minMatch = String(finalError || '').match(/Amount is too low for bridge,\s*try at least\s*(\d+)/i);
+      if (minMatch) {
+        const dec = resolveTokenDecimals(resolvedOriginAsset);
+        const rawStr = fromBaseUnits(minMatch[1], dec);
+        const rawNum = Number(rawStr);
+        const minHuman = Number.isFinite(rawNum) && rawNum > 0
+          ? (rawNum >= 1e-6 && rawNum < 1e12 ? String(Number(rawNum.toPrecision(6))) : rawStr)
+          : rawStr;
+        finalError = t(`跨链金额过低，最低需约 ${minHuman}`, `Amount too low for bridge (min ~${minHuman})`);
       }
-    }
 
-    let finalError = firstTry.error;
-    const minMatch = String(finalError || '').match(/Amount is too low for bridge,\s*try at least\s*(\d+)/i);
-    if (minMatch) {
-      const dec = resolveTokenDecimals(resolvedOriginAsset);
-      const rawStr = fromBaseUnits(minMatch[1], dec);
-      const rawNum = Number(rawStr);
-      const minHuman = Number.isFinite(rawNum) && rawNum > 0
-        ? (rawNum >= 1e-6 && rawNum < 1e12 ? String(Number(rawNum.toPrecision(6))) : rawStr)
-        : rawStr;
-      finalError = t(`跨链金额过低，最低需约 ${minHuman}`, `Amount too low for bridge (min ~${minHuman})`);
-    }
-
-    return {
-      ok: false,
-      quote: null,
-      depositAddress: null,
-      memo: null,
-      amountOut: null,
-      amountOutFormatted: null,
-      amountInUsd: null,
-      amountOutUsd: null,
-      serviceFeeBps: feeBps,
-      error: finalError
+      return {
+        ok: false,
+        quote: null,
+        depositAddress: null,
+        memo: null,
+        amountOut: null,
+        amountOutFormatted: null,
+        amountInUsd: null,
+        amountOutUsd: null,
+        serviceFeeBps: feeBps,
+        error: finalError
+      };
     };
+
+    if (!isDry) return runOneClick();
+    const ocPromise = runOneClick();
+    _oneClickQuoteInFlight.set(ocKey, { fetchRef: curFetch, promise: ocPromise });
+    try {
+      const result = await ocPromise;
+      if (result && result.ok) {
+        _oneClickQuoteCache.set(ocKey, { ts: Date.now(), fetchRef: curFetch, val: result });
+        if (_oneClickQuoteCache.size > 100) _oneClickQuoteCache.delete(_oneClickQuoteCache.keys().next().value);
+      }
+      return result;
+    } finally {
+      const cur = _oneClickQuoteInFlight.get(ocKey);
+      if (cur && cur.promise === ocPromise) _oneClickQuoteInFlight.delete(ocKey);
+    }
   }
 
   /**
@@ -1805,9 +2186,11 @@
       if (originIsPrl) {
         let effectivePrlIn = amtStr;
         let bridgeQuote = null;
+        let bridgeFeeCharged = 0;
         const originIsPearlL1 = String(originAsset).toLowerCase() === PRL_PEARL_ASSET_ID;
         const directNearDest = extractNearTokenContract(destinationAsset);
         if (originIsPearlL1) {
+          const wantedBridgeFee = directNearDest ? 25 : 0;
           bridgeQuote = await quoteRawOneClick({
             originAsset: PRL_PEARL_ASSET_ID,
             destinationAsset: PRL_NEAR_ASSET_ID,
@@ -1818,13 +2201,26 @@
             nearAccountId: nearAccount,
             depositType: 'ORIGIN_CHAIN',
             recipientType: 'DESTINATION_CHAIN',
-            appFeeBps: directNearDest ? 25 : 0,
+            appFeeBps: wantedBridgeFee,
             dry: true,
             signal
-          }).catch(() => null);
-          if (bridgeQuote && bridgeQuote.ok && bridgeQuote.amountOut && BigInt(bridgeQuote.amountOut) > 0n) {
-            effectivePrlIn = bridgeQuote.amountOut;
+          }).catch((e) => ({ ok: false, error: e && e.message ? e.message : '' }));
+          if (!bridgeQuote || !bridgeQuote.ok || !bridgeQuote.amountOut || BigInt(bridgeQuote.amountOut) <= 0n) {
+            return {
+              ok: false,
+              quote: null,
+              depositAddress: null,
+              memo: null,
+              amountOut: null,
+              amountOutFormatted: null,
+              amountInUsd: null,
+              amountOutUsd: null,
+              serviceFeeBps: 0,
+              error: (bridgeQuote && bridgeQuote.error) || t('PRL 跨链至 NEAR 桥接报价失败', 'PRL bridge-in quote unavailable')
+            };
           }
+          effectivePrlIn = bridgeQuote.amountOut;
+          bridgeFeeCharged = wantedBridgeFee;
         }
 
         if (directNearDest) {
@@ -1863,7 +2259,7 @@
               amountOutFormatted: fromBaseUnits(refQ.amountOut, dec),
               amountInUsd: bridgeQuote ? bridgeQuote.amountInUsd : null,
               amountOutUsd: null,
-              serviceFeeBps: originIsPearlL1 ? 25 : 0,
+              serviceFeeBps: bridgeFeeCharged,
               error: null
             };
           }
@@ -1880,6 +2276,8 @@
         if (!refToUsdc.ok) {
           return { ok: false, quote: null, depositAddress: null, memo: null, amountOut: null, amountOutFormatted: null, amountInUsd: null, amountOutUsd: null, error: refToUsdc.error };
         }
+        const exitFeeBps = bridgeFeeCharged > 0 ? 0 : 25;
+        const totalFeeBps = bridgeFeeCharged > 0 ? bridgeFeeCharged : 25;
         // When buying NEAR-side QTC, concurrently compare Rhea CLMM (dclv2) vs 1Click Solver and pick the highest output
         if (String(destinationAsset).toLowerCase() === QTC_NEAR_ASSET_ID) {
           const [dclRes, oneClickRes] = await Promise.allSettled([
@@ -1900,6 +2298,7 @@
               nearAccountId: nearAccount,
               depositType: 'ORIGIN_CHAIN',
               recipientType: 'DESTINATION_CHAIN',
+              appFeeBps: exitFeeBps,
               dry: true,
               signal
             }).catch(() => null)
@@ -1925,7 +2324,7 @@
                 amountOutFormatted: fromBaseUnits(dclStep2.amountOut, 12),
                 amountInUsd: bridgeQuote ? bridgeQuote.amountInUsd : null,
                 amountOutUsd: null,
-                serviceFeeBps: originIsPearlL1 ? 25 : 0,
+                serviceFeeBps: bridgeFeeCharged,
                 error: null
               }
             });
@@ -1944,7 +2343,7 @@
                 intermediaryUsdcAssetId: NEAR_USDC_ASSET_ID,
                 intermediaryUsdcContract: NEAR_USDC_CONTRACT,
                 intermediaryUsdcRaw: refToUsdc.amountOut,
-                serviceFeeBps: 25
+                serviceFeeBps: totalFeeBps
               }
             });
           }
@@ -1971,6 +2370,7 @@
           nearAccountId: nearAccount,
           depositType: 'ORIGIN_CHAIN',
           recipientType: 'DESTINATION_CHAIN',
+          appFeeBps: exitFeeBps,
           dry: true,
           signal
         });
@@ -1984,7 +2384,7 @@
           intermediaryUsdcAssetId: NEAR_USDC_ASSET_ID,
           intermediaryUsdcContract: NEAR_USDC_CONTRACT,
           intermediaryUsdcRaw: refToUsdc.amountOut,
-          serviceFeeBps: 25
+          serviceFeeBps: totalFeeBps
         };
       }
 
@@ -2015,12 +2415,25 @@
                 nearAccountId: nearAccount,
                 depositType: 'ORIGIN_CHAIN',
                 recipientType: 'DESTINATION_CHAIN',
+                appFeeBps: 25,
                 dry: true,
                 signal
-              }).catch(() => null);
-              if (bridgeQuote && bridgeQuote.ok && bridgeQuote.amountOut && BigInt(bridgeQuote.amountOut) > 0n) {
-                finalPrlOut = bridgeQuote.amountOut;
+              }).catch((e) => ({ ok: false, error: e && e.message ? e.message : '' }));
+              if (!bridgeQuote || !bridgeQuote.ok || !bridgeQuote.amountOut || BigInt(bridgeQuote.amountOut) <= 0n) {
+                return {
+                  ok: false,
+                  quote: null,
+                  depositAddress: null,
+                  memo: null,
+                  amountOut: null,
+                  amountOutFormatted: null,
+                  amountInUsd: null,
+                  amountOutUsd: null,
+                  serviceFeeBps: 0,
+                  error: (bridgeQuote && bridgeQuote.error) || t('PRL 跨回主网桥接报价失败', 'PRL bridge-out quote unavailable')
+                };
               }
+              finalPrlOut = bridgeQuote.amountOut;
             }
             return {
               ok: true,
@@ -2082,10 +2495,22 @@
             appFeeBps: 0,
             dry: true,
             signal
-          }).catch(() => null);
-          if (bridgeOutQuote && bridgeOutQuote.ok && bridgeOutQuote.amountOut && BigInt(bridgeOutQuote.amountOut) > 0n) {
-            finalPrlOut = bridgeOutQuote.amountOut;
+          }).catch((e) => ({ ok: false, error: e && e.message ? e.message : '' }));
+          if (!bridgeOutQuote || !bridgeOutQuote.ok || !bridgeOutQuote.amountOut || BigInt(bridgeOutQuote.amountOut) <= 0n) {
+            return {
+              ok: false,
+              quote: null,
+              depositAddress: null,
+              memo: null,
+              amountOut: null,
+              amountOutFormatted: null,
+              amountInUsd: null,
+              amountOutUsd: null,
+              serviceFeeBps: 25,
+              error: (bridgeOutQuote && bridgeOutQuote.error) || t('PRL 跨回主网桥接报价失败', 'PRL bridge-out quote unavailable')
+            };
           }
+          finalPrlOut = bridgeOutQuote.amountOut;
         }
         return {
           ok: true,
@@ -2242,6 +2667,9 @@
     base: 'nep141:base.omft.near',
     arb: 'nep141:arb.omft.near',
     bsc: 'nep141:bnb.omdep.near',
+    pol: 'nep141:pol.omdep.near',
+    avax: 'nep141:avax.omdep.near',
+    op: 'nep245:v2_1.omni.hot.tg:10_11111111111111111111',
     hood: 'nep141:hood.omft.near'
   };
 
@@ -2249,6 +2677,45 @@
    * Multi-pool best-price comparator for NEAR same-chain token pairs:
    * concurrently queries Ref V2 AMM, Rhea/Ref CLMM (dclv2 + PRL composite), and 1Click Solver.
    */
+  function safeRaceWithGraceWindow(promises, graceMs = 700, globalTimeoutMs = 6000) {
+    return new Promise((resolve) => {
+      const results = promises.map(() => ({ status: 'pending', value: null }));
+      let remaining = promises.length;
+      if (remaining === 0) {
+        resolve(results);
+        return;
+      }
+      let settled = false;
+      let graceTimer = null;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        if (graceTimer) clearTimeout(graceTimer);
+        if (globalTimer) clearTimeout(globalTimer);
+        resolve(results);
+      };
+      const globalTimer = setTimeout(done, globalTimeoutMs);
+      promises.forEach((p, idx) => {
+        Promise.resolve(p).then(
+          (val) => {
+            results[idx] = { status: 'fulfilled', value: val };
+            remaining--;
+            const hasWinner = val && val.ok && val.amountOut && /^\d+$/.test(String(val.amountOut)) && BigInt(val.amountOut) > 0n;
+            if (remaining === 0) done();
+            else if (hasWinner && !graceTimer) {
+              graceTimer = setTimeout(done, graceMs);
+            }
+          },
+          (err) => {
+            results[idx] = { status: 'rejected', reason: err };
+            remaining--;
+            if (remaining === 0) done();
+          }
+        );
+      });
+    });
+  }
+
   async function quoteBestNearPairSwap({
     fromToken,
     toToken,
@@ -2265,97 +2732,123 @@
     const amtStr = String(amountRaw || '0').trim();
     const outDec = typeof toToken.decimals === 'number' ? toToken.decimals : resolveTokenDecimals(toToken.assetId);
 
-    // Build parallel candidates across Ref V2 AMM, Rhea CLMM (dclv2), Composite PRL, and 1Click
-    const refPromise = (contracts && typeof contracts.quoteNearRefFinanceSwap === 'function')
-      ? contracts.quoteNearRefFinanceSwap({ tokenIn: tokenInContract, tokenOut: tokenOutContract, amountRaw: amtStr, slippageBps, signal }).catch(() => null)
-      : quoteRefSmartRouterPath({ tokenIn: tokenInContract, tokenOut: tokenOutContract, amountRaw: amtStr, slippageBps, signal }).catch(() => null);
+    const curFetch = (typeof globalThis !== 'undefined' && globalThis.fetch) || null;
+    const cacheKey = `near|${tokenInContract}|${tokenOutContract}|${amtStr}|${slippageBps}|${nearAcct || ''}`;
+    const hit = _quoteCache.get(cacheKey);
+    if (hit && hit.fetchRef === curFetch && Date.now() - hit.ts < 10_000) return { ...hit.val };
 
-    const dclPromise = quoteNearDclPoolSwap({ tokenIn: tokenInContract, tokenOut: tokenOutContract, amountRaw: amtStr, slippageBps, signal }).catch(() => null);
-
-    const compositePrlPromise = (isPrlAssetId(fromToken.assetId) !== isPrlAssetId(toToken.assetId))
-      ? quoteCompositePrlSwap({
-          originAsset: fromToken.assetId,
-          destinationAsset: toToken.assetId,
-          amountRaw: amtStr,
-          slippageBps,
-          recipient: nearAcct,
-          refundTo: nearAcct,
-          nearAccountId: nearAcct,
-          signal
-        }).catch(() => null)
-      : Promise.resolve(null);
-
-    const oneClickPromise = quoteRawOneClick({
-      originAsset: fromToken.assetId,
-      destinationAsset: toToken.assetId,
-      amountRaw: amtStr,
-      slippageBps,
-      recipient: nearAcct,
-      refundTo: nearAcct,
-      nearAccountId: nearAcct,
-      depositType: 'ORIGIN_CHAIN',
-      recipientType: 'DESTINATION_CHAIN',
-      dry: true,
-      signal
-    }).catch(() => null);
-
-    const [rRes, dRes, cRes, oRes] = await Promise.allSettled([
-      refPromise,
-      dclPromise,
-      compositePrlPromise,
-      oneClickPromise
-    ]);
-
-    const candidates = [];
-    const pushCand = (source, res, defaultFeeBps = 0, formatter = null) => {
-      if (!res || !res.ok || !res.amountOut || !/^\d+$/.test(String(res.amountOut))) return;
-      const outBig = BigInt(res.amountOut);
-      if (outBig <= 0n) return;
-      candidates.push({
-        source,
-        outBig,
-        payload: {
-          ...res,
-          serviceFeeBps: res.serviceFeeBps !== undefined ? res.serviceFeeBps : defaultFeeBps,
-          amountOut: String(res.amountOut),
-          amountOutFormatted: res.amountOutFormatted || (formatter ? formatter(res.amountOut) : fromBaseUnits(res.amountOut, outDec))
-        }
-      });
-    };
-
-    const refVal = rRes.status === 'fulfilled' ? rRes.value : null;
-    if (refVal && refVal.ok && !refVal.isDcl) pushCand('Ref Finance V2', refVal, 0);
-    const dclVal = dRes.status === 'fulfilled' ? dRes.value : null;
-    if (dclVal && dclVal.ok) pushCand('Rhea CLMM (dclv2)', dclVal, 0);
-    else if (refVal && refVal.ok && refVal.isDcl) pushCand('Rhea CLMM (dclv2)', refVal, 0);
-
-    const compVal = cRes.status === 'fulfilled' ? cRes.value : null;
-    if (compVal && compVal.ok) {
-      pushCand(compVal.bestSource || 'Ref + Composite', compVal, compVal.serviceFeeBps || 0);
-    }
-    const ocVal = oRes.status === 'fulfilled' ? oRes.value : null;
-    if (ocVal && ocVal.ok) pushCand('1Click Solver', ocVal, 25);
-
-    if (candidates.length === 0) {
-      const errMsg = (compVal && compVal.error) || (ocVal && ocVal.error) || (refVal && refVal.error) || t('暂无 NEAR 流动性报价', 'No NEAR quote available');
-      return { ok: false, error: errMsg, comparedRoutesCount: 0 };
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const mergedSignal = (ctrl && signal && typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function')
+      ? AbortSignal.any([signal, ctrl.signal])
+      : (ctrl ? ctrl.signal : signal);
+    let onExtAbort = null;
+    if (ctrl && signal && (!mergedSignal || mergedSignal === ctrl.signal)) {
+      if (signal.aborted) ctrl.abort();
+      else {
+        onExtAbort = () => ctrl.abort();
+        signal.addEventListener('abort', onExtAbort, { once: true });
+      }
     }
 
-    candidates.sort((a, b) => (b.outBig > a.outBig ? 1 : b.outBig < a.outBig ? -1 : 0));
-    const best = candidates[0];
-    const comparedRoutesCount = candidates.length;
-    const routeLabel = comparedRoutesCount > 1
-      ? `⚡ ${t('最优', 'Best')}: ${best.source} (${t(`比价 ${comparedRoutesCount} 池`, `${comparedRoutesCount} pools`)})`
-      : best.source;
+    try {
+      const refPromise = (contracts && typeof contracts.quoteNearRefFinanceSwap === 'function')
+        ? contracts.quoteNearRefFinanceSwap({ tokenIn: tokenInContract, tokenOut: tokenOutContract, amountRaw: amtStr, slippageBps, signal: mergedSignal }).catch(() => null)
+        : quoteRefSmartRouterPath({ tokenIn: tokenInContract, tokenOut: tokenOutContract, amountRaw: amtStr, slippageBps, signal: mergedSignal }).catch(() => null);
 
-    return {
-      ...best.payload,
-      ok: true,
-      bestSource: best.source,
-      comparedRoutesCount,
-      comparedPools: comparedRoutesCount,
-      routeLabel
-    };
+      const dclPromise = quoteNearDclPoolSwap({ tokenIn: tokenInContract, tokenOut: tokenOutContract, amountRaw: amtStr, slippageBps, signal: mergedSignal }).catch(() => null);
+
+      const compositePrlPromise = (isPrlAssetId(fromToken.assetId) !== isPrlAssetId(toToken.assetId))
+        ? quoteCompositePrlSwap({
+            originAsset: fromToken.assetId,
+            destinationAsset: toToken.assetId,
+            amountRaw: amtStr,
+            slippageBps,
+            recipient: nearAcct,
+            refundTo: nearAcct,
+            nearAccountId: nearAcct,
+            signal: mergedSignal
+          }).catch(() => null)
+        : Promise.resolve(null);
+
+      const oneClickPromise = quoteRawOneClick({
+        originAsset: fromToken.assetId,
+        destinationAsset: toToken.assetId,
+        amountRaw: amtStr,
+        slippageBps,
+        recipient: nearAcct,
+        refundTo: nearAcct,
+        nearAccountId: nearAcct,
+        depositType: 'ORIGIN_CHAIN',
+        recipientType: 'DESTINATION_CHAIN',
+        dry: true,
+        signal: mergedSignal
+      }).catch(() => null);
+
+      const [rRes, dRes, cRes, oRes] = await safeRaceWithGraceWindow(
+        [refPromise, dclPromise, compositePrlPromise, oneClickPromise],
+        350,
+        4500
+      );
+      if (ctrl && !ctrl.signal.aborted) ctrl.abort();
+
+      const candidates = [];
+      const pushCand = (source, res, defaultFeeBps = 0, formatter = null) => {
+        if (!res || !res.ok || !res.amountOut || !/^\d+$/.test(String(res.amountOut))) return;
+        const outBig = BigInt(res.amountOut);
+        if (outBig <= 0n) return;
+        candidates.push({
+          source,
+          outBig,
+          payload: {
+            ...res,
+            serviceFeeBps: res.serviceFeeBps !== undefined ? res.serviceFeeBps : defaultFeeBps,
+            amountOut: String(res.amountOut),
+            amountOutFormatted: res.amountOutFormatted || (formatter ? formatter(res.amountOut) : fromBaseUnits(res.amountOut, outDec))
+          }
+        });
+      };
+
+      const refVal = rRes && rRes.status === 'fulfilled' ? rRes.value : null;
+      if (refVal && refVal.ok && !refVal.isDcl) pushCand('Ref Finance V2', refVal, 0);
+      const dclVal = dRes && dRes.status === 'fulfilled' ? dRes.value : null;
+      if (dclVal && dclVal.ok) pushCand('Rhea CLMM (dclv2)', dclVal, 0);
+      else if (refVal && refVal.ok && refVal.isDcl) pushCand('Rhea CLMM (dclv2)', refVal, 0);
+
+      const compVal = cRes && cRes.status === 'fulfilled' ? cRes.value : null;
+      if (compVal && compVal.ok) {
+        pushCand(compVal.bestSource || 'Ref + Composite', compVal, compVal.serviceFeeBps || 0);
+      }
+      const ocVal = oRes && oRes.status === 'fulfilled' ? oRes.value : null;
+      if (ocVal && ocVal.ok) pushCand('1Click Solver', ocVal, 25);
+
+      if (candidates.length === 0) {
+        const errMsg = (compVal && compVal.error) || (ocVal && ocVal.error) || (refVal && refVal.error) || t('暂无 NEAR 流动性报价', 'No NEAR quote available');
+        return { ok: false, error: errMsg, comparedRoutesCount: 0 };
+      }
+
+      candidates.sort((a, b) => (b.outBig > a.outBig ? 1 : b.outBig < a.outBig ? -1 : 0));
+      const best = candidates[0];
+      const comparedRoutesCount = candidates.length;
+      const routeLabel = comparedRoutesCount > 1
+        ? `⚡ ${t('最优', 'Best')}: ${best.source} (${t(`比价 ${comparedRoutesCount} 池`, `${comparedRoutesCount} pools`)})`
+        : best.source;
+
+      const out = {
+        ...best.payload,
+        ok: true,
+        bestSource: best.source,
+        comparedRoutesCount,
+        comparedPools: comparedRoutesCount,
+        routeLabel
+      };
+      _quoteCache.set(cacheKey, { ts: Date.now(), fetchRef: curFetch, val: out });
+      if (_quoteCache.size > 60) _quoteCache.delete(_quoteCache.keys().next().value);
+      return out;
+    } finally {
+      if (signal && onExtAbort) {
+        try { signal.removeEventListener('abort', onExtAbort); } catch (_) {}
+      }
+    }
   }
 
   const RELAY_API_URL = 'https://api.relay.link/quote';
@@ -2376,8 +2869,13 @@
     signal = null
   } = {}) {
     try {
-      const u = /^0x[0-9a-fA-F]{40}$/.test(String(user || '')) ? user : '0x1111111111111111111111111111111111111111';
-      const r = /^0x[0-9a-fA-F]{40}$/.test(String(recipient || '')) ? recipient : u;
+      const validU = /^0x[0-9a-fA-F]{40}$/.test(String(user || '')) ? user : '';
+      const validR = /^0x[0-9a-fA-F]{40}$/.test(String(recipient || '')) ? recipient : validU;
+      const u = validU || validR;
+      const r = validR || validU;
+      if (!u) {
+        return { ok: false, error: t('缺少有效的 EVM 地址', 'Valid EVM address required for Relay bridge quote') };
+      }
       const resp = await fetchJsonWithTimeout(
         RELAY_API_URL,
         {
@@ -2429,8 +2927,13 @@
     signal = null
   } = {}) {
     try {
-      const fAddr = /^0x[0-9a-fA-F]{40}$/.test(String(fromAddress || '')) ? fromAddress : '0x1111111111111111111111111111111111111111';
-      const tAddr = /^0x[0-9a-fA-F]{40}$/.test(String(toAddress || '')) ? toAddress : fAddr;
+      const validFrom = /^0x[0-9a-fA-F]{40}$/.test(String(fromAddress || '')) ? fromAddress : '';
+      const validTo = /^0x[0-9a-fA-F]{40}$/.test(String(toAddress || '')) ? toAddress : validFrom;
+      const fAddr = validFrom || validTo;
+      const tAddr = validTo || validFrom;
+      if (!fAddr) {
+        return { ok: false, error: t('缺少有效的 EVM 地址', 'Valid EVM address required for LI.FI bridge quote') };
+      }
       const slip = ((Number(slippageBps) || 100) / 10000).toFixed(4);
       const url = `${LIFI_API_URL}/quote?fromChain=${encodeURIComponent(fromChain)}&toChain=${encodeURIComponent(toChain)}&fromToken=${encodeURIComponent(fromToken)}&toToken=${encodeURIComponent(toToken)}&fromAmount=${encodeURIComponent(fromAmount)}&fromAddress=${encodeURIComponent(fAddr)}&toAddress=${encodeURIComponent(tAddr)}&slippage=${slip}`;
       const resp = await fetchJsonWithTimeout(url, { signal }, DEFAULT_TIMEOUT_MS);
@@ -2481,6 +2984,7 @@
     recipient,
     refundTo,
     nearAccountId,
+    evmAddress = '',
     signal = null
   } = {}) {
     try {
@@ -2494,6 +2998,20 @@
       const amtStr = String(amountRaw || '0').trim();
       if (!/^\d+$/.test(amtStr) || BigInt(amtStr) <= 0n) return { ok: false, error: t('兑换数量无效', 'Invalid amount') };
 
+      const hubCtrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const hubSignal = (hubCtrl && signal && typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function')
+        ? AbortSignal.any([signal, hubCtrl.signal])
+        : (hubCtrl ? hubCtrl.signal : signal);
+      let onExtAbort = null;
+      if (hubCtrl && signal && (!hubSignal || hubSignal === hubCtrl.signal)) {
+        if (signal.aborted) hubCtrl.abort();
+        else {
+          onExtAbort = () => hubCtrl.abort();
+          signal.addEventListener('abort', onExtAbort, { once: true });
+        }
+      }
+      try {
+
       const fromAsset = resolveOneClickAssetId(fromToken, fromBc);
       const toAsset = resolveOneClickAssetId(toToken, toBc);
       const toDec = typeof toToken.decimals === 'number' ? toToken.decimals : resolveTokenDecimals(toAsset);
@@ -2503,14 +3021,14 @@
       if (fromBc === 'near' && toBc === 'near') return { ok: false, error: 'same-chain' };
       const okAmt = (q) => q && q.ok && /^\d+$/.test(String(q.amountOut || '')) && BigInt(q.amountOut) > 0n;
 
-      const isOneClickId = (s) => /^(nep141:|1cs_v1:)/i.test(String(s || ''));
+      const isOneClickId = (s) => /^(nep141:|nep245:|1cs_v1:)/i.test(String(s || ''));
       const originIsSolDex = fromBc === 'sol' && !isOneClickId(fromAsset) && Boolean(fromToken.contractAddress)
         && fromToken.contractAddress.toLowerCase() !== SOL_NATIVE_WSOL.toLowerCase();
-      const originIsEvmDex = ['eth', 'base', 'arb', 'bsc', 'hood'].includes(fromBc) && !isOneClickId(fromAsset) && Boolean(fromToken.contractAddress)
+      const originIsEvmDex = ['eth', 'base', 'arb', 'op', 'pol', 'avax', 'bsc', 'hood'].includes(fromBc) && !isOneClickId(fromAsset) && Boolean(fromToken.contractAddress)
         && fromToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL;
       const targetIsSolDex = toBc === 'sol' && !isOneClickId(toAsset) && Boolean(toToken.contractAddress)
         && toToken.contractAddress.toLowerCase() !== SOL_NATIVE_WSOL.toLowerCase();
-      const targetIsEvmDex = ['eth', 'base', 'arb', 'bsc', 'hood'].includes(toBc) && !isOneClickId(toAsset) && Boolean(toToken.contractAddress)
+      const targetIsEvmDex = ['eth', 'base', 'arb', 'op', 'pol', 'avax', 'bsc', 'hood'].includes(toBc) && !isOneClickId(toAsset) && Boolean(toToken.contractAddress)
         && toToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL;
 
       // Optional Stage 0: Origin Chain DEX -> Origin Chain Native (when origin token is DEX-only)
@@ -2524,7 +3042,7 @@
           outputMint: SOL_NATIVE_WSOL,
           amountRaw: amtStr,
           slippageBps,
-          signal
+          signal: hubSignal
         }).catch(() => null);
         if (!jupS0 || !jupS0.outAmount || BigInt(jupS0.outAmount) <= 0n) {
           return { ok: false, error: t('Solana 源链 DEX 询价失败', 'Origin Solana DEX quote failed') };
@@ -2533,6 +3051,9 @@
         bridgeInOriginAsset = SOL_1CLICK_ASSET_ID;
         bridgeInAmountRaw = String(jupS0.outAmount);
       } else if (originIsEvmDex && EVM_NATIVE_1CLICK_MAP[fromBc] && typeof contracts.quoteEvmDexSwap === 'function') {
+        const validEvmFrom = /^0x[0-9a-fA-F]{40}$/.test(String(evmAddress || ''))
+          ? evmAddress
+          : (/^0x[0-9a-fA-F]{40}$/.test(String(refundTo || '')) ? refundTo : (/^0x[0-9a-fA-F]{40}$/.test(String(recipient || '')) ? recipient : ''));
         const evmS0 = await contracts.quoteEvmDexSwap({
           chainKey: fromBc,
           srcToken: fromToken.contractAddress,
@@ -2541,7 +3062,8 @@
           srcDecimals: fromDec,
           destDecimals: 18,
           slippageBps,
-          signal
+          fromAddress: validEvmFrom || undefined,
+          signal: hubSignal
         }).catch(() => null);
         if (!evmS0 || !evmS0.ok || !evmS0.amountOut || BigInt(evmS0.amountOut) <= 0n) {
           return { ok: false, error: t('EVM 源链 DEX 询价失败', 'Origin EVM DEX quote failed') };
@@ -2551,7 +3073,7 @@
         bridgeInAmountRaw = String(evmS0.amountOut);
       }
 
-      // ---- Entry options (pruned: Pearl PRL only enters via PRL hub; non-NEAR charges fee once on exit when exit exists)
+      // ---- Entry options (pruned: Pearl PRL only enters via PRL hub; non-PRL prioritizes USDC + wNEAR)
       const hasBridgeOut = toBc !== 'near';
       const entryFeeBps = hasBridgeOut ? 0 : 25;
       let entries = [];
@@ -2561,7 +3083,7 @@
       } else {
         const hubs = fromBc === 'prl'
           ? SMART_HUBS.filter((h) => h.key === 'prl')
-          : SMART_HUBS;
+          : SMART_HUBS.filter((h) => h.key === 'usdc' || h.key === 'wnear');
         const bridged = await Promise.all(hubs.map(async (h) => {
           if (String(bridgeInOriginAsset).toLowerCase() === h.asset.toLowerCase()) return null;
           const q = await quoteRawOneClick({
@@ -2576,7 +3098,7 @@
             recipientType: 'DESTINATION_CHAIN',
             appFeeBps: entryFeeBps,
             dry: true,
-            signal
+            signal: hubSignal
           }).catch((err) => ({ ok: false, error: err && err.message ? err.message : '' }));
           if (!okAmt(q) && q && q.error && !bridgeInErr) bridgeInErr = q.error;
           return okAmt(q) ? { contract: h.contract, decimals: h.decimals, symbol: h.symbol, out: String(q.amountOut), bridgeIn: q, hubAsset: h.asset } : null;
@@ -2587,7 +3109,7 @@
         return { ok: false, error: bridgeInErr || t('该来源资产暂无法跨入 NEAR 流动性', 'Origin asset cannot be bridged into NEAR liquidity') };
       }
 
-      // ---- Exit options (pruned: Pearl PRL only exits via PRL hub)
+      // ---- Exit options (pruned <= 6 combos max: Pearl PRL exits via PRL hub; other chains via USDC + wNEAR)
       const bridgeOutDestAsset = targetIsSolDex
         ? SOL_1CLICK_ASSET_ID
         : (targetIsEvmDex && EVM_NATIVE_1CLICK_MAP[toBc] ? EVM_NATIVE_1CLICK_MAP[toBc] : toAsset);
@@ -2595,17 +3117,23 @@
         ? [{ contract: toNearContract, decimals: toDec, symbol: toToken.symbol, asset: toAsset, isFinal: true }]
         : (toBc === 'prl'
             ? SMART_HUBS.filter((h) => h.key === 'prl').map((h) => ({ contract: h.contract, decimals: h.decimals, symbol: h.symbol, asset: h.asset, isFinal: false }))
-            : SMART_HUBS.map((h) => ({ contract: h.contract, decimals: h.decimals, symbol: h.symbol, asset: h.asset, isFinal: false })));
+            : SMART_HUBS.filter((h) => h.key === 'usdc' || h.key === 'wnear').map((h) => ({ contract: h.contract, decimals: h.decimals, symbol: h.symbol, asset: h.asset, isFinal: false })));
 
-      const combos = [];
-      entries.forEach((e) => exits.forEach((x) => combos.push({ e, x })));
+      const combosRaw = [];
+      entries.forEach((e) => exits.forEach((x) => {
+        if (x.isFinal || fromBc === 'near' || e.contract !== x.contract || String(bridgeInOriginAsset).toLowerCase() !== String(bridgeOutDestAsset).toLowerCase()) {
+          combosRaw.push({ e, x, priority: e.contract === '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1' ? 0 : 1 });
+        }
+      }));
+      combosRaw.sort((a, b) => a.priority - b.priority);
+      const combos = combosRaw.slice(0, 6);
 
-      const evaluated = await Promise.all(combos.map(async ({ e, x }) => {
+      const evaluated = await safeRaceWithGraceWindow(combos.map(async ({ e, x }) => {
         try {
           let midOut = e.out;
           let swapQ = null;
           if (e.contract !== x.contract) {
-            swapQ = await contracts.quoteNearRefFinanceSwap({ tokenIn: e.contract, tokenOut: x.contract, amountRaw: e.out, slippageBps, signal }).catch(() => null);
+            swapQ = await contracts.quoteNearRefFinanceSwap({ tokenIn: e.contract, tokenOut: x.contract, amountRaw: e.out, slippageBps, signal: hubSignal }).catch(() => null);
             if (!okAmt(swapQ)) return null;
             midOut = String(swapQ.amountOut);
           }
@@ -2624,7 +3152,7 @@
               recipientType: 'DESTINATION_CHAIN',
               appFeeBps: 25,
               dry: true,
-              signal
+              signal: hubSignal
             }).catch(() => null);
             if (!okAmt(bridgeOut)) return null;
             finalOut = String(bridgeOut.amountOut);
@@ -2636,11 +3164,14 @@
               outputMint: toToken.contractAddress,
               amountRaw: finalOut,
               slippageBps,
-              signal
+              signal: hubSignal
             }).catch(() => null);
             if (!destDexQ || !destDexQ.outAmount || BigInt(destDexQ.outAmount) <= 0n) return null;
             finalOut = String(destDexQ.outAmount);
           } else if (targetIsEvmDex && typeof contracts.quoteEvmDexSwap === 'function') {
+            const validEvmFrom = /^0x[0-9a-fA-F]{40}$/.test(String(evmAddress || ''))
+              ? evmAddress
+              : (/^0x[0-9a-fA-F]{40}$/.test(String(recipient || '')) ? recipient : (/^0x[0-9a-fA-F]{40}$/.test(String(refundTo || '')) ? refundTo : ''));
             destDexQ = await contracts.quoteEvmDexSwap({
               chainKey: toBc,
               srcToken: EVM_NATIVE_SENTINEL,
@@ -2649,31 +3180,35 @@
               srcDecimals: 18,
               destDecimals: toDec,
               slippageBps,
-              signal
+              fromAddress: validEvmFrom || undefined,
+              signal: hubSignal
             }).catch(() => null);
             if (!destDexQ || !destDexQ.ok || !destDexQ.amountOut || BigInt(destDexQ.amountOut) <= 0n) return null;
             finalOut = String(destDexQ.amountOut);
           }
           const stageCount = (stage0Dex ? 1 : 0) + (e.bridgeIn ? 1 : 0) + (swapQ ? 1 : 0) + (bridgeOut ? 1 : 0) + (destDexQ ? 1 : 0);
           if (stageCount === 0) return null;
-          return { e, x, swapQ, bridgeOut, destDexQ, midOut, finalOut, outBig: BigInt(finalOut), stageCount };
+          return { ok: true, amountOut: finalOut, e, x, swapQ, bridgeOut, destDexQ, midOut, finalOut, outBig: BigInt(finalOut), stageCount };
         } catch (_) {
           return null;
         }
-      }));
+      }), 1200, 6000);
+      if (hubCtrl && !hubCtrl.signal.aborted) hubCtrl.abort();
 
-      const valid = evaluated.filter(Boolean).sort((a, b) => {
-        if (a.outBig === b.outBig) return a.stageCount - b.stageCount;
-        // Prefer fewer stages unless the extra stage gives > 0.3% more output
-        if (a.stageCount !== b.stageCount) {
-          const fewer = a.stageCount < b.stageCount ? a : b;
-          const more = a.stageCount < b.stageCount ? b : a;
-          if (more.outBig * 1000n <= fewer.outBig * 1003n) {
-            return a === fewer ? -1 : 1;
+      const valid = evaluated
+        .map((r) => (r && r.status === 'fulfilled' ? r.value : null))
+        .filter((v) => v && v.outBig > 0n)
+        .sort((a, b) => {
+          if (a.outBig === b.outBig) return a.stageCount - b.stageCount;
+          if (a.stageCount !== b.stageCount) {
+            const fewer = a.stageCount < b.stageCount ? a : b;
+            const more = a.stageCount < b.stageCount ? b : a;
+            if (more.outBig * 1000n <= fewer.outBig * 1003n) {
+              return a === fewer ? -1 : 1;
+            }
           }
-        }
-        return b.outBig > a.outBig ? 1 : -1;
-      });
+          return b.outBig > a.outBig ? 1 : -1;
+        });
       if (valid.length === 0) {
         return { ok: false, error: t('暂无可用的跨链/多跳兑换路径', 'No viable multi-stage route found') };
       }
@@ -2714,7 +3249,10 @@
           outDecimals: best.x.decimals,
           outSymbol: best.x.symbol,
           expectedIn: best.e.out,
-          expectedOut: best.midOut
+          expectedOut: best.midOut,
+          isDcl: Boolean(best.swapQ.isDcl),
+          poolIds: Array.isArray(best.swapQ.poolIds) ? best.swapQ.poolIds : [],
+          refQuote: best.swapQ
         });
         labels.push(best.swapQ.label || 'Ref Finance');
       }
@@ -2758,6 +3296,11 @@
         routeLabel,
         error: null
       };
+      } finally {
+        if (signal && onExtAbort) {
+          try { signal.removeEventListener('abort', onExtAbort); } catch (_) {}
+        }
+      }
     } catch (err) {
       return { ok: false, error: err && err.message ? err.message : t('智能路由询价失败', 'Smart route quote failed') };
     }
@@ -2768,6 +3311,39 @@
    * to Smart Hub Router only when needed (PRL pairs, DEX-only targets, or no direct liquidity).
    */
   async function quoteCrossChainWithDexRelay(params = {}) {
+    const { fromToken, toToken, amountRaw, slippageBps = 100, recipient, signal = null } = params;
+    if (!fromToken || !toToken) return quoteCrossChainWithDexRelayLegacy(params);
+    const curFetch = (typeof globalThis !== 'undefined' && globalThis.fetch) || null;
+    const cacheKey = `xc|${fromToken.blockchain}:${fromToken.assetId}|${toToken.blockchain}:${toToken.assetId}|${String(amountRaw || '')}|${slippageBps}|${String(recipient || '')}`;
+    const hit = _quoteCache.get(cacheKey);
+    if (hit && hit.fetchRef === curFetch && Date.now() - hit.ts < 10_000) return { ...hit.val };
+    const inflight = _quoteInFlight.get(cacheKey);
+    if (inflight && inflight.fetchRef === curFetch) {
+      if (!signal) return inflight.promise;
+      return Promise.race([
+        inflight.promise,
+        new Promise((r) => {
+          const onA = () => r({ ok: false, error: t('请求已取消', 'Request aborted') });
+          if (signal.aborted) onA();
+          else signal.addEventListener('abort', onA, { once: true });
+        })
+      ]);
+    }
+    const run = _execQuoteCrossChainWithDexRelay(params).then((res) => {
+      if (res && res.ok) {
+        _quoteCache.set(cacheKey, { ts: Date.now(), fetchRef: curFetch, val: res });
+        if (_quoteCache.size > 60) _quoteCache.delete(_quoteCache.keys().next().value);
+      }
+      return res;
+    }).finally(() => {
+      const cur = _quoteInFlight.get(cacheKey);
+      if (cur && cur.promise === run) _quoteInFlight.delete(cacheKey);
+    });
+    _quoteInFlight.set(cacheKey, { fetchRef: curFetch, promise: run });
+    return run;
+  }
+
+  async function _execQuoteCrossChainWithDexRelay(params = {}) {
     const { fromToken, toToken, signal = null } = params;
     if (!fromToken || !toToken) return quoteCrossChainWithDexRelayLegacy(params);
     const fromBc = String(fromToken.blockchain || '').toLowerCase();
@@ -2776,11 +3352,11 @@
     if (fromBc === 'arc' || toBc === 'arc') return quoteCrossChainWithDexRelayLegacy(params);
 
     const prlInvolved = isPrlAssetId(fromToken.assetId) || isPrlAssetId(toToken.assetId);
-    const isOneClickDirectAsset = (tok) => /^(nep141:|1cs_v1:)/i.test(String(resolveOneClickAssetId(tok, tok.blockchain) || ''));
+    const isOneClickDirectAsset = (tok) => /^(nep141:|nep245:|1cs_v1:)/i.test(String(resolveOneClickAssetId(tok, tok.blockchain) || ''));
     const isDexOnlySol = toBc === 'sol' && Boolean(toToken.contractAddress) && toToken.contractAddress !== SOL_NATIVE_WSOL && !isOneClickDirectAsset(toToken);
-    const isDexOnlyEvm = ['eth', 'base', 'arb', 'bsc', 'hood'].includes(toBc) && Boolean(toToken.contractAddress) && toToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL && !isOneClickDirectAsset(toToken);
+    const isDexOnlyEvm = ['eth', 'base', 'arb', 'op', 'pol', 'avax', 'bsc', 'hood'].includes(toBc) && Boolean(toToken.contractAddress) && toToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL && !isOneClickDirectAsset(toToken);
     const isOriginDexOnly = (fromBc === 'sol' && Boolean(fromToken.contractAddress) && fromToken.contractAddress !== SOL_NATIVE_WSOL && !isOneClickDirectAsset(fromToken))
-      || (['eth', 'base', 'arb', 'bsc', 'hood'].includes(fromBc) && Boolean(fromToken.contractAddress) && fromToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL && !isOneClickDirectAsset(fromToken));
+      || (['eth', 'base', 'arb', 'op', 'pol', 'avax', 'bsc', 'hood'].includes(fromBc) && Boolean(fromToken.contractAddress) && fromToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL && !isOneClickDirectAsset(fromToken));
 
     // Fast path: direct 1Click-to-1Click pair (e.g. NEAR -> SOL/ETH/USDC) runs in 1 single request (~1s);
     // only falls back to multi-hub Smart Hub Router when direct quote fails.
@@ -2861,9 +3437,11 @@
     const destIsPrl = isPrlAssetId(toToken.assetId);
     const resolvedOriginAsset = resolveOneClickAssetId(fromToken, fromBc);
     const resolvedDestAsset = resolveOneClickAssetId(toToken, toBc);
-    const isTargetSolDex = toBc === 'sol' && Boolean(toToken.contractAddress) && toToken.contractAddress !== SOL_NATIVE_WSOL;
+    const isTargetOneClickDirect = /^(nep141:|1cs_v1:)/i.test(resolvedDestAsset);
+    const isTargetSolDex = toBc === 'sol' && Boolean(toToken.contractAddress) && toToken.contractAddress !== SOL_NATIVE_WSOL && !isTargetOneClickDirect;
     const isOriginSolDex = fromBc === 'sol' && Boolean(fromToken.contractAddress) && fromToken.contractAddress !== SOL_NATIVE_WSOL && !/^(nep141:|1cs_v1:)/i.test(resolvedOriginAsset);
-    const isTargetEvmDex = ['eth', 'base', 'arb', 'bsc', 'hood'].includes(toBc) && Boolean(toToken.contractAddress) && toToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL;
+    const isTargetEvmToken = ['eth', 'base', 'arb', 'bsc', 'hood'].includes(toBc) && Boolean(toToken.contractAddress) && toToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL;
+    const isTargetEvmDex = isTargetEvmToken && !isTargetOneClickDirect;
 
     // 1. PRL pairs with 1Click-reachable tokens (not DEX-only target tokens or Arc)
     if ((originIsPrl !== destIsPrl) && !isTargetSolDex && !isTargetEvmDex && toBc !== 'arc' && fromBc !== 'arc') {
@@ -2943,7 +3521,10 @@
     if (toBc === 'arc' && fromBc !== 'arc') {
       const evmUser = /^0x[0-9a-fA-F]{40}$/.test(String(evmAddress || ''))
         ? evmAddress
-        : (/^0x[0-9a-fA-F]{40}$/.test(String(recipient || '')) ? recipient : '0x1111111111111111111111111111111111111111');
+        : (/^0x[0-9a-fA-F]{40}$/.test(String(recipient || '')) ? recipient : '');
+      if (!evmUser) {
+        return { ok: false, error: t('请先初始化或提供有效的 EVM 钱包地址', 'Valid EVM address required for Arc bridge quote') };
+      }
       const arcRecip = /^0x[0-9a-fA-F]{40}$/.test(String(recipient || '')) ? recipient : evmUser;
       const rawDestAddr = String(toToken.contractAddress || ARC_USDC_CONTRACT).trim();
       const arcDestContract = rawDestAddr.toLowerCase() === EVM_NATIVE_SENTINEL ? ARC_USDC_CONTRACT : rawDestAddr;
@@ -3011,6 +3592,7 @@
           destDecimals: toDec,
           slippageBps,
           feeBps: 0,
+          fromAddress: evmUser,
           signal
         });
         if (!dexQuote || !dexQuote.ok || !dexQuote.amountOut) {
@@ -3053,7 +3635,10 @@
     if (fromBc === 'arc' && toBc !== 'arc') {
       const evmUser = /^0x[0-9a-fA-F]{40}$/.test(String(evmAddress || ''))
         ? evmAddress
-        : '0x1111111111111111111111111111111111111111';
+        : (/^0x[0-9a-fA-F]{40}$/.test(String(refundTo || '')) ? refundTo : '');
+      if (!evmUser) {
+        return { ok: false, error: t('请先初始化或提供有效的 EVM 钱包地址', 'Valid EVM address required for Arc bridge quote') };
+      }
       const rawSrcAddr = String(fromToken.contractAddress || ARC_USDC_CONTRACT).trim();
       const arcSrcContract = rawSrcAddr.toLowerCase() === EVM_NATIVE_SENTINEL ? ARC_USDC_CONTRACT : rawSrcAddr;
       const srcIsArcUsdc = arcSrcContract.toLowerCase() === ARC_USDC_CONTRACT;
@@ -3072,6 +3657,7 @@
           destDecimals: 6,
           slippageBps,
           feeBps: 0,
+          fromAddress: evmUser,
           signal
         });
         if (!stage1Dex || !stage1Dex.ok || !stage1Dex.amountOut) {
@@ -3290,90 +3876,81 @@
       }
     }
 
-    // 4. Concurrent Best-Price Competition for EVM & Cross-Chain pairs (Direct 1Click vs 1Click Native Hub + Chain DEX e.g. NEAR -> PONS/AERO/UNI/CAKE)
+    // 4. Direct 1Click (1-request fast path) -> Automatic EVM DEX Relay fallback (e.g. NEAR -> PONS on Robinhood)
     const canTryDirectCross = /^(nep141:|1cs_v1:)/i.test(resolvedOriginAsset) && /^(nep141:|1cs_v1:)/i.test(resolvedDestAsset);
-    const directPromise = canTryDirectCross
-      ? quoteIntentSwapOrWithdraw({
-          originAsset: resolvedOriginAsset,
-          destinationAsset: resolvedDestAsset,
-          amountRaw: amtStr,
-          slippageBps,
-          recipient,
-          refundTo,
-          nearAccountId,
-          depositType: 'ORIGIN_CHAIN',
-          recipientType: 'DESTINATION_CHAIN',
-          dry: true,
-          signal
-        }).catch(() => null)
-      : Promise.resolve(null);
-
     const evmInterAsset = EVM_NATIVE_1CLICK_MAP[toBc];
-    const evmRelayPromise = (isTargetEvmDex && evmInterAsset && contracts && typeof contracts.quoteEvmDexSwap === 'function')
-      ? (async () => {
-          const targetEvmRecip = evmAddress || recipient;
-          const stage1 = await quoteBridgeToIntermediate(evmInterAsset, targetEvmRecip);
-          if (!stage1 || !stage1.ok || !stage1.amountOut || BigInt(stage1.amountOut) <= 0n) {
-            return stage1 || { ok: false, error: 'Stage 1 EVM bridge failed' };
-          }
-          const stage2 = await contracts.quoteEvmDexSwap({
-            chainKey: toBc,
-            srcToken: EVM_NATIVE_SENTINEL,
-            destToken: toToken.contractAddress,
-            amountRaw: stage1.amountOut,
-            srcDecimals: 18,
-            destDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 18,
-            slippageBps,
-            signal
-          });
-          if (!stage2 || !stage2.ok || !stage2.amountOut) {
-            return stage2 || { ok: false, error: 'Stage 2 EVM DEX quote failed' };
-          }
-          return {
-            ok: true,
-            compositeType: 'CROSS_CHAIN_TO_EVM_DEX',
-            stage1Quote: stage1,
-            stage2DexQuote: stage2,
-            intermediaryAssetId: evmInterAsset,
-            intermediaryRaw: stage1.amountOut,
-            depositAddress: null,
-            memo: null,
-            amountOut: String(stage2.amountOut),
-            amountOutFormatted: stage2.amountOutFormatted,
-            amountInUsd: stage1.amountInUsd || stage2.amountInUsd || null,
-            amountOutUsd: stage2.amountOutUsd || null,
-            serviceFeeBps: stage1.serviceFeeBps !== undefined ? stage1.serviceFeeBps : 25,
-            comparedPools: stage2.comparedPools || 1,
-            bestSource: stage2.bestSource || stage2.label,
-            routeLabel: `1Click (➔${toBc.toUpperCase()}) + ${stage2.routeLabel || stage2.label}`,
-            error: null
-          };
-        })().catch((err) => ({ ok: false, error: err && err.message ? err.message : 'EVM DEX relay failed' }))
-      : Promise.resolve(null);
+    const canTryEvmRelay = Boolean(isTargetEvmToken && evmInterAsset && contracts && typeof contracts.quoteEvmDexSwap === 'function');
 
-    const [dirSettled, relSettled] = await Promise.allSettled([directPromise, evmRelayPromise]);
-    const dirVal = dirSettled.status === 'fulfilled' ? dirSettled.value : null;
-    const relVal = relSettled.status === 'fulfilled' ? relSettled.value : null;
-    const evmCandidates = [];
-    if (dirVal && dirVal.ok && dirVal.amountOut && BigInt(dirVal.amountOut) > 0n) {
-      evmCandidates.push({
-        outBig: BigInt(dirVal.amountOut),
-        payload: { ...dirVal, routeLabel: dirVal.routeLabel || '1Click Cross-Chain' }
-      });
-    }
-    if (relVal && relVal.ok && relVal.amountOut && BigInt(relVal.amountOut) > 0n) {
-      evmCandidates.push({ outBig: BigInt(relVal.amountOut), payload: relVal });
-    }
-    if (evmCandidates.length > 0) {
-      evmCandidates.sort((a, b) => (b.outBig > a.outBig ? 1 : b.outBig < a.outBig ? -1 : 0));
-      const winner = { ...evmCandidates[0].payload };
-      if (evmCandidates.length > 1) {
-        winner.comparedPools = Math.max(2, Number(winner.comparedPools || 1) + 1);
+    const runEvmRelay = async () => {
+      const targetEvmRecip = evmAddress || recipient;
+      const stage1 = await quoteBridgeToIntermediate(evmInterAsset, targetEvmRecip);
+      if (!stage1 || !stage1.ok || !stage1.amountOut || BigInt(stage1.amountOut) <= 0n) {
+        return stage1 || { ok: false, error: 'Stage 1 EVM bridge failed' };
       }
-      return winner;
+      const stage2 = await contracts.quoteEvmDexSwap({
+        chainKey: toBc,
+        srcToken: EVM_NATIVE_SENTINEL,
+        destToken: toToken.contractAddress,
+        amountRaw: stage1.amountOut,
+        srcDecimals: 18,
+        destDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 18,
+        slippageBps,
+        fromAddress: /^0x[0-9a-fA-F]{40}$/.test(String(targetEvmRecip || '')) ? targetEvmRecip : undefined,
+        signal
+      });
+      if (!stage2 || !stage2.ok || !stage2.amountOut) {
+        return stage2 || { ok: false, error: 'Stage 2 EVM DEX quote failed' };
+      }
+      return {
+        ok: true,
+        compositeType: 'CROSS_CHAIN_TO_EVM_DEX',
+        stage1Quote: stage1,
+        stage2DexQuote: stage2,
+        intermediaryAssetId: evmInterAsset,
+        intermediaryRaw: stage1.amountOut,
+        depositAddress: null,
+        memo: null,
+        amountOut: String(stage2.amountOut),
+        amountOutFormatted: stage2.amountOutFormatted,
+        amountInUsd: stage1.amountInUsd || stage2.amountInUsd || null,
+        amountOutUsd: stage2.amountOutUsd || null,
+        serviceFeeBps: stage1.serviceFeeBps !== undefined ? stage1.serviceFeeBps : 25,
+        comparedPools: stage2.comparedPools || 1,
+        bestSource: stage2.bestSource || stage2.label,
+        routeLabel: `1Click (➔${toBc.toUpperCase()}) + ${stage2.routeLabel || stage2.label}`,
+        error: null
+      };
+    };
+
+    let dirVal = null;
+    if (canTryDirectCross) {
+      dirVal = await quoteIntentSwapOrWithdraw({
+        originAsset: resolvedOriginAsset,
+        destinationAsset: resolvedDestAsset,
+        amountRaw: amtStr,
+        slippageBps,
+        recipient,
+        refundTo,
+        nearAccountId,
+        depositType: 'ORIGIN_CHAIN',
+        recipientType: 'DESTINATION_CHAIN',
+        dry: true,
+        signal
+      }).catch((err) => ({ ok: false, error: err && err.message ? err.message : 'Direct 1Click quote failed' }));
+      if (dirVal && dirVal.ok && dirVal.amountOut && BigInt(dirVal.amountOut) > 0n) {
+        return { ...dirVal, routeLabel: dirVal.routeLabel || '1Click Cross-Chain' };
+      }
     }
 
-    return dirVal || relVal || { ok: false, error: t('暂无跨链报价', 'No cross-chain quote available') };
+    if (canTryEvmRelay) {
+      const relVal = await runEvmRelay().catch((err) => ({ ok: false, error: err && err.message ? err.message : 'EVM DEX relay failed' }));
+      if (relVal && relVal.ok && relVal.amountOut && BigInt(relVal.amountOut) > 0n) {
+        return relVal;
+      }
+      return dirVal || relVal;
+    }
+
+    return dirVal || { ok: false, error: t('暂无跨链报价', 'No cross-chain quote available') };
   }
 
   /**
@@ -3644,6 +4221,7 @@
     fetchNearNep141Balances,
     fetchIntentsUnifiedBalances,
     fetchLiveDefuseTokenPrices,
+    seedLivePricesCache,
     searchJupiterTokensV2,
     quoteNearDclPoolSwap,
     requestCrossChainDepositAddress,

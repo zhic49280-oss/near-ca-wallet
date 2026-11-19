@@ -164,7 +164,7 @@
   function encodeU64LE(n) {
     const out = new Uint8Array(8);
     let v = BigInt(n);
-    if (v < 0n) throw new RangeError('u64 must be non-negative');
+    if (v < 0n || v >= (1n << 64n)) throw new RangeError('u64 out of range');
     for (let i = 0; i < 8; i++) {
       out[i] = Number(v & 0xffn);
       v >>= 8n;
@@ -175,7 +175,7 @@
   function encodeU128LE(n) {
     const out = new Uint8Array(16);
     let v = BigInt(n);
-    if (v < 0n) throw new RangeError('u128 must be non-negative');
+    if (v < 0n || v >= (1n << 128n)) throw new RangeError('u128 out of range');
     for (let i = 0; i < 16; i++) {
       out[i] = Number(v & 0xffn);
       v >>= 8n;
@@ -541,31 +541,48 @@
     return (Array.isArray(mnemonic) ? mnemonic.join(' ') : String(mnemonic || '')).trim().normalize('NFKD');
   }
 
+  const _pbkdf2Cache = new Map();
+
   function cryptoPbkdf2Sync(mnemonic, passphrase = '') {
     const passStr = normalizeMnemonicInput(mnemonic);
-    const saltStr = 'mnemonic' + String(passphrase || '').normalize('NFKD');
+    const saltSuffix = String(passphrase || '').normalize('NFKD');
+    const cacheKey = `${passStr}\u0000${saltSuffix}`;
+    if (_pbkdf2Cache.has(cacheKey)) {
+      return new Uint8Array(_pbkdf2Cache.get(cacheKey));
+    }
+    const saltStr = 'mnemonic' + saltSuffix;
+    let out;
     if (nodeCrypto && nodeCrypto.pbkdf2Sync) {
-      return new Uint8Array(nodeCrypto.pbkdf2Sync(passStr, saltStr, 2048, 64, 'sha512'));
-    }
-    const enc = new TextEncoder();
-    const passBytes = enc.encode(passStr);
-    const saltBytes = enc.encode(saltStr);
-    const block1 = new Uint8Array(saltBytes.length + 4);
-    block1.set(saltBytes);
-    block1[saltBytes.length + 3] = 1;
+      out = new Uint8Array(nodeCrypto.pbkdf2Sync(passStr, saltStr, 2048, 64, 'sha512'));
+    } else {
+      const enc = new TextEncoder();
+      const passBytes = enc.encode(passStr);
+      const saltBytes = enc.encode(saltStr);
+      const block1 = new Uint8Array(saltBytes.length + 4);
+      block1.set(saltBytes);
+      block1[saltBytes.length + 3] = 1;
 
-    let U = cryptoHmacSha512Sync(passBytes, block1);
-    const T = new Uint8Array(U);
-    for (let iter = 1; iter < 2048; iter++) {
-      U = cryptoHmacSha512Sync(passBytes, U);
-      for (let j = 0; j < 64; j++) T[j] ^= U[j];
+      let U = cryptoHmacSha512Sync(passBytes, block1);
+      const T = new Uint8Array(U);
+      for (let iter = 1; iter < 2048; iter++) {
+        U = cryptoHmacSha512Sync(passBytes, U);
+        for (let j = 0; j < 64; j++) T[j] ^= U[j];
+      }
+      out = T;
     }
-    return T;
+    if (_pbkdf2Cache.size >= 64) _pbkdf2Cache.clear();
+    _pbkdf2Cache.set(cacheKey, out);
+    return new Uint8Array(out);
   }
 
   async function cryptoPbkdf2Async(mnemonic, passphrase = '') {
     const passStr = normalizeMnemonicInput(mnemonic);
-    const saltStr = 'mnemonic' + String(passphrase || '').normalize('NFKD');
+    const saltSuffix = String(passphrase || '').normalize('NFKD');
+    const cacheKey = `${passStr}\u0000${saltSuffix}`;
+    if (_pbkdf2Cache.has(cacheKey)) {
+      return new Uint8Array(_pbkdf2Cache.get(cacheKey));
+    }
+    const saltStr = 'mnemonic' + saltSuffix;
     if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
       try {
         const enc = new TextEncoder();
@@ -577,7 +594,10 @@
           key,
           512
         );
-        return new Uint8Array(bits);
+        const out = new Uint8Array(bits);
+        if (_pbkdf2Cache.size >= 64) _pbkdf2Cache.clear();
+        _pbkdf2Cache.set(cacheKey, out);
+        return new Uint8Array(out);
       } catch (_) {}
     }
     return cryptoPbkdf2Sync(mnemonic, passphrase);
@@ -678,38 +698,35 @@
 
   function generateMnemonic(length = 12) {
     const wordlist = getBip39Wordlist();
-    if (wordlist.length === 2048 && [12, 15, 18, 21, 24].includes(length)) {
-      const entBits = (length * 11 * 32) / 33;
-      const entBytesLen = entBits / 8;
-      const csBits = entBits / 32;
-      const entropy = getRandomBytes(entBytesLen);
-      const hash = sha256Bytes(entropy);
-      const csVal = hash[0] >> (8 - csBits);
+    if (wordlist.length !== 2048) {
+      throw new Error(msg('BIP-39 完整词库未加载，无法安全生成助记词', 'Full 2048-word BIP-39 wordlist unavailable'));
+    }
+    const len = Number(length) || 12;
+    if (![12, 15, 18, 21, 24].includes(len)) {
+      throw new Error(msg('助记词长度必须为 12 / 15 / 18 / 21 / 24 词', 'Mnemonic length must be 12, 15, 18, 21, or 24 words'));
+    }
+    const entBits = (len * 11 * 32) / 33;
+    const entBytesLen = entBits / 8;
+    const csBits = entBits / 32;
+    const entropy = getRandomBytes(entBytesLen);
+    const hash = sha256Bytes(entropy);
+    const csVal = hash[0] >> (8 - csBits);
 
-      const bits = [];
-      for (let i = 0; i < entropy.length; i++) {
-        for (let b = 7; b >= 0; b--) bits.push((entropy[i] >> b) & 1);
-      }
-      for (let b = csBits - 1; b >= 0; b--) {
-        bits.push((csVal >> b) & 1);
-      }
-
-      const words = [];
-      for (let i = 0; i < length; i++) {
-        let idx = 0;
-        for (let b = 0; b < 11; b++) {
-          idx = (idx << 1) | bits[i * 11 + b];
-        }
-        words.push(wordlist[idx]);
-      }
-      return words;
+    const bits = [];
+    for (let i = 0; i < entropy.length; i++) {
+      for (let b = 7; b >= 0; b--) bits.push((entropy[i] >> b) & 1);
+    }
+    for (let b = csBits - 1; b >= 0; b--) {
+      bits.push((csVal >> b) & 1);
     }
 
     const words = [];
-    const rand = getRandomBytes(length * 4);
-    const view = new DataView(rand.buffer, rand.byteOffset, rand.byteLength);
-    for (let i = 0; i < length; i++) {
-      words.push(wordlist[view.getUint32(i * 4, false) % wordlist.length]);
+    for (let i = 0; i < len; i++) {
+      let idx = 0;
+      for (let b = 0; b < 11; b++) {
+        idx = (idx << 1) | bits[i * 11 + b];
+      }
+      words.push(wordlist[idx]);
     }
     return words;
   }
@@ -744,12 +761,12 @@
       };
     }
 
-    if (words.length !== 12 && words.length !== 24) {
+    if (![12, 15, 18, 21, 24].includes(words.length)) {
       return {
         valid: false,
         error: msg(
-          `⚠️ 助记词数量错误 (Invalid word count)：检测到 ${words.length} 个单词，应为 12 或 24 个英文单词！`,
-          `Invalid word count: expected 12 or 24 words, got ${words.length}`
+          `⚠️ 助记词数量错误 (Invalid word count)：检测到 ${words.length} 个单词，应为 12 / 15 / 18 / 21 / 24 个英文单词！`,
+          `Invalid word count: expected 12, 15, 18, 21, or 24 words, got ${words.length}`
         ),
         invalidWords: []
       };
@@ -778,10 +795,19 @@
     }
 
     const normalized = words.map(w => w.toLowerCase());
+    const checksumValid = verifyBip39Checksum(normalized);
+    if (!checksumValid) {
+      return {
+        valid: false,
+        error: msg('助记词校验和无效，请检查单词拼写或顺序', 'Invalid BIP-39 checksum; check word spelling or order'),
+        words: normalized,
+        checksumValid: false
+      };
+    }
     return {
       valid: true,
       words: normalized,
-      checksumValid: verifyBip39Checksum(normalized)
+      checksumValid: true
     };
   }
 
@@ -903,7 +929,7 @@
     return ret;
   }
 
-  function decodeBech32m(address) {
+  function decodeBech32Any(address, expectedConst = null) {
     if (typeof address !== 'string') {
       return { valid: false, error: 'Address must be a string' };
     }
@@ -934,10 +960,11 @@
       data.push(idx);
     }
     const poly = bech32Polymod(bech32HrpExpand(hrp).concat(data));
-    if (poly !== BECH32M_CONST) {
+    const encoding = poly === 1 ? 'bech32' : (poly === BECH32M_CONST ? 'bech32m' : null);
+    if (!encoding || (expectedConst !== null && poly !== expectedConst)) {
       return {
         valid: false,
-        error: `Invalid Bech32m checksum: got 0x${poly.toString(16)}, expected 0x${BECH32M_CONST.toString(16)}`
+        error: `Invalid Bech32 checksum: got 0x${poly.toString(16)}`
       };
     }
     const values = data.slice(0, data.length - 6);
@@ -945,6 +972,12 @@
       return { valid: false, error: 'Empty witness data' };
     }
     const witnessVersion = values[0];
+    if (witnessVersion === 0 && poly !== 1) {
+      return { valid: false, error: 'Witness v0 must use Bech32' };
+    }
+    if (witnessVersion > 0 && poly !== BECH32M_CONST) {
+      return { valid: false, error: 'Witness v1+ must use Bech32m' };
+    }
     const programWords = values.slice(1);
     const programBytes = convertBits(programWords, 5, 8, false);
     if (!programBytes) {
@@ -952,11 +985,32 @@
     }
     return {
       valid: true,
+      encoding,
       hrp,
       witnessVersion,
       programBytes,
       programHex: Array.from(programBytes).map(b => b.toString(16).padStart(2, '0')).join('')
     };
+  }
+
+  function decodeBech32(address) {
+    return decodeBech32Any(address, 1);
+  }
+
+  function decodeBech32m(address) {
+    return decodeBech32Any(address, BECH32M_CONST);
+  }
+
+  function base58CheckDecode(str) {
+    const raw = base58Decode(str);
+    if (raw.length < 5) throw new Error('Invalid Base58Check length');
+    const payload = raw.slice(0, raw.length - 4);
+    const checksum = raw.slice(raw.length - 4);
+    const h = sha256Bytes(sha256Bytes(payload));
+    for (let i = 0; i < 4; i++) {
+      if (checksum[i] !== h[i]) throw new Error('Invalid Base58Check checksum');
+    }
+    return payload;
   }
 
   function validatePearlAddress(address) {
@@ -1001,22 +1055,52 @@
 
   const EVM_NETWORKS = new Set([
     'evm', 'eth', 'ethereum', 'bsc', 'smartchain', 'bnb', 'base', 'arb', 'arbitrum',
-    'hype', 'hyperevm', 'hood', 'robinhood', 'op', 'optimism', 'pol', 'polygon', 'avax', 'gnosis'
+    'hype', 'hyperevm', 'hood', 'robinhood', 'arc', 'arcnetwork', 'op', 'optimism', 'pol', 'polygon', 'avax', 'gnosis'
   ]);
 
   function isNearNamedAccount(addr) {
     if (addr.length < 2 || addr.length > 64) return false;
-    return /^(([a-z\d]+[-_])*[a-z\d]+\.)+([a-z\d]+[-_])*[a-z\d]+$/.test(addr) && /\.(near|tg)$/i.test(addr);
-  }
-
-  function isNearUniversalAccount(addr) {
-    return /^0u[0-9a-hjkmnp-tv-z]{52}$/.test(String(addr || '').trim());
+    return /^(([a-z\d]+[-_])*[a-z\d]+\.)+([a-z\d]+[-_])*[a-z\d]+$/.test(addr) && /\.(near|tg|testnet)$/i.test(addr);
   }
 
   function isValidSolanaAddressFormat(clean) {
     if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(clean)) return false;
     try {
       return base58Decode(clean).length === 32;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isValidBitcoinAddressFormat(clean) {
+    if (!clean) return false;
+    if (/^bc1/i.test(clean)) {
+      const dec = decodeBech32Any(clean);
+      if (!dec.valid || dec.hrp !== 'bc') return false;
+      if (dec.witnessVersion === 0) {
+        return dec.programBytes.length === 20 || dec.programBytes.length === 32;
+      }
+      if (dec.witnessVersion === 1) {
+        return dec.programBytes.length === 32;
+      }
+      return false;
+    }
+    if (/^[13][1-9A-HJ-NP-Za-km-z]{25,34}$/.test(clean)) {
+      try {
+        const payload = base58CheckDecode(clean);
+        return payload.length === 21 && (payload[0] === 0x00 || payload[0] === 0x05);
+      } catch (_) {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function isValidTronAddressFormat(clean) {
+    if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(clean)) return false;
+    try {
+      const payload = base58CheckDecode(clean);
+      return payload.length === 21 && payload[0] === 0x41;
     } catch (_) {
       return false;
     }
@@ -1040,16 +1124,26 @@
     }
     if (net === 'near') {
       const lower = clean.toLowerCase();
-      if (/^[a-f0-9]{64}$/i.test(clean) || isNearNamedAccount(lower) || isNearUniversalAccount(lower)) {
+      if (/^[a-f0-9]{64}$/i.test(clean) || isNearNamedAccount(lower)) {
         return { valid: true };
       }
       return {
         valid: false,
-        error: msg('NEAR 地址应为 .near/.tg 域名、0u 通用地址或 64 位十六进制隐式地址', 'NEAR address must be a .near/.tg account ID, 0u universal address, or 64-hex implicit account')
+        error: msg('NEAR 地址应为 .near/.tg 域名或 64 位十六进制隐式地址', 'NEAR address must be a .near/.tg account ID or 64-hex implicit account')
       };
     }
     if (EVM_NETWORKS.has(net)) {
-      if (/^0x[a-fA-F0-9]{40}$/.test(clean)) return { valid: true };
+      if (/^0x[a-fA-F0-9]{40}$/.test(clean)) {
+        const hasLower = /[a-f]/.test(clean.slice(2));
+        const hasUpper = /[A-F]/.test(clean.slice(2));
+        if (hasLower && hasUpper && eip55ChecksumAddress(clean) !== clean) {
+          return {
+            valid: false,
+            error: msg('EVM 地址 EIP-55 大小写校验失败', 'Invalid EVM EIP-55 checksum')
+          };
+        }
+        return { valid: true };
+      }
       return {
         valid: false,
         error: msg('EVM 地址应为 0x 开头的 42 位十六进制地址', 'EVM address must be a 42-character hex string starting with 0x')
@@ -1063,23 +1157,20 @@
       };
     }
     if (net === 'tron' || net === 'trx') {
-      if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(clean)) return { valid: true };
+      if (isValidTronAddressFormat(clean)) return { valid: true };
       return {
         valid: false,
-        error: msg('TRON 地址应为 T 开头的 34 位 Base58 地址', 'TRON address must be a 34-character Base58 string starting with T')
+        error: msg('TRON 地址无效（应为 T 开头的有效 Base58Check 地址）', 'Invalid TRON Base58Check address')
       };
     }
     if (net === 'btc' || net === 'bitcoin') {
-      if (/^(bc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{25,87}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$/i.test(clean)) {
-        // Legacy Base58Check addresses start with 1 or 3 and must be valid Base58 (not mixed invalid chars)
-        if (/^[13]/.test(clean) && !/^[13][1-9A-HJ-NP-Za-km-z]{25,34}$/.test(clean)) {
-          return { valid: false, error: msg('Bitcoin 地址格式不正确', 'Invalid Bitcoin address format') };
-        }
-        return { valid: true };
-      }
-      return { valid: false, error: msg('Bitcoin 地址格式不正确', 'Invalid Bitcoin address format') };
+      if (isValidBitcoinAddressFormat(clean)) return { valid: true };
+      return { valid: false, error: msg('Bitcoin 地址格式或校验和无效', 'Invalid Bitcoin address or checksum') };
     }
-    return { valid: true };
+    return {
+      valid: false,
+      error: msg('暂不支持该链地址格式校验', 'Unsupported chain address format')
+    };
   }
 
   function detectAddressNetwork(address) {
@@ -1088,19 +1179,10 @@
     if (/^prl1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{10,}$/i.test(clean)) return 'prl';
     if (/^qz[1-9A-HJ-NP-Za-km-z]{45,50}$/.test(clean)) return 'qtc';
     if (/^0x[a-fA-F0-9]{40}$/.test(clean)) return 'evm';
-    if (/^[a-f0-9]{64}$/i.test(clean) || isNearNamedAccount(clean.toLowerCase()) || isNearUniversalAccount(clean.toLowerCase())) return 'near';
-    if (/^bc1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{25,87}$/i.test(clean)) return 'btc';
-    if (/^[1-9A-HJ-NP-Za-km-z]{26,44}$/.test(clean)) {
-      let decodedLen = -1;
-      try {
-        decodedLen = base58Decode(clean).length;
-      } catch (_) {
-        decodedLen = -1;
-      }
-      if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(clean) && decodedLen !== 32) return 'tron';
-      if (/^[13][1-9A-HJ-NP-Za-km-z]{25,34}$/.test(clean) && decodedLen !== 32) return 'btc';
-      if (clean.length >= 32 && decodedLen === 32) return 'sol';
-    }
+    if (/^[a-f0-9]{64}$/i.test(clean) || isNearNamedAccount(clean.toLowerCase())) return 'near';
+    if (isValidBitcoinAddressFormat(clean)) return 'btc';
+    if (isValidTronAddressFormat(clean)) return 'tron';
+    if (isValidSolanaAddressFormat(clean)) return 'sol';
     return null;
   }
 
@@ -1129,12 +1211,69 @@
     return secpMod(old_s, m);
   }
 
+  function secpJacDouble(P) {
+    if (!P || P.y === 0n || P.z === 0n) return null;
+    const X1 = P.x;
+    const Y1 = P.y;
+    const Z1 = P.z;
+    const A = secpMod(X1 * X1);
+    const B = secpMod(Y1 * Y1);
+    const C = secpMod(B * B);
+    const xPlusB = secpMod(X1 + B);
+    const D = secpMod(2n * (secpMod(xPlusB * xPlusB) - A - C));
+    const E = secpMod(3n * A);
+    const F = secpMod(E * E);
+    const X3 = secpMod(F - 2n * D);
+    const Y3 = secpMod(E * (D - X3) - 8n * C);
+    const Z3 = secpMod(2n * Y1 * Z1);
+    if (Z3 === 0n) return null;
+    return { x: X3, y: Y3, z: Z3 };
+  }
+
+  function secpJacAdd(P, Q) {
+    if (!P || P.z === 0n) return Q;
+    if (!Q || Q.z === 0n) return P;
+    const Z1Z1 = secpMod(P.z * P.z);
+    const Z2Z2 = secpMod(Q.z * Q.z);
+    const U1 = secpMod(P.x * Z2Z2);
+    const U2 = secpMod(Q.x * Z1Z1);
+    const S1 = secpMod(P.y * Q.z * Z2Z2);
+    const S2 = secpMod(Q.y * P.z * Z1Z1);
+    const H = secpMod(U2 - U1);
+    const r = secpMod(2n * (S2 - S1));
+    if (H === 0n) {
+      return r === 0n ? secpJacDouble(P) : null;
+    }
+    const twoH = secpMod(2n * H);
+    const I = secpMod(twoH * twoH);
+    const J = secpMod(H * I);
+    const V = secpMod(U1 * I);
+    const X3 = secpMod(r * r - J - 2n * V);
+    const Y3 = secpMod(r * (V - X3) - 2n * S1 * J);
+    const zSum = secpMod(P.z + Q.z);
+    const Z3 = secpMod((secpMod(zSum * zSum) - Z1Z1 - Z2Z2) * H);
+    if (Z3 === 0n) return null;
+    return { x: X3, y: Y3, z: Z3 };
+  }
+
+  function secpJacToAffine(P) {
+    if (!P || P.z === 0n) return null;
+    const zInv = secpModInverse(P.z);
+    const zInv2 = secpMod(zInv * zInv);
+    const zInv3 = secpMod(zInv2 * zInv);
+    return {
+      x: secpMod(P.x * zInv2),
+      y: secpMod(P.y * zInv3)
+    };
+  }
+
   function secpPointAdd(p1, p2) {
     if (!p1) return p2;
     if (!p2) return p1;
-    if (p1.x === p2.x && p1.y !== p2.y) return null;
+    if (p1.x === p2.x && secpMod(p1.y + p2.y) === 0n) return null;
     let m;
     if (p1.x === p2.x && p1.y === p2.y) {
+      if (p1.y === 0n) return null;
       m = secpMod(3n * p1.x * p1.x * secpModInverse(2n * p1.y));
     } else {
       m = secpMod((p2.y - p1.y) * secpModInverse(p2.x - p1.x));
@@ -1145,26 +1284,32 @@
   }
 
   function secpPointMultiply(k, p = { x: SECP256K1_GX, y: SECP256K1_GY }) {
-    let curr = p;
-    let res = null;
+    if (!p) return null;
     let scalar = secpMod(k, SECP256K1_N);
+    if (scalar === 0n) return null;
+    let curr = { x: p.x, y: p.y, z: 1n };
+    let res = null;
     while (scalar > 0n) {
-      if (scalar & 1n) res = secpPointAdd(res, curr);
-      curr = secpPointAdd(curr, curr);
+      if (scalar & 1n) res = secpJacAdd(res, curr);
       scalar >>= 1n;
+      if (scalar > 0n) curr = secpJacDouble(curr);
     }
-    return res;
+    return secpJacToAffine(res);
   }
 
   function bip32DeriveMasterKey(seedBytes) {
     const enc = new TextEncoder();
     const IBytes = cryptoHmacSha512Sync(enc.encode('Bitcoin seed'), seedBytes);
+    const k = BigInt('0x' + bytesToHex(IBytes.slice(0, 32)));
+    if (k === 0n || k >= SECP256K1_N) throw new Error('Invalid BIP-32 master key');
     return { privateKey: IBytes.slice(0, 32), chainCode: IBytes.slice(32) };
   }
 
   async function bip32DeriveMasterKeyAsync(seedBytes) {
     const enc = new TextEncoder();
     const IBytes = await cryptoHmacSha512Async(enc.encode('Bitcoin seed'), seedBytes);
+    const k = BigInt('0x' + bytesToHex(IBytes.slice(0, 32)));
+    if (k === 0n || k >= SECP256K1_N) throw new Error('Invalid BIP-32 master key');
     return { privateKey: IBytes.slice(0, 32), chainCode: IBytes.slice(32) };
   }
 
@@ -1190,8 +1335,12 @@
   function finishBip32Child(parent, IBytes) {
     const IL = IBytes.slice(0, 32);
     const IR = IBytes.slice(32);
+    const ilNum = BigInt('0x' + bytesToHex(IL));
+    if (ilNum === 0n || ilNum >= SECP256K1_N) {
+      throw new Error('Invalid BIP-32 IL scalar derived');
+    }
     const ki = secpMod(
-      BigInt('0x' + bytesToHex(IL)) + BigInt('0x' + bytesToHex(parent.privateKey)),
+      ilNum + BigInt('0x' + bytesToHex(parent.privateKey)),
       SECP256K1_N
     );
     if (ki === 0n) throw new Error('Invalid BIP-32 child key derived');
@@ -1201,12 +1350,26 @@
     };
   }
 
+  function parseBip32PathSegments(pathStr) {
+    const parts = String(pathStr || '').trim().split('/');
+    if (parts[0] !== 'm' || parts.length < 2) {
+      throw new Error(`Invalid BIP-32 derivation path: ${pathStr}`);
+    }
+    return parts.slice(1).map((part) => {
+      const m = part.match(/^(\d+)(['hH]?)$/);
+      if (!m) throw new Error(`Invalid BIP-32 path segment: ${part}`);
+      const index = Number(m[1]);
+      if (!Number.isInteger(index) || index < 0 || index >= 0x80000000) {
+        throw new Error(`BIP-32 index out of range: ${part}`);
+      }
+      return { index, hardened: Boolean(m[2]) };
+    });
+  }
+
   function bip32DerivePath(master, pathStr) {
-    const parts = String(pathStr).split('/').slice(1);
+    const segments = parseBip32PathSegments(pathStr);
     let curr = master;
-    for (const part of parts) {
-      const hardened = part.endsWith("'");
-      const index = parseInt(part.replace("'", ''), 10);
+    for (const { index, hardened } of segments) {
       const dataBytes = buildBip32ChildInput(curr, index, hardened);
       curr = finishBip32Child(curr, cryptoHmacSha512Sync(curr.chainCode, dataBytes));
     }
@@ -1214,11 +1377,9 @@
   }
 
   async function bip32DerivePathAsync(master, pathStr) {
-    const parts = String(pathStr).split('/').slice(1);
+    const segments = parseBip32PathSegments(pathStr);
     let curr = master;
-    for (const part of parts) {
-      const hardened = part.endsWith("'");
-      const index = parseInt(part.replace("'", ''), 10);
+    for (const { index, hardened } of segments) {
       const dataBytes = buildBip32ChildInput(curr, index, hardened);
       curr = finishBip32Child(curr, await cryptoHmacSha512Async(curr.chainCode, dataBytes));
     }
@@ -1293,17 +1454,21 @@
     const eHash = taggedHash('BIP0340/challenge', concatUint8Arrays([sig.slice(0, 32), pkX, msg]));
     const e = BigInt('0x' + bytesToHex(eHash)) % SECP256K1_N;
     const sG = secpPointMultiply(s);
-    const eP = secpPointMultiply(e, P);
-    const negEP = { x: eP.x, y: secpMod(SECP256K1_P - eP.y, SECP256K1_P) };
+    const eP = e === 0n ? null : secpPointMultiply(e, P);
+    const negEP = eP ? { x: eP.x, y: secpMod(SECP256K1_P - eP.y, SECP256K1_P) } : null;
     const R = secpPointAdd(sG, negEP);
     if (!R || R.y % 2n !== 0n || R.x !== r) return false;
     return true;
   }
 
-  function privateKeyToTaprootAddress(privBytes, useTapTweak = true, path = "m/86'/808276'/0'/0/0") {
+  function privateKeyToTaprootAddress(privBytes, useTapTweak = true, path = "m/86'/808276'/0'/0/0", hrp = 'prl') {
     const privHex = bytesToHex(privBytes);
     let priv = BigInt('0x' + privHex);
+    if (priv <= 0n || priv >= SECP256K1_N) {
+      throw new Error('Invalid Taproot private key scalar');
+    }
     let pt = secpPointMultiply(priv);
+    if (!pt) throw new Error('Invalid Taproot public key');
 
     if (useTapTweak) {
       if (pt.y % 2n !== 0n) {
@@ -1313,12 +1478,16 @@
       const pxHex = pt.x.toString(16).padStart(64, '0');
       const pxBytes = hexToBytes(pxHex);
       const tBytes = tapTweakHash(pxBytes);
-      const tBig = BigInt('0x' + bytesToHex(tBytes)) % SECP256K1_N;
+      const tBig = BigInt('0x' + bytesToHex(tBytes));
+      if (tBig >= SECP256K1_N) {
+        throw new Error('Invalid BIP-341 TapTweak scalar >= n');
+      }
       const tPt = secpPointMultiply(tBig);
       const Q = secpPointAdd(pt, tPt);
+      if (!Q) throw new Error('Invalid BIP-341 tweaked point at infinity');
       const qxHex = Q.x.toString(16).padStart(64, '0');
       const qxBytes = Array.from(hexToBytes(qxHex));
-      const address = encodeBech32m('prl', 1, qxBytes);
+      const address = encodeBech32m(hrp, 1, qxBytes);
       const tweakedPriv = secpMod(priv + tBig, SECP256K1_N);
       return {
         address,
@@ -1331,7 +1500,7 @@
 
     const xHex = pt.x.toString(16).padStart(64, '0');
     const xBytes = Array.from(hexToBytes(xHex));
-    const address = encodeBech32m('prl', 1, xBytes);
+    const address = encodeBech32m(hrp, 1, xBytes);
     return {
       address,
       privateKeyHex: `0x${privHex}`,
@@ -1671,7 +1840,7 @@
     const seedBytes = cryptoPbkdf2Sync(mnemonicStr);
     const master = bip32DeriveMasterKey(seedBytes);
     const child = bip32DerivePath(master, path);
-    return privateKeyToTaprootAddress(child.privateKey, useTapTweak, path);
+    return privateKeyToTaprootAddress(child.privateKey, useTapTweak, path, 'prl');
   }
 
   async function derivePearlFromSeedAsync(words, path = "m/86'/808276'/0'/0/0", useTapTweak = true) {
@@ -1679,7 +1848,23 @@
     const seedBytes = await cryptoPbkdf2Async(mnemonicStr);
     const master = await bip32DeriveMasterKeyAsync(seedBytes);
     const child = await bip32DerivePathAsync(master, path);
-    return privateKeyToTaprootAddress(child.privateKey, useTapTweak, path);
+    return privateKeyToTaprootAddress(child.privateKey, useTapTweak, path, 'prl');
+  }
+
+  function deriveBitcoinFromSeed(words, path = "m/86'/0'/0'/0/0", useTapTweak = true) {
+    const mnemonicStr = assertNonEmptyMnemonic(words);
+    const seedBytes = cryptoPbkdf2Sync(mnemonicStr);
+    const master = bip32DeriveMasterKey(seedBytes);
+    const child = bip32DerivePath(master, path);
+    return privateKeyToTaprootAddress(child.privateKey, useTapTweak, path, 'bc');
+  }
+
+  async function deriveBitcoinFromSeedAsync(words, path = "m/86'/0'/0'/0/0", useTapTweak = true) {
+    const mnemonicStr = assertNonEmptyMnemonic(words);
+    const seedBytes = await cryptoPbkdf2Async(mnemonicStr);
+    const master = await bip32DeriveMasterKeyAsync(seedBytes);
+    const child = await bip32DerivePathAsync(master, path);
+    return privateKeyToTaprootAddress(child.privateKey, useTapTweak, path, 'bc');
   }
 
   async function deriveCandidatePearlAddressesAsync(words) {
@@ -1698,11 +1883,11 @@
     const results = [];
     for (const p of tweakedPaths) {
       const child = await bip32DerivePathAsync(master, p);
-      results.push(privateKeyToTaprootAddress(child.privateKey, true, p));
+      results.push(privateKeyToTaprootAddress(child.privateKey, true, p, 'prl'));
     }
     for (const p of ["m/86'/808276'/0'/0/0", "m/86'/0'/0'/0/0"]) {
       const child = await bip32DerivePathAsync(master, p);
-      results.push(privateKeyToTaprootAddress(child.privateKey, false, `${p} (untweaked)`));
+      results.push(privateKeyToTaprootAddress(child.privateKey, false, `${p} (untweaked)`, 'prl'));
     }
     return results;
   }
@@ -1711,31 +1896,42 @@
     const mnemonicStr = assertNonEmptyMnemonic(words);
     const seedBytes = await cryptoPbkdf2Async(mnemonicStr);
     const master = await bip32DeriveMasterKeyAsync(seedBytes);
-    const [near, pearlChild] = await Promise.all([
+    const [near, pearlChild, btcChild] = await Promise.all([
       deriveNearFromSeedBytesAsync(seedBytes, 0),
-      bip32DerivePathAsync(master, "m/86'/808276'/0'/0/0")
+      bip32DerivePathAsync(master, "m/86'/808276'/0'/0/0"),
+      bip32DerivePathAsync(master, "m/86'/0'/0'/0/0")
     ]);
-    const pearl = privateKeyToTaprootAddress(pearlChild.privateKey, true, "m/86'/808276'/0'/0/0");
-    const mpc = deriveNearMpcAllAddresses(near.nearAddress);
+    const pearl = privateKeyToTaprootAddress(pearlChild.privateKey, true, "m/86'/808276'/0'/0/0", 'prl');
+    const btc = privateKeyToTaprootAddress(btcChild.privateKey, true, "m/86'/0'/0'/0/0", 'bc');
+    const evmMpc = deriveNearMpcEvmAddress(near.nearAddress, 'ethereum-1');
+    const solMpc = deriveNearMpcSolanaAddress(near.nearAddress, 'solana-1');
+    const mpc = {
+      nearAccountId: evmMpc.predecessorId,
+      evmAddress: evmMpc.mpcEvmAddress,
+      solAddress: solMpc.mpcSolAddress,
+      details: { evm: evmMpc, sol: solMpc }
+    };
 
     return {
       near,
       pearl,
+      btc,
       mpc,
       nearAddress: near.nearAddress,
       nearPublicKey: near.nearPublicKey,
       nearPrivateKey: near.nearPrivateKey,
       nearPrivateSeedHex: near.nearPrivateSeedHex,
-      evmAddress: mpc.evmAddress,
-      mpcEvmAddress: mpc.evmAddress,
-      solAddress: mpc.solAddress,
-      mpcSolAddress: mpc.solAddress,
-      solPublicKey: mpc.solAddress,
+      evmAddress: evmMpc.mpcEvmAddress,
+      mpcEvmAddress: evmMpc.mpcEvmAddress,
+      solAddress: solMpc.mpcSolAddress,
+      mpcSolAddress: solMpc.mpcSolAddress,
+      solPublicKey: solMpc.mpcSolAddress,
       pearlAddress: pearl.address,
       pearlPrivateKeyHex: pearl.privateKeyHex,
       pearlTweakedPrivateKeyHex: pearl.tweakedPrivateKeyHex,
-      btcAddress: mpc.btcAddress,
-      mpcBtcAddress: mpc.btcAddress
+      btcAddress: btc.address,
+      btcPrivateKeyHex: btc.privateKeyHex,
+      btcTweakedPrivateKeyHex: btc.tweakedPrivateKeyHex
     };
   }
 
@@ -1823,7 +2019,7 @@
   }
 
   function deriveNearMpcSecp256k1Point(nearAccountId, path = 'ethereum-1', options = {}) {
-    const predecessorId = String(nearAccountId || '').trim();
+    const predecessorId = String(nearAccountId || '').trim().toLowerCase();
     if (!predecessorId) {
       throw new Error('nearAccountId is required for MPC address derivation');
     }
@@ -1890,7 +2086,7 @@
    * using Ed25519 additive key derivation with little-endian sha3_256 epsilon modulo ED_L.
    */
   function deriveNearMpcSolanaAddress(nearAccountId, path = 'solana-1', options = {}) {
-    const predecessorId = String(nearAccountId || '').trim();
+    const predecessorId = String(nearAccountId || '').trim().toLowerCase();
     if (!predecessorId) {
       throw new Error('nearAccountId is required for MPC Solana address derivation');
     }
@@ -1929,7 +2125,7 @@
   }
 
   /**
-   * Derives the deterministic Pearl Taproot Bech32m (prl1p...) address controlled by NEAR MPC (`v1.signer`, domain_id: 0).
+   * @deprecated Legacy MPC secp256k1 helper only. Do NOT use for Taproot (BIP-340 Schnorr) wallets.
    */
   function deriveNearMpcPearlAddress(nearAccountId, path = 'pearl-1', options = {}) {
     const pt = deriveNearMpcSecp256k1Point(nearAccountId, path || 'pearl-1', options);
@@ -1947,7 +2143,7 @@
   }
 
   /**
-   * Derives the deterministic Bitcoin Taproot Bech32m (bc1p...) address controlled by NEAR MPC (`v1.signer`, domain_id: 0).
+   * @deprecated Legacy MPC secp256k1 helper only. Wallets use self-custody BIP-86 (deriveBitcoinFromSeed).
    */
   function deriveNearMpcBitcoinAddress(nearAccountId, path = 'bitcoin-1', options = {}) {
     const pt = deriveNearMpcSecp256k1Point(nearAccountId, path || 'bitcoin-1', options);
@@ -1964,16 +2160,23 @@
     };
   }
 
+  const _mpcAllCache = new Map();
+
   /**
-   * Derives all external chain addresses (EVM, Solana, Pearl, Bitcoin) controlled by a NEAR Master Account via v1.signer.
+   * Derives external chain addresses (EVM, Solana, plus legacy inspector fields) controlled by a NEAR Master Account via v1.signer.
    */
   function deriveNearMpcAllAddresses(nearAccountId, options = {}) {
-    const evm = deriveNearMpcEvmAddress(nearAccountId, (options && options.evmPath) || 'ethereum-1', options);
-    const sol = deriveNearMpcSolanaAddress(nearAccountId, (options && options.solPath) || 'solana-1', options);
-    const pearl = deriveNearMpcPearlAddress(nearAccountId, (options && options.pearlPath) || 'pearl-1', options);
-    const btc = deriveNearMpcBitcoinAddress(nearAccountId, (options && options.btcPath) || 'bitcoin-1', options);
+    const normId = String(nearAccountId || '').trim().toLowerCase();
+    const cacheKey = `${normId}|${JSON.stringify(options || {})}`;
+    if (_mpcAllCache.has(cacheKey)) {
+      return _mpcAllCache.get(cacheKey);
+    }
+    const evm = deriveNearMpcEvmAddress(normId, (options && options.evmPath) || 'ethereum-1', options);
+    const sol = deriveNearMpcSolanaAddress(normId, (options && options.solPath) || 'solana-1', options);
+    const pearl = deriveNearMpcPearlAddress(normId, (options && options.pearlPath) || 'pearl-1', options);
+    const btc = deriveNearMpcBitcoinAddress(normId, (options && options.btcPath) || 'bitcoin-1', options);
 
-    return {
+    const out = {
       nearAccountId: evm.predecessorId,
       evmAddress: evm.mpcEvmAddress,
       solAddress: sol.mpcSolAddress,
@@ -1981,139 +2184,120 @@
       btcAddress: btc.mpcBtcAddress,
       details: { evm, sol, pearl, btc }
     };
-  }
-
-  // ======================== Post-Quantum ML-DSA-65 & NEP-655 Universal Accounts ========================
-
-  function getNearMlDsa65Lib() {
-    if (typeof globalThis !== 'undefined' && globalThis.NearMlDsa65) {
-      return globalThis.NearMlDsa65;
-    }
-    if (typeof require === 'function') {
-      try {
-        require('../ml-dsa-65.umd.min.js');
-        if (typeof globalThis !== 'undefined' && globalThis.NearMlDsa65) {
-          return globalThis.NearMlDsa65;
-        }
-      } catch (_) {}
-    }
-    throw new Error(msg('ML-DSA-65 后量子引擎未加载', 'ML-DSA-65 post-quantum engine is not loaded'));
-  }
-
-  function encodeCrockfordBase32(bytes) {
-    const alphabet = '0123456789abcdefghjkmnpqrstvwxyz';
-    let bits = 0;
-    let value = 0;
-    let out = '';
-    for (let i = 0; i < bytes.length; i++) {
-      value = (value << 8) | bytes[i];
-      bits += 8;
-      while (bits >= 5) {
-        out += alphabet[(value >>> (bits - 5)) & 31];
-        bits -= 5;
-      }
-    }
-    if (bits > 0) {
-      out += alphabet[(value << (5 - bits)) & 31];
-    }
+    if (_mpcAllCache.size >= 64) _mpcAllCache.clear();
+    _mpcAllCache.set(cacheKey, out);
     return out;
   }
 
-  function buildUniversalStateInitFromMlDsa65PublicKey(publicKeyStr) {
-    const lib = getNearMlDsa65Lib();
-    const handleStr = lib.publicKeyToHandle(publicKeyStr);
-    const handleBytes = lib.decodePublicKeyHandle(handleStr);
-    // UniversalStateInit::V1 { code: None (0x00), data: empty (0x00000000), access_keys: [PublicKeyHandle::MLDSA65(2, handle32)] }
-    const rawStateInitBytes = concatUint8Arrays([
-      new Uint8Array([0]), // UniversalStateInit::V1
-      new Uint8Array([0]), // code: Option::None
-      encodeU32LE(0), // data: empty BTreeMap
-      encodeU32LE(1), // access_keys: BTreeSet len 1
-      new Uint8Array([2]), // PublicKeyHandle::MLDSA65 (KeyType = 2)
-      handleBytes
-    ]);
-    const digest = sha3_256Bytes(rawStateInitBytes);
-    const universalAccountId = `0u${encodeCrockfordBase32(digest)}`;
+  // ======================== PIN PBKDF2 Hashing & AES-256-GCM Vault Encryption ========================
+
+  async function derivePbkdf2Sha256KeyBytesAsync(secretStr, saltBytes, iterations = 100_000) {
+    const passBytes = new TextEncoder().encode(String(secretStr || ''));
+    if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
+      try {
+        const baseKey = await globalThis.crypto.subtle.importKey('raw', passBytes, 'PBKDF2', false, ['deriveBits']);
+        const bits = await globalThis.crypto.subtle.deriveBits(
+          { name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations },
+          baseKey,
+          256
+        );
+        return new Uint8Array(bits);
+      } catch (_) {}
+    }
+    if (nodeCrypto && nodeCrypto.pbkdf2Sync) {
+      return new Uint8Array(nodeCrypto.pbkdf2Sync(passBytes, saltBytes, iterations, 32, 'sha256'));
+    }
+    throw new Error('PBKDF2-SHA256 unavailable');
+  }
+
+  async function hashPinAsync(pin, saltHex = null, iterations = 100_000) {
+    const cleanPin = String(pin || '').trim();
+    if (!cleanPin) throw new Error('PIN cannot be empty');
+    const saltBytes = saltHex ? hexToBytes(saltHex) : getRandomBytes(16);
+    const derived = await derivePbkdf2Sha256KeyBytesAsync(cleanPin, saltBytes, iterations);
     return {
-      rawStateInitBytes,
-      publicKeyHandle: handleStr,
-      universalAccountId
+      hashHex: bytesToHex(derived),
+      saltHex: bytesToHex(saltBytes),
+      iterations
     };
   }
 
-  async function deriveNearMlDsa65FromMnemonicAsync(mnemonic, index = 0) {
-    const checked = validateMnemonic(mnemonic);
-    if (!checked.valid) {
-      throw new Error(checked.error || 'Invalid mnemonic');
-    }
-    const normalizedPhrase = checked.words.join(' ');
-    const bip39Seed = await cryptoPbkdf2Async(normalizedPhrase, 'mnemonic', 2048, 64);
-    const domain = new TextEncoder().encode(`near:ml-dsa-65-seed:v1:${Number(index) || 0}:`);
-    const seed32 = sha256Bytes(concatUint8Arrays([domain, bip39Seed]));
-    const lib = getNearMlDsa65Lib();
-    const signer = lib.signerFromSeed(seed32);
+  async function verifyPinHashAsync(pin, expectedHashHex, saltHex, iterations = 100_000) {
+    if (!pin || !expectedHashHex || !saltHex) return false;
     try {
-      const publicKey = signer.publicKey;
-      const secretKey = signer.exportSecretKey();
-      const { universalAccountId, publicKeyHandle, rawStateInitBytes } = buildUniversalStateInitFromMlDsa65PublicKey(publicKey);
+      const actual = await hashPinAsync(pin, saltHex, iterations);
+      const a = hexToBytes(actual.hashHex);
+      const b = hexToBytes(expectedHashHex);
+      if (a.length !== b.length) return false;
+      let diff = 0;
+      for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+      return diff === 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function encryptVaultJsonAsync(obj, password, iterations = 100_000) {
+    const plainBytes = new TextEncoder().encode(JSON.stringify(obj));
+    const saltBytes = getRandomBytes(16);
+    const ivBytes = getRandomBytes(12);
+    const keyBytes = await derivePbkdf2Sha256KeyBytesAsync(password, saltBytes, iterations);
+
+    if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
+      const aesKey = await globalThis.crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt']);
+      const ctBuf = await globalThis.crypto.subtle.encrypt({ name: 'AES-GCM', iv: ivBytes }, aesKey, plainBytes);
       return {
-        mnemonic: normalizedPhrase,
-        seedHex: bytesToHex(seed32),
-        publicKey,
-        publicKeyHandle,
-        secretKey,
-        universalAccountId,
-        rawStateInitHex: bytesToHex(rawStateInitBytes)
+        v: 1,
+        alg: 'AES-256-GCM',
+        kdf: 'PBKDF2-SHA256',
+        iter: iterations,
+        saltHex: bytesToHex(saltBytes),
+        ivHex: bytesToHex(ivBytes),
+        ctBase64: bytesToBase64(new Uint8Array(ctBuf))
       };
-    } finally {
-      signer.destroy();
     }
-  }
-
-  function importNearMlDsa65FromSecretKey(secretKeyStr) {
-    const lib = getNearMlDsa65Lib();
-    const signer = lib.signerFromSecretKey(String(secretKeyStr || '').trim());
-    try {
-      const publicKey = signer.publicKey;
-      const secretKey = signer.exportSecretKey();
-      const { universalAccountId, publicKeyHandle, rawStateInitBytes } = buildUniversalStateInitFromMlDsa65PublicKey(publicKey);
+    if (nodeCrypto && nodeCrypto.createCipheriv) {
+      const cipher = nodeCrypto.createCipheriv('aes-256-gcm', keyBytes, ivBytes);
+      const enc = Buffer.concat([cipher.update(plainBytes), cipher.final()]);
+      const tag = cipher.getAuthTag();
       return {
-        publicKey,
-        publicKeyHandle,
-        secretKey,
-        universalAccountId,
-        rawStateInitHex: bytesToHex(rawStateInitBytes)
+        v: 1,
+        alg: 'AES-256-GCM',
+        kdf: 'PBKDF2-SHA256',
+        iter: iterations,
+        saltHex: bytesToHex(saltBytes),
+        ivHex: bytesToHex(ivBytes),
+        ctBase64: bytesToBase64(concatUint8Arrays([new Uint8Array(enc), new Uint8Array(tag)]))
       };
-    } finally {
-      signer.destroy();
     }
+    throw new Error('AES-256-GCM unavailable');
   }
 
-  function decodeNearMlDsa65PublicKey(publicKeyStr) {
-    return getNearMlDsa65Lib().decodePublicKey(String(publicKeyStr || '').trim());
-  }
-
-  function decodeNearMlDsa65PublicKeyHandle(handleStr) {
-    return getNearMlDsa65Lib().decodePublicKeyHandle(String(handleStr || '').trim());
-  }
-
-  function signNearHashMlDsa65(hashBytes, secretKeyStr) {
-    const lib = getNearMlDsa65Lib();
-    const signer = lib.signerFromSecretKey(String(secretKeyStr || '').trim());
-    try {
-      return signer.signHash(toUint8Array(hashBytes));
-    } finally {
-      signer.destroy();
+  async function decryptVaultJsonAsync(envelope, password) {
+    if (!envelope || typeof envelope !== 'object' || !envelope.ctBase64 || !envelope.saltHex || !envelope.ivHex) {
+      throw new Error('Invalid encrypted vault envelope');
     }
-  }
+    const saltBytes = hexToBytes(envelope.saltHex);
+    const ivBytes = hexToBytes(envelope.ivHex);
+    const ctBytes = base64ToBytes(envelope.ctBase64);
+    const iterations = Number(envelope.iter) || 100_000;
+    const keyBytes = await derivePbkdf2Sha256KeyBytesAsync(password, saltBytes, iterations);
 
-  function verifyNearHashMlDsa65(hashBytes, signatureBytes, publicKeyStr) {
-    const lib = getNearMlDsa65Lib();
-    return lib.verifyHash({
-      hash: toUint8Array(hashBytes),
-      signature: signatureBytes,
-      publicKey: publicKeyStr
-    });
+    if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
+      const aesKey = await globalThis.crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt']);
+      const ptBuf = await globalThis.crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivBytes }, aesKey, ctBytes);
+      return JSON.parse(new TextDecoder().decode(new Uint8Array(ptBuf)));
+    }
+    if (nodeCrypto && nodeCrypto.createDecipheriv) {
+      if (ctBytes.length < 16) throw new Error('Invalid AES-GCM ciphertext');
+      const data = ctBytes.slice(0, ctBytes.length - 16);
+      const tag = ctBytes.slice(ctBytes.length - 16);
+      const decipher = nodeCrypto.createDecipheriv('aes-256-gcm', keyBytes, ivBytes);
+      decipher.setAuthTag(tag);
+      const dec = Buffer.concat([decipher.update(data), decipher.final()]);
+      return JSON.parse(new TextDecoder().decode(new Uint8Array(dec)));
+    }
+    throw new Error('AES-256-GCM unavailable');
   }
 
   // ======================== Export Bundle ========================
@@ -2138,7 +2322,9 @@
     sha3_256Bytes,
     base58Encode,
     base58Decode,
+    base58CheckDecode,
     encodeBech32m,
+    decodeBech32,
     decodeBech32m,
     validatePearlAddress,
     eip55ChecksumAddress,
@@ -2155,6 +2341,8 @@
     deriveEvmFromSeedAsync,
     derivePearlFromSeedAsync,
     derivePearlFromSeed,
+    deriveBitcoinFromSeedAsync,
+    deriveBitcoinFromSeed,
     deriveCandidatePearlAddressesAsync,
     deriveAllChainKeysAsync,
     taggedHash,
@@ -2184,16 +2372,11 @@
     deriveNearMpcBitcoinAddress,
     deriveNearMpcAllAddresses,
 
-    // 6. Post-Quantum ML-DSA-65 & NEP-655 Universal Accounts
-    isNearUniversalAccount,
-    encodeCrockfordBase32,
-    buildUniversalStateInitFromMlDsa65PublicKey,
-    deriveNearMlDsa65FromMnemonicAsync,
-    importNearMlDsa65FromSecretKey,
-    decodeNearMlDsa65PublicKey,
-    decodeNearMlDsa65PublicKeyHandle,
-    signNearHashMlDsa65,
-    verifyNearHashMlDsa65
+    // 6. PIN Hashing & Vault Encryption
+    hashPinAsync,
+    verifyPinHashAsync,
+    encryptVaultJsonAsync,
+    decryptVaultJsonAsync
   };
 
   if (root) {

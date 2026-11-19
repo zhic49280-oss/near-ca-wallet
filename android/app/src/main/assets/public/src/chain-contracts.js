@@ -8,6 +8,73 @@
     'https://1rpc.io/near'
   ];
   const _nearRpc429Until = {};
+  const _solRpcCooldownUntil = {};
+  const _aggCooldownUntil = {};
+  const _evmRpcCooldownUntil = {};
+  const _quoteCacheMap = new Map();
+  const _quoteInFlightMap = new Map();
+
+  function shouldCooldownRpcError(err) {
+    if (!err) return true;
+    if (err.name === 'AbortError') return true;
+    const status = Number(err.status || 0);
+    if (!status) return true; // Network / CORS TypeError
+    return status === 401 || status === 403 || status === 408 || status === 410 || status === 429 || status >= 500;
+  }
+
+  function isDeterministicJsonRpcError(rpcErr) {
+    if (!rpcErr) return false;
+    const code = Number(rpcErr.code);
+    const msg = String(rpcErr.message || rpcErr.data || '').toLowerCase();
+    if (/rate|limit|429|403|timeout|unavailable|too many|header not found|missing trie/i.test(msg)) {
+      return false;
+    }
+    return (
+      code === -32000 ||
+      code === -32602 ||
+      code === 3 ||
+      /revert|invalid|insufficient|out of gas|unknown_account|methodnotfound|contractexecutionerror/i.test(msg)
+    );
+  }
+
+  async function withQuoteCacheAndDedup(cacheKey, ttlMs, fn) {
+    const curFetch = (typeof globalThis !== 'undefined' && globalThis.fetch) || null;
+    const hit = _quoteCacheMap.get(cacheKey);
+    if (hit && hit.fetchRef === curFetch && Date.now() - hit.ts < ttlMs) {
+      return { ...hit.val };
+    }
+    const inflight = _quoteInFlightMap.get(cacheKey);
+    if (inflight && inflight.fetchRef === curFetch) {
+      return inflight.promise.then((res) => (res && typeof res === 'object' ? { ...res } : res));
+    }
+    const promise = Promise.resolve().then(fn);
+    _quoteInFlightMap.set(cacheKey, { fetchRef: curFetch, promise });
+    try {
+      const val = await promise;
+      if (val && (val.ok || val.outAmount)) {
+        _quoteCacheMap.set(cacheKey, { ts: Date.now(), fetchRef: curFetch, val });
+        if (_quoteCacheMap.size > 80) _quoteCacheMap.delete(_quoteCacheMap.keys().next().value);
+      }
+      return val;
+    } finally {
+      const cur = _quoteInFlightMap.get(cacheKey);
+      if (cur && cur.promise === promise) _quoteInFlightMap.delete(cacheKey);
+    }
+  }
+
+  function resolveWalletEvmSender(wallet, ethersLib = null) {
+    if (!wallet) return '';
+    if (wallet.evmPrivateKey) {
+      const lib = ethersLib || getEthersLib();
+      if (lib && typeof lib.Wallet === 'function') {
+        try {
+          return new lib.Wallet(wallet.evmPrivateKey).address;
+        } catch (_) {}
+      }
+      if (wallet.evmAddress) return wallet.evmAddress;
+    }
+    return wallet.mpcEvmAddress || wallet.evmAddress || '';
+  }
   const NEAR_EXPLORER_TX = 'https://nearblocks.io/txns/';
   const SOLANA_RPC_ENDPOINTS = ['https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com'];
   const SOLSCAN_TX = 'https://solscan.io/tx/';
@@ -17,6 +84,7 @@
   const SPL_TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
   const SPL_TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
   const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+  const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
   const DEFAULT_SOL_FEE_RECIPIENT = 'ANB4P6mVYUMVuznmt6zkkctB6kjzrQydXG34ZqJqSYGD';
   const DEFAULT_EVM_FEE_RECEIVER = '0x00dCBFDe63933Dc710Dd804dE58602d267BCCE34';
   const NATIVE_EVM_SENTINEL = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
@@ -31,6 +99,8 @@
       name: 'Ethereum',
       symbol: 'ETH',
       rpc: 'https://ethereum-rpc.publicnode.com',
+      rpcs: ['https://ethereum-rpc.publicnode.com', 'https://1rpc.io/eth'],
+      supportsMulticall3: true,
       kyber: 'ethereum',
       openOcean: 'eth',
       explorer: 'https://etherscan.io/tx/',
@@ -41,6 +111,8 @@
       name: 'Base',
       symbol: 'ETH',
       rpc: 'https://mainnet.base.org',
+      rpcs: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://1rpc.io/base'],
+      supportsMulticall3: true,
       kyber: 'base',
       openOcean: 'base',
       explorer: 'https://basescan.org/tx/',
@@ -51,6 +123,8 @@
       name: 'Arbitrum',
       symbol: 'ETH',
       rpc: 'https://arb1.arbitrum.io/rpc',
+      rpcs: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum-one-rpc.publicnode.com', 'https://1rpc.io/arb'],
+      supportsMulticall3: true,
       kyber: 'arbitrum',
       openOcean: 'arbitrum',
       explorer: 'https://arbiscan.io/tx/',
@@ -60,17 +134,57 @@
       chainId: 56,
       name: 'BSC',
       symbol: 'BNB',
-      rpc: 'https://bsc-dataseed.bnbchain.org',
+      rpc: 'https://bsc-rpc.publicnode.com',
+      rpcs: ['https://bsc-rpc.publicnode.com', 'https://bsc-dataseed.bnbchain.org', 'https://1rpc.io/bnb'],
+      supportsMulticall3: true,
       kyber: 'bsc',
       openOcean: 'bsc',
       explorer: 'https://bscscan.com/tx/',
       gasReserve: 0.0005
+    },
+    op: {
+      chainId: 10,
+      name: 'Optimism',
+      symbol: 'ETH',
+      rpc: 'https://mainnet.optimism.io',
+      rpcs: ['https://mainnet.optimism.io', 'https://optimism-rpc.publicnode.com', 'https://1rpc.io/op'],
+      supportsMulticall3: true,
+      kyber: 'optimism',
+      openOcean: 'optimism',
+      explorer: 'https://optimistic.etherscan.io/tx/',
+      gasReserve: 0.0002
+    },
+    pol: {
+      chainId: 137,
+      name: 'Polygon',
+      symbol: 'POL',
+      rpc: 'https://polygon-bor-rpc.publicnode.com',
+      rpcs: ['https://polygon-bor-rpc.publicnode.com', 'https://1rpc.io/matic'],
+      supportsMulticall3: true,
+      kyber: 'polygon',
+      openOcean: 'polygon',
+      explorer: 'https://polygonscan.com/tx/',
+      gasReserve: 0.05
+    },
+    avax: {
+      chainId: 43114,
+      name: 'Avalanche',
+      symbol: 'AVAX',
+      rpc: 'https://api.avax.network/ext/bc/C/rpc',
+      rpcs: ['https://api.avax.network/ext/bc/C/rpc', 'https://avalanche-c-chain-rpc.publicnode.com'],
+      supportsMulticall3: true,
+      kyber: 'avalanche',
+      openOcean: 'avax',
+      explorer: 'https://snowtrace.io/tx/',
+      gasReserve: 0.005
     },
     hype: {
       chainId: 999,
       name: 'HyperEVM',
       symbol: 'HYPE',
       rpc: 'https://rpc.hyperliquid.xyz/evm',
+      rpcs: ['https://rpc.hyperliquid.xyz/evm'],
+      supportsMulticall3: true,
       kyber: 'hyperevm',
       explorer: 'https://purrsec.com/tx/',
       gasReserve: 0.0005
@@ -80,6 +194,8 @@
       name: 'Robinhood',
       symbol: 'ETH',
       rpc: 'https://rpc.mainnet.chain.robinhood.com',
+      rpcs: ['https://rpc.mainnet.chain.robinhood.com'],
+      supportsMulticall3: false,
       kyber: 'robinhood',
       explorer: 'https://robinhoodchain.blockscout.com/tx/',
       gasReserve: 0.0002
@@ -89,6 +205,8 @@
       name: 'Arc',
       symbol: 'USDC',
       rpc: 'https://rpc.mainnet.arc.io',
+      rpcs: ['https://rpc.mainnet.arc.io'],
+      supportsMulticall3: false,
       kyber: 'arc',
       openOcean: null,
       explorer: 'https://explorer.arc.io/tx/',
@@ -103,9 +221,13 @@
     base: 0.0002,
     arb: 0.0002,
     bsc: 0.0005,
+    op: 0.0002,
+    pol: 0.05,
+    avax: 0.005,
     hype: 0.0005,
     hood: 0.0002,
     arc: 0.02,
+    btc: 0.00005,
     prl: 0.003
   };
 
@@ -466,6 +588,7 @@
       isTokenStake: true,
       isAaveV3: true,
       tokenContract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      aTokenAddress: '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB',
       apy: null,
       rate: null,
       tvlText: null,
@@ -489,6 +612,7 @@
       isTokenStake: true,
       isAaveV3: true,
       tokenContract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+      aTokenAddress: '0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c',
       apy: null,
       rate: null,
       tvlText: null,
@@ -512,6 +636,7 @@
       isTokenStake: true,
       isAaveV3: true,
       tokenContract: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+      aTokenAddress: '0x724dc807b04555b71ed48a6896b6f41593b8c637',
       apy: null,
       rate: null,
       tvlText: null,
@@ -1032,12 +1157,30 @@
   async function fetchJsonWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
     const fetchFn = (typeof globalThis !== 'undefined' && globalThis.fetch) || (typeof fetch !== 'undefined' ? fetch : null);
     if (!fetchFn) throw new Error('fetch API unavailable');
+    const extSignal = options && options.signal ? options.signal : null;
+    if (extSignal && extSignal.aborted) {
+      const abortErr = new Error(t('请求已取消', 'Request aborted'));
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    let timedOut = false;
+    const timer = controller
+      ? setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, timeoutMs)
+      : null;
+    let onExtAbort = null;
+    if (extSignal && controller) {
+      onExtAbort = () => controller.abort();
+      extSignal.addEventListener('abort', onExtAbort, { once: true });
+    }
     try {
+      const { signal: _ignoredSignal, ...restOptions } = options || {};
       const res = await fetchFn(url, {
-        ...options,
-        signal: options.signal || (controller ? controller.signal : undefined),
+        ...restOptions,
+        signal: controller ? controller.signal : undefined,
         headers: {
           Accept: 'application/json',
           ...(options.headers || {})
@@ -1064,13 +1207,16 @@
       return data;
     } catch (err) {
       if (err && (err.name === 'AbortError' || String(err.message || '').includes('abort'))) {
-        const timeoutErr = new Error(t('网络请求超时', 'Request timeout'));
+        const timeoutErr = new Error(timedOut ? t('网络请求超时', 'Request timeout') : t('请求已取消', 'Request aborted'));
         timeoutErr.name = 'AbortError';
         throw timeoutErr;
       }
       throw err;
     } finally {
       if (timer) clearTimeout(timer);
+      if (extSignal && onExtAbort) {
+        try { extSignal.removeEventListener('abort', onExtAbort); } catch (_) {}
+      }
     }
   }
 
@@ -1087,17 +1233,18 @@
             .map((a) => String(a || '').trim().toLowerCase())
             .filter((a) => a && !/^[0-9a-f]{64}$/.test(a) && (a.endsWith('.near') || a.endsWith('.tg') || a.includes('.')))
         : [];
-    try {
-      const fRes = await fetchJsonWithTimeout(`https://api.fastnear.com/v1/public_key/${encodeURIComponent(pk)}/all`, {}, 4500).catch(() => null);
-      const hits = filterNamed(fRes && fRes.account_ids);
-      if (hits.length > 0) return hits;
-    } catch (_) {}
-    try {
-      const kRes = await fetchJsonWithTimeout(`https://api.kitwallet.app/publicKey/${encodeURIComponent(pk)}/accounts`, {}, 4500).catch(() => null);
-      const hits = filterNamed(kRes);
-      if (hits.length > 0) return hits;
-    } catch (_) {}
-    return [];
+    const [fastRes, kitRes] = await Promise.allSettled([
+      fetchJsonWithTimeout(`https://api.fastnear.com/v1/public_key/${encodeURIComponent(pk)}/all`, {}, 4000),
+      fetchJsonWithTimeout(`https://api.kitwallet.app/publicKey/${encodeURIComponent(pk)}/accounts`, {}, 4000)
+    ]);
+    const hits = new Set();
+    if (fastRes.status === 'fulfilled' && fastRes.value) {
+      filterNamed(fastRes.value.account_ids).forEach((a) => hits.add(a));
+    }
+    if (kitRes.status === 'fulfilled' && kitRes.value) {
+      filterNamed(kitRes.value).forEach((a) => hits.add(a));
+    }
+    return Array.from(hits);
   }
 
   /**
@@ -1124,7 +1271,7 @@
           const stakedRaw = BigInt(String(accInfo.staked_balance || '0'));
           const unstakedRaw = BigInt(String(accInfo.unstaked_balance || '0'));
           const totalRaw = stakedRaw + unstakedRaw;
-          if (totalRaw <= 10n ** 19n) return null; // ignore < 0.00001 NEAR dust
+          if (totalRaw <= 5n * 10n ** 20n) return null; // ignore < 0.0005 NEAR residual interest dust
           const stakedNear = Number(stakedRaw / 10n ** 18n) / 1e6;
           const unstakedNear = Number(unstakedRaw / 10n ** 18n) / 1e6;
           const totalNear = stakedNear + unstakedNear;
@@ -1134,7 +1281,7 @@
             stakedNear,
             unstakedNear,
             totalNear,
-            canWithdraw: Boolean(accInfo.can_withdraw)
+            canWithdraw: Boolean(accInfo.can_withdraw) && unstakedRaw > 10n ** 18n
           };
         })
       );
@@ -1143,18 +1290,28 @@
       if (Array.isArray(orheaConvs) && orheaConvs.length > 0) {
         let totalRaw = 0n;
         let activeCount = 0;
+        const claimableIds = [];
+        const activeIds = [];
+        const nowNs = BigInt(Date.now()) * 1000000n;
         for (const conv of orheaConvs) {
           if (!conv || typeof conv !== 'object') continue;
           const statusLower = String(conv.status || '').toLowerCase();
           if (conv.is_withdrawn === true || conv.withdrawn === true || statusLower === 'withdrawn' || statusLower === 'claimed') {
             continue;
           }
+          const convId = conv.conversion_id ?? conv.id ?? null;
           const rawVal = conv.source_amount ?? conv.amount ?? conv.locked_amount ?? conv.source_token_amount ?? '0';
           try {
             const rawBig = BigInt(String(rawVal));
             if (rawBig > 0n) {
               totalRaw += rawBig;
               activeCount += 1;
+              if (convId !== null && convId !== undefined) {
+                activeIds.push(String(convId));
+                const releaseTime = conv.release_timestamp ?? conv.unlock_time ?? conv.end_timestamp ?? 0;
+                const relBig = BigInt(String(releaseTime || '0'));
+                if (relBig > 0n && relBig <= nowNs) claimableIds.push(String(convId));
+              }
             }
           } catch (_) {}
         }
@@ -1162,14 +1319,81 @@
         if (Number.isFinite(totalAmount) && totalAmount > 0.00001) {
           positions.push({
             type: 'lock_convert',
-            poolId: 'orhea-conv.rhealab.near',
+            poolId: 'rhea_orhea_convert',
+            contractId: 'orhea-conv.rhealab.near',
             symbol: 'oRHEA',
             totalAmount,
+            activeIds,
+            claimableIds,
+            canClaim: claimableIds.length > 0,
             chain: 'near',
             title: 'Rhea oRHEA Convert',
             subtitle: t(`锁仓兑换中 (${activeCount} 笔)`, `Locked Converting (${activeCount})`)
           });
         }
+      }
+
+      // Check xRHEA unstake requests + Meta Pool / LiNEAR / Rhea LST pending unstaked NEAR
+      const [xrheaReqs, ...lstUnstakeStates] = await Promise.all([
+        viewNearContractCall('xtoken.rhealab.near', 'get_account_unstake_requests', { account_id: acct }).catch(() => null),
+        ...['lst.rhealab.near', 'meta-pool.near', 'linear-protocol.near', 'v2-nearx.stader-labs.near'].map(async (cid) => {
+          const [amtStr, availFlag] = await Promise.all([
+            viewNearContractCall(cid, 'get_account_unstaked_balance', { account_id: acct }).catch(() => null),
+            viewNearContractCall(cid, 'is_account_unstaked_balance_available', { account_id: acct }).catch(() => null)
+          ]);
+          return { cid, amtStr, availFlag: Boolean(availFlag) };
+        })
+      ]);
+
+      if (Array.isArray(xrheaReqs) && xrheaReqs.length > 0) {
+        const nowNs = BigInt(Date.now()) * 1000000n;
+        for (const req of xrheaReqs) {
+          if (!req || !req.request_id) continue;
+          const rawAmt = String(req.amount || '0');
+          const amt = Number(fromBaseUnits(rawAmt, 18));
+          if (!(amt > 0.00001)) continue;
+          const unlockTs = BigInt(String(req.unlock_timestamp || req.release_timestamp || '0'));
+          positions.push({
+            type: 'xrhea_unstake',
+            poolId: 'rhea_xrhea',
+            contractId: 'xtoken.rhealab.near',
+            requestId: String(req.request_id),
+            symbol: 'RHEA',
+            totalAmount: amt,
+            canWithdraw: unlockTs > 0n && unlockTs <= nowNs,
+            chain: 'near',
+            title: 'Rhea xRHEA Unstake',
+            subtitle: unlockTs > 0n && unlockTs <= nowNs
+              ? t('已解锁可领取 RHEA', 'Unlocked — ready to claim')
+              : t('xRHEA 解质押解锁中', 'xRHEA unstaking cooldown')
+          });
+        }
+      }
+
+      const lstPoolIdMap = {
+        'lst.rhealab.near': 'rhea_rnear',
+        'meta-pool.near': 'metapool_stnear',
+        'linear-protocol.near': 'linear_near',
+        'v2-nearx.stader-labs.near': 'stader_nearx'
+      };
+      for (const st of lstUnstakeStates) {
+        if (!st || !st.amtStr || !/^\d+$/.test(String(st.amtStr))) continue;
+        const nearAmt = Number(fromBaseUnits(String(st.amtStr), 24));
+        if (!(nearAmt > 0.0001)) continue;
+        const pid = lstPoolIdMap[st.cid] || st.cid;
+        positions.push({
+          type: 'near_lst_unstaked',
+          poolId: pid,
+          contractId: st.cid,
+          symbol: 'NEAR',
+          totalAmount: nearAmt,
+          canWithdraw: st.availFlag,
+          chain: 'near',
+          title: `${findStakingPool(pid)?.name || st.cid}`,
+          subtitle: st.availFlag
+            ? t('解质押已完成，可提取 NEAR', 'Unstake ready to withdraw')
+            : t('解质押冷却中 (约 2-3 天)', 'Unbonding (~2-3 days)')
+        });
       }
 
       const burrowSupplied = burrowAcc && Array.isArray(burrowAcc.supplied) ? burrowAcc.supplied : [];
@@ -1277,16 +1501,24 @@
           const buf = base64ToBytes(String(escrowRes.value.data[0]));
           if (buf.length >= 129) {
             const amountRaw = decodeU64LE(buf, 105);
+            const escrowEndsAtRaw = decodeU64LE(buf, 121);
+            const escrowEndsAtSec = Number(BigInt.asIntN(64, escrowEndsAtRaw));
+            const isMaxLock = buf.length >= 162 ? buf[161] === 1 : false;
             if (amountRaw > 0n) {
               const stakedJup = Number(amountRaw) / 1e6;
               if (Number.isFinite(stakedJup) && stakedJup > 0.00001) {
                 positions.push({
                   type: 'jupiter_dao',
+                  poolId: 'jupiter_jup',
                   chain: 'sol',
                   symbol: 'JUP',
                   title: 'Jupiter DAO (ASR)',
                   subtitle: escrowPda.address,
                   amount: stakedJup,
+                  totalAmount: stakedJup,
+                  isMaxLock,
+                  escrowEndsAtSec,
+                  canWithdraw: !isMaxLock && Math.floor(Date.now() / 1000) >= escrowEndsAtSec,
                   amountText: `${stakedJup.toFixed(4)} JUP`
                 });
               }
@@ -1326,29 +1558,6 @@
     if (!wallet) return wallet;
     const cryptoEngine = getCryptoEngine();
 
-    if (wallet.accountType === 'post_quantum') {
-      if (wallet.mnemonic && (!wallet.nearMlDsa65PublicKey || !wallet.nearMlDsa65PrivateKey || !wallet.nearUniversalAddress)) {
-        if (!cryptoEngine || typeof cryptoEngine.deriveNearMlDsa65FromMnemonicAsync !== 'function') {
-          throw new Error(t('ML-DSA-65 后量子引擎不可用', 'NearCACrypto ML-DSA-65 unavailable'));
-        }
-        const pq = await cryptoEngine.deriveNearMlDsa65FromMnemonicAsync(wallet.mnemonic, 0);
-        wallet.nearMlDsa65PublicKey = wallet.nearMlDsa65PublicKey || pq.publicKey;
-        wallet.nearMlDsa65PublicKeyHandle = wallet.nearMlDsa65PublicKeyHandle || pq.publicKeyHandle;
-        wallet.nearMlDsa65PrivateKey = wallet.nearMlDsa65PrivateKey || pq.secretKey;
-        wallet.nearUniversalAddress = wallet.nearUniversalAddress || pq.universalAccountId;
-        wallet.nearAddress = wallet.nearAddress || pq.universalAccountId;
-      } else if (wallet.nearMlDsa65PrivateKey && (!wallet.nearMlDsa65PublicKey || !wallet.nearUniversalAddress)) {
-        if (cryptoEngine && typeof cryptoEngine.importNearMlDsa65FromSecretKey === 'function') {
-          const pq = cryptoEngine.importNearMlDsa65FromSecretKey(wallet.nearMlDsa65PrivateKey);
-          wallet.nearMlDsa65PublicKey = wallet.nearMlDsa65PublicKey || pq.publicKey;
-          wallet.nearMlDsa65PublicKeyHandle = wallet.nearMlDsa65PublicKeyHandle || pq.publicKeyHandle;
-          wallet.nearUniversalAddress = wallet.nearUniversalAddress || pq.universalAccountId;
-          wallet.nearAddress = wallet.nearAddress || pq.universalAccountId;
-        }
-      }
-      return wallet;
-    }
-
     if (wallet.mnemonic) {
       const needsNear = !wallet.nearAddress || !wallet.nearPrivateKey || !wallet.nearPublicKey || !wallet.nearPrivateSeedHex;
       if (needsNear) {
@@ -1372,6 +1581,15 @@
           wallet.tweakedPrivateKeyHex = pearl.tweakedPrivateKeyHex || wallet.tweakedPrivateKeyHex;
         }
       }
+      const needsBtc = !wallet.btcAddress || !wallet.btcPrivateKeyHex || !wallet.btcTweakedPrivateKeyHex;
+      if (needsBtc && cryptoEngine && typeof cryptoEngine.deriveBitcoinFromSeedAsync === 'function') {
+        const btc = await cryptoEngine.deriveBitcoinFromSeedAsync(wallet.mnemonic, "m/86'/0'/0'/0/0", true);
+        if (btc && btc.address) {
+          wallet.btcAddress = btc.address;
+          wallet.btcPrivateKeyHex = btc.privateKeyHex || wallet.btcPrivateKeyHex;
+          wallet.btcTweakedPrivateKeyHex = btc.tweakedPrivateKeyHex || wallet.btcTweakedPrivateKeyHex;
+        }
+      }
     }
 
     const nearId = wallet.nearNamedAccount || wallet.nearAddress;
@@ -1381,22 +1599,26 @@
         wallet.mpcEvmAddress &&
         wallet.evmAddress &&
         wallet.solAddress &&
-        wallet.solPublicKey &&
-        wallet.btcAddress
+        wallet.solPublicKey
       );
       if (!hasCachedMpc) {
         if (cryptoEngine && typeof cryptoEngine.deriveNearMpcAllAddresses === 'function') {
           const mpc = cryptoEngine.deriveNearMpcAllAddresses(nearId);
           wallet.mpcEvmAddress = mpc.evmAddress;
-          wallet.evmAddress = mpc.evmAddress;
-          wallet.solAddress = mpc.solAddress;
-          wallet.solPublicKey = mpc.solAddress;
-          wallet.btcAddress = mpc.btcAddress;
+          if (!wallet.evmPrivateKey) wallet.evmAddress = mpc.evmAddress;
+          else wallet.evmAddress = wallet.evmAddress || mpc.evmAddress;
+          if (!wallet.solPrivateSeedHex) {
+            wallet.solAddress = mpc.solAddress;
+            wallet.solPublicKey = mpc.solAddress;
+          } else {
+            wallet.solAddress = wallet.solAddress || mpc.solAddress;
+            wallet.solPublicKey = wallet.solPublicKey || wallet.solAddress;
+          }
           wallet._mpcDerivedForNearId = nearId;
         } else if (!wallet.mpcEvmAddress) {
           const mpcEvm = await deriveMpcEvmAddressAsync(nearId, 'ethereum-1');
           wallet.mpcEvmAddress = mpcEvm;
-          wallet.evmAddress = wallet.evmAddress || mpcEvm;
+          if (!wallet.evmPrivateKey) wallet.evmAddress = wallet.evmAddress || mpcEvm;
           wallet._mpcDerivedForNearId = nearId;
         }
       }
@@ -1408,16 +1630,18 @@
   function resolveWalletChainBalance(wallet, chain) {
     if (!wallet) return 0;
     const c = String(chain || '').toLowerCase();
+    const nb = wallet.nativeBalances || {};
     if (c === 'near') {
-      const val = Number(wallet.nearBalance);
+      const rawNear = wallet.nearBalance !== undefined && wallet.nearBalance !== null ? wallet.nearBalance : nb.near;
+      const val = Number(rawNear);
       return Number.isFinite(val) ? val : 0;
     }
     if (c === 'prl') {
-      const val = Number(wallet.balance);
+      const rawPrl = wallet.balance !== undefined && wallet.balance !== null ? wallet.balance : nb.prl;
+      const val = Number(rawPrl);
       return Number.isFinite(val) ? val : 0;
     }
     const mb = wallet.multiBalances || {};
-    const nb = wallet.nativeBalances || {};
     if (c === 'bsc') {
       const rawBsc = mb.bnb !== undefined && mb.bnb !== null ? mb.bnb : (mb.bsc !== undefined && mb.bsc !== null ? mb.bsc : nb.bsc);
       const val = Number(rawBsc);
@@ -1463,7 +1687,7 @@
     }
 
     const requiredTotal = reqAmt + effectiveBuffer;
-    if (available < reqAmt || available < requiredTotal) {
+    if (available + 1e-12 < reqAmt || available + 1e-12 < requiredTotal) {
       const availFormatted = available.toFixed(4);
       const zhMsg = `${sym} 余额不足 (当前可用: ${availFormatted} ${sym})`;
       const enMsg = `Insufficient ${sym} (Available: ${availFormatted} ${sym})`;
@@ -1489,26 +1713,79 @@
   // ==================== Solana RPC & Contract Execution ====================
 
   async function callSolanaRpc(method, params, timeoutMs = DEFAULT_TIMEOUT_MS) {
+    const now = Date.now();
+    let active = SOLANA_RPC_ENDPOINTS.filter((u) => !(_solRpcCooldownUntil[u] > now));
+    if (active.length === 0) active = SOLANA_RPC_ENDPOINTS.slice();
+    const isReadOnly = method !== 'sendTransaction' && method !== 'simulateTransaction';
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
+
+    if (isReadOnly && active.length > 1) {
+      const raceCtrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      try {
+        return await Promise.any(
+          active.slice(0, 2).map(async (rpcUrl) => {
+            try {
+              const res = await fetchJsonWithTimeout(
+                rpcUrl,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body,
+                  signal: raceCtrl ? raceCtrl.signal : undefined
+                },
+                timeoutMs
+              );
+              if (res && !res.error && res.result !== undefined) {
+                if (raceCtrl && !raceCtrl.signal.aborted) raceCtrl.abort();
+                return res.result;
+              }
+              const msg = (res && res.error && res.error.message) || JSON.stringify(res?.error || 'RPC error');
+              if (res && res.error && !isDeterministicJsonRpcError(res.error)) {
+                _solRpcCooldownUntil[rpcUrl] = Date.now() + 90_000;
+              }
+              throw new Error(msg);
+            } catch (err) {
+              if (!(raceCtrl && raceCtrl.signal.aborted) && shouldCooldownRpcError(err)) {
+                _solRpcCooldownUntil[rpcUrl] = Date.now() + 90_000;
+              }
+              throw err;
+            }
+          })
+        );
+      } catch (aggErr) {
+        const errs = aggErr && Array.isArray(aggErr.errors) ? aggErr.errors : [aggErr];
+        throw errs[0] || new Error('Solana RPC call failed');
+      } finally {
+        if (raceCtrl && !raceCtrl.signal.aborted) raceCtrl.abort();
+      }
+    }
+
     let lastErr = null;
-    for (const rpcUrl of SOLANA_RPC_ENDPOINTS) {
+    for (const rpcUrl of active) {
       try {
         const res = await fetchJsonWithTimeout(
           rpcUrl,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
-          },
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body },
           timeoutMs
         );
         if (res && !res.error && res.result !== undefined) {
           return res.result;
         }
         if (res && res.error) {
+          if (!isDeterministicJsonRpcError(res.error)) {
+            _solRpcCooldownUntil[rpcUrl] = Date.now() + 90_000;
+          }
           lastErr = new Error(res.error.message || JSON.stringify(res.error));
+          if (isDeterministicJsonRpcError(res.error)) throw lastErr;
         }
       } catch (err) {
+        if (shouldCooldownRpcError(err)) {
+          _solRpcCooldownUntil[rpcUrl] = Date.now() + 90_000;
+        }
         lastErr = err;
+        if (err && !err.status && err.name !== 'AbortError' && /simulation|blockhash|insufficient/i.test(String(err.message || ''))) {
+          throw err;
+        }
       }
     }
     throw lastErr || new Error('Solana RPC call failed');
@@ -1516,24 +1793,33 @@
 
   /**
    * 通用竞速聚合器：并发发起多个异步请求，一旦首个有效结果到达，
-   * 仅再等待 graceMs 毫秒让其余更快候选参与比价，超时立即返回当前已到达的结果数组。
+   * 仅再等待 graceMs 毫秒让其余更快候选参与比价，超时立即返回当前已到达的结果数组，
+   * 并在结束时主动 abort 未完成分支。
    */
-  async function raceWithGraceWindow(promises, isValidFn = (v) => Boolean(v), graceMs = 600) {
+  async function raceWithGraceWindow(promises, isValidFn = (v) => Boolean(v), graceMs = 600, maxWaitMs = 8000, abortCtrl = null) {
     const list = Array.isArray(promises) ? promises : [];
     if (list.length === 0) return [];
     return new Promise((resolve) => {
       const results = new Array(list.length).fill(null);
-      const settled = new Array(list.length).fill(false);
       let remaining = list.length;
       let done = false;
       let graceTimer = null;
+      let globalTimer = null;
 
       const finish = () => {
         if (done) return;
         done = true;
         if (graceTimer) clearTimeout(graceTimer);
+        if (globalTimer) clearTimeout(globalTimer);
+        if (abortCtrl && abortCtrl.signal && !abortCtrl.signal.aborted) {
+          try { abortCtrl.abort(); } catch (_) {}
+        }
         resolve(results);
       };
+
+      if (maxWaitMs > 0) {
+        globalTimer = setTimeout(finish, maxWaitMs);
+      }
 
       list.forEach((p, idx) => {
         Promise.resolve(p)
@@ -1547,7 +1833,6 @@
             results[idx] = { status: 'rejected', reason: err };
           })
           .finally(() => {
-            settled[idx] = true;
             remaining -= 1;
             if (remaining <= 0) finish();
           });
@@ -1560,13 +1845,10 @@
     if (!addr) return null;
 
     try {
-      const needT22 = Array.isArray(mintAddresses) && mintAddresses.length > 0;
       const [balRes, splRes, t22Res] = await Promise.all([
         callSolanaRpc('getBalance', [addr], 5000),
         callSolanaRpc('getTokenAccountsByOwner', [addr, { programId: SPL_TOKEN_PROGRAM_ID }, { encoding: 'jsonParsed' }], 5000).catch(() => null),
-        needT22
-          ? callSolanaRpc('getTokenAccountsByOwner', [addr, { programId: SPL_TOKEN_2022_PROGRAM_ID }, { encoding: 'jsonParsed' }], 5000).catch(() => null)
-          : Promise.resolve(null)
+        callSolanaRpc('getTokenAccountsByOwner', [addr, { programId: SPL_TOKEN_2022_PROGRAM_ID }, { encoding: 'jsonParsed' }], 5000).catch(() => null)
       ]);
 
       const lamports = balRes && typeof balRes.value === 'number' ? balRes.value : 0;
@@ -1648,72 +1930,97 @@
     }
     const slip = Number(slippageBps) || 100;
     const solFeeBps = Number.isFinite(Number(platformFeeBps)) ? Math.max(0, Math.round(Number(platformFeeBps))) : 0;
-    const feeParam = solFeeBps > 0 ? `&platformFeeBps=${solFeeBps}` : '';
-    const jupUrl = `${JUPITER_API_URL}/quote?inputMint=${encodeURIComponent(inputMint)}&outputMint=${encodeURIComponent(outputMint)}&amount=${encodeURIComponent(amtStr)}&slippageBps=${slip}${feeParam}`;
-    const rayUrl = `${RAYDIUM_API_URL}/compute/swap-base-in?inputMint=${encodeURIComponent(inputMint)}&outputMint=${encodeURIComponent(outputMint)}&amount=${encodeURIComponent(amtStr)}&slippageBps=${slip}&txVersion=V0`;
+    const cacheKey = `sol:${inputMint}:${outputMint}:${amtStr}:${slip}:${solFeeBps}`;
 
-    const [jRes, rRes] = await raceWithGraceWindow(
-      [
-        fetchJsonWithTimeout(jupUrl, { signal }, 5000),
-        fetchJsonWithTimeout(rayUrl, { signal }, 5000).catch(() => null)
-      ],
-      (v) => Boolean(v && (v.outAmount || (v.success && v.data && v.data.outputAmount))),
-      600
-    );
+    return withQuoteCacheAndDedup(cacheKey, 10_000, async () => {
+      const feeParam = solFeeBps > 0 ? `&platformFeeBps=${solFeeBps}` : '';
+      const jupUrl = `${JUPITER_API_URL}/quote?inputMint=${encodeURIComponent(inputMint)}&outputMint=${encodeURIComponent(outputMint)}&amount=${encodeURIComponent(amtStr)}&slippageBps=${slip}${feeParam}`;
+      const rayUrl = `${RAYDIUM_API_URL}/compute/swap-base-in?inputMint=${encodeURIComponent(inputMint)}&outputMint=${encodeURIComponent(outputMint)}&amount=${encodeURIComponent(amtStr)}&slippageBps=${slip}&txVersion=V0`;
 
-    const jQuote = jRes.status === 'fulfilled' && jRes.value && jRes.value.outAmount ? jRes.value : null;
-    const rResp = rRes.status === 'fulfilled' && rRes.value && rRes.value.success && rRes.value.data && rRes.value.data.outputAmount
-      ? rRes.value
-      : null;
+      const localCtrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const mergedSig = (localCtrl && signal && typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function')
+        ? AbortSignal.any([signal, localCtrl.signal])
+        : (localCtrl ? localCtrl.signal : signal);
+      let onExtAbort = null;
+      if (localCtrl && signal && (!mergedSig || mergedSig === localCtrl.signal)) {
+        if (signal.aborted) localCtrl.abort();
+        else {
+          onExtAbort = () => localCtrl.abort();
+          signal.addEventListener('abort', onExtAbort, { once: true });
+        }
+      }
 
-    const candidates = [];
-    if (jQuote && /^\d+$/.test(String(jQuote.outAmount)) && BigInt(jQuote.outAmount) > 0n) {
-      candidates.push({ source: 'Jupiter V1', outBig: BigInt(jQuote.outAmount), data: jQuote });
-    }
-    if (rResp && /^\d+$/.test(String(rResp.data.outputAmount)) && BigInt(rResp.data.outputAmount) > 0n) {
-      candidates.push({ source: 'Raydium V1', outBig: BigInt(rResp.data.outputAmount), data: rResp });
-    }
+      try {
+        const [jRes, rRes] = await raceWithGraceWindow(
+          [
+            fetchJsonWithTimeout(jupUrl, { signal: mergedSig }, 4500),
+            fetchJsonWithTimeout(rayUrl, { signal: mergedSig }, 4500).catch(() => null)
+          ],
+          (v) => Boolean(v && (v.outAmount || (v.success && v.data && v.data.outputAmount))),
+          450,
+          5000,
+          localCtrl
+        );
 
-    if (candidates.length === 0) {
-      const jErr = jRes.status === 'rejected'
-        ? jRes.reason?.message
-        : (jRes.status === 'fulfilled' && jRes.value && jRes.value.error);
-      throw new Error(jErr || t('Jupiter / Raydium 暂无报价', 'Solana DEX quote unavailable'));
-    }
+        const jQuote = jRes && jRes.status === 'fulfilled' && jRes.value && jRes.value.outAmount ? jRes.value : null;
+        const rResp = rRes && rRes.status === 'fulfilled' && rRes.value && rRes.value.success && rRes.value.data && rRes.value.data.outputAmount
+          ? rRes.value
+          : null;
 
-    candidates.sort((a, b) => (b.outBig > a.outBig ? 1 : b.outBig < a.outBig ? -1 : 0));
-    const best = candidates[0];
-    const comparedPools = candidates.length;
-    const routeLabel = comparedPools > 1
-      ? `⚡ ${t('最优', 'Best')}: ${best.source} (${t(`比价 ${comparedPools} 池`, `${comparedPools} pools`)})`
-      : best.source;
+        const candidates = [];
+        if (jQuote && /^\d+$/.test(String(jQuote.outAmount)) && BigInt(jQuote.outAmount) > 0n) {
+          candidates.push({ source: 'Jupiter V1', outBig: BigInt(jQuote.outAmount), data: jQuote });
+        }
+        if (rResp && /^\d+$/.test(String(rResp.data.outputAmount)) && BigInt(rResp.data.outputAmount) > 0n) {
+          candidates.push({ source: 'Raydium V1', outBig: BigInt(rResp.data.outputAmount), data: rResp });
+        }
 
-    if (best.source === 'Jupiter V1') {
-      return {
-        ...jQuote,
-        bestSource: 'Jupiter V1',
-        comparedPools,
-        routeLabel,
-        serviceFeeBps: solFeeBps,
-        _jupiterQuote: jQuote,
-        _raydiumRawResponse: rResp
-      };
-    }
+        if (candidates.length === 0) {
+          const jErr = jRes && jRes.status === 'rejected'
+            ? jRes.reason?.message
+            : (jRes && jRes.status === 'fulfilled' && jRes.value && jRes.value.error);
+          throw new Error(jErr || t('Jupiter / Raydium 暂无报价', 'Solana DEX quote unavailable'));
+        }
 
-    return {
-      ...(jQuote || {}),
-      inputMint,
-      outputMint,
-      inAmount: amtStr,
-      outAmount: best.outBig.toString(),
-      slippageBps: slip,
-      bestSource: 'Raydium V1',
-      comparedPools,
-      routeLabel,
-      serviceFeeBps: 0,
-      _jupiterQuote: jQuote,
-      _raydiumRawResponse: rResp
-    };
+        candidates.sort((a, b) => (b.outBig > a.outBig ? 1 : b.outBig < a.outBig ? -1 : 0));
+        const best = candidates[0];
+        const comparedPools = candidates.length;
+        const routeLabel = comparedPools > 1
+          ? `⚡ ${t('最优', 'Best')}: ${best.source} (${t(`比价 ${comparedPools} 池`, `${comparedPools} pools`)})`
+          : best.source;
+
+        if (best.source === 'Jupiter V1') {
+          return {
+            ...jQuote,
+            bestSource: 'Jupiter V1',
+            comparedPools,
+            routeLabel,
+            serviceFeeBps: solFeeBps,
+            _jupiterQuote: jQuote,
+            _raydiumRawResponse: rResp
+          };
+        }
+
+        return {
+          ...(jQuote || {}),
+          inputMint,
+          outputMint,
+          inAmount: amtStr,
+          outAmount: best.outBig.toString(),
+          slippageBps: slip,
+          bestSource: 'Raydium V1',
+          comparedPools,
+          routeLabel,
+          serviceFeeBps: 0,
+          _jupiterQuote: jQuote,
+          _raydiumRawResponse: rResp
+        };
+      } finally {
+        if (signal && onExtAbort) {
+          try { signal.removeEventListener('abort', onExtAbort); } catch (_) {}
+        }
+      }
+    });
   }
 
   function extractSolanaMpcSignatureBytes(mpcRes) {
@@ -1959,19 +2266,37 @@
     let activeQuote = quoteResponse;
     if (activeQuote.bestSource === 'Raydium V1' && activeQuote._raydiumRawResponse) {
       try {
+        const ataProg = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+        const deriveAtaForMint = async (mintAddr) => {
+          if (!mintAddr || mintAddr === WSOL_MINT) return undefined;
+          const mInfo = await callSolanaRpc('getAccountInfo', [mintAddr, { encoding: 'jsonParsed' }], 4000).catch(() => null);
+          const progId = mInfo?.value?.owner === SPL_TOKEN_2022_PROGRAM_ID ? SPL_TOKEN_2022_PROGRAM_ID : SPL_TOKEN_PROGRAM_ID;
+          const pda = await findSolanaPdaAsync(
+            [base58Decode(wallet.solAddress), base58Decode(progId), base58Decode(mintAddr)],
+            base58Decode(ataProg)
+          );
+          return pda.address;
+        };
+        const [inputAccount, outputAccount] = await Promise.all([
+          deriveAtaForMint(inputMint),
+          deriveAtaForMint(activeQuote.outputMint)
+        ]);
+        const rayBody = {
+          computeUnitPriceMicroLamports: '100000',
+          swapResponse: activeQuote._raydiumRawResponse,
+          txVersion: 'V0',
+          wallet: wallet.solAddress,
+          wrapSol: inputMint === WSOL_MINT,
+          unwrapSol: activeQuote.outputMint === WSOL_MINT
+        };
+        if (inputAccount) rayBody.inputAccount = inputAccount;
+        if (outputAccount) rayBody.outputAccount = outputAccount;
         const rayBuild = await fetchJsonWithTimeout(
           `${RAYDIUM_API_URL}/transaction/swap-base-in`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              computeUnitPriceMicroLamports: '100000',
-              swapResponse: activeQuote._raydiumRawResponse,
-              txVersion: 'V0',
-              wallet: wallet.solAddress,
-              wrapSol: inputMint === WSOL_MINT,
-              unwrapSol: activeQuote.outputMint === WSOL_MINT
-            })
+            body: JSON.stringify(rayBody)
           },
           12000
         );
@@ -1982,6 +2307,8 @@
       } catch (_) {}
       if (activeQuote._jupiterQuote) {
         activeQuote = activeQuote._jupiterQuote;
+      } else {
+        throw new Error(t('Raydium 交易构建失败且无 Jupiter 备选报价', 'Raydium swap build failed and no Jupiter quote available'));
       }
     } else if (activeQuote._jupiterQuote) {
       activeQuote = activeQuote._jupiterQuote;
@@ -2125,7 +2452,7 @@
     mintAddress,
     toAddress,
     amount,
-    decimals = 6,
+    decimals = null,
     programId = null,
     tokenBalance = null
   } = {}) {
@@ -2138,39 +2465,49 @@
     if (mintPubkey.length !== 32) throw new Error(t('Solana Mint 地址无效', 'Invalid Solana mint address'));
     if (toPubkey.length !== 32) throw new Error(t('Solana 收款地址无效', 'Invalid Solana recipient address'));
 
-    await ensureWalletSigningKeysAsync(wallet);
-    const hasNearMpc = Boolean((wallet.nearNamedAccount || wallet.nearAddress) && wallet.nearPublicKey && wallet.nearPrivateKey);
-    if (!wallet.solAddress || (!wallet.solPrivateSeedHex && !hasNearMpc)) {
-      throw new Error(t('NEAR 主账户或 MPC Solana 地址不可用', 'NEAR Master Account or MPC Solana address unavailable'));
-    }
-
-    const dec = Number.isFinite(Number(decimals)) ? Number(decimals) : 6;
-    const rawAmtStr = toBaseUnits(amount, dec);
-    if (!/^\d+$/.test(rawAmtStr) || BigInt(rawAmtStr) <= 0n) {
-      throw new Error(t('转账数量过小', 'Transfer amount too small'));
-    }
-
+    const cachedSplBal =
+      tokenBalance !== null && tokenBalance !== undefined
+        ? Number(tokenBalance)
+        : (wallet.splBalances && wallet.splBalances[mintStr] !== undefined && wallet.splBalances[mintStr] !== null
+            ? Number(wallet.splBalances[mintStr])
+            : null);
     validateSufficientChainBalance({
       wallet,
       chain: 'sol',
       tokenSymbol: 'SPL',
       amount,
       isNative: false,
-      tokenBalance: tokenBalance !== null && tokenBalance !== undefined
-        ? tokenBalance
-        : (wallet.splBalances && typeof wallet.splBalances[mintStr] === 'number' ? wallet.splBalances[mintStr] : null)
+      tokenBalance: Number.isFinite(cachedSplBal) ? cachedSplBal : 0
     });
-
-    const solGasAvail = resolveWalletChainBalance(wallet, 'sol');
-    if (solGasAvail < 0.00001) {
-      throw new Error(t(`SOL 余额不足以支付交易费 (当前: ${solGasAvail.toFixed(6)} SOL)`, `Insufficient SOL for gas (Available: ${solGasAvail.toFixed(6)} SOL)`));
+    const solGasAvailPre = resolveWalletChainBalance(wallet, 'sol');
+    if (solGasAvailPre < 0.00002) {
+      throw new Error(t(`SOL 余额不足以支付交易费与 ATA 租金 (需至少 0.00002, 当前 ${solGasAvailPre.toFixed(5)} SOL)`, `Insufficient SOL for gas/ATA rent (Available: ${solGasAvailPre.toFixed(5)} SOL)`));
     }
 
+    await ensureWalletSigningKeysAsync(wallet);
+    const hasNearMpc = Boolean((wallet.nearNamedAccount || wallet.nearAddress) && wallet.nearPublicKey && wallet.nearPrivateKey);
+    if (!wallet.solAddress || (!wallet.solPrivateSeedHex && !hasNearMpc)) {
+      throw new Error(t('NEAR 主账户或 MPC Solana 地址不可用', 'NEAR Master Account or MPC Solana address unavailable'));
+    }
+
+    let dec = (decimals !== null && decimals !== undefined && Number.isFinite(Number(decimals))) ? Number(decimals) : null;
     let tokProg = programId ? String(programId).trim() : '';
-    if (!tokProg) {
-      const mintAccInfo = await callSolanaRpc('getAccountInfo', [mintStr, { encoding: 'jsonParsed' }], 5000).catch(() => null);
-      const ownerProg = mintAccInfo && mintAccInfo.value && mintAccInfo.value.owner ? String(mintAccInfo.value.owner) : '';
-      tokProg = ownerProg === SPL_TOKEN_2022_PROGRAM_ID ? SPL_TOKEN_2022_PROGRAM_ID : SPL_TOKEN_PROGRAM_ID;
+    let mintAccInfo = null;
+    if (!tokProg || dec === null) {
+      mintAccInfo = await callSolanaRpc('getAccountInfo', [mintStr, { encoding: 'jsonParsed' }], 5000).catch(() => null);
+      if (!tokProg) {
+        const ownerProg = mintAccInfo && mintAccInfo.value && mintAccInfo.value.owner ? String(mintAccInfo.value.owner) : '';
+        tokProg = ownerProg === SPL_TOKEN_2022_PROGRAM_ID ? SPL_TOKEN_2022_PROGRAM_ID : SPL_TOKEN_PROGRAM_ID;
+      }
+      if (dec === null) {
+        const parsedDec = mintAccInfo?.value?.data?.parsed?.info?.decimals;
+        dec = Number.isFinite(Number(parsedDec)) ? Number(parsedDec) : resolveSolanaTokenDecimals(mintStr, 6);
+      }
+    }
+
+    const rawAmtStr = toBaseUnits(amount, dec);
+    if (!/^\d+$/.test(rawAmtStr) || BigInt(rawAmtStr) <= 0n) {
+      throw new Error(t('转账数量过小', 'Transfer amount too small'));
     }
 
     const ownerStr = wallet.solAddress;
@@ -2185,6 +2522,14 @@
       [toPubkey, base58Decode(tokProg), mintPubkey],
       base58Decode(ataProg)
     );
+
+    const destAtaInfo = await callSolanaRpc('getAccountInfo', [destAta.address, { encoding: 'base64' }], 4000).catch(() => null);
+    const needAtaRent = !destAtaInfo || !destAtaInfo.value;
+    const requiredSolGas = needAtaRent ? 0.00205 : 0.00002;
+    const solGasAvail = resolveWalletChainBalance(wallet, 'sol');
+    if (solGasAvail < requiredSolGas) {
+      throw new Error(t(`SOL 余额不足以支付交易费与 ATA 租金 (需 ${requiredSolGas.toFixed(5)}, 当前 ${solGasAvail.toFixed(5)} SOL)`, `Insufficient SOL for gas/ATA rent (Need ${requiredSolGas.toFixed(5)}, Available: ${solGasAvail.toFixed(5)} SOL)`));
+    }
 
     const instructions = [];
     // 幂等创建接收方 ATA（若已存在则合约无操作且不报错）
@@ -2231,9 +2576,11 @@
     const instructions = [];
     for (const acc of accounts) {
       if (!acc || !acc.ataAddress || !acc.mint) continue;
+      if (acc.hasWithheldFee) continue;
       const tokProg = acc.programId === SPL_TOKEN_2022_PROGRAM_ID ? SPL_TOKEN_2022_PROGRAM_ID : SPL_TOKEN_PROGRAM_ID;
       const rawAmt = BigInt(String(acc.rawAmount || '0'));
-      if (rawAmt > 0n) {
+      const isWsol = acc.mint === WSOL_MINT;
+      if (rawAmt > 0n && !isWsol) {
         instructions.push({
           programId: tokProg,
           keys: [
@@ -2304,6 +2651,9 @@
         const info = parsed && parsed.info;
         if (!info || !info.mint || !info.tokenAmount) continue;
         if (info.state === 'frozen') continue;
+        const exts = Array.isArray(info.extensions) ? info.extensions : [];
+        const hasWithheld = exts.some((ext) => ext && ext.extension === 'transferFeeAmount' && Number(ext.state?.withheldAmount || 0) > 0);
+        if (hasWithheld) continue;
         const lamports = Number(item?.account?.lamports || 0);
         const rentSol = lamports / 1e9;
         const decimals = Number(info.tokenAmount.decimals || 0);
@@ -2359,17 +2709,18 @@
     }
 
     await ensureWalletSigningKeysAsync(wallet);
+    const batchSize = 8;
+    const batchCount = Math.max(1, Math.ceil(list.length / batchSize));
     validateSufficientChainBalance({
       wallet,
       chain: 'sol',
       tokenSymbol: 'SOL',
-      amount: 0.00001,
+      amount: 0.00001 * batchCount,
       isNative: false,
       tokenBalance: resolveWalletChainBalance(wallet, 'sol')
     });
 
     const txHashes = [];
-    const batchSize = 8;
     for (let i = 0; i < list.length; i += batchSize) {
       const chunk = list.slice(i, i + batchSize);
       const instructions = buildSolanaCloseOrBurnInstructions({
@@ -2616,21 +2967,43 @@
     ]);
 
     const rawHex = Array.from(rawBytes).map((b) => b.toString(16).padStart(2, '0')).join('');
-    return { rawHex, feeGrains: feeAmt.toString(), changeGrains: changeAmt >= 546n ? changeAmt.toString() : '0', inputCount: selected.length, outputCount: outputs.length };
+    const hasChange = changeAmt >= 546n;
+    const actualFee = hasChange ? feeAmt : (totalIn - sendAmt);
+    return { rawHex, feeGrains: actualFee.toString(), changeGrains: hasChange ? changeAmt.toString() : '0', inputCount: selected.length, outputCount: outputs.length };
   }
 
   async function executePearlTransfer({ wallet, toAddress, amountPrl, feeDeductMode = 'extra' } = {}) {
     if (!wallet || !wallet.address) {
       throw new Error(t('Pearl 地址不可用', 'Pearl address unavailable'));
     }
-    await ensureWalletSigningKeysAsync(wallet);
-    if (!wallet.tweakedPrivateKeyHex) {
-      throw new Error(t('缺少 Pearl Taproot 签名私钥', 'Pearl Taproot signing key unavailable'));
+    const destAddr = String(toAddress || '').trim();
+    const cryptoEngine = getCryptoEngine();
+    if (cryptoEngine) {
+      pearlOutputScriptPubKey(cryptoEngine, destAddr);
     }
 
     const reqAmt = Number(amountPrl);
     if (!Number.isFinite(reqAmt) || reqAmt <= 0) {
       throw new Error(t('请输入有效 PRL 数量', 'Enter a valid PRL amount'));
+    }
+
+    const cachedPrl = wallet.nativeBalances && typeof wallet.nativeBalances.prl === 'number'
+      ? wallet.nativeBalances.prl
+      : (typeof wallet.balance === 'number' ? wallet.balance : null);
+    if (cachedPrl !== null) {
+      validateSufficientChainBalance({
+        wallet,
+        chain: 'prl',
+        tokenSymbol: 'PRL',
+        amount: reqAmt,
+        isNative: feeDeductMode !== 'internal',
+        tokenBalance: cachedPrl
+      });
+    }
+
+    await ensureWalletSigningKeysAsync(wallet);
+    if (!wallet.tweakedPrivateKeyHex) {
+      throw new Error(t('缺少 Pearl Taproot 签名私钥', 'Pearl Taproot signing key unavailable'));
     }
 
     const [utxos, feeEst] = await Promise.all([
@@ -2717,22 +3090,654 @@
     };
   }
 
+  async function fetchPearlNativeBalance(prlAddress) {
+    const addr = String(prlAddress || '').trim();
+    if (!addr) return null;
+    try {
+      const data = await pearlBlockbookRequest(`/api/v2/address/${encodeURIComponent(addr)}`);
+      if (!data || (data.balance === undefined && data.unconfirmedBalance === undefined)) return null;
+      const confBig = BigInt(String(data.balance || '0'));
+      const unconfBig = BigInt(String(data.unconfirmedBalance || '0'));
+      const totalBig = confBig + unconfBig > 0n ? confBig + unconfBig : 0n;
+      const absUnconf = unconfBig < 0n ? -unconfBig : unconfBig;
+      return {
+        raw: totalBig.toString(),
+        formatted: Number(fromBaseUnits(totalBig.toString(), 8)),
+        confirmedRaw: confBig.toString(),
+        confirmedFormatted: Number(fromBaseUnits(confBig.toString(), 8)),
+        unconfirmedRaw: unconfBig.toString(),
+        unconfirmedFormatted: Number(fromBaseUnits(absUnconf.toString(), 8)) * (unconfBig < 0n ? -1 : 1)
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ==================== Bitcoin Mainnet BIP-86 Self-Custody (bc1p) ====================
+
+  const BTC_API_BASES = [
+    'https://mempool.space/api',
+    'https://blockstream.info/api'
+  ];
+  const _btcApiCooldownUntil = {};
+
+  function bitcoinTaprootScriptPubKey(cryptoEngine, btcAddress) {
+    const decoded = cryptoEngine.decodeBech32m(String(btcAddress || '').trim());
+    if (!decoded || !decoded.valid || decoded.hrp !== 'bc' || decoded.witnessVersion !== 1 || !decoded.programBytes || decoded.programBytes.length !== 32) {
+      throw new Error(t('Bitcoin Taproot 地址无效', 'Invalid Bitcoin Taproot address'));
+    }
+    const spk = new Uint8Array(34);
+    spk[0] = 0x51;
+    spk[1] = 0x20;
+    spk.set(Uint8Array.from(decoded.programBytes), 2);
+    return spk;
+  }
+
+  function bitcoinOutputScriptPubKey(cryptoEngine, btcAddress) {
+    const addr = String(btcAddress || '').trim();
+    if (!addr) throw new Error(t('Bitcoin 收款地址不能为空', 'Bitcoin recipient address required'));
+    const bech32m = cryptoEngine.decodeBech32m(addr);
+    if (bech32m && bech32m.valid && bech32m.hrp === 'bc' && bech32m.witnessVersion === 1 && bech32m.programBytes && bech32m.programBytes.length === 32) {
+      const spk = new Uint8Array(34);
+      spk[0] = 0x51;
+      spk[1] = 0x20;
+      spk.set(Uint8Array.from(bech32m.programBytes), 2);
+      return spk;
+    }
+    const bech32v0 = cryptoEngine.decodeBech32(addr);
+    if (bech32v0 && bech32v0.valid && bech32v0.hrp === 'bc' && bech32v0.witnessVersion === 0 && (bech32v0.programBytes.length === 20 || bech32v0.programBytes.length === 32)) {
+      const spk = new Uint8Array(2 + bech32v0.programBytes.length);
+      spk[0] = 0x00;
+      spk[1] = bech32v0.programBytes.length;
+      spk.set(Uint8Array.from(bech32v0.programBytes), 2);
+      return spk;
+    }
+    if (/^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(addr) && typeof cryptoEngine.base58CheckDecode === 'function') {
+      try {
+        const payload = cryptoEngine.base58CheckDecode(addr);
+        if (payload && payload.length === 21) {
+          if (payload[0] === 0x00) {
+            // P2PKH: OP_DUP OP_HASH160 PUSH20 <hash160> OP_EQUALVERIFY OP_CHECKSIG
+            return concatUint8Arrays([new Uint8Array([0x76, 0xa9, 0x14]), payload.slice(1), new Uint8Array([0x88, 0xac])]);
+          }
+          if (payload[0] === 0x05) {
+            // P2SH: OP_HASH160 PUSH20 <hash160> OP_EQUAL
+            return concatUint8Arrays([new Uint8Array([0xa9, 0x14]), payload.slice(1), new Uint8Array([0x87])]);
+          }
+        }
+      } catch (_) {}
+    }
+    throw new Error(t('不支持或无效的 Bitcoin 收款地址', 'Invalid or unsupported Bitcoin address'));
+  }
+
+  function buildSignedBitcoinTaprootTx({
+    fromAddress,
+    toAddress,
+    amountSats,
+    feeSats,
+    utxos = [],
+    tweakedPrivateKeyHex
+  }) {
+    const cryptoEngine = getCryptoEngine();
+    if (!cryptoEngine || typeof cryptoEngine.signSchnorrBip340 !== 'function') {
+      throw new Error(t('BIP-340 Schnorr 签名引擎不可用', 'BIP-340 Schnorr signer unavailable'));
+    }
+    const sendAmt = BigInt(String(amountSats || '0'));
+    const feeAmt = BigInt(String(feeSats || '0'));
+    if (sendAmt < 546n) {
+      throw new Error(t('BTC 转账金额不能低于粉尘阈值 (546 sats)', 'BTC transfer amount must be at least 546 sats (dust limit)'));
+    }
+    if (feeAmt <= 0n) {
+      throw new Error(t('BTC 矿工费必须大于 0 sats', 'BTC miner fee must be positive'));
+    }
+
+    const sortedUtxos = [...utxos]
+      .filter((u) => u && u.txid && u.vout !== undefined && BigInt(String(u.value || '0')) > 0n)
+      .sort((a, b) => (BigInt(String(b.value)) > BigInt(String(a.value)) ? 1 : -1));
+
+    const selected = [];
+    let totalIn = 0n;
+    const needed = sendAmt + feeAmt;
+    for (const u of sortedUtxos) {
+      selected.push(u);
+      totalIn += BigInt(String(u.value));
+      if (totalIn >= needed) break;
+    }
+    if (totalIn < needed) {
+      const availBtc = Number(fromBaseUnits(totalIn.toString(), 8));
+      const needBtc = Number(fromBaseUnits(needed.toString(), 8));
+      throw new Error(`${t('BTC UTXO 可用余额不足', 'Insufficient BTC UTXO balance')} (${availBtc.toFixed(8)} < ${needBtc.toFixed(8)} BTC)`);
+    }
+
+    const fromSpk = bitcoinTaprootScriptPubKey(cryptoEngine, fromAddress);
+    const fromXOnly = fromSpk.slice(2, 34);
+    const toSpk = bitcoinOutputScriptPubKey(cryptoEngine, toAddress);
+    const changeAmt = totalIn - sendAmt - feeAmt;
+    const hasChange = changeAmt >= 546n;
+    const outputs = [{ value: sendAmt, spk: toSpk }];
+    if (hasChange) {
+      outputs.push({ value: changeAmt, spk: fromSpk });
+    }
+    const actualFee = totalIn - sendAmt - (hasChange ? changeAmt : 0n);
+
+    const versionBytes = encodeU32LE(2);
+    const locktimeBytes = encodeU32LE(0);
+    const seqBytes = new Uint8Array([0xfd, 0xff, 0xff, 0xff]); // RBF 0xfffffffd
+
+    const prevoutsBuf = concatUint8Arrays(selected.map((u) => concatUint8Arrays([reverseHexBytes(u.txid), encodeU32LE(u.vout)])));
+    const amountsBuf = concatUint8Arrays(selected.map((u) => encodeU64LE(String(u.value))));
+    const spksBuf = concatUint8Arrays(selected.map(() => concatUint8Arrays([encodeVarInt(fromSpk.length), fromSpk])));
+    const seqsBuf = concatUint8Arrays(selected.map(() => seqBytes));
+    const outsBuf = concatUint8Arrays(outputs.map((o) => concatUint8Arrays([encodeU64LE(o.value.toString()), encodeVarInt(o.spk.length), o.spk])));
+
+    const shaPrevouts = cryptoEngine.sha256Bytes(prevoutsBuf);
+    const shaAmounts = cryptoEngine.sha256Bytes(amountsBuf);
+    const shaSpks = cryptoEngine.sha256Bytes(spksBuf);
+    const shaSeqs = cryptoEngine.sha256Bytes(seqsBuf);
+    const shaOuts = cryptoEngine.sha256Bytes(outsBuf);
+
+    const witnesses = [];
+    for (let i = 0; i < selected.length; i++) {
+      const sigMsg = concatUint8Arrays([
+        new Uint8Array([0x00]), // epoch
+        new Uint8Array([0x00]), // SIGHASH_DEFAULT
+        versionBytes,
+        locktimeBytes,
+        shaPrevouts,
+        shaAmounts,
+        shaSpks,
+        shaSeqs,
+        shaOuts,
+        new Uint8Array([0x00]), // spend_type (key-path, no annex)
+        encodeU32LE(i)
+      ]);
+      const sighash = cryptoEngine.taggedHash('TapSighash', sigMsg);
+      const sig64 = cryptoEngine.signSchnorrBip340(sighash, tweakedPrivateKeyHex);
+      if (typeof cryptoEngine.verifySchnorrBip340 === 'function') {
+        if (!cryptoEngine.verifySchnorrBip340(sig64, sighash, fromXOnly)) {
+          throw new Error(t('Bitcoin Taproot 本地签名自检失败', 'Bitcoin Taproot local Schnorr signature verification failed'));
+        }
+      }
+      witnesses.push(concatUint8Arrays([new Uint8Array([0x01, 0x40]), sig64]));
+    }
+
+    const rawBytes = concatUint8Arrays([
+      versionBytes,
+      new Uint8Array([0x00, 0x01]), // SegWit marker & flag
+      encodeVarInt(selected.length),
+      ...selected.map((u) => concatUint8Arrays([reverseHexBytes(u.txid), encodeU32LE(u.vout), new Uint8Array([0x00]), seqBytes])),
+      encodeVarInt(outputs.length),
+      ...outputs.map((o) => concatUint8Arrays([encodeU64LE(o.value.toString()), encodeVarInt(o.spk.length), o.spk])),
+      ...witnesses,
+      locktimeBytes
+    ]);
+
+    const rawHex = Array.from(rawBytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+    return {
+      rawHex,
+      feeSats: actualFee.toString(),
+      changeSats: hasChange ? changeAmt.toString() : '0',
+      inputCount: selected.length,
+      outputCount: outputs.length
+    };
+  }
+
+  async function btcApiRequestJson(apiPath, options = {}, timeoutMs = 8000) {
+    const isNativeCap = Boolean(
+      typeof window !== 'undefined' &&
+      window.Capacitor &&
+      typeof window.Capacitor.isNativePlatform === 'function' &&
+      window.Capacitor.isNativePlatform()
+    );
+    const now = Date.now();
+    let candidates = BTC_API_BASES.filter((b) => !(_btcApiCooldownUntil[b] > now));
+    if (candidates.length === 0) candidates = [...BTC_API_BASES];
+
+    let lastErr = null;
+    for (const base of candidates) {
+      const fullUrl = `${base}${apiPath}`;
+      try {
+        if (isNativeCap && window.Capacitor?.Plugins?.CapacitorHttp?.request) {
+          const res = await window.Capacitor.Plugins.CapacitorHttp.request({
+            url: fullUrl,
+            method: options.method || 'GET',
+            headers: options.headers || {},
+            data: options.body || undefined,
+            connectTimeout: timeoutMs,
+            readTimeout: timeoutMs
+          });
+          if (res && res.status >= 200 && res.status < 300) {
+            return typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+          }
+          if (res && (res.status === 429 || res.status >= 500)) {
+            _btcApiCooldownUntil[base] = Date.now() + 60_000;
+          }
+          throw new Error(`BTC API HTTP ${res ? res.status : 'error'}`);
+        }
+        return await fetchJsonWithTimeout(fullUrl, options, timeoutMs);
+      } catch (err) {
+        lastErr = err;
+        if (shouldCooldownRpcError(err)) {
+          _btcApiCooldownUntil[base] = Date.now() + 90_000;
+        }
+      }
+    }
+    throw lastErr || new Error(t('Bitcoin 节点请求失败', 'Bitcoin API request failed'));
+  }
+
+  async function btcBroadcastRawTx(rawHex, timeoutMs = 10000) {
+    const isNativeCap = Boolean(
+      typeof window !== 'undefined' &&
+      window.Capacitor &&
+      typeof window.Capacitor.isNativePlatform === 'function' &&
+      window.Capacitor.isNativePlatform()
+    );
+    const fetchFn = (typeof globalThis !== 'undefined' && globalThis.fetch) || (typeof fetch !== 'undefined' ? fetch : null);
+    const now = Date.now();
+    let bases = BTC_API_BASES.filter((b) => !(_btcApiCooldownUntil[b] > now));
+    if (bases.length === 0) bases = [...BTC_API_BASES];
+    let lastErr = null;
+    for (const base of bases) {
+      const fullUrl = `${base}/tx`;
+      try {
+        if (isNativeCap && window.Capacitor?.Plugins?.CapacitorHttp?.request) {
+          const res = await window.Capacitor.Plugins.CapacitorHttp.request({
+            url: fullUrl,
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            data: rawHex,
+            connectTimeout: timeoutMs,
+            readTimeout: timeoutMs
+          });
+          const bodyStr = typeof res?.data === 'string' ? res.data.trim() : String(res?.data || '');
+          if (res && res.status >= 200 && res.status < 300 && /^[0-9a-fA-F]{64}$/.test(bodyStr)) {
+            return bodyStr;
+          }
+          const err = new Error(bodyStr || `BTC broadcast HTTP ${res ? res.status : 'error'}`);
+          err.status = res ? res.status : 0;
+          if (err.status === 400) throw Object.assign(err, { isConsensusReject: true });
+          throw err;
+        }
+        if (!fetchFn) throw new Error('fetch unavailable');
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+        try {
+          const res = await fetchFn(fullUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: rawHex,
+            signal: ctrl ? ctrl.signal : undefined
+          });
+          const text = typeof res.text === 'function' ? (await res.text()).trim() : '';
+          if (res.ok && /^[0-9a-fA-F]{64}$/.test(text)) {
+            return text;
+          }
+          const err = new Error(text || `BTC broadcast HTTP ${res.status}`);
+          err.status = res.status;
+          if (res.status === 400) err.isConsensusReject = true;
+          throw err;
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      } catch (err) {
+        if (err && err.isConsensusReject) throw err;
+        if (shouldCooldownRpcError(err)) _btcApiCooldownUntil[base] = Date.now() + 90_000;
+        lastErr = err;
+      }
+    }
+    throw lastErr || new Error(t('Bitcoin 交易广播失败', 'Bitcoin transaction broadcast failed'));
+  }
+
+  async function fetchBitcoinNativeBalance(btcAddress) {
+    const addr = String(btcAddress || '').trim();
+    if (!addr) return null;
+    try {
+      const data = await btcApiRequestJson(`/address/${encodeURIComponent(addr)}`, {}, 8000);
+      const cs = data && data.chain_stats;
+      const ms = data && data.mempool_stats;
+      if (!cs) return null;
+      const confSats = BigInt(String(cs.funded_txo_sum || 0)) - BigInt(String(cs.spent_txo_sum || 0));
+      const mempoolDelta = ms
+        ? (BigInt(String(ms.funded_txo_sum || 0)) - BigInt(String(ms.spent_txo_sum || 0)))
+        : 0n;
+      const totalSats = confSats + mempoolDelta > 0n ? confSats + mempoolDelta : 0n;
+      return {
+        raw: totalSats.toString(),
+        formatted: Number(fromBaseUnits(totalSats.toString(), 8)),
+        confirmedRaw: confSats.toString(),
+        confirmedFormatted: Number(fromBaseUnits((confSats > 0n ? confSats : 0n).toString(), 8)),
+        mempoolDeltaSats: mempoolDelta.toString()
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function executeBitcoinTransfer({ wallet, toAddress, amountBtc, feeDeductMode = 'extra', feeRateSatVb = null } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const destAddr = String(toAddress || '').trim();
+    const cryptoEngine = getCryptoEngine();
+    if (cryptoEngine && typeof cryptoEngine.validateChainAddress === 'function') {
+      const chk = cryptoEngine.validateChainAddress('btc', destAddr);
+      if (!chk || !chk.valid) {
+        throw new Error(t('Bitcoin 收款地址无效', 'Invalid Bitcoin recipient address'));
+      }
+    }
+
+    const reqAmt = Number(amountBtc);
+    if (!Number.isFinite(reqAmt) || reqAmt <= 0) {
+      throw new Error(t('请输入有效 BTC 数量', 'Enter a valid BTC amount'));
+    }
+    const cachedBtc = wallet.nativeBalances && typeof wallet.nativeBalances.btc === 'number'
+      ? wallet.nativeBalances.btc
+      : (typeof wallet.btcBalance === 'number' ? wallet.btcBalance : null);
+    if (cachedBtc !== null) {
+      validateSufficientChainBalance({
+        wallet,
+        chain: 'btc',
+        tokenSymbol: 'BTC',
+        amount: reqAmt,
+        isNative: feeDeductMode !== 'internal',
+        tokenBalance: cachedBtc
+      });
+    }
+
+    await ensureWalletSigningKeysAsync(wallet);
+    if (!wallet.btcAddress || !wallet.btcTweakedPrivateKeyHex) {
+      throw new Error(t('Bitcoin Taproot 自托管密钥不可用', 'Bitcoin Taproot self-custody key unavailable'));
+    }
+
+    const [utxos, mempoolFees, blockstreamFees] = await Promise.all([
+      btcApiRequestJson(`/address/${encodeURIComponent(wallet.btcAddress)}/utxo`, {}, 8000),
+      feeRateSatVb ? Promise.resolve(null) : fetchJsonWithTimeout('https://mempool.space/api/v1/fees/recommended', {}, 5000).catch(() => null),
+      feeRateSatVb ? Promise.resolve(null) : fetchJsonWithTimeout('https://blockstream.info/api/fee-estimates', {}, 5000).catch(() => null)
+    ]);
+
+    if (!Array.isArray(utxos) || utxos.length === 0) {
+      throw new Error(t('Bitcoin 钱包暂无可用 UTXO', 'No spendable BTC UTXOs found'));
+    }
+
+    const spendableUtxos = utxos.filter((u) => {
+      if (!u || !u.txid || u.vout === undefined) return false;
+      if (u.coinbase || (u.status && u.status.coinbase)) {
+        const confs = Number(u.confirmations);
+        if (!Number.isFinite(confs) || confs < 100) return false;
+      }
+      try {
+        return BigInt(String(u.value || '0')) > 0n;
+      } catch (_) {
+        return false;
+      }
+    });
+    if (spendableUtxos.length === 0) {
+      throw new Error(t('Bitcoin 钱包暂无可用 UTXO', 'No spendable BTC UTXOs found'));
+    }
+
+    let satPerVbyte = Number(feeRateSatVb);
+    if (!Number.isFinite(satPerVbyte) || satPerVbyte <= 0) {
+      if (mempoolFees && Number(mempoolFees.halfHourFee || mempoolFees.fastestFee) > 0) {
+        satPerVbyte = Math.ceil(Number(mempoolFees.halfHourFee || mempoolFees.fastestFee));
+      } else if (blockstreamFees && Number(blockstreamFees['2'] || blockstreamFees['3'] || blockstreamFees['1']) > 0) {
+        satPerVbyte = Math.ceil(Number(blockstreamFees['2'] || blockstreamFees['3'] || blockstreamFees['1']));
+      }
+    }
+    if (!Number.isFinite(satPerVbyte) || satPerVbyte <= 0) {
+      throw new Error(t('无法获取实时 Bitcoin 网络费率，请稍后重试', 'Failed to fetch live Bitcoin fee rate'));
+    }
+    satPerVbyte = Math.max(1, satPerVbyte);
+
+    const sortedUtxos = [...spendableUtxos].sort((a, b) => (BigInt(String(b.value)) > BigInt(String(a.value)) ? 1 : -1));
+    const reqSatsBig = BigInt(toBaseUnits(String(reqAmt), 8));
+    let feeSatsBig = BigInt(Math.ceil((12 + 58 + 2 * 43) * satPerVbyte));
+    for (let pass = 0; pass < 3; pass++) {
+      const targetSend = feeDeductMode === 'internal'
+        ? (reqSatsBig > feeSatsBig ? reqSatsBig - feeSatsBig : 0n)
+        : reqSatsBig;
+      let acc = 0n;
+      let count = 0;
+      for (const u of sortedUtxos) {
+        acc += BigInt(String(u.value));
+        count += 1;
+        if (acc >= targetSend + feeSatsBig) break;
+      }
+      const hasChange = acc > targetSend + feeSatsBig && (acc - targetSend - feeSatsBig) >= 546n;
+      const vbytes = 12 + Math.max(1, count) * 58 + (hasChange ? 2 : 1) * 43;
+      const nextFee = BigInt(Math.max(150, Math.ceil(vbytes * satPerVbyte)));
+      if (nextFee === feeSatsBig) break;
+      feeSatsBig = nextFee;
+    }
+
+    const sendSatsBig = feeDeductMode === 'internal'
+      ? (reqSatsBig > feeSatsBig ? reqSatsBig - feeSatsBig : 0n)
+      : reqSatsBig;
+    if (sendSatsBig < 546n) {
+      throw new Error(t('转账金额扣除矿工费后低于粉尘阈值 (546 sats)', 'Amount after miner fee is below 546 sats dust limit'));
+    }
+
+    const built = buildSignedBitcoinTaprootTx({
+      fromAddress: wallet.btcAddress,
+      toAddress: String(toAddress || '').trim(),
+      amountSats: sendSatsBig.toString(),
+      feeSats: feeSatsBig.toString(),
+      utxos: spendableUtxos,
+      tweakedPrivateKeyHex: wallet.btcTweakedPrivateKeyHex
+    });
+
+    const txHash = await btcBroadcastRawTx(built.rawHex, 10000);
+    return {
+      ok: true,
+      txHash,
+      explorerUrl: `https://mempool.space/tx/${txHash}`,
+      amountBtc: Number(fromBaseUnits(sendSatsBig.toString(), 8)),
+      feeBtc: Number(fromBaseUnits(built.feeSats, 8)),
+      feeRateSatVb: satPerVbyte
+    };
+  }
+
   // ==================== EVM RPC & Smart Contract Execution ====================
 
+  function sliceEvmUint256WordHex(hexResult, wordIndex = 0) {
+    const clean = String(hexResult || '').replace(/^0x/i, '');
+    const start = wordIndex * 64;
+    if (clean.length < start + 64) return '0';
+    return BigInt('0x' + clean.slice(start, start + 64)).toString();
+  }
+
+  function encodeMulticall3Aggregate3(calls = []) {
+    const selector = '82ad56cb';
+    const count = calls.length;
+    const headWords = [
+      '0000000000000000000000000000000000000000000000000000000000000020',
+      count.toString(16).padStart(64, '0')
+    ];
+    let elemOffset = count * 32;
+    const offsetWords = [];
+    const bodyChunks = [];
+
+    for (const c of calls) {
+      offsetWords.push(elemOffset.toString(16).padStart(64, '0'));
+      const targetHex = String(c.target || '').replace(/^0x/i, '').toLowerCase().padStart(64, '0');
+      const allowHex = (c.allowFailure ? 1 : 0).toString(16).padStart(64, '0');
+      const dataRelOff = (96).toString(16).padStart(64, '0');
+      const dataClean = String(c.callData || '').replace(/^0x/i, '').toLowerCase();
+      const dataByteLen = Math.floor(dataClean.length / 2);
+      const dataLenHex = dataByteLen.toString(16).padStart(64, '0');
+      const paddedLen = Math.ceil(dataClean.length / 64) * 64;
+      const dataPadded = dataClean.padEnd(paddedLen, '0');
+      const chunk = targetHex + allowHex + dataRelOff + dataLenHex + dataPadded;
+      bodyChunks.push(chunk);
+      elemOffset += chunk.length / 2;
+    }
+
+    return '0x' + selector + headWords.join('') + offsetWords.join('') + bodyChunks.join('');
+  }
+
+  function decodeMulticall3Aggregate3Result(hexResult) {
+    const clean = String(hexResult || '').replace(/^0x/i, '');
+    if (clean.length < 128) return null;
+    const readWord = (byteOff) => {
+      const start = byteOff * 2;
+      if (start + 64 > clean.length) return 0n;
+      return BigInt('0x' + clean.slice(start, start + 64));
+    };
+    const arrOffset = Number(readWord(0));
+    const count = Number(readWord(arrOffset));
+    if (!Number.isFinite(count) || count < 0 || count > 2000) return null;
+    const elemsBase = arrOffset + 32;
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      const rel = Number(readWord(elemsBase + i * 32));
+      const elemPos = elemsBase + rel;
+      const success = readWord(elemPos) !== 0n;
+      const dataRel = Number(readWord(elemPos + 32));
+      const dataPos = elemPos + dataRel;
+      const dataByteLen = Number(readWord(dataPos));
+      const hexStart = (dataPos + 32) * 2;
+      const hexEnd = hexStart + dataByteLen * 2;
+      const returnData = hexEnd <= clean.length ? ('0x' + clean.slice(hexStart, hexEnd)) : '0x';
+      out.push({ success: Boolean(success && dataByteLen > 0), returnData });
+    }
+    return out;
+  }
+
+  async function callEvmRpc(chainKey, payload, timeoutMs = 6000) {
+    const key = String(chainKey || '').toLowerCase();
+    const cfg = EVM_CHAINS[key];
+    if (!cfg) return null;
+    const allRpcs = Array.isArray(cfg.rpcs) && cfg.rpcs.length > 0 ? cfg.rpcs : (cfg.rpc ? [cfg.rpc] : []);
+    if (allRpcs.length === 0) return null;
+    const now = Date.now();
+    let active = allRpcs.filter((u) => !(_evmRpcCooldownUntil[u] > now));
+    if (active.length === 0) active = allRpcs;
+
+    const effTimeout = Math.min(timeoutMs, 5000);
+    const bodyStr = JSON.stringify(payload);
+    const isBatch = Array.isArray(payload);
+    const methodName = !isBatch && payload && payload.method ? String(payload.method) : '';
+    const isReadOnly = isBatch || !/sendRawTransaction|sendTransaction/i.test(methodName);
+
+    const trySingleEndpoint = async (rpcUrl, signal = undefined) => {
+      try {
+        const res = await fetchJsonWithTimeout(
+          rpcUrl,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: bodyStr,
+            signal
+          },
+          effTimeout
+        );
+        if (Array.isArray(res)) {
+          const allErrors = res.length > 0 && res.every((item) => item && item.error && item.result === undefined);
+          if (allErrors) {
+            const firstErr = res[0].error;
+            if (isDeterministicJsonRpcError(firstErr)) return { deterministicError: true, data: null };
+            _evmRpcCooldownUntil[rpcUrl] = Date.now() + 90_000;
+            return { deterministicError: false, data: null };
+          }
+          return { deterministicError: false, data: res };
+        }
+        if (res && res.result !== undefined && !res.error) {
+          return { deterministicError: false, data: res };
+        }
+        if (res && res.error) {
+          if (isDeterministicJsonRpcError(res.error)) {
+            return { deterministicError: true, data: null };
+          }
+          _evmRpcCooldownUntil[rpcUrl] = Date.now() + 90_000;
+        }
+      } catch (err) {
+        if (!(signal && signal.aborted) && shouldCooldownRpcError(err)) {
+          _evmRpcCooldownUntil[rpcUrl] = Date.now() + 90_000;
+        }
+      }
+      return { deterministicError: false, data: null };
+    };
+
+    // Hedged racing for read-only calls when >= 2 healthy RPCs exist: launch backup after 1500ms if primary is slow
+    if (isReadOnly && active.length >= 2) {
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const sig = ctrl ? ctrl.signal : undefined;
+      let hedgeTimer = null;
+      try {
+        const primary = trySingleEndpoint(active[0], sig).then((r) => {
+          if (r && (r.data !== null || r.deterministicError)) return r;
+          throw new Error('primary_failed');
+        });
+        const backup = new Promise((resolve, reject) => {
+          let settled = false;
+          const runBackup = () => {
+            if (settled || (sig && sig.aborted)) { reject(new Error('aborted')); return; }
+            trySingleEndpoint(active[1], sig).then((r) => {
+              if (r && (r.data !== null || r.deterministicError)) resolve(r);
+              else reject(new Error('backup_failed'));
+            }).catch(reject);
+          };
+          hedgeTimer = setTimeout(runBackup, 1500);
+          primary.catch(() => {
+            if (hedgeTimer) { clearTimeout(hedgeTimer); hedgeTimer = null; }
+            runBackup();
+          });
+        });
+        const winner = await Promise.any([primary, backup]);
+        if (hedgeTimer) clearTimeout(hedgeTimer);
+        if (ctrl && !ctrl.signal.aborted) ctrl.abort();
+        if (winner && winner.deterministicError) return null;
+        if (winner && winner.data !== null) return winner.data;
+      } catch (_) {
+        if (hedgeTimer) clearTimeout(hedgeTimer);
+        if (ctrl && !ctrl.signal.aborted) ctrl.abort();
+      }
+      // Try any remaining endpoints beyond the first two
+      for (let i = 2; i < active.length; i++) {
+        const r = await trySingleEndpoint(active[i]);
+        if (r.deterministicError) return null;
+        if (r.data !== null) return r.data;
+      }
+      return null;
+    }
+
+    for (const rpcUrl of active) {
+      const r = await trySingleEndpoint(rpcUrl);
+      if (r.deterministicError) return null;
+      if (r.data !== null) return r.data;
+    }
+    return null;
+  }
+
+  async function waitForEvmTxConfirmation(chainKey, txHash, timeoutMs = 45000) {
+    if (!txHash) return null;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const res = await callEvmRpc(
+        chainKey,
+        { jsonrpc: '2.0', id: 'receipt', method: 'eth_getTransactionReceipt', params: [txHash] },
+        5000
+      ).catch(() => null);
+      const receipt = res && res.result ? res.result : null;
+      if (receipt && receipt.blockNumber) {
+        if (receipt.status === '0x0') {
+          throw new Error(t(`链上交易执行失败 (tx: ${txHash})`, `On-chain transaction reverted (tx: ${txHash})`));
+        }
+        return receipt;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1800));
+    }
+    return null;
+  }
+
   async function fetchEvmNativeAndErc20Balance(chainKey, evmAddress, tokenContract = null, decimals = 18) {
-    const cfg = EVM_CHAINS[String(chainKey || '').toLowerCase()];
+    const key = String(chainKey || '').toLowerCase();
+    const cfg = EVM_CHAINS[key];
     const addr = String(evmAddress || '').trim();
     if (!cfg || !addr) return null;
 
     try {
-      const nativeRes = await fetchJsonWithTimeout(
-        cfg.rpc,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [addr, 'latest'] })
-        },
-        8000
+      const nativeRes = await callEvmRpc(
+        key,
+        { jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [addr, 'latest'] },
+        6500
       );
       if (!nativeRes || typeof nativeRes.result !== 'string' || !nativeRes.result.startsWith('0x')) {
         return null;
@@ -2745,28 +3750,24 @@
       const contract = tokenContract ? String(tokenContract).trim() : '';
       if (contract && contract.toLowerCase() !== NATIVE_EVM_SENTINEL) {
         const paddedAddr = addr.toLowerCase().replace(/^0x/, '').padStart(64, '0');
-        const tokenRes = await fetchJsonWithTimeout(
-          cfg.rpc,
+        const tokenRes = await callEvmRpc(
+          key,
           {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              jsonrpc: '2.0',
-              id: 2,
-              method: 'eth_call',
-              params: [{ to: contract, data: '0x70a08231' + paddedAddr }, 'latest']
-            })
+            jsonrpc: '2.0',
+            id: 2,
+            method: 'eth_call',
+            params: [{ to: contract, data: '0x70a08231' + paddedAddr }, 'latest']
           },
-          8000
+          6500
         );
         if (tokenRes && typeof tokenRes.result === 'string' && tokenRes.result.startsWith('0x')) {
-          tokenRaw = BigInt(tokenRes.result === '0x' ? '0x0' : tokenRes.result).toString();
+          tokenRaw = sliceEvmUint256WordHex(tokenRes.result, 0);
           tokenFormatted = Number(fromBaseUnits(tokenRaw, decimals));
         }
       }
 
       return {
-        chainKey: String(chainKey).toLowerCase(),
+        chainKey: key,
         chainId: cfg.chainId,
         nativeRaw,
         nativeFormatted,
@@ -2780,8 +3781,8 @@
 
   /**
    * 批量查询单条 EVM 链的原生余额与多个 ERC20 balanceOf：
-   * 优先使用单次 JSON-RPC Batch 请求（1 次 HTTP 请求完成整条链所有代币查询），
-   * 若节点不支持 Batch 则自动降级为 1 次 eth_getBalance + 并发 eth_call。
+   * 优先通过 Multicall3.aggregate3 单次 eth_call 查询（无节点 Batch 限制，最快）；
+   * 不支持 Multicall3 或失败时自动降级为 JSON-RPC Batch / 多 RPC 故障转移并发查询。
    */
   async function fetchEvmChainBalancesBatch(chainKey, evmAddress, tokenQueries = []) {
     const key = String(chainKey || '').toLowerCase();
@@ -2797,31 +3798,91 @@
       }));
 
     const paddedAddr = addr.toLowerCase().replace(/^0x/, '').padStart(64, '0');
-    const batchPayload = [
-      { jsonrpc: '2.0', id: 0, method: 'eth_getBalance', params: [addr, 'latest'] },
-      ...validTokens.map((q, idx) => ({
-        jsonrpc: '2.0',
-        id: idx + 1,
-        method: 'eth_call',
-        params: [{ to: q.contract, data: '0x70a08231' + paddedAddr }, 'latest']
-      }))
-    ];
-
-    let nativeFormatted = null;
-    let nativeRaw = null;
     const tokens = Object.create(null);
+    const allRpcList = Array.isArray(cfg.rpcs) && cfg.rpcs.length > 0 ? cfg.rpcs : (cfg.rpc ? [cfg.rpc] : []);
+    const allInCooldown = () => allRpcList.length > 0 && allRpcList.every((u) => (_evmRpcCooldownUntil[u] || 0) > Date.now());
 
     try {
-      const batchRes = await fetchJsonWithTimeout(
-        cfg.rpc,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(batchPayload)
-        },
-        5500
-      ).catch(() => null);
+      if (validTokens.length === 0) {
+        const natOnlyRes = await callEvmRpc(
+          key,
+          { jsonrpc: '2.0', id: 0, method: 'eth_getBalance', params: [addr, 'latest'] },
+          5500
+        );
+        if (!natOnlyRes || typeof natOnlyRes.result !== 'string' || !natOnlyRes.result.startsWith('0x')) {
+          return null;
+        }
+        const nativeRaw = BigInt(natOnlyRes.result === '0x' ? '0x0' : natOnlyRes.result).toString();
+        const nativeFormatted = Number(fromBaseUnits(nativeRaw, 18));
+        return { chainKey: key, chainId: cfg.chainId, nativeRaw, nativeFormatted, tokens };
+      }
 
+      // 1. Multicall3 aggregate3 (1 eth_call for native ETH + all ERC20 tokens)
+      if (cfg.supportsMulticall3 !== false) {
+        const allCalls = [
+          { target: MULTICALL3_ADDRESS, allowFailure: true, callData: '0x4d2301cc' + paddedAddr },
+          ...validTokens.map((q) => ({
+            target: q.contract,
+            allowFailure: true,
+            callData: '0x70a08231' + paddedAddr
+          }))
+        ];
+        const CHUNK_SIZE = 100;
+        const decodedAll = [];
+        let mcOk = true;
+        for (let off = 0; off < allCalls.length; off += CHUNK_SIZE) {
+          const chunk = allCalls.slice(off, off + CHUNK_SIZE);
+          const calldata = encodeMulticall3Aggregate3(chunk);
+          const mcRes = await callEvmRpc(
+            key,
+            {
+              jsonrpc: '2.0',
+              id: `mc3_${off}`,
+              method: 'eth_call',
+              params: [{ to: MULTICALL3_ADDRESS, data: calldata }, 'latest']
+            },
+            5500
+          );
+          const decoded = mcRes && typeof mcRes.result === 'string'
+            ? decodeMulticall3Aggregate3Result(mcRes.result)
+            : null;
+          if (!decoded || decoded.length !== chunk.length) {
+            mcOk = false;
+            break;
+          }
+          decodedAll.push(...decoded);
+        }
+        if (mcOk && decodedAll.length === allCalls.length && decodedAll[0].success) {
+          const nativeRaw = sliceEvmUint256WordHex(decodedAll[0].returnData, 0);
+          const nativeFormatted = Number(fromBaseUnits(nativeRaw, 18));
+          validTokens.forEach((q, idx) => {
+            const item = decodedAll[idx + 1];
+            if (item && item.success && item.returnData && item.returnData !== '0x') {
+              const raw = sliceEvmUint256WordHex(item.returnData, 0);
+              tokens[q.contract.toLowerCase()] = {
+                contract: q.contract,
+                raw,
+                formatted: Number(fromBaseUnits(raw, q.decimals))
+              };
+            }
+          });
+          return { chainKey: key, chainId: cfg.chainId, nativeRaw, nativeFormatted, tokens };
+        }
+        if (allInCooldown()) return null;
+      }
+
+      // 2. JSON-RPC Batch fallback
+      const batchPayload = [
+        { jsonrpc: '2.0', id: 0, method: 'eth_getBalance', params: [addr, 'latest'] },
+        ...validTokens.map((q, idx) => ({
+          jsonrpc: '2.0',
+          id: idx + 1,
+          method: 'eth_call',
+          params: [{ to: q.contract, data: '0x70a08231' + paddedAddr }, 'latest']
+        }))
+      ];
+
+      const batchRes = await callEvmRpc(key, batchPayload, 5500);
       if (Array.isArray(batchRes) && batchRes.length > 0) {
         const byId = new Map();
         for (const item of batchRes) {
@@ -2829,58 +3890,38 @@
         }
         const natItem = byId.get(0);
         if (natItem && typeof natItem.result === 'string' && natItem.result.startsWith('0x')) {
-          nativeRaw = BigInt(natItem.result === '0x' ? '0x0' : natItem.result).toString();
-          nativeFormatted = Number(fromBaseUnits(nativeRaw, 18));
-        }
-        validTokens.forEach((q, idx) => {
-          const item = byId.get(idx + 1);
-          if (item && typeof item.result === 'string' && item.result.startsWith('0x')) {
-            const raw = BigInt(item.result === '0x' ? '0x0' : item.result).toString();
-            tokens[q.contract.toLowerCase()] = {
-              contract: q.contract,
-              raw,
-              formatted: Number(fromBaseUnits(raw, q.decimals))
-            };
-          }
-        });
-        if (nativeFormatted !== null) {
+          const nativeRaw = BigInt(natItem.result === '0x' ? '0x0' : natItem.result).toString();
+          const nativeFormatted = Number(fromBaseUnits(nativeRaw, 18));
+          validTokens.forEach((q, idx) => {
+            const item = byId.get(idx + 1);
+            if (item && typeof item.result === 'string' && item.result.startsWith('0x')) {
+              const raw = sliceEvmUint256WordHex(item.result, 0);
+              tokens[q.contract.toLowerCase()] = {
+                contract: q.contract,
+                raw,
+                formatted: Number(fromBaseUnits(raw, q.decimals))
+              };
+            }
+          });
           return { chainKey: key, chainId: cfg.chainId, nativeRaw, nativeFormatted, tokens };
         }
       }
+      if (allInCooldown()) return null;
 
-      // 降级路径：并发发起 1 次 eth_getBalance + N 次 eth_call（无重复原生查询）
+      // 3. Concurrent individual calls fallback
       const [natRes, ...ercResults] = await Promise.all([
-        fetchJsonWithTimeout(
-          cfg.rpc,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(batchPayload[0])
-          },
-          5500
-        ).catch(() => null),
-        ...validTokens.map((q, idx) =>
-          fetchJsonWithTimeout(
-            cfg.rpc,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(batchPayload[idx + 1])
-            },
-            5500
-          ).catch(() => null)
-        )
+        callEvmRpc(key, batchPayload[0], 5500),
+        ...validTokens.map((_, idx) => callEvmRpc(key, batchPayload[idx + 1], 5500))
       ]);
-
       if (!natRes || typeof natRes.result !== 'string' || !natRes.result.startsWith('0x')) {
         return null;
       }
-      nativeRaw = BigInt(natRes.result === '0x' ? '0x0' : natRes.result).toString();
-      nativeFormatted = Number(fromBaseUnits(nativeRaw, 18));
+      const nativeRaw = BigInt(natRes.result === '0x' ? '0x0' : natRes.result).toString();
+      const nativeFormatted = Number(fromBaseUnits(nativeRaw, 18));
       validTokens.forEach((q, idx) => {
         const res = ercResults[idx];
         if (res && typeof res.result === 'string' && res.result.startsWith('0x')) {
-          const raw = BigInt(res.result === '0x' ? '0x0' : res.result).toString();
+          const raw = sliceEvmUint256WordHex(res.result, 0);
           tokens[q.contract.toLowerCase()] = {
             contract: q.contract,
             raw,
@@ -2896,7 +3937,6 @@
   }
 
   const ARC_USDC_PRECOMPILE = '0x3600000000000000000000000000000000000000';
-  const ARC_QUOTE_PLACEHOLDER_ADDR = '0x1111111111111111111111111111111111111111';
   const LIFI_API_URL = 'https://li.quest/v1';
 
   async function quoteArcNetworkDexSwap(params = {}) {
@@ -2913,6 +3953,7 @@
     slippageBps = 100,
     feeBps = 0,
     feeReceiver = DEFAULT_EVM_FEE_RECEIVER,
+    fromAddress = '',
     signal = null
   } = {}) {
     const key = String(chainKey || '').toLowerCase();
@@ -2954,159 +3995,245 @@
     }
 
     const bps = feeBps !== undefined && feeBps !== null && Number.isFinite(Number(feeBps)) ? Math.max(0, Math.round(Number(feeBps))) : 0;
-    const feeQueryKyber = bps > 0 && feeReceiver
-      ? `&feeAmount=${bps}&isInBps=true&chargeFeeBy=currency_in&feeReceiver=${encodeURIComponent(feeReceiver)}`
-      : '';
-    const kyberUrl = cfg.kyber
-      ? `https://aggregator-api.kyberswap.com/${cfg.kyber}/api/v1/routes?tokenIn=${encodeURIComponent(effSrc)}&tokenOut=${encodeURIComponent(effDest)}&amountIn=${encodeURIComponent(effAmtStr)}${feeQueryKyber}`
-      : null;
+    const validFromAddr = /^0x[0-9a-fA-F]{40}$/.test(String(fromAddress || '')) ? String(fromAddress).trim() : '';
+    const slipNum = Number(slippageBps) || 100;
+    const evmCacheKey = `evm:${key}:${effSrc.toLowerCase()}:${effDest.toLowerCase()}:${effAmtStr}:${slipNum}:${bps}:${validFromAddr.toLowerCase()}`;
 
-    const feeQueryPara = bps > 0 && feeReceiver
-      ? `&partner=pearlwallet&partnerAddress=${encodeURIComponent(feeReceiver)}&partnerFeeBps=${bps}`
-      : '';
-    const paraUrl = `https://api.paraswap.io/prices?srcToken=${encodeURIComponent(effSrc)}&destToken=${encodeURIComponent(effDest)}&amount=${encodeURIComponent(effAmtStr)}&srcDecimals=${effSrcDec}&destDecimals=${effDestDec}&network=${cfg.chainId}&side=SELL${feeQueryPara}`;
-
-    const ooAmountHuman = fromBaseUnits(effAmtStr, effSrcDec);
-    const ooSlippagePct = ((Number(slippageBps) || 100) / 100).toFixed(2);
-    const ooUrl = cfg.openOcean
-      ? `${OPENOCEAN_API_URL}/${cfg.openOcean}/quote?inTokenAddress=${encodeURIComponent(effSrc)}&outTokenAddress=${encodeURIComponent(effDest)}&amount=${encodeURIComponent(ooAmountHuman)}&gasPrice=5&slippage=${ooSlippagePct}`
-      : null;
-
-    const lifiSlip = ((Number(slippageBps) || 100) / 10000).toFixed(4);
-    const lifiUrl = isArcMainnet
-      ? `${LIFI_API_URL}/quote?fromChain=${cfg.chainId}&toChain=${cfg.chainId}&fromToken=${encodeURIComponent(effSrc)}&toToken=${encodeURIComponent(effDest)}&fromAmount=${encodeURIComponent(effAmtStr)}&fromAddress=${ARC_QUOTE_PLACEHOLDER_ADDR}&slippage=${lifiSlip}`
-      : null;
-
-    const [kRes, pRes, oRes, lRes] = await raceWithGraceWindow(
-      [
-        kyberUrl ? fetchJsonWithTimeout(kyberUrl, { signal }, 5000) : Promise.resolve(null),
-        cfg.chainId === 999 || cfg.chainId === 4663 || cfg.chainId === 5042
-          ? Promise.resolve(null)
-          : fetchJsonWithTimeout(paraUrl, { signal }, 5000),
-        ooUrl ? fetchJsonWithTimeout(ooUrl, { signal }, 4500).catch(() => null) : Promise.resolve(null),
-        lifiUrl ? fetchJsonWithTimeout(lifiUrl, { signal }, 5000).catch(() => null) : Promise.resolve(null)
-      ],
-      (v) => Boolean(
-        v && (
-          (v.code === 0 && v.data && v.data.routeSummary && v.data.routeSummary.amountOut) ||
-          (v.priceRoute && v.priceRoute.destAmount) ||
-          (Number(v.code) === 200 && v.data && v.data.outAmount) ||
-          (v.estimate && v.estimate.toAmount)
-        )
-      ),
-      650
-    );
-
-    const scaleArcOut = (rawOutStr) => {
-      const b = BigInt(rawOutStr);
-      if (arcDestNative && Number(destDecimals) === 18) return b * 1000000000000n;
-      return b;
-    };
-
-    const candidates = [];
-    const kRoute =
-      kRes.status === 'fulfilled' && kRes.value && kRes.value.code === 0 && kRes.value.data && kRes.value.data.routeSummary
-        ? kRes.value.data.routeSummary
-        : null;
-    if (kRoute && kRoute.amountOut) {
-      const scaledOut = scaleArcOut(kRoute.amountOut);
-      candidates.push({
-        routeSource: 'kyber',
-        label: 'KyberSwap',
-        outBig: scaledOut,
-        amountOut: scaledOut.toString(),
-        amountInUsd: kRoute.amountInUsd || null,
-        amountOutUsd: kRoute.amountOutUsd || null,
-        routeData: { ...kRoute, _arcNormSrc: effSrc, _arcNormDest: effDest, _arcNormAmtIn: effAmtStr }
-      });
-    }
-
-    const pRoute =
-      pRes.status === 'fulfilled' && pRes.value && pRes.value.priceRoute && pRes.value.priceRoute.destAmount
-        ? pRes.value.priceRoute
-        : null;
-    if (pRoute && pRoute.destAmount) {
-      candidates.push({
-        routeSource: 'paraswap',
-        label: 'ParaSwap',
-        outBig: BigInt(pRoute.destAmount),
-        amountOut: String(pRoute.destAmount),
-        amountInUsd: pRoute.srcUSD || null,
-        amountOutUsd: pRoute.destUSD || null,
-        routeData: pRoute
-      });
-    }
-
-    const ooRoute =
-      oRes.status === 'fulfilled' && oRes.value && Number(oRes.value.code) === 200 && oRes.value.data && oRes.value.data.outAmount
-        ? oRes.value.data
-        : null;
-    if (ooRoute && /^\d+$/.test(String(ooRoute.outAmount)) && BigInt(ooRoute.outAmount) > 0n) {
-      candidates.push({
-        routeSource: 'openocean',
-        label: 'OpenOcean',
-        outBig: BigInt(ooRoute.outAmount),
-        amountOut: String(ooRoute.outAmount),
-        amountInUsd: null,
-        amountOutUsd: null,
-        routeData: ooRoute
-      });
-    }
-
-    const lRoute =
-      lRes.status === 'fulfilled' && lRes.value && lRes.value.estimate && lRes.value.estimate.toAmount
-        ? lRes.value
-        : null;
-    if (lRoute && /^\d+$/.test(String(lRoute.estimate.toAmount)) && BigInt(lRoute.estimate.toAmount) > 0n) {
-      const scaledOut = scaleArcOut(lRoute.estimate.toAmount);
-      candidates.push({
-        routeSource: 'lifi',
-        label: 'LI.FI',
-        outBig: scaledOut,
-        amountOut: scaledOut.toString(),
-        amountInUsd: lRoute.estimate.fromAmountUSD || null,
-        amountOutUsd: lRoute.estimate.toAmountUSD || null,
-        routeData: { ...lRoute, _arcNormSrc: effSrc, _arcNormDest: effDest, _arcNormAmtIn: effAmtStr }
-      });
-    }
-
-    if (candidates.length === 0) {
-      return {
-        ok: false,
-        routeSource: null,
-        label: null,
-        amountOut: null,
-        amountOutFormatted: null,
-        amountInUsd: null,
-        amountOutUsd: null,
-        routeData: null,
-        comparedPools: 0,
-        error: t('暂无链上聚合报价', 'No DEX quote available')
+    return withQuoteCacheAndDedup(evmCacheKey, 10_000, async () => {
+      const curFetch = (typeof globalThis !== 'undefined' && globalThis.fetch) || null;
+      const isAggCoolingDown = (prov) => {
+        const entry = _aggCooldownUntil[prov];
+        if (!entry) return false;
+        if (typeof entry === 'number') return entry > Date.now();
+        return entry.fetchRef === curFetch && entry.until > Date.now();
       };
-    }
+      const markAggCooldown = (prov, ms = 120_000) => {
+        _aggCooldownUntil[prov] = { until: Date.now() + ms, fetchRef: curFetch };
+      };
 
-    candidates.sort((a, b) => (b.outBig > a.outBig ? 1 : b.outBig < a.outBig ? -1 : 0));
-    const best = candidates[0];
-    const comparedPools = candidates.length;
-    const routeLabel = comparedPools > 1
-      ? `⚡ ${t('最优', 'Best')}: ${best.label} (${t(`比价 ${comparedPools} 池`, `${comparedPools} pools`)})`
-      : best.label;
-    return {
-      ok: true,
-      routeSource: best.routeSource,
-      label: best.label,
-      bestSource: best.label,
-      comparedPools,
-      routeLabel,
-      amountOut: best.amountOut,
-      amountOutFormatted: fromBaseUnits(best.amountOut, destDecimals),
-      amountInUsd: best.amountInUsd,
-      amountOutUsd: best.amountOutUsd,
-      routeData: best.routeData,
-      slippageBps,
-      serviceFeeBps: bps,
-      error: null
-    };
+      const feeQueryKyber = bps > 0 && feeReceiver
+        ? `&feeAmount=${bps}&isInBps=true&chargeFeeBy=currency_in&feeReceiver=${encodeURIComponent(feeReceiver)}`
+        : '';
+      const kyberUrl = cfg.kyber && !isAggCoolingDown(`kyber:${key}`)
+        ? `https://aggregator-api.kyberswap.com/${cfg.kyber}/api/v1/routes?tokenIn=${encodeURIComponent(effSrc)}&tokenOut=${encodeURIComponent(effDest)}&amountIn=${encodeURIComponent(effAmtStr)}${feeQueryKyber}`
+        : null;
+
+      const feeQueryPara = bps > 0 && feeReceiver
+        ? `&partner=pearlwallet&partnerAddress=${encodeURIComponent(feeReceiver)}&partnerFeeBps=${bps}`
+        : '';
+      const skipPara = cfg.chainId === 999 || cfg.chainId === 4663 || cfg.chainId === 5042 || isAggCoolingDown(`paraswap:${key}`);
+      const paraUrl = !skipPara
+        ? `https://api.paraswap.io/prices?srcToken=${encodeURIComponent(effSrc)}&destToken=${encodeURIComponent(effDest)}&amount=${encodeURIComponent(effAmtStr)}&srcDecimals=${effSrcDec}&destDecimals=${effDestDec}&network=${cfg.chainId}&side=SELL${feeQueryPara}`
+        : null;
+
+      const ooAmountHuman = fromBaseUnits(effAmtStr, effSrcDec);
+      const ooSlippagePct = (slipNum / 100).toFixed(2);
+      const ooUrl = cfg.openOcean && !isAggCoolingDown('openocean')
+        ? `${OPENOCEAN_API_URL}/${cfg.openOcean}/quote?inTokenAddress=${encodeURIComponent(effSrc)}&outTokenAddress=${encodeURIComponent(effDest)}&amount=${encodeURIComponent(ooAmountHuman)}&slippage=${ooSlippagePct}`
+        : null;
+
+      const lifiSlip = (slipNum / 10000).toFixed(4);
+      const lifiUrl = isArcMainnet && validFromAddr && !isAggCoolingDown(`lifi:${key}`)
+        ? `${LIFI_API_URL}/quote?fromChain=${cfg.chainId}&toChain=${cfg.chainId}&fromToken=${encodeURIComponent(effSrc)}&toToken=${encodeURIComponent(effDest)}&fromAmount=${encodeURIComponent(effAmtStr)}&fromAddress=${encodeURIComponent(validFromAddr)}&slippage=${lifiSlip}`
+        : null;
+
+      const localCtrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const mergedSig = (localCtrl && signal && typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function')
+        ? AbortSignal.any([signal, localCtrl.signal])
+        : (localCtrl ? localCtrl.signal : signal);
+      let onExtAbort = null;
+      if (localCtrl && signal && (!mergedSig || mergedSig === localCtrl.signal)) {
+        if (signal.aborted) localCtrl.abort();
+        else {
+          onExtAbort = () => localCtrl.abort();
+          signal.addEventListener('abort', onExtAbort, { once: true });
+        }
+      }
+
+      const fetchAgg = (url, prov, timeout = 4500) => {
+        if (!url) return Promise.resolve(null);
+        return fetchJsonWithTimeout(url, { signal: mergedSig }, timeout).catch((err) => {
+          if (!(localCtrl && localCtrl.signal.aborted) && err && (err.status === 403 || err.status === 429 || err.name === 'AbortError' || err.status >= 500)) {
+            markAggCooldown(prov, err.status === 403 ? 10 * 60_000 : 120_000);
+          }
+          return null;
+        });
+      };
+
+      try {
+        const [kRes, pRes, oRes, lRes] = await raceWithGraceWindow(
+          [
+            fetchAgg(kyberUrl, `kyber:${key}`, 4500),
+            fetchAgg(paraUrl, `paraswap:${key}`, 4500),
+            fetchAgg(ooUrl, 'openocean', 4000),
+            fetchAgg(lifiUrl, `lifi:${key}`, 4500)
+          ],
+          (v) => Boolean(
+            v && (
+              (v.code === 0 && v.data && v.data.routeSummary && v.data.routeSummary.amountOut) ||
+              (v.priceRoute && v.priceRoute.destAmount) ||
+              (Number(v.code) === 200 && v.data && v.data.outAmount) ||
+              (v.estimate && v.estimate.toAmount)
+            )
+          ),
+          350,
+          5000,
+          localCtrl
+        );
+
+        const scaleArcOut = (rawOutStr) => {
+          const b = BigInt(rawOutStr);
+          if (arcDestNative && Number(destDecimals) === 18) return b * 1000000000000n;
+          return b;
+        };
+
+        const candidates = [];
+        const kRoute =
+          kRes && kRes.status === 'fulfilled' && kRes.value && kRes.value.code === 0 && kRes.value.data && kRes.value.data.routeSummary
+            ? kRes.value.data.routeSummary
+            : null;
+        if (kRoute && kRoute.amountOut) {
+          const scaledOut = scaleArcOut(kRoute.amountOut);
+          candidates.push({
+            routeSource: 'kyber',
+            label: 'KyberSwap',
+            outBig: scaledOut,
+            amountOut: scaledOut.toString(),
+            amountInUsd: kRoute.amountInUsd || null,
+            amountOutUsd: kRoute.amountOutUsd || null,
+            routeData: { ...kRoute, _arcNormSrc: effSrc, _arcNormDest: effDest, _arcNormAmtIn: effAmtStr }
+          });
+        }
+
+        const pRoute =
+          pRes && pRes.status === 'fulfilled' && pRes.value && pRes.value.priceRoute && pRes.value.priceRoute.destAmount
+            ? pRes.value.priceRoute
+            : null;
+        if (pRoute && pRoute.destAmount) {
+          candidates.push({
+            routeSource: 'paraswap',
+            label: 'ParaSwap',
+            outBig: BigInt(pRoute.destAmount),
+            amountOut: String(pRoute.destAmount),
+            amountInUsd: pRoute.srcUSD || null,
+            amountOutUsd: pRoute.destUSD || null,
+            routeData: pRoute
+          });
+        }
+
+        const ooRoute =
+          oRes && oRes.status === 'fulfilled' && oRes.value && Number(oRes.value.code) === 200 && oRes.value.data && oRes.value.data.outAmount
+            ? oRes.value.data
+            : null;
+        if (ooRoute && /^\d+$/.test(String(ooRoute.outAmount)) && BigInt(ooRoute.outAmount) > 0n) {
+          candidates.push({
+            routeSource: 'openocean',
+            label: 'OpenOcean',
+            outBig: BigInt(ooRoute.outAmount),
+            amountOut: String(ooRoute.outAmount),
+            amountInUsd: null,
+            amountOutUsd: null,
+            routeData: ooRoute
+          });
+        }
+
+        const lRoute =
+          lRes && lRes.status === 'fulfilled' && lRes.value && lRes.value.estimate && lRes.value.estimate.toAmount
+            ? lRes.value
+            : null;
+        if (lRoute && /^\d+$/.test(String(lRoute.estimate.toAmount)) && BigInt(lRoute.estimate.toAmount) > 0n) {
+          const scaledOut = scaleArcOut(lRoute.estimate.toAmount);
+          candidates.push({
+            routeSource: 'lifi',
+            label: 'LI.FI',
+            outBig: scaledOut,
+            amountOut: scaledOut.toString(),
+            amountInUsd: lRoute.estimate.fromAmountUSD || null,
+            amountOutUsd: lRoute.estimate.toAmountUSD || null,
+            routeData: { ...lRoute, _arcNormSrc: effSrc, _arcNormDest: effDest, _arcNormAmtIn: effAmtStr }
+          });
+        }
+
+        if (candidates.length === 0) {
+          return {
+            ok: false,
+            routeSource: null,
+            label: null,
+            amountOut: null,
+            amountOutFormatted: null,
+            amountInUsd: null,
+            amountOutUsd: null,
+            routeData: null,
+            comparedPools: 0,
+            error: t('暂无链上聚合报价', 'No DEX quote available')
+          };
+        }
+
+        candidates.sort((a, b) => (b.outBig > a.outBig ? 1 : b.outBig < a.outBig ? -1 : 0));
+        const best = candidates[0];
+        const comparedPools = candidates.length;
+        const routeLabel = comparedPools > 1
+          ? `⚡ ${t('最优', 'Best')}: ${best.label} (${t(`比价 ${comparedPools} 池`, `${comparedPools} pools`)})`
+          : best.label;
+        return {
+          ok: true,
+          routeSource: best.routeSource,
+          label: best.label,
+          bestSource: best.label,
+          comparedPools,
+          routeLabel,
+          amountOut: best.amountOut,
+          amountOutFormatted: fromBaseUnits(best.amountOut, destDecimals),
+          amountInUsd: best.amountInUsd,
+          amountOutUsd: best.amountOutUsd,
+          routeData: best.routeData,
+          slippageBps,
+          serviceFeeBps: bps,
+          error: null
+        };
+      } finally {
+        if (signal && onExtAbort) {
+          try { signal.removeEventListener('abort', onExtAbort); } catch (_) {}
+        }
+      }
+    });
+  }
+
+  function getOrderedHealthyEvmRpcs(chainKey) {
+    const key = String(chainKey || '').toLowerCase();
+    const cfg = EVM_CHAINS[key];
+    if (!cfg) return [];
+    const all = Array.isArray(cfg.rpcs) && cfg.rpcs.length > 0 ? cfg.rpcs : (cfg.rpc ? [cfg.rpc] : []);
+    const now = Date.now();
+    const healthy = all.filter((u) => !(_evmRpcCooldownUntil[u] > now));
+    return healthy.length > 0 ? healthy : all;
+  }
+
+  function createEvmStaticProvider(cfg, rpcUrl, ethersLib) {
+    const net = (ethersLib.Network && typeof ethersLib.Network.from === 'function')
+      ? ethersLib.Network.from({ name: String(cfg.name || 'evm').toLowerCase(), chainId: cfg.chainId })
+      : cfg.chainId;
+    return new ethersLib.JsonRpcProvider(rpcUrl, net, { staticNetwork: true });
+  }
+
+  async function withEvmProviderFailover(chainKey, ethersLib, taskFn) {
+    const cfg = EVM_CHAINS[String(chainKey || '').toLowerCase()];
+    if (!cfg) throw new Error(t(`不支持的 EVM 链: ${chainKey}`, `Unsupported EVM chain: ${chainKey}`));
+    const rpcs = getOrderedHealthyEvmRpcs(chainKey);
+    let lastErr = null;
+    for (const rpcUrl of rpcs) {
+      const provider = createEvmStaticProvider(cfg, rpcUrl, ethersLib);
+      try {
+        return await taskFn(provider, cfg, rpcUrl);
+      } catch (err) {
+        lastErr = err;
+        const msg = String((err && (err.shortMessage || err.message)) || '').toLowerCase();
+        const isRevert = err && (err.code === 'CALL_EXCEPTION' || err.code === 'INSUFFICIENT_FUNDS' || err.code === 'NONCE_EXPIRED' || /reverted|insufficient funds|already known/i.test(msg));
+        if (isRevert) throw err;
+        _evmRpcCooldownUntil[rpcUrl] = Date.now() + 90_000;
+      }
+    }
+    throw lastErr || new Error(t('EVM RPC 执行失败', 'EVM RPC execution failed'));
   }
 
   async function sendEvmMpcSignedTransaction({
@@ -3127,63 +4254,84 @@
     const fromAddr = wallet && (wallet.mpcEvmAddress || wallet.evmAddress);
     if (!fromAddr) throw new Error(t('MPC EVM 地址不可用', 'MPC EVM address unavailable'));
 
-    const provider = new ethersLib.JsonRpcProvider(cfg.rpc, cfg.chainId);
-
     const signAndBroadcastOne = async (txTo, txData, txVal) => {
-      const nonce = await provider.getTransactionCount(fromAddr, 'pending');
-      const feeData = await provider.getFeeData();
       const valBig = BigInt(txVal || '0');
-      let gasLimit = 21000n;
-      try {
-        const est = await provider.estimateGas({ from: fromAddr, to: txTo, data: txData, value: valBig });
-        gasLimit = (est * 125n) / 100n;
-      } catch (_) {
-        gasLimit = txData && txData !== '0x' ? 350000n : 21000n;
-      }
-      const maxFeePerGas = feeData.maxFeePerGas || feeData.gasPrice || 1000000000n;
-      const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || (maxFeePerGas / 4n) || 1000000n;
-      const unsignedTx = ethersLib.Transaction.from({
-        type: 2,
-        chainId: cfg.chainId,
-        nonce,
-        to: txTo,
-        data: txData || '0x',
-        value: valBig,
-        gasLimit,
-        maxFeePerGas,
-        maxPriorityFeePerGas
+      const { unsignedTx, serialized } = await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
+        const [nonce, feeData, est] = await Promise.all([
+          provider.getTransactionCount(fromAddr, 'pending'),
+          provider.getFeeData(),
+          provider.estimateGas({ from: fromAddr, to: txTo, data: txData, value: valBig }).catch(() => null)
+        ]);
+        const gasLimit = est !== null ? ((est * 125n) / 100n) : (txData && txData !== '0x' ? 350000n : 21000n);
+        const useEip1559 = Boolean(feeData.maxFeePerGas);
+        const maxFee = feeData.maxFeePerGas || 1000000000n;
+        const prioFeeRaw = feeData.maxPriorityFeePerGas || (maxFee / 4n) || 1000000n;
+        const prioFee = prioFeeRaw > maxFee ? maxFee : prioFeeRaw;
+        const txFields = useEip1559
+          ? {
+              type: 2,
+              chainId: cfg.chainId,
+              nonce,
+              to: txTo,
+              data: txData || '0x',
+              value: valBig,
+              gasLimit,
+              maxFeePerGas: maxFee,
+              maxPriorityFeePerGas: prioFee
+            }
+          : {
+              type: 0,
+              chainId: cfg.chainId,
+              nonce,
+              to: txTo,
+              data: txData || '0x',
+              value: valBig,
+              gasLimit,
+              gasPrice: feeData.gasPrice || 1000000000n
+            };
+        const uTx = ethersLib.Transaction.from(txFields);
+        const digestBytes = hexToBytes(uTx.unsignedHash.replace(/^0x/i, ''));
+        const mpcRes = await api.requestNearMpcChainSignature({
+          wallet,
+          payloadHash32Bytes: digestBytes,
+          path,
+          domainId: 0
+        });
+        const sigObj = mpcRes && mpcRes.mpcSignature;
+        if (!sigObj || !sigObj.big_r || !sigObj.big_r.affine_point || !sigObj.s || !sigObj.s.scalar) {
+          throw new Error(t('NEAR MPC 未返回有效的 Secp256k1 签名', 'NEAR MPC did not return a valid Secp256k1 signature'));
+        }
+        const rHex = sigObj.big_r.affine_point.slice(2, 66);
+        const sHex = sigObj.s.scalar.padStart(64, '0');
+        const yParity = Number(sigObj.recovery_id || 0) & 1;
+        uTx.signature = ethersLib.Signature.from({ r: `0x${rHex}`, s: `0x${sHex}`, yParity });
+        if (uTx.from && uTx.from.toLowerCase() !== fromAddr.toLowerCase()) {
+          throw new Error(t('MPC 签名恢复地址与发送地址不匹配', 'MPC signature recovered address mismatch'));
+        }
+        return { unsignedTx: uTx, serialized: uTx.serialized };
       });
-      const digestBytes = hexToBytes(unsignedTx.unsignedHash.replace(/^0x/i, ''));
-      const mpcRes = await api.requestNearMpcChainSignature({
-        wallet,
-        payloadHash32Bytes: digestBytes,
-        path,
-        domainId: 0
-      });
-      const sigObj = mpcRes && mpcRes.mpcSignature;
-      if (!sigObj || !sigObj.big_r || !sigObj.big_r.affine_point || !sigObj.s || !sigObj.s.scalar) {
-        throw new Error(t('NEAR MPC 未返回有效的 Secp256k1 签名', 'NEAR MPC did not return a valid Secp256k1 signature'));
-      }
-      const rHex = sigObj.big_r.affine_point.slice(2, 66);
-      const sHex = sigObj.s.scalar.padStart(64, '0');
-      const yParity = Number(sigObj.recovery_id || 0) & 1;
-      unsignedTx.signature = ethersLib.Signature.from({ r: `0x${rHex}`, s: `0x${sHex}`, yParity });
-      const txResp = await provider.broadcastTransaction(unsignedTx.serialized);
-      return txResp;
+      return withEvmProviderFailover(chainKey, ethersLib, (provider) => provider.broadcastTransaction(serialized));
     };
 
     if (approvalToken && approvalToken.toLowerCase() !== NATIVE_EVM_SENTINEL && spender && amountRaw) {
-      const erc20 = new ethersLib.Contract(
-        approvalToken,
-        ['function allowance(address owner, address spender) view returns (uint256)'],
-        provider
-      );
-      const curAllow = await erc20.allowance(fromAddr, spender);
+      const curAllow = await withEvmProviderFailover(chainKey, ethersLib, (provider) => {
+        const erc20 = new ethersLib.Contract(
+          approvalToken,
+          ['function allowance(address owner, address spender) view returns (uint256)'],
+          provider
+        );
+        return erc20.allowance(fromAddr, spender);
+      });
       if (curAllow < BigInt(amountRaw)) {
         const approveIface = new ethersLib.Interface(['function approve(address spender, uint256 amount) returns (bool)']);
+        if (curAllow > 0n) {
+          const resetData = approveIface.encodeFunctionData('approve', [spender, '0']);
+          const resetResp = await signAndBroadcastOne(approvalToken, resetData, '0');
+          await resetResp.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, resetResp.hash, 45000));
+        }
         const approveData = approveIface.encodeFunctionData('approve', [spender, amountRaw]);
         const appResp = await signAndBroadcastOne(approvalToken, approveData, '0');
-        await appResp.wait(1);
+        await appResp.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, appResp.hash, 45000));
       }
     }
 
@@ -3200,34 +4348,39 @@
     const cfg = EVM_CHAINS[String(chainKey || '').toLowerCase()];
     if (!cfg) throw new Error(t(`不支持的 EVM 链: ${chainKey}`, `Unsupported EVM chain: ${chainKey}`));
 
-    const provider = new ethersLib.JsonRpcProvider(cfg.rpc, cfg.chainId);
-    const signer = new ethersLib.Wallet(privateKey, provider);
+    return withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
+      const signer = new ethersLib.Wallet(privateKey, provider);
 
-    if (approvalToken && approvalToken.toLowerCase() !== NATIVE_EVM_SENTINEL && spender && amountRaw) {
-      const erc20 = new ethersLib.Contract(
-        approvalToken,
-        [
-          'function allowance(address owner, address spender) view returns (uint256)',
-          'function approve(address spender, uint256 amount) returns (bool)'
-        ],
-        signer
-      );
-      const curAllow = await erc20.allowance(signer.address, spender);
-      if (curAllow < BigInt(amountRaw)) {
-        const approveTx = await erc20.approve(spender, amountRaw);
-        await approveTx.wait(1);
+      if (approvalToken && approvalToken.toLowerCase() !== NATIVE_EVM_SENTINEL && spender && amountRaw) {
+        const erc20 = new ethersLib.Contract(
+          approvalToken,
+          [
+            'function allowance(address owner, address spender) view returns (uint256)',
+            'function approve(address spender, uint256 amount) returns (bool)'
+          ],
+          signer
+        );
+        const curAllow = await erc20.allowance(signer.address, spender);
+        if (curAllow < BigInt(amountRaw)) {
+          if (curAllow > 0n) {
+            const resetTx = await erc20.approve(spender, '0');
+            await resetTx.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, resetTx.hash, 45000));
+          }
+          const approveTx = await erc20.approve(spender, amountRaw);
+          await approveTx.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, approveTx.hash, 45000));
+        }
       }
-    }
 
-    const txResp = await signer.sendTransaction({
-      to,
-      data,
-      value: BigInt(value || '0')
+      const txResp = await signer.sendTransaction({
+        to,
+        data,
+        value: BigInt(value || '0')
+      });
+      return {
+        txHash: txResp.hash,
+        explorerUrl: `${cfg.explorer}${txResp.hash}`
+      };
     });
-    return {
-      txHash: txResp.hash,
-      explorerUrl: `${cfg.explorer}${txResp.hash}`
-    };
   }
 
   async function executeEvmDexSwap({
@@ -3359,12 +4512,12 @@
       toAddr = pBuild.to;
       txData = pBuild.data;
       txVal = pBuild.value || '0';
-      spenderAddr = toAddr;
+      spenderAddr = (routeData && routeData.tokenTransferProxy) || toAddr;
     } else if (routeSource === 'openocean' && cfg.openOcean) {
       const ooHuman = fromBaseUnits(String(amountRaw), srcDecimals);
       const ooSlip = ((Number(slippageBps) || 100) / 100).toFixed(2);
       const ooBuild = await fetchJsonWithTimeout(
-        `${OPENOCEAN_API_URL}/${cfg.openOcean}/swap?inTokenAddress=${encodeURIComponent(srcToken)}&outTokenAddress=${encodeURIComponent(destToken)}&amount=${encodeURIComponent(ooHuman)}&gasPrice=5&slippage=${ooSlip}&account=${encodeURIComponent(wallet.evmAddress)}`,
+        `${OPENOCEAN_API_URL}/${cfg.openOcean}/swap?inTokenAddress=${encodeURIComponent(srcToken)}&outTokenAddress=${encodeURIComponent(destToken)}&amount=${encodeURIComponent(ooHuman)}&slippage=${ooSlip}&account=${encodeURIComponent(wallet.evmAddress)}`,
         {},
         12000
       );
@@ -3442,13 +4595,22 @@
     if (!Array.isArray(steps) || steps.length === 0) throw new Error(t('缺少链上交易步骤', 'Missing EVM execution steps'));
     await ensureWalletSigningKeysAsync(wallet);
 
-    const ethersLib = getEthersLib();
-    const provider = ethersLib ? new ethersLib.JsonRpcProvider(cfg.rpc, cfg.chainId) : null;
-    let lastRes = null;
+    const execQueue = [];
+    for (const step of steps) {
+      if (step && Array.isArray(step.items) && step.items.length > 0) {
+        for (const item of step.items) {
+          const itemData = item && item.data ? item.data : item;
+          if (itemData && itemData.to && itemData.data) execQueue.push(itemData);
+        }
+      } else if (step && step.to && step.data) {
+        execQueue.push(step);
+      }
+    }
+    if (execQueue.length === 0) throw new Error(t('未执行任何链上交易步骤', 'No executable EVM step found'));
 
-    for (let i = 0; i < steps.length; i++) {
-      const itemData = steps[i] && steps[i].items && steps[i].items[0] ? steps[i].items[0].data : steps[i];
-      if (!itemData || !itemData.to || !itemData.data) continue;
+    let lastRes = null;
+    for (let i = 0; i < execQueue.length; i++) {
+      const itemData = execQueue[i];
       const stepChain = Number(itemData.chainId || cfg.chainId);
       const targetKey = Object.keys(EVM_CHAINS).find((k) => EVM_CHAINS[k].chainId === stepChain) || key;
       const stepParams = {
@@ -3462,11 +4624,10 @@
       } else {
         lastRes = await sendEvmMpcSignedTransaction({ wallet, path: 'ethereum-1', ...stepParams });
       }
-      if (i + 1 < steps.length && provider && lastRes && lastRes.txHash) {
-        await provider.waitForTransaction(lastRes.txHash, 1).catch(() => null);
+      if (i + 1 < execQueue.length && lastRes && lastRes.txHash) {
+        await waitForEvmTxConfirmation(targetKey, lastRes.txHash, 45000).catch(() => null);
       }
     }
-    if (!lastRes) throw new Error(t('未执行任何链上交易步骤', 'No executable EVM step found'));
     return lastRes;
   }
 
@@ -3489,6 +4650,7 @@
       throw new Error(t('EVM 收款地址无效', 'Invalid EVM recipient address'));
     }
 
+    await ensureWalletSigningKeysAsync(wallet);
     const isNative = !tokenContract || String(tokenContract).toLowerCase() === NATIVE_EVM_SENTINEL;
     const hasNearMpc = Boolean((wallet.nearNamedAccount || wallet.nearAddress) && wallet.nearPublicKey && wallet.nearPrivateKey);
 
@@ -3500,7 +4662,6 @@
         amount,
         isNative: true
       });
-      await ensureWalletSigningKeysAsync(wallet);
       if (!wallet.evmAddress || (!wallet.evmPrivateKey && !hasNearMpc)) {
         throw new Error(t('NEAR 主账户或 MPC EVM 地址不可用', 'NEAR Master Account or MPC EVM address unavailable'));
       }
@@ -3549,7 +4710,6 @@
       tokenBalance: resolveWalletChainBalance(wallet, key)
     });
 
-    await ensureWalletSigningKeysAsync(wallet);
     if (!wallet.evmAddress || (!wallet.evmPrivateKey && !hasNearMpc)) {
       throw new Error(t('NEAR 主账户或 MPC EVM 地址不可用', 'NEAR Master Account or MPC EVM address unavailable'));
     }
@@ -3593,25 +4753,13 @@
 
   function getWalletNearSignerCredentials(wallet) {
     if (!wallet) {
-      return { accountId: '', publicKeyStr: '', privateKeyStr: '', isPostQuantum: false };
+      return { accountId: '', publicKeyStr: '', privateKeyStr: '' };
     }
-    const accountId = String(wallet.nearNamedAccount || wallet.nearAddress || wallet.nearUniversalAddress || '').trim();
-    const isPq = wallet.accountType === 'post_quantum' || (!wallet.nearPrivateKey && Boolean(wallet.nearMlDsa65PrivateKey));
-    if (isPq) {
-      return {
-        accountId,
-        publicKeyStr: String(wallet.nearMlDsa65PublicKey || '').trim(),
-        publicKeyHandleStr: String(wallet.nearMlDsa65PublicKeyHandle || '').trim(),
-        privateKeyStr: String(wallet.nearMlDsa65PrivateKey || '').trim(),
-        isPostQuantum: true
-      };
-    }
+    const accountId = String(wallet.nearNamedAccount || wallet.nearAddress || '').trim();
     return {
       accountId,
       publicKeyStr: String(wallet.nearPublicKey || '').trim(),
-      publicKeyHandleStr: '',
-      privateKeyStr: String(wallet.nearPrivateKey || '').trim(),
-      isPostQuantum: false
+      privateKeyStr: String(wallet.nearPrivateKey || '').trim()
     };
   }
 
@@ -3633,14 +4781,26 @@
           },
           timeoutMs
         );
-        if (res && typeof res === 'object' && (res.result !== undefined || res.error !== undefined)) {
-          return res;
+        if (res && typeof res === 'object') {
+          if (res.result !== undefined) return res;
+          if (res.error !== undefined) {
+            const errStr = JSON.stringify(res.error);
+            if (/UNKNOWN_ACCOUNT|MethodNotFound|ExecutionError|ContractExecutionError|AccountDoesNotExist|HostError/i.test(errStr)) {
+              return res;
+            }
+            if (/rate|limit|429|timeout|unavailable/i.test(errStr)) {
+              _nearRpc429Until[url] = Date.now() + 90_000;
+              lastErr = new Error(res.error.message || errStr);
+              continue;
+            }
+            return res;
+          }
         }
+        _nearRpc429Until[url] = Date.now() + 30_000;
       } catch (err) {
         if (signal && signal.aborted) throw err;
-        const msg = String((err && err.message) || '');
-        if ((err && err.status === 429) || /429|Too Many Requests/i.test(msg)) {
-          _nearRpc429Until[url] = Date.now() + 60_000;
+        if (shouldCooldownRpcError(err)) {
+          _nearRpc429Until[url] = Date.now() + 90_000;
         }
         lastErr = err;
       }
@@ -3650,14 +4810,6 @@
 
   function encodeNearPublicKeyBorsh(publicKeyStr) {
     const raw = String(publicKeyStr || '').trim();
-    const cryptoEngine = getCryptoEngine();
-    if (raw.startsWith('ml-dsa-65:')) {
-      if (!cryptoEngine || typeof cryptoEngine.decodeNearMlDsa65PublicKey !== 'function') {
-        throw new Error(t('ML-DSA-65 后量子引擎不可用', 'NearCACrypto ML-DSA-65 unavailable'));
-      }
-      const pubBytes = cryptoEngine.decodeNearMlDsa65PublicKey(raw);
-      return concatUint8Arrays([new Uint8Array([2]), pubBytes]); // KeyType::MLDSA65 = 2
-    }
     if (raw.startsWith('secp256k1:')) {
       const pubBytes = base58Decode(raw.slice('secp256k1:'.length));
       if (pubBytes.length !== 64) {
@@ -3672,49 +4824,41 @@
     return concatUint8Arrays([new Uint8Array([0]), pubBytes]); // KeyType::ED25519 = 0
   }
 
-  async function buildSignAndBroadcastNearActions({ accountId, publicKeyStr, privateKeyStr, receiverId, actionsBytes, actionCount = 1 }) {
+  function extractNearOutcomeFailure(result) {
+    if (!result || typeof result !== 'object') return null;
+    if (result.status && result.status.Failure) return JSON.stringify(result.status.Failure);
+    const receipts = Array.isArray(result.receipts_outcome) ? result.receipts_outcome : [];
+    for (const r of receipts) {
+      if (r && r.outcome && r.outcome.status && r.outcome.status.Failure) {
+        return JSON.stringify(r.outcome.status.Failure);
+      }
+    }
+    return null;
+  }
+
+  async function buildSignAndBroadcastNearActionsWithOutcome({ accountId, publicKeyStr, privateKeyStr, receiverId, actionsBytes, actionCount = 1 }) {
     if (!accountId || !publicKeyStr || !privateKeyStr || !receiverId) {
       throw new Error(t('缺少 NEAR 交易签名参数', 'Missing NEAR transaction signing parameters'));
     }
     const cryptoEngine = getCryptoEngine();
-    const isMlDsa65 = String(publicKeyStr).startsWith('ml-dsa-65:') || String(privateKeyStr).startsWith('ml-dsa-65:');
-    if (isMlDsa65) {
-      if (!cryptoEngine || typeof cryptoEngine.signNearHashMlDsa65 !== 'function') {
-        throw new Error(t('ML-DSA-65 签名引擎不可用', 'NearCACrypto.signNearHashMlDsa65 unavailable'));
-      }
-    } else if (!cryptoEngine || typeof cryptoEngine.ed25519SignAsync !== 'function') {
+    if (!cryptoEngine || typeof cryptoEngine.ed25519SignAsync !== 'function') {
       throw new Error(t('Ed25519 签名引擎不可用', 'NearCACrypto.ed25519SignAsync unavailable'));
     }
 
-    async function queryAccessKey(pkQuery) {
-      return nearRpcPostAsync(
-        {
-          jsonrpc: '2.0',
-          id: 'ak',
-          method: 'query',
-          params: {
-            request_type: 'view_access_key',
-            finality: 'final',
-            account_id: accountId,
-            public_key: pkQuery
-          }
-        },
-        8000
-      );
-    }
-
-    let akRes = await queryAccessKey(publicKeyStr);
-    if (isMlDsa65 && (!akRes || akRes.error) && cryptoEngine && typeof cryptoEngine.buildUniversalStateInitFromMlDsa65PublicKey === 'function') {
-      try {
-        const { publicKeyHandle } = cryptoEngine.buildUniversalStateInitFromMlDsa65PublicKey(publicKeyStr);
-        if (publicKeyHandle) {
-          const handleRes = await queryAccessKey(publicKeyHandle);
-          if (handleRes && !handleRes.error && handleRes.result) {
-            akRes = handleRes;
-          }
+    const akRes = await nearRpcPostAsync(
+      {
+        jsonrpc: '2.0',
+        id: 'ak',
+        method: 'query',
+        params: {
+          request_type: 'view_access_key',
+          finality: 'final',
+          account_id: accountId,
+          public_key: publicKeyStr
         }
-      } catch (_) {}
-    }
+      },
+      8000
+    );
 
     if (!akRes || akRes.error || !akRes.result || typeof akRes.result.nonce !== 'number') {
       throw new Error(
@@ -3738,15 +4882,9 @@
     ]);
 
     const txHashBytes = await sha256BytesAsync(txBytes);
-    let signedTxBytes;
-    if (isMlDsa65) {
-      const sig = cryptoEngine.signNearHashMlDsa65(txHashBytes, privateKeyStr);
-      signedTxBytes = concatUint8Arrays([txBytes, new Uint8Array([2]), sig]); // Signature::MLDSA65 = 2
-    } else {
-      const seedHex = extractNearEd25519SeedHex(privateKeyStr);
-      const sig = await cryptoEngine.ed25519SignAsync(txHashBytes, seedHex);
-      signedTxBytes = concatUint8Arrays([txBytes, new Uint8Array([0]), sig]); // Signature::ED25519 = 0
-    }
+    const seedHex = extractNearEd25519SeedHex(privateKeyStr);
+    const sig = await cryptoEngine.ed25519SignAsync(txHashBytes, seedHex);
+    const signedTxBytes = concatUint8Arrays([txBytes, new Uint8Array([0]), sig]);
     const signedB64 = bytesToBase64(signedTxBytes);
     const expectedTxHash = base58Encode(txHashBytes);
 
@@ -3767,7 +4905,7 @@
         (broadcastErr && (broadcastErr.name === 'AbortError' || broadcastErr.status === 408 || broadcastErr.status === 504)) ||
         /timeout|timed out|abort|504|408|network/i.test(bMsg);
       if (isTimeoutLike && expectedTxHash) {
-        for (let attempt = 0; attempt < 4; attempt++) {
+        for (let attempt = 0; attempt < 6; attempt++) {
           const checkRes = await nearRpcPostAsync(
             {
               jsonrpc: '2.0',
@@ -3777,7 +4915,9 @@
             },
             6000
           ).catch(() => null);
-          if (checkRes && checkRes.result && checkRes.result.status) {
+          const st = checkRes && checkRes.result && checkRes.result.status;
+          const isFinal = Boolean(st && (st.SuccessValue !== undefined || st.SuccessReceiptId !== undefined || st.Failure !== undefined));
+          if (isFinal) {
             txRes = checkRes;
             break;
           }
@@ -3793,19 +4933,27 @@
           t('NEAR 交易广播失败', 'NEAR transaction broadcast failed')
       );
     }
-    const status = txRes.result && txRes.result.status;
-    if (status && status.Failure) {
-      throw new Error(JSON.stringify(status.Failure));
+    const receiptFailure = extractNearOutcomeFailure(txRes.result);
+    if (receiptFailure) {
+      throw new Error(receiptFailure);
     }
-    const txHash = txRes.result && txRes.result.transaction ? txRes.result.transaction.hash : '';
-    api._lastNearOutcome = {
+    const status = txRes.result && txRes.result.status;
+    const txHash = (txRes.result && txRes.result.transaction && txRes.result.transaction.hash) || expectedTxHash || '';
+    const outcome = {
       txHash,
-      successValueB64: status && typeof status.SuccessValue === 'string' ? status.SuccessValue : null
+      successValueB64: status && typeof status.SuccessValue === 'string' ? status.SuccessValue : null,
+      result: txRes.result
     };
-    return txHash;
+    api._lastNearOutcome = outcome;
+    return outcome;
   }
 
-  async function signAndSendNearFunctionCall({
+  async function buildSignAndBroadcastNearActions(params = {}) {
+    const out = await buildSignAndBroadcastNearActionsWithOutcome(params);
+    return out.txHash;
+  }
+
+  async function _signAndSendNearFunctionCallWithOutcome({
     accountId,
     publicKeyStr,
     privateKeyStr,
@@ -3828,13 +4976,18 @@
       encodeU128LE(depositYocto)
     ]);
 
-    return buildSignAndBroadcastNearActions({
+    return buildSignAndBroadcastNearActionsWithOutcome({
       accountId,
       publicKeyStr,
       privateKeyStr,
       receiverId,
       actionsBytes: actionBytes
     });
+  }
+
+  async function signAndSendNearFunctionCall(params = {}) {
+    const out = await _signAndSendNearFunctionCallWithOutcome(params);
+    return out.txHash;
   }
 
   async function signAndSendNearTransfer({
@@ -3975,6 +5128,13 @@
         if (Array.isArray(rawBytes)) {
           const decoded = JSON.parse(new TextDecoder().decode(new Uint8Array(rawBytes)));
           if (decoded === null) {
+            let minStorageYocto = '1250000000000000000000';
+            try {
+              const bounds = await viewNearContractCall(contract, 'storage_balance_bounds', {}).catch(() => null);
+              if (bounds && bounds.min && /^\d+$/.test(String(bounds.min)) && BigInt(String(bounds.min)) > 0n) {
+                minStorageYocto = String(bounds.min);
+              }
+            } catch (_) {}
             const creds = getWalletNearSignerCredentials(resolvedWallet);
             await api.signAndSendNearFunctionCall({
               accountId: sender,
@@ -3984,7 +5144,7 @@
               methodName: 'storage_deposit',
               argsJson: JSON.stringify({ account_id: dest, registration_only: true }),
               gas: '30000000000000',
-              depositYocto: '1250000000000000000000'
+              depositYocto: minStorageYocto
             });
           }
         }
@@ -4099,21 +5259,11 @@
     if (!creds.accountId || !creds.publicKeyStr || !creds.privateKeyStr) {
       throw new Error(t('当前 NEAR 账户缺少签名密钥', 'Missing NEAR signing credentials'));
     }
-    let resolvedTarget = String(targetPublicKeyStr || '').trim();
-    if (resolvedTarget.startsWith('ml-dsa-65-hash:') && creds.publicKeyHandleStr === resolvedTarget && creds.publicKeyStr) {
-      resolvedTarget = creds.publicKeyStr;
-    }
+    const resolvedTarget = String(targetPublicKeyStr || '').trim();
     if (!skipSafetyCheck) {
       const list = await fetchNearAccessKeysAsync(creds.accountId);
       const fullKeys = (list.keys || []).filter((k) => k && k.access_key && k.access_key.permission === 'FullAccess');
-      const cryptoEngine = getCryptoEngine();
-      let targetHandle = '';
-      if (resolvedTarget.startsWith('ml-dsa-65:') && cryptoEngine && typeof cryptoEngine.buildUniversalStateInitFromMlDsa65PublicKey === 'function') {
-        try {
-          targetHandle = cryptoEngine.buildUniversalStateInitFromMlDsa65PublicKey(resolvedTarget).publicKeyHandle;
-        } catch (_) {}
-      }
-      const remainingFull = fullKeys.filter((k) => k.public_key !== resolvedTarget && (!targetHandle || k.public_key !== targetHandle));
+      const remainingFull = fullKeys.filter((k) => k.public_key !== resolvedTarget);
       if (fullKeys.length > 0 && remainingFull.length === 0) {
         throw new Error(
           t(
@@ -4141,7 +5291,7 @@
     return { txHash, explorerUrl: `${NEAR_EXPLORER_TX}${txHash}` };
   }
 
-  async function rotateNearAccountKeyAsync({ wallet, newMnemonic, upgradeToMlDsa65 = false, deleteOldKey = true } = {}) {
+  async function rotateNearAccountKeyAsync({ wallet, newMnemonic, deleteOldKey = true } = {}) {
     if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
     const cryptoEngine = getCryptoEngine();
     const resolved = await ensureWalletSigningKeysAsync(wallet);
@@ -4158,13 +5308,8 @@
       isNative: true
     });
 
-    let newDerived;
-    if (upgradeToMlDsa65) {
-      newDerived = await cryptoEngine.deriveNearMlDsa65FromMnemonicAsync(newMnemonic, 0);
-    } else {
-      newDerived = await cryptoEngine.deriveNearFromSeedAsync(newMnemonic, 0);
-    }
-    const newPubKey = upgradeToMlDsa65 ? newDerived.publicKey : newDerived.nearPublicKey;
+    const newDerived = await cryptoEngine.deriveNearFromSeedAsync(newMnemonic, 0);
+    const newPubKey = newDerived.nearPublicKey;
 
     const addAction = buildAddKeyActionBytes({ newPublicKeyStr: newPubKey, permission: 'FullAccess' });
     const addTxHash = await buildSignAndBroadcastNearActions({
@@ -4177,12 +5322,11 @@
 
     let deleteTxHash = '';
     if (deleteOldKey && creds.publicKeyStr !== newPubKey) {
-      const newSignerPriv = upgradeToMlDsa65 ? newDerived.secretKey : newDerived.nearPrivateKey;
       const delAction = buildDeleteKeyActionBytes({ targetPublicKeyStr: creds.publicKeyStr });
       deleteTxHash = await buildSignAndBroadcastNearActions({
         accountId: creds.accountId,
         publicKeyStr: newPubKey,
-        privateKeyStr: newSignerPriv,
+        privateKeyStr: newDerived.nearPrivateKey,
         receiverId: creds.accountId,
         actionsBytes: delAction
       });
@@ -4191,47 +5335,9 @@
     return {
       addTxHash,
       deleteTxHash,
-      upgradeToMlDsa65,
       newDerived,
       explorerUrl: `${NEAR_EXPLORER_TX}${deleteTxHash || addTxHash}`
     };
-  }
-
-  async function activateUniversalAccountAsync({ fundingWallet, targetUniversalAccountId, rawStateInitHex, depositNear = '0.05' } = {}) {
-    if (!fundingWallet) throw new Error(t('缺少出资账户', 'Funding wallet is required'));
-    const resolved = await ensureWalletSigningKeysAsync(fundingWallet);
-    const creds = getWalletNearSignerCredentials(resolved);
-    const targetId = String(targetUniversalAccountId || '').trim().toLowerCase();
-    if (!creds.accountId || !creds.publicKeyStr || !creds.privateKeyStr) {
-      throw new Error(t('出资账户缺少 NEAR 签名密钥', 'Funding wallet missing NEAR signing credentials'));
-    }
-    if (!/^0u[0-9a-hjkmnp-tv-z]{52}$/.test(targetId)) {
-      throw new Error(t('目标不是有效的 0u 通用账户地址', 'Invalid 0u universal account ID'));
-    }
-    validateSufficientChainBalance({
-      wallet: resolved,
-      chain: 'near',
-      tokenSymbol: 'NEAR',
-      amount: Number(depositNear) + 0.01,
-      isNative: true
-    });
-    const cryptoEngine = getCryptoEngine();
-    const stateInitBytes = cryptoEngine.hexToBytes(rawStateInitHex);
-    const yoctoDeposit = toBaseUnits(depositNear, 24);
-    const actionBytes = concatUint8Arrays([
-      new Uint8Array([15]), // Action::UniversalStateInit (tag 15)
-      encodeU32LE(stateInitBytes.length),
-      stateInitBytes,
-      encodeU128LE(yoctoDeposit)
-    ]);
-    const txHash = await buildSignAndBroadcastNearActions({
-      accountId: creds.accountId,
-      publicKeyStr: creds.publicKeyStr,
-      privateKeyStr: creds.privateKeyStr,
-      receiverId: targetId,
-      actionsBytes: actionBytes
-    });
-    return { txHash, explorerUrl: `${NEAR_EXPLORER_TX}${txHash}` };
   }
 
   async function registerNearNamedAccountOnChain({
@@ -4428,21 +5534,39 @@
       throw new Error(t('NEAR 签名凭据不可用', 'NEAR signing credentials unavailable'));
     }
 
-    api._lastNearOutcome = null;
-    const txHash = await api.signAndSendNearFunctionCall({
-      accountId,
-      publicKeyStr: wallet.nearPublicKey,
-      privateKeyStr: wallet.nearPrivateKey,
-      receiverId: V1_SIGNER_CONTRACT,
-      methodName: 'sign',
-      argsJson: JSON.stringify(requestBody),
-      gas: '250000000000000',
-      depositYocto: String(depositYocto)
-    });
+    const useDirectOutcome = api.signAndSendNearFunctionCall === signAndSendNearFunctionCall;
+    let txHash;
+    let outcomeObj = null;
+    if (useDirectOutcome) {
+      outcomeObj = await _signAndSendNearFunctionCallWithOutcome({
+        accountId,
+        publicKeyStr: wallet.nearPublicKey,
+        privateKeyStr: wallet.nearPrivateKey,
+        receiverId: V1_SIGNER_CONTRACT,
+        methodName: 'sign',
+        argsJson: JSON.stringify(requestBody),
+        gas: '250000000000000',
+        depositYocto: String(depositYocto)
+      });
+      txHash = outcomeObj.txHash;
+    } else {
+      api._lastNearOutcome = null;
+      txHash = await api.signAndSendNearFunctionCall({
+        accountId,
+        publicKeyStr: wallet.nearPublicKey,
+        privateKeyStr: wallet.nearPrivateKey,
+        receiverId: V1_SIGNER_CONTRACT,
+        methodName: 'sign',
+        argsJson: JSON.stringify(requestBody),
+        gas: '250000000000000',
+        depositYocto: String(depositYocto)
+      });
+      outcomeObj = api._lastNearOutcome && api._lastNearOutcome.txHash === txHash ? api._lastNearOutcome : null;
+    }
 
     let mpcSignature = null;
-    if (api._lastNearOutcome && api._lastNearOutcome.txHash === txHash && api._lastNearOutcome.successValueB64) {
-      mpcSignature = decodeSuccessValueJson(api._lastNearOutcome.successValueB64);
+    if (outcomeObj && outcomeObj.successValueB64) {
+      mpcSignature = decodeSuccessValueJson(outcomeObj.successValueB64);
     }
 
     return {
@@ -4475,19 +5599,16 @@
   }
 
   async function ethReadCall(chainKey, to, data, timeoutMs = 6000) {
-    const chain = EVM_CHAINS[String(chainKey || '').toLowerCase()];
-    if (!chain || !chain.rpc || !to || !data) return null;
-    const res = await fetchJsonWithTimeout(
-      chain.rpc,
+    const key = String(chainKey || '').toLowerCase();
+    const chain = EVM_CHAINS[key];
+    if (!chain || !to || !data) return null;
+    const res = await callEvmRpc(
+      key,
       {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: `eth_call_${chain.chainId}`,
-          method: 'eth_call',
-          params: [{ to, data }, 'latest']
-        })
+        jsonrpc: '2.0',
+        id: `eth_call_${chain.chainId}`,
+        method: 'eth_call',
+        params: [{ to, data }, 'latest']
       },
       timeoutMs
     ).catch(() => null);
@@ -4497,15 +5618,60 @@
 
   let _llamaPoolsCache = { ts: 0, data: null };
   let _stakingMetricsCache = { ts: 0, pools: null };
+  let _stakingMetricsInFlight = null;
+
+  const RELEVANT_LLAMA_PROJECTS = new Set([
+    'rhea-lst',
+    'jito-liquid-staking',
+    'jupiter-staked-sol',
+    'marinade-liquid-staking',
+    'sanctum-infinity',
+    'lido',
+    'aave-v3',
+    'ethena-usde',
+    'kinetiq-khype'
+  ]);
+
+  function filterAndSortLlamaPools(rawPools) {
+    if (!Array.isArray(rawPools)) return [];
+    const filtered = [];
+    for (let i = 0; i < rawPools.length; i++) {
+      const p = rawPools[i];
+      if (!p) continue;
+      const proj = String(p.project || '').toLowerCase();
+      const ch = String(p.chain || '').toLowerCase();
+      if (
+        RELEVANT_LLAMA_PROJECTS.has(proj) ||
+        ch === 'near' ||
+        ch === 'arc' ||
+        proj.includes('burrow') ||
+        proj.includes('rhea-lend')
+      ) {
+        filtered.push(p);
+      }
+    }
+    filtered.sort((a, b) => Number(b.tvlUsd || 0) - Number(a.tvlUsd || 0));
+    return filtered;
+  }
 
   /**
-   * Fetches live APY and conversion rates across all 21 staking/lending pools from real RPCs and protocol APIs.
+   * Fetches live APY and conversion rates across all staking/lending pools from real RPCs and protocol APIs.
    * Never populates fake values: keeps apy/rate as null when an upstream feed is unreachable.
    */
   async function fetchLiveStakingMetrics(opts = {}) {
     if (opts && opts.useCache === true && _stakingMetricsCache.pools && (Date.now() - _stakingMetricsCache.ts < 300_000)) {
       return _stakingMetricsCache.pools;
     }
+    if (_stakingMetricsInFlight) {
+      return _stakingMetricsInFlight;
+    }
+    _stakingMetricsInFlight = _runFetchLiveStakingMetrics(opts).finally(() => {
+      _stakingMetricsInFlight = null;
+    });
+    return _stakingMetricsInFlight;
+  }
+
+  async function _runFetchLiveStakingMetrics(opts = {}) {
     const setPool = (id, patch) => {
       const target = findStakingPool(id);
       if (target && patch && typeof patch === 'object') {
@@ -4535,50 +5701,10 @@
     };
 
     const useCachedLlama = Boolean(opts && opts.useCache === true && Array.isArray(_llamaPoolsCache.data) && (Date.now() - _llamaPoolsCache.ts < 900_000));
-
-    const [
-      narRes,
-      rnearSummaryRes,
-      rnearAccountsRes,
-      rnearApyRes,
-      xrheaVpRes,
-      xrheaMetaRes,
-      orheaStratRes,
-      orheaAmountsRes,
-      orheaAccountsRes,
-      metapoolStateRes,
-      linearSummaryRes,
-      linearAccountsRes,
-      staderPriceRes,
-      staderTotalRes,
-      staderAccountsRes,
-      llamaRes,
-      sanctumValRes,
-      jitoApyRes,
-      jitoRateRes,
-      jupLockerRes,
-      jupAssetsRes,
-      marinadeApyRes,
-      lidoRes,
-      arcSteakPreviewRes,
-      ethSusdeAssetsRes,
-      hyperKhypeRes,
-      lidoBlockscoutRes,
-      susdeBlockscoutRes,
-      susdeTotalAssetsRes,
-      aaveBaseInfoRes,
-      aaveBaseSupplyRes,
-      arcSteakAssetsRes,
-      khypeSupplyRes,
-      burrowWnearRes,
-      burrowUsdtRes,
-      burrowAccountsRes,
-      aaveEthUsdcInfoRes,
-      aaveEthWethInfoRes,
-      aaveArbUsdcInfoRes,
-      khypeInfoRes,
-      arcSteakInfoRes
-    ] = await Promise.allSettled([
+    const llamaPromise = useCachedLlama
+      ? Promise.resolve({ data: _llamaPoolsCache.data })
+      : fetchJsonWithTimeout('https://yields.llama.fi/pools', {}, 7000);
+    const fastSettledPromise = Promise.allSettled([
       fetchJsonWithTimeout('https://validators.narwallets.com/metrics_json', {}, 6000),
       viewNearContractCall('lst.rhealab.near', 'get_summary', {}),
       viewNearContractCall('lst.rhealab.near', 'get_number_of_accounts', {}),
@@ -4594,7 +5720,6 @@
       viewNearContractCall('v2-nearx.stader-labs.near', 'get_nearx_price', {}),
       viewNearContractCall('v2-nearx.stader-labs.near', 'get_total_staked_balance', {}),
       viewNearContractCall('v2-nearx.stader-labs.near', 'get_number_of_accounts', {}),
-      useCachedLlama ? Promise.resolve({ data: _llamaPoolsCache.data }) : fetchJsonWithTimeout('https://yields.llama.fi/pools', {}, 7000),
       fetchJsonWithTimeout('https://extra-api.sanctum.so/v1/sol-value/current?lst=INF&lst=jupSOL&lst=mSOL&lst=JitoSOL', {}, 6000),
       fetchJsonWithTimeout('https://kobe.mainnet.jito.network/api/v1/stake_pool_stats', {}, 6000),
       fetchJsonWithTimeout(
@@ -4602,7 +5727,10 @@
         {},
         6000
       ),
-      callSolanaRpc('getAccountInfo', ['CVMdMd79no569tjc5Sq7kzz8isbfCcFyBS5TLGsrZ5dN', { encoding: 'base64' }]),
+      Promise.race([
+        callSolanaRpc('getAccountInfo', ['CVMdMd79no569tjc5Sq7kzz8isbfCcFyBS5TLGsrZ5dN', { encoding: 'base64' }], 4000),
+        new Promise((resolve) => setTimeout(() => resolve(null), 4000))
+      ]),
       fetchJsonWithTimeout(
         'https://datapi.jup.ag/v1/assets/search?query=JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN,jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v,J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn,mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So,5oVNBeEEQvYi1cX3ir8Dx5n1P7pdxydbGF2X4TxVusJm',
         {},
@@ -4634,17 +5762,104 @@
       fetchJsonWithTimeout('https://explorer.arc.io/api/v2/tokens/0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', {}, 5000)
     ]);
 
-    const llamaPools = llamaRes.status === 'fulfilled' && llamaRes.value && Array.isArray(llamaRes.value.data)
-      ? llamaRes.value.data
-      : [];
+    const fastResults = await fastSettledPromise;
+    const [
+      narRes,
+      rnearSummaryRes,
+      rnearAccountsRes,
+      rnearApyRes,
+      xrheaVpRes,
+      xrheaMetaRes,
+      orheaStratRes,
+      orheaAmountsRes,
+      orheaAccountsRes,
+      metapoolStateRes,
+      linearSummaryRes,
+      linearAccountsRes,
+      staderPriceRes,
+      staderTotalRes,
+      staderAccountsRes,
+      sanctumValRes,
+      jitoApyRes,
+      jitoRateRes,
+      jupLockerRes,
+      jupAssetsRes,
+      marinadeApyRes,
+      lidoRes,
+      arcSteakPreviewRes,
+      ethSusdeAssetsRes,
+      hyperKhypeRes,
+      lidoBlockscoutRes,
+      susdeBlockscoutRes,
+      susdeTotalAssetsRes,
+      aaveBaseInfoRes,
+      aaveBaseSupplyRes,
+      arcSteakAssetsRes,
+      khypeSupplyRes,
+      burrowWnearRes,
+      burrowUsdtRes,
+      burrowAccountsRes,
+      aaveEthUsdcInfoRes,
+      aaveEthWethInfoRes,
+      aaveArbUsdcInfoRes,
+      khypeInfoRes,
+      arcSteakInfoRes
+    ] = fastResults;
+
+    // If caller wants early render, notify once NEAR/Jito/Marinade/Blockscout RPCs are in while DeFiLlama finishes in parallel
+    let earlyLlama = null;
+    if (opts && typeof opts.onFastUpdate === 'function') {
+      const probe = await Promise.race([
+        llamaPromise.then((v) => ({ done: true, value: v })).catch(() => ({ done: true, value: null })),
+        new Promise((resolve) => setTimeout(() => resolve({ done: false, value: null }), 120))
+      ]);
+      if (probe && probe.done) {
+        earlyLlama = probe.value;
+      } else {
+        // Apply fast NEAR/Solana/Lido metrics first so UI shows numbers without waiting 4s for DeFiLlama JSON
+        try {
+          if (narRes.status === 'fulfilled' && narRes.value) {
+            const m = narRes.value;
+            const apy = Number(m.st_near_30_day_apy || m.st_near_7_day_apy);
+            const price = Number(m.st_near_price);
+            if (Number.isFinite(apy) && apy > 0) setPool('metapool_stnear', { apy: Number(apy.toFixed(2)) });
+            if (Number.isFinite(price) && price > 0) setPool('metapool_stnear', { rate: 1 / price });
+            const linApy = Number(m.linear_30_day_apy || m.linear_3_day_apy);
+            if (Number.isFinite(linApy) && linApy > 0) setPool('linear_near', { apy: Number(linApy.toFixed(2)) });
+          }
+          if (rnearApyRes.status === 'fulfilled' && rnearApyRes.value && rnearApyRes.value.data !== undefined) {
+            const num = Number(rnearApyRes.value.data);
+            if (Number.isFinite(num) && num > 0) setPool('rhea_rnear', { apy: Number(num.toFixed(2)) });
+          }
+          if (jitoApyRes.status === 'fulfilled' && jitoApyRes.value && Array.isArray(jitoApyRes.value.apy) && jitoApyRes.value.apy.length > 0) {
+            const latestApy = Number(jitoApyRes.value.apy[jitoApyRes.value.apy.length - 1].data) * 100;
+            if (Number.isFinite(latestApy) && latestApy > 0 && latestApy < 50) {
+              setPool('jito_sol', { apy: Number(latestApy.toFixed(2)) });
+            }
+          }
+          opts.onFastUpdate(STAKING_POOLS);
+        } catch (_) {}
+      }
+    }
+
+    let llamaPools = [];
+    try {
+      const llamaRaw = earlyLlama || (await llamaPromise);
+      if (llamaRaw && Array.isArray(llamaRaw.data)) {
+        llamaPools = useCachedLlama ? llamaRaw.data : filterAndSortLlamaPools(llamaRaw.data);
+      }
+    } catch (_) {
+      llamaPools = [];
+    }
     if (!useCachedLlama && llamaPools.length > 0) {
       _llamaPoolsCache = { ts: Date.now(), data: llamaPools };
     }
     const findLlamaPool = (predicate) => {
-      const matches = llamaPools.filter((p) => p && predicate(p));
-      if (matches.length === 0) return null;
-      matches.sort((a, b) => Number(b.tvlUsd || 0) - Number(a.tvlUsd || 0));
-      return matches[0];
+      for (let i = 0; i < llamaPools.length; i++) {
+        const p = llamaPools[i];
+        if (p && predicate(p)) return p; // already sorted descending by tvlUsd
+      }
+      return null;
     };
     const findLlamaApy = (predicate) => {
       const top = findLlamaPool((p) => typeof p.apy === 'number' && Number.isFinite(p.apy) && p.apy > 0 && predicate(p));
@@ -4746,7 +5961,7 @@
           lockTiers: tiers,
           rate: maxR,
           rateRangeText: `${minR.toFixed(2)} ~ ${maxR.toFixed(2)} RHEA`,
-          apy: Math.round(maxR * 100)
+          apy: null
         });
       }
     }
@@ -4821,14 +6036,7 @@
     if (staderAccountsRes.status === 'fulfilled' && Number(staderAccountsRes.value) > 0) {
       setPool('stader_nearx', { stakersCount: Number(staderAccountsRes.value) });
     }
-    let nearxApy = findLlamaApy((p) => String(p.chain || '').toLowerCase() === 'near' && /nearx/i.test(String(p.symbol || '')));
-    if (nearxApy === null && narRes.status === 'fulfilled' && narRes.value) {
-      const m = narRes.value;
-      const baseEpochApy = Number(m.linear_30_day_apy || m.st_near_30_day_apy || m.mp01_staking_apy);
-      if (Number.isFinite(baseEpochApy) && baseEpochApy > 0) {
-        nearxApy = Number(baseEpochApy.toFixed(2));
-      }
-    }
+    const nearxApy = findLlamaApy((p) => String(p.chain || '').toLowerCase() === 'near' && /nearx/i.test(String(p.symbol || '')));
     if (nearxApy !== null) setPool('stader_nearx', { apy: nearxApy });
 
     // 7-11. Solana LSTs & Jupiter DAO Staking
@@ -4869,9 +6077,8 @@
           const lockedRaw = decodeU64LE(buf, 73);
           const lockedJup = Number(lockedRaw) / 1e6;
           if (Number.isFinite(lockedJup) && lockedJup > 0) {
-            const asrApy = Number(((200_000_000 / lockedJup) * 100).toFixed(2));
             const tvlText = formatTvlToken(lockedJup, 'JUP');
-            setPool('jupiter_jup', { rate: 1.0, apy: asrApy, tvlText, tvlTokenAmount: lockedJup });
+            setPool('jupiter_jup', { rate: 1.0, apy: null, tvlText, tvlTokenAmount: lockedJup });
           }
         }
       } catch (_) {}
@@ -5380,7 +6587,8 @@
       }
       if (pool.isTokenStake && pool.tokenContract) {
         const nearGasAvail = resolveWalletChainBalance(wallet, 'near');
-        if (nearGasAvail < 0.05) {
+        const minNearGas = (pool.isBurrowSupply || pool.id === 'rhea_xrhea') ? 0.12 : 0.05;
+        if (nearGasAvail < minNearGas) {
           throw new Error(t(`NEAR 余额不足以支付合约 Gas (当前: ${nearGasAvail.toFixed(4)} NEAR)`, `Insufficient NEAR for contract gas (Available: ${nearGasAvail.toFixed(4)} NEAR)`));
         }
         if (pool.isBurrowSupply) {
@@ -5560,9 +6768,9 @@
     if (!wallet.evmPrivateKey && !hasNearMpc) {
       throw new Error(t('NEAR 主账户或 MPC EVM 地址不可用', 'NEAR Master Account or MPC EVM address unavailable'));
     }
-    const evmSender = wallet.mpcEvmAddress || wallet.evmAddress;
     const ethersLib = getEthersLib();
     if (!ethersLib) throw new Error(t('EVM 签名库 ethers 不可用', 'EVM signer library ethers unavailable'));
+    const evmSender = resolveWalletEvmSender(wallet, ethersLib);
 
     const sendEvmContractCall = async ({ chainKey, to, data, value = '0', approvalToken = null, spender = null, approvalAmount = null }) => {
       return wallet.evmPrivateKey
@@ -5633,12 +6841,15 @@
         if (wethBal < Number(amount)) {
           const shortfallWei = toBaseUnits(Math.max(0, Number(amount) - Math.max(0, wethBal)), 18);
           if (BigInt(shortfallWei) > 0n) {
-            await sendEvmContractCall({
+            const wrapRes = await sendEvmContractCall({
               chainKey: pool.chain,
               to: pool.tokenContract,
               data: '0xd0e30db0', // WETH9.deposit()
               value: shortfallWei
             });
+            if (wrapRes && wrapRes.txHash) {
+              await waitForEvmTxConfirmation(pool.chain, wrapRes.txHash, 45000);
+            }
           }
         }
       }
@@ -5657,7 +6868,7 @@
       // Lido submit(address) payable ETH staking
       const iface = new ethersLib.Interface(['function submit(address _referral) payable returns (uint256)']);
       const data = iface.encodeFunctionData('submit', [referral || ZERO_ADDRESS]);
-      const valueWei = ethersLib.parseEther(String(amount)).toString();
+      const valueWei = toBaseUnits(amount, pool.decimals || 18);
       res = await sendEvmContractCall({
         chainKey: pool.chain,
         to: pool.contract,
@@ -5835,18 +7046,26 @@
     return s;
   }
 
-  async function resolveKnownOrApiRefV2PoolId(tA, tB, allowApiLookup = true) {
+  const _refV2PoolIdCache = new Map();
+
+  async function resolveKnownOrApiRefV2PoolId(tA, tB, allowApiLookup = true, signal = null) {
     if (!tA || !tB || tA === tB) return null;
     const sortedKey = [tA, tB].sort().join('|');
     if (KNOWN_REF_V2_POOLS[sortedKey] !== undefined) return KNOWN_REF_V2_POOLS[sortedKey];
     if (!allowApiLookup) return null;
+    const cached = _refV2PoolIdCache.get(sortedKey);
+    if (cached && (Date.now() - cached.ts < 300_000)) {
+      return cached.id;
+    }
     try {
       const url = `https://api.ref.finance/list-pools-by-tokens?token0=${encodeURIComponent(tA)}&token1=${encodeURIComponent(tB)}`;
-      const res = await fetchJsonWithTimeout(url, {}, 5000).catch(() => null);
+      const res = await fetchJsonWithTimeout(url, signal ? { signal } : {}, 5000).catch(() => null);
       if (!Array.isArray(res) || res.length === 0) return null;
       const sorted = [...res].sort((a, b) => Number(b.tvl || 0) - Number(a.tvl || 0));
       const topId = Number(sorted[0]?.id);
-      return Number.isFinite(topId) && topId >= 0 ? topId : null;
+      const validId = Number.isFinite(topId) && topId >= 0 ? topId : null;
+      if (validId !== null) _refV2PoolIdCache.set(sortedKey, { id: validId, ts: Date.now() });
+      return validId;
     } catch (_) {
       return null;
     }
@@ -5907,172 +7126,263 @@
       return { ok: false, label: 'Ref Finance', amountOut: null, actions: [], routeData: null, error: t('兑换数量必须大于 0', 'Amount must be positive') };
     }
 
-    const slippageDec = (Math.max(1, Number(slippageBps) || 100) / 10000).toFixed(4);
-    const url = `${REF_SMART_ROUTER_URL}?amountIn=${encodeURIComponent(amtStr)}&tokenIn=${encodeURIComponent(inId)}&tokenOut=${encodeURIComponent(outId)}&pathDeep=3&slippage=${slippageDec}`;
+    const slipVal = Number(slippageBps) || 100;
+    const refCacheKey = `nearRef:${inId}:${outId}:${amtStr}:${slipVal}`;
+    return withQuoteCacheAndDedup(refCacheKey, 10_000, async () => {
+      const slippageDec = (Math.max(1, slipVal) / 10000).toFixed(4);
+      const url = `${REF_SMART_ROUTER_URL}?amountIn=${encodeURIComponent(amtStr)}&tokenIn=${encodeURIComponent(inId)}&tokenOut=${encodeURIComponent(outId)}&pathDeep=3&slippage=${slippageDec}`;
 
-    const knownPoolId = await resolveKnownOrApiRefV2PoolId(inId, outId, false);
-    const smartRouterPromise = fetchJsonWithTimeout(url, { signal }, 7000).catch(() => null);
-    const directKnownPromise = knownPoolId !== null
-      ? quoteDirectRefV2SingleHop(knownPoolId, inId, outId, amtStr, slippageBps, signal).catch(() => null)
-      : Promise.resolve(null);
-
-    const [srData, directKnownRes] = await Promise.all([smartRouterPromise, directKnownPromise]);
-
-    let smartRouterBest = null;
-    if (srData && Number(srData.result_code) === 0 && srData.result_data) {
-      const rData = srData.result_data;
-      const routes = Array.isArray(rData.routes) ? rData.routes : [];
-      const amountOut = rData.amount_out ? String(rData.amount_out) : '0';
-      const actions = [];
-      for (const route of routes) {
-        const pools = Array.isArray(route.pools) ? route.pools : [];
-        for (const p of pools) {
-          if (p.pool_id === undefined || !p.token_in || !p.token_out) continue;
-          const act = {
-            pool_id: Number(p.pool_id),
-            token_in: String(p.token_in),
-            token_out: String(p.token_out),
-            min_amount_out: String(p.min_amount_out || '0')
-          };
-          if (p.amount_in && String(p.amount_in) !== '0') {
-            act.amount_in = String(p.amount_in);
-          }
-          actions.push(act);
+      const knownPoolId = await resolveKnownOrApiRefV2PoolId(inId, outId, false, signal);
+      const hasDclPool = resolveNearDclPoolIds(inId, outId).length > 0;
+      const stage1Ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const mergedSig = (stage1Ctrl && signal && typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function')
+        ? AbortSignal.any([signal, stage1Ctrl.signal])
+        : (stage1Ctrl ? stage1Ctrl.signal : signal);
+      let onExtAbort = null;
+      if (stage1Ctrl && signal && (!mergedSig || mergedSig === stage1Ctrl.signal)) {
+        if (signal.aborted) stage1Ctrl.abort();
+        else {
+          onExtAbort = () => stage1Ctrl.abort();
+          signal.addEventListener('abort', onExtAbort, { once: true });
         }
       }
-      if (actions.length > 0 && /^\d+$/.test(amountOut) && BigInt(amountOut) > 0n) {
-        smartRouterBest = {
-          ok: true,
-          label: 'Ref Finance (v2.ref-finance.near)',
-          routeSource: 'Ref Finance',
-          contractId: REF_FINANCE_CONTRACT,
-          tokenIn: inId,
-          tokenOut: outId,
-          amountIn: amtStr,
-          amountOut,
-          minAmountOut: String(routes[0]?.min_amount_out || '0'),
-          serviceFeeBps: 0,
-          actions,
-          routeData: rData,
-          error: null
-        };
-      }
-    }
 
-    // Always compare every route (smart router, direct pool, dynamic pool, 2-hop via hubs) and pick the best output.
-    // A thin direct pool must never beat a deeper 2-hop route (e.g. NEAR -> RHEA -> oRHEA).
-    const refCandidates = [smartRouterBest, directKnownRes].filter(Boolean);
-
-    if (knownPoolId === null) {
-      const apiPoolId = await resolveKnownOrApiRefV2PoolId(inId, outId, true);
-      if (apiPoolId !== null) {
-        const dynRes = await quoteDirectRefV2SingleHop(apiPoolId, inId, outId, amtStr, slippageBps).catch(() => null);
-        if (dynRes) refCandidates.push(dynRes);
-      }
-    }
-
-    const hubs = ['token.rhealab.near', WRAP_NEAR_CONTRACT, NEAR_USDC_CONTRACT_REF];
-    const twoHopResults = await Promise.all(hubs.map(async (mid) => {
-      if (mid === inId || mid === outId) return null;
       try {
-        const [pid1, pid2] = await Promise.all([
-          resolveKnownOrApiRefV2PoolId(inId, mid, true),
-          resolveKnownOrApiRefV2PoolId(mid, outId, true)
-        ]);
-        if (pid1 === null || pid2 === null) return null;
-        const hop1 = await quoteDirectRefV2SingleHop(pid1, inId, mid, amtStr, slippageBps);
-        if (!hop1) return null;
-        const hop2 = await quoteDirectRefV2SingleHop(pid2, mid, outId, hop1.amountOut, slippageBps);
-        if (!hop2) return null;
-        const actions = [
-          { pool_id: Number(pid1), token_in: inId, token_out: mid, amount_in: amtStr, min_amount_out: hop1.minAmountOut },
-          { pool_id: Number(pid2), token_in: mid, token_out: outId, min_amount_out: hop2.minAmountOut }
-        ];
-        return {
-          ok: true,
-          label: `Ref Finance V2 (#${pid1}➔#${pid2})`,
-          routeSource: 'Ref Finance',
-          contractId: REF_FINANCE_CONTRACT,
-          tokenIn: inId,
-          tokenOut: outId,
-          amountIn: amtStr,
-          amountOut: hop2.amountOut,
-          minAmountOut: hop2.minAmountOut,
-          actions,
-          routeData: { direct2Hop: [pid1, pid2], actions, amount_out: hop2.amountOut },
-          error: null
-        };
-      } catch (_) {
-        return null;
-      }
-    }));
-    twoHopResults.forEach((r) => { if (r) refCandidates.push(r); });
-    // 3-hop via two hubs using known pools only (e.g. PRL -> USDC -> RHEA -> oRHEA), executed atomically by Ref actions.
-    const threeHopJobs = [];
-    for (const h1 of hubs) {
-      for (const h2 of hubs) {
-        if (h1 === h2 || h1 === inId || h1 === outId || h2 === inId || h2 === outId) continue;
-        threeHopJobs.push((async () => {
-          try {
-            const [p1, p2, p3] = await Promise.all([
-              resolveKnownOrApiRefV2PoolId(inId, h1, false),
-              resolveKnownOrApiRefV2PoolId(h1, h2, false),
-              resolveKnownOrApiRefV2PoolId(h2, outId, false)
-            ]);
-            if (p1 === null || p2 === null || p3 === null) return null;
-            const q1 = await quoteDirectRefV2SingleHop(p1, inId, h1, amtStr, slippageBps);
-            if (!q1) return null;
-            const q2 = await quoteDirectRefV2SingleHop(p2, h1, h2, q1.amountOut, slippageBps);
-            if (!q2) return null;
-            const q3 = await quoteDirectRefV2SingleHop(p3, h2, outId, q2.amountOut, slippageBps);
-            if (!q3) return null;
-            const actions = [
-              { pool_id: Number(p1), token_in: inId, token_out: h1, amount_in: amtStr, min_amount_out: q1.minAmountOut },
-              { pool_id: Number(p2), token_in: h1, token_out: h2, min_amount_out: q2.minAmountOut },
-              { pool_id: Number(p3), token_in: h2, token_out: outId, min_amount_out: q3.minAmountOut }
-            ];
+        const smartRouterPromise = fetchJsonWithTimeout(url, { signal: mergedSig }, 3000).catch(() => null);
+        const directKnownPromise = knownPoolId !== null
+          ? quoteDirectRefV2SingleHop(knownPoolId, inId, outId, amtStr, slipVal, mergedSig).catch(() => null)
+          : Promise.resolve(null);
+        const dclStage1Promise = hasDclPool
+          ? quoteNearDclPoolSwap({ tokenIn: inId, tokenOut: outId, amountRaw: amtStr, slippageBps: slipVal, signal: mergedSig }).catch(() => null)
+          : Promise.resolve(null);
+
+        const parseSmartRouter = (data) => {
+          if (!data || Number(data.result_code) !== 0 || !data.result_data) return null;
+          const rData = data.result_data;
+          const routes = Array.isArray(rData.routes) ? rData.routes : [];
+          const amountOut = rData.amount_out ? String(rData.amount_out) : '0';
+          const actions = [];
+          for (const route of routes) {
+            const pools = Array.isArray(route.pools) ? route.pools : [];
+            for (const p of pools) {
+              if (p.pool_id === undefined || !p.token_in || !p.token_out) continue;
+              const act = {
+                pool_id: Number(p.pool_id),
+                token_in: String(p.token_in),
+                token_out: String(p.token_out),
+                min_amount_out: String(p.min_amount_out || '0')
+              };
+              if (p.amount_in && String(p.amount_in) !== '0') {
+                act.amount_in = String(p.amount_in);
+              }
+              actions.push(act);
+            }
+          }
+          if (actions.length > 0 && /^\d+$/.test(amountOut) && BigInt(amountOut) > 0n) {
             return {
               ok: true,
-              label: `Ref Finance V2 (#${p1}➔#${p2}➔#${p3})`,
+              label: 'Ref Finance (v2.ref-finance.near)',
               routeSource: 'Ref Finance',
               contractId: REF_FINANCE_CONTRACT,
               tokenIn: inId,
               tokenOut: outId,
               amountIn: amtStr,
-              amountOut: q3.amountOut,
-              minAmountOut: q3.minAmountOut,
+              amountOut,
+              minAmountOut: String(routes[0]?.min_amount_out || '0'),
+              serviceFeeBps: 0,
               actions,
-              routeData: { direct3Hop: [p1, p2, p3], actions, amount_out: q3.amountOut },
+              routeData: rData,
               error: null
             };
-          } catch (_) {
-            return null;
           }
-        })());
+          return null;
+        };
+
+        const [srRace, dirRace, dclRace] = await raceWithGraceWindow(
+          [smartRouterPromise, directKnownPromise, dclStage1Promise],
+          (v) => Boolean(v && ((v.ok && v.amountOut) || parseSmartRouter(v))),
+          550,
+          3200,
+          stage1Ctrl
+        );
+
+        const srData = srRace && srRace.status === 'fulfilled' ? srRace.value : null;
+        const smartRouterBest = parseSmartRouter(srData);
+        const directKnownRes = dirRace && dirRace.status === 'fulfilled' ? dirRace.value : null;
+        const dclStage1Res = dclRace && dclRace.status === 'fulfilled' ? dclRace.value : null;
+
+        // Stage 1 fast-path: if SmartRouter OR direct known/DCL returned a valid route, pick highest and skip waterfalls.
+        const stage1Candidates = [smartRouterBest, directKnownRes, dclStage1Res].filter((c) => c && c.ok && c.amountOut);
+        if (stage1Candidates.length > 0) {
+          stage1Candidates.sort((a, b) => {
+            const x = BigInt(a.amountOut);
+            const y = BigInt(b.amountOut);
+            return y > x ? 1 : (y < x ? -1 : 0);
+          });
+          return { serviceFeeBps: 0, ...stage1Candidates[0] };
+        }
+
+        // Fallback when SmartRouter failed: explore dynamic pool + 2-hop + 3-hop + DCL.
+        const refCandidates = [...stage1Candidates];
+
+        if (knownPoolId === null && !(signal && signal.aborted)) {
+          const apiPoolId = await resolveKnownOrApiRefV2PoolId(inId, outId, true, signal);
+          if (apiPoolId !== null) {
+            const dynRes = await quoteDirectRefV2SingleHop(apiPoolId, inId, outId, amtStr, slipVal, signal).catch(() => null);
+            if (dynRes) refCandidates.push(dynRes);
+          }
+        }
+
+        const hubs = ['token.rhealab.near', WRAP_NEAR_CONTRACT, NEAR_USDC_CONTRACT_REF];
+        const twoHopResults = (signal && signal.aborted)
+          ? []
+          : await Promise.all(hubs.map(async (mid) => {
+              if (mid === inId || mid === outId) return null;
+              try {
+                const [pid1, pid2] = await Promise.all([
+                  resolveKnownOrApiRefV2PoolId(inId, mid, true, signal),
+                  resolveKnownOrApiRefV2PoolId(mid, outId, true, signal)
+                ]);
+                if (pid1 === null || pid2 === null) return null;
+                const hop1 = await quoteDirectRefV2SingleHop(pid1, inId, mid, amtStr, slipVal, signal);
+                if (!hop1) return null;
+                const hop2 = await quoteDirectRefV2SingleHop(pid2, mid, outId, hop1.amountOut, slipVal, signal);
+                if (!hop2) return null;
+                const actions = [
+                  { pool_id: Number(pid1), token_in: inId, token_out: mid, amount_in: amtStr, min_amount_out: '0' },
+                  { pool_id: Number(pid2), token_in: mid, token_out: outId, min_amount_out: hop2.minAmountOut }
+                ];
+                return {
+                  ok: true,
+                  label: `Ref Finance V2 (#${pid1}➔#${pid2})`,
+                  routeSource: 'Ref Finance',
+                  contractId: REF_FINANCE_CONTRACT,
+                  tokenIn: inId,
+                  tokenOut: outId,
+                  amountIn: amtStr,
+                  amountOut: hop2.amountOut,
+                  minAmountOut: hop2.minAmountOut,
+                  actions,
+                  routeData: { direct2Hop: [pid1, pid2], actions, amount_out: hop2.amountOut },
+                  error: null
+                };
+              } catch (_) {
+                return null;
+              }
+            }));
+        twoHopResults.forEach((r) => { if (r) refCandidates.push(r); });
+        // 3-hop via two hubs using known pools only (e.g. PRL -> USDC -> RHEA -> oRHEA), executed atomically by Ref actions.
+        const threeHopJobs = [];
+        if (!(signal && signal.aborted)) {
+          for (const h1 of hubs) {
+            for (const h2 of hubs) {
+              if (h1 === h2 || h1 === inId || h1 === outId || h2 === inId || h2 === outId) continue;
+              threeHopJobs.push((async () => {
+                try {
+                  const [p1, p2, p3] = await Promise.all([
+                    resolveKnownOrApiRefV2PoolId(inId, h1, false, signal),
+                    resolveKnownOrApiRefV2PoolId(h1, h2, false, signal),
+                    resolveKnownOrApiRefV2PoolId(h2, outId, false, signal)
+                  ]);
+                  if (p1 === null || p2 === null || p3 === null) return null;
+                  const q1 = await quoteDirectRefV2SingleHop(p1, inId, h1, amtStr, slipVal, signal);
+                  if (!q1) return null;
+                  const q2 = await quoteDirectRefV2SingleHop(p2, h1, h2, q1.amountOut, slipVal, signal);
+                  if (!q2) return null;
+                  const q3 = await quoteDirectRefV2SingleHop(p3, h2, outId, q2.amountOut, slipVal, signal);
+                  if (!q3) return null;
+                  const actions = [
+                    { pool_id: Number(p1), token_in: inId, token_out: h1, amount_in: amtStr, min_amount_out: '0' },
+                    { pool_id: Number(p2), token_in: h1, token_out: h2, min_amount_out: '0' },
+                    { pool_id: Number(p3), token_in: h2, token_out: outId, min_amount_out: q3.minAmountOut }
+                  ];
+                  return {
+                    ok: true,
+                    label: `Ref Finance V2 (#${p1}➔#${p2}➔#${p3})`,
+                    routeSource: 'Ref Finance',
+                    contractId: REF_FINANCE_CONTRACT,
+                    tokenIn: inId,
+                    tokenOut: outId,
+                    amountIn: amtStr,
+                    amountOut: q3.amountOut,
+                    minAmountOut: q3.minAmountOut,
+                    actions,
+                    routeData: { direct3Hop: [p1, p2, p3], actions, amount_out: q3.amountOut },
+                    error: null
+                  };
+                } catch (_) {
+                  return null;
+                }
+              })());
+            }
+          }
+        }
+        (await Promise.all(threeHopJobs)).forEach((r) => { if (r) refCandidates.push(r); });
+
+        if (refCandidates.length > 0) {
+          refCandidates.sort((a, b) => {
+            const x = BigInt(a.amountOut);
+            const y = BigInt(b.amountOut);
+            return y > x ? 1 : (y < x ? -1 : 0);
+          });
+          return { serviceFeeBps: 0, ...refCandidates[0] };
+        }
+        if (hasDclPool) {
+          const dclFallback = await quoteNearDclPoolSwap({ tokenIn: inId, tokenOut: outId, amountRaw: amtStr, slippageBps: slipVal, signal }).catch(() => null);
+          if (dclFallback && dclFallback.ok) return dclFallback;
+        }
+
+        return {
+          ok: false,
+          label: 'Ref Finance',
+          amountOut: null,
+          actions: [],
+          routeData: null,
+          error: (srData && srData.result_message) || t('Ref Finance 暂无可用流动性路径', 'No Ref Finance liquidity route found')
+        };
+      } finally {
+        if (signal && onExtAbort) {
+          try { signal.removeEventListener('abort', onExtAbort); } catch (_) {}
+        }
       }
-    }
-    (await Promise.all(threeHopJobs)).forEach((r) => { if (r) refCandidates.push(r); });
+    });
+  }
 
-    if (refCandidates.length > 0) {
-      refCandidates.sort((a, b) => {
-        const x = BigInt(a.amountOut);
-        const y = BigInt(b.amountOut);
-        return y > x ? 1 : (y < x ? -1 : 0);
-      });
-      return { serviceFeeBps: 0, ...refCandidates[0] };
-    }
-    // Fallback 3: Rhea / Ref DCL CLMM (dclv2.ref-labs.near)
-    const dclFallback = await quoteNearDclPoolSwap({ tokenIn: inId, tokenOut: outId, amountRaw: amtStr, slippageBps, signal }).catch(() => null);
-    if (dclFallback && dclFallback.ok) return dclFallback;
+  async function ensureNearNep141StorageRegistered({ resolvedWallet, accountId, tokenContract } = {}) {
+    const acct = String(accountId || '').trim();
+    const cid = String(tokenContract || '').trim();
+    if (!resolvedWallet || !acct || !cid || cid.toLowerCase() === 'near') return false;
+    try {
+      const sBal = await viewNearContractCall(cid, 'storage_balance_of', { account_id: acct });
+      if (sBal && typeof sBal === 'object' && BigInt(String(sBal.total || '0')) > 0n) {
+        return true;
+      }
+    } catch (_) {}
 
-    return {
-      ok: false,
-      label: 'Ref Finance',
-      amountOut: null,
-      actions: [],
-      routeData: null,
-      error: (srData && srData.result_message) || t('Ref Finance 暂无可用流动性路径', 'No Ref Finance liquidity route found')
-    };
+    let depositYocto = '1250000000000000000000';
+    try {
+      const minBal = await viewNearContractCall(cid, 'storage_minimum_balance', {});
+      const minStr = minBal && typeof minBal === 'object' ? (minBal.min ?? minBal.minimum ?? null) : minBal;
+      if (minStr !== null && minStr !== undefined && /^\d+$/.test(String(minStr))) {
+        const minBig = BigInt(String(minStr));
+        const maxCap = 50_000_000_000_000_000_000_000n; // 0.05 NEAR safety cap
+        if (minBig > 0n) {
+          depositYocto = (minBig <= maxCap ? minBig : maxCap).toString();
+        }
+      }
+    } catch (_) {}
+
+    await api.signAndSendNearFunctionCall({
+      accountId: acct,
+      publicKeyStr: resolvedWallet.nearPublicKey,
+      privateKeyStr: resolvedWallet.nearPrivateKey,
+      receiverId: cid,
+      methodName: 'storage_deposit',
+      argsJson: JSON.stringify({ account_id: acct, registration_only: true }),
+      gas: '30000000000000',
+      depositYocto
+    });
+    return true;
   }
 
   async function prepareNearSwapFundingAndStorage({ resolvedWallet, sender, inId, outId, amtStr }) {
@@ -6085,21 +7395,11 @@
       const needed = BigInt(amtStr);
       if (wrappedBal < needed) {
         const shortfall = needed - wrappedBal;
-        try {
-          const sBal = await viewNearContractCall(WRAP_NEAR_CONTRACT, 'storage_balance_of', { account_id: sender });
-          if (sBal === null) {
-            await api.signAndSendNearFunctionCall({
-              accountId: sender,
-              publicKeyStr: resolvedWallet.nearPublicKey,
-              privateKeyStr: resolvedWallet.nearPrivateKey,
-              receiverId: WRAP_NEAR_CONTRACT,
-              methodName: 'storage_deposit',
-              argsJson: JSON.stringify({ account_id: sender, registration_only: true }),
-              gas: '30000000000000',
-              depositYocto: '1250000000000000000000'
-            });
-          }
-        } catch (_) {}
+        await ensureNearNep141StorageRegistered({
+          resolvedWallet,
+          accountId: sender,
+          tokenContract: WRAP_NEAR_CONTRACT
+        }).catch(() => {});
         await api.signAndSendNearFunctionCall({
           accountId: sender,
           publicKeyStr: resolvedWallet.nearPublicKey,
@@ -6113,21 +7413,193 @@
       }
     }
 
-    try {
-      const outStorage = await viewNearContractCall(outId, 'storage_balance_of', { account_id: sender });
-      if (outStorage === null) {
-        await api.signAndSendNearFunctionCall({
-          accountId: sender,
-          publicKeyStr: resolvedWallet.nearPublicKey,
-          privateKeyStr: resolvedWallet.nearPrivateKey,
-          receiverId: outId,
-          methodName: 'storage_deposit',
-          argsJson: JSON.stringify({ account_id: sender, registration_only: true }),
-          gas: '30000000000000',
-          depositYocto: '1250000000000000000000'
+    await ensureNearNep141StorageRegistered({
+      resolvedWallet,
+      accountId: sender,
+      tokenContract: outId
+    }).catch(() => {});
+  }
+
+  const DEFAULT_NEAR_STORAGE_SCAN_CONTRACTS = [
+    'wrap.near',
+    'token.rhealab.near',
+    'xtoken.rhealab.near',
+    'otoken.rhealab.near',
+    'lst.rhealab.near',
+    'prl.omft.near',
+    'qtc.omft.near',
+    'usdt.tether-token.near',
+    '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+    'eth.omft.near',
+    'sol.omft.near',
+    'btc.omft.near',
+    'meta-pool.near',
+    'linear-protocol.near',
+    'v2-nearx.stader-labs.near'
+  ];
+
+  const KNOWN_NEAR_STORAGE_META = {
+    'wrap.near': { symbol: 'wNEAR', decimals: 24 },
+    'token.rhealab.near': { symbol: 'RHEA', decimals: 18 },
+    'xtoken.rhealab.near': { symbol: 'xRHEA', decimals: 18 },
+    'otoken.rhealab.near': { symbol: 'oRHEA', decimals: 18 },
+    'lst.rhealab.near': { symbol: 'rNEAR', decimals: 24 },
+    'prl.omft.near': { symbol: 'PRL', decimals: 8 },
+    'qtc.omft.near': { symbol: 'QTC', decimals: 12 },
+    'usdt.tether-token.near': { symbol: 'USDT', decimals: 6 },
+    '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1': { symbol: 'USDC', decimals: 6 },
+    'eth.omft.near': { symbol: 'ETH', decimals: 18 },
+    'sol.omft.near': { symbol: 'SOL', decimals: 9 },
+    'btc.omft.near': { symbol: 'BTC', decimals: 8 },
+    'meta-pool.near': { symbol: 'stNEAR', decimals: 24 },
+    'linear-protocol.near': { symbol: 'LiNEAR', decimals: 24 },
+    'v2-nearx.stader-labs.near': { symbol: 'NearX', decimals: 24 }
+  };
+
+  /**
+   * Scans NEP-141 token contracts on NEAR Mainnet for locked NEP-145 storage deposits (`storage_balance_of`)
+   * and distinguishes empty accounts (`ft_balance_of === 0`, safe to unregister and reclaim) from held positions.
+   */
+  async function scanNearReclaimableStorageAsync(nearAccountId) {
+    const acct = String(nearAccountId || '').trim().toLowerCase();
+    if (!acct) throw new Error(t('NEAR 账户地址不可用', 'NEAR account address unavailable'));
+
+    const candidateSet = new Set(DEFAULT_NEAR_STORAGE_SCAN_CONTRACTS);
+    const fnResp = await fetchJsonWithTimeout(`https://api.fastnear.com/v1/account/${encodeURIComponent(acct)}/ft`, {}, 4000).catch(() => null);
+    if (fnResp && fnResp.ok && fnResp.data && Array.isArray(fnResp.data.tokens)) {
+      for (const tok of fnResp.data.tokens) {
+        if (tok && tok.contract_id) {
+          const cid = String(tok.contract_id).trim().toLowerCase();
+          if (cid && cid !== 'near') candidateSet.add(cid);
+        }
+      }
+    }
+
+    const candidates = Array.from(candidateSet).slice(0, 25);
+    const registry = (typeof globalThis !== 'undefined' && globalThis.NearCATokens) || (typeof window !== 'undefined' && window.NearCATokens) || null;
+    const nearDexTokens = (registry && registry.DEX_CHAIN_TOKENS && Array.isArray(registry.DEX_CHAIN_TOKENS.near))
+      ? registry.DEX_CHAIN_TOKENS.near
+      : [];
+
+    const resolveMeta = (cid) => {
+      if (KNOWN_NEAR_STORAGE_META[cid]) return KNOWN_NEAR_STORAGE_META[cid];
+      const dexMatch = nearDexTokens.find((tk) => tk && String(tk.contractAddress || '').toLowerCase() === cid);
+      if (dexMatch) return { symbol: dexMatch.symbol, decimals: typeof dexMatch.decimals === 'number' ? dexMatch.decimals : 18 };
+      if (registry && typeof registry.findTokenByAssetId === 'function') {
+        const regMatch = registry.findTokenByAssetId(`nep141:${cid}`, 'near');
+        if (regMatch) return { symbol: regMatch.symbol, decimals: typeof regMatch.decimals === 'number' ? regMatch.decimals : 18 };
+      }
+      return { symbol: (cid.split('.')[0] || cid).toUpperCase(), decimals: 18 };
+    };
+
+    const accounts = [];
+    const concurrency = 6;
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(concurrency, candidates.length) }, async () => {
+      while (cursor < candidates.length) {
+        const idx = cursor++;
+        const cid = candidates[idx];
+        const [storageBal, ftBal] = await Promise.all([
+          viewNearContractCall(cid, 'storage_balance_of', { account_id: acct }).catch(() => null),
+          viewNearContractCall(cid, 'ft_balance_of', { account_id: acct }).catch(() => null)
+        ]);
+        if (!storageBal || typeof storageBal !== 'object') continue;
+        const totalYoctoStr = String(storageBal.total || '0').trim();
+        if (!/^\d+$/.test(totalYoctoStr) || BigInt(totalYoctoStr) <= 0n) continue;
+
+        const depositNear = Number(fromBaseUnits(totalYoctoStr, 24));
+        const rawBalStr = ftBal !== null && ftBal !== undefined && /^\d+$/.test(String(ftBal).trim())
+          ? String(ftBal).trim()
+          : '0';
+        const isEmpty = BigInt(rawBalStr) === 0n;
+        const meta = resolveMeta(cid);
+        const uiAmount = Number(fromBaseUnits(rawBalStr, meta.decimals));
+
+        accounts.push({
+          contractId: cid,
+          symbol: meta.symbol,
+          decimals: meta.decimals,
+          totalYocto: totalYoctoStr,
+          depositNear: Number.isFinite(depositNear) ? depositNear : 0,
+          rawAmount: rawBalStr,
+          uiAmount: Number.isFinite(uiAmount) ? uiAmount : 0,
+          isEmpty,
+          canReclaim: isEmpty
         });
       }
-    } catch (_) {}
+    });
+    await Promise.all(workers);
+
+    accounts.sort((a, b) => {
+      if (a.isEmpty !== b.isEmpty) return a.isEmpty ? -1 : 1;
+      return b.depositNear - a.depositNear;
+    });
+
+    const emptyAccounts = accounts.filter((a) => a.isEmpty);
+    const lockedCount = accounts.length - emptyAccounts.length;
+    const totalReclaimableNear = emptyAccounts.reduce((sum, a) => sum + Number(a.depositNear || 0), 0);
+
+    return {
+      ok: true,
+      accounts,
+      emptyCount: emptyAccounts.length,
+      lockedCount,
+      totalReclaimableNear
+    };
+  }
+
+  /**
+   * Unregisters selected zero-balance NEP-141 token contracts (`storage_unregister`) to reclaim NEAR storage deposits.
+   */
+  async function executeNearStorageReclaim({ wallet, contracts = [] } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const list = (Array.isArray(contracts) ? contracts : [])
+      .map((item) => (typeof item === 'string' ? { contractId: item } : item))
+      .filter((item) => item && item.contractId);
+    if (list.length === 0) {
+      throw new Error(t('请选择至少一个可回收合约', 'Select at least one contract to reclaim'));
+    }
+
+    await ensureWalletSigningKeysAsync(wallet);
+    const accountId = wallet.nearNamedAccount || wallet.nearAddress;
+    if (!accountId || !wallet.nearPublicKey || !wallet.nearPrivateKey) {
+      throw new Error(t('NEAR 签名凭据不可用', 'NEAR signing credentials unavailable'));
+    }
+
+    validateSufficientChainBalance({
+      wallet,
+      chain: 'near',
+      tokenSymbol: 'NEAR',
+      amount: Math.max(0.002, 0.0005 * list.length),
+      isNative: false,
+      tokenBalance: resolveWalletChainBalance(wallet, 'near')
+    });
+
+    const txHashes = [];
+    for (const item of list) {
+      const cid = String(item.contractId).trim();
+      const liveBal = await viewNearContractCall(cid, 'ft_balance_of', { account_id: accountId }).catch(() => null);
+      if (liveBal !== null && liveBal !== undefined && /^\d+$/.test(String(liveBal).trim()) && BigInt(String(liveBal).trim()) > 0n) {
+        throw new Error(t(`${cid} 仍有代币余额，禁止强制注销`, `${cid} still has token balance; cannot unregister safely`));
+      }
+      const txHash = await api.signAndSendNearFunctionCall({
+        accountId,
+        publicKeyStr: wallet.nearPublicKey,
+        privateKeyStr: wallet.nearPrivateKey,
+        receiverId: cid,
+        methodName: 'storage_unregister',
+        argsJson: JSON.stringify({ force: false }),
+        gas: '30000000000000',
+        depositYocto: '1'
+      });
+      if (txHash) txHashes.push(txHash);
+    }
+
+    return {
+      ok: true,
+      txHashes,
+      reclaimedCount: txHashes.length
+    };
   }
 
   /**
@@ -6452,7 +7924,7 @@
     }
     const ethersLib = getEthersLib();
     if (!ethersLib) throw new Error(t('EVM 签名库不可用', 'EVM signer library unavailable'));
-    const evmSender = wallet.mpcEvmAddress || wallet.evmAddress;
+    const evmSender = resolveWalletEvmSender(wallet, ethersLib);
     const rawAmt = String(amount).toLowerCase() === 'max'
       ? ethersLib.MaxUint256
       : toBaseUnits(amount, pool.decimals || 6);
@@ -6514,11 +7986,634 @@
     return { txHash, explorerUrl: `${NEAR_EXPLORER_TX}${txHash}`, tokenContract: tokenId };
   }
 
+  /**
+   * 批量读取用户在 EVM / Arc / HyperEVM 上的活跃理财与质押持仓（Aave V3、Ethena sUSDe 含冷却、Steakhouse ERC-4626、stETH、kHYPE）
+   */
+  async function fetchEvmAccountStakingPositionsAsync(wallet) {
+    const evmAddr = wallet && (wallet.mpcEvmAddress || wallet.evmAddress);
+    if (!evmAddr || !/^0x[0-9a-fA-F]{40}$/.test(String(evmAddr))) return [];
+    const addrLower = String(evmAddr).toLowerCase();
+    const paddedAddr = addrLower.replace(/^0x/, '').padStart(64, '0');
+    const balCallData = '0x70a08231' + paddedAddr;
+    const positions = [];
+
+    const ethCalls = [
+      { target: '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', allowFailure: true, callData: balCallData }, // 0: Lido stETH
+      { target: '0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c', allowFailure: true, callData: balCallData }, // 1: aEthUSDC
+      { target: '0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', allowFailure: true, callData: balCallData }, // 2: aEthWETH
+      { target: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', allowFailure: true, callData: balCallData }, // 3: sUSDe shares
+      { target: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', allowFailure: true, callData: '0x01320fe2' + paddedAddr }, // 4: cooldowns(address)
+      { target: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', allowFailure: true, callData: '0x35269315' } // 5: cooldownDuration()
+    ];
+
+    const [ethMcRes, baseRes, arbRes, arcRes, hypeRes] = await Promise.all([
+      callEvmRpc(
+        'eth',
+        {
+          jsonrpc: '2.0',
+          id: 'evm_pos_eth',
+          method: 'eth_call',
+          params: [{ to: MULTICALL3_ADDRESS, data: encodeMulticall3Aggregate3(ethCalls) }, 'latest']
+        },
+        6000
+      ).catch(() => null),
+      ethReadCall('base', '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', balCallData, 5500).catch(() => null),
+      ethReadCall('arb', '0x724dc807b04555b71Ed48a6896b6F41593b8C637', balCallData, 5500).catch(() => null),
+      ethReadCall('arc', '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', balCallData, 5500).catch(() => null),
+      ethReadCall('hype', '0xfD739d4e423301CE9385c1fb8850539D657C296D', balCallData, 5500).catch(() => null)
+    ]);
+
+    const decodedEth = ethMcRes && typeof ethMcRes.result === 'string'
+      ? decodeMulticall3Aggregate3Result(ethMcRes.result)
+      : null;
+
+    if (decodedEth && decodedEth.length >= 4) {
+      if (decodedEth[0].success) {
+        const raw = sliceEvmUint256WordHex(decodedEth[0].returnData, 0);
+        const amt = Number(fromBaseUnits(raw, 18));
+        if (amt > 0.00001) {
+          positions.push({
+            type: 'liquid_lst',
+            poolId: 'lido_steth',
+            chain: 'eth',
+            symbol: 'stETH',
+            outSymbol: 'ETH',
+            amount: amt,
+            rawAmount: raw,
+            decimals: 18,
+            canExit: true,
+            title: 'Lido Staked ETH',
+            subtitle: t('可随时在链上兑换回 ETH', 'Exit stETH to ETH anytime')
+          });
+        }
+      }
+      if (decodedEth[1].success) {
+        const raw = sliceEvmUint256WordHex(decodedEth[1].returnData, 0);
+        const amt = Number(fromBaseUnits(raw, 6));
+        if (amt > 0.0001) {
+          positions.push({
+            type: 'aave_v3',
+            poolId: 'aave_eth_usdc',
+            chain: 'eth',
+            symbol: 'USDC',
+            outSymbol: 'aEthUSDC',
+            amount: amt,
+            rawAmount: raw,
+            decimals: 6,
+            canWithdraw: true,
+            title: 'Aave V3 Ethereum USDC',
+            subtitle: t('计息存款，随时可提取', 'Earning yield — withdraw anytime')
+          });
+        }
+      }
+      if (decodedEth[2].success) {
+        const raw = sliceEvmUint256WordHex(decodedEth[2].returnData, 0);
+        const amt = Number(fromBaseUnits(raw, 18));
+        if (amt > 0.00001) {
+          positions.push({
+            type: 'aave_v3',
+            poolId: 'aave_eth_weth',
+            chain: 'eth',
+            symbol: 'WETH',
+            outSymbol: 'aEthWETH',
+            amount: amt,
+            rawAmount: raw,
+            decimals: 18,
+            canWithdraw: true,
+            title: 'Aave V3 Ethereum ETH',
+            subtitle: t('计息存款，随时可提取', 'Earning yield — withdraw anytime')
+          });
+        }
+      }
+      const susdeSharesRaw = decodedEth[3].success ? sliceEvmUint256WordHex(decodedEth[3].returnData, 0) : '0';
+      const susdeAmt = Number(fromBaseUnits(susdeSharesRaw, 18));
+      const cooldownEnd = decodedEth[4] && decodedEth[4].success ? Number(sliceEvmUint256WordHex(decodedEth[4].returnData, 0)) : 0;
+      const underlyingCooldownRaw = decodedEth[4] && decodedEth[4].success ? sliceEvmUint256WordHex(decodedEth[4].returnData, 1) : '0';
+      const underlyingCooldownAmt = Number(fromBaseUnits(underlyingCooldownRaw, 18));
+      const cooldownDuration = decodedEth[5] && decodedEth[5].success ? Number(sliceEvmUint256WordHex(decodedEth[5].returnData, 0)) : 604800;
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (susdeAmt > 0.0001 || underlyingCooldownAmt > 0.0001) {
+        const canUnstakeCooldown = underlyingCooldownAmt > 0.0001 && nowSec >= cooldownEnd;
+        const waitingCooldown = underlyingCooldownAmt > 0.0001 && nowSec < cooldownEnd;
+        const needsCooldown = cooldownDuration > 0 && susdeAmt > 0.0001 && !canUnstakeCooldown;
+        positions.push({
+          type: 'erc4626',
+          poolId: 'ethena_susde',
+          chain: 'eth',
+          symbol: canUnstakeCooldown || waitingCooldown ? 'USDe' : 'sUSDe',
+          outSymbol: 'USDe',
+          amount: susdeAmt > 0.0001 ? susdeAmt : underlyingCooldownAmt,
+          sharesRaw: susdeSharesRaw,
+          cooldownEnd,
+          cooldownDuration,
+          underlyingCooldownAmount: underlyingCooldownAmt,
+          canRedeem: cooldownDuration === 0 && susdeAmt > 0.0001,
+          canUnstakeCooldown,
+          needsCooldown,
+          title: 'Ethena Staked USDe',
+          subtitle: canUnstakeCooldown
+            ? t(`冷却已完成 (${underlyingCooldownAmt.toFixed(2)} USDe 可领取)`, `Cooldown ready (${underlyingCooldownAmt.toFixed(2)} USDe claimable)`)
+            : waitingCooldown
+              ? t(`冷却解锁中 (${underlyingCooldownAmt.toFixed(2)} USDe)`, `Cooldown in progress (${underlyingCooldownAmt.toFixed(2)} USDe)`)
+              : (cooldownDuration > 0 ? t('点击发起解质押冷却', 'Initiate unstake cooldown') : t('随时可赎回 USDe', 'Redeem anytime'))
+        });
+      }
+    }
+
+    const pushAave = (rawHex, poolId, decimals, symbol, title) => {
+      if (!rawHex) return;
+      const raw = sliceEvmUint256WordHex(rawHex, 0);
+      const amt = Number(fromBaseUnits(raw, decimals));
+      if (amt > 0.0001) {
+        positions.push({
+          type: 'aave_v3',
+          poolId,
+          chain: findStakingPool(poolId)?.chain || 'base',
+          symbol,
+          outSymbol: findStakingPool(poolId)?.outSymbol || symbol,
+          amount: amt,
+          rawAmount: raw,
+          decimals,
+          canWithdraw: true,
+          title,
+          subtitle: t('计息存款，随时可提取', 'Earning yield — withdraw anytime')
+        });
+      }
+    };
+
+    pushAave(baseRes, 'aave_base_usdc', 6, 'USDC', 'Aave V3 Base USDC');
+    pushAave(arbRes, 'aave_arb_usdc', 6, 'USDC', 'Aave V3 Arbitrum USDC');
+
+    if (arcRes) {
+      const sharesRaw = sliceEvmUint256WordHex(arcRes, 0);
+      const sharesAmt = Number(fromBaseUnits(sharesRaw, 18));
+      if (sharesAmt > 0.0001) {
+        const pool = findStakingPool('arc_steak_usdc');
+        const rate = pool && pool.rate > 0 ? (1 / pool.rate) : 1;
+        positions.push({
+          type: 'erc4626',
+          poolId: 'arc_steak_usdc',
+          chain: 'arc',
+          symbol: 'USDC',
+          outSymbol: 'steakUSDC',
+          amount: sharesAmt * rate,
+          sharesAmount: sharesAmt,
+          sharesRaw,
+          canRedeem: true,
+          title: 'Steakhouse Prime (Arc)',
+          subtitle: t('ERC-4626 凭证，可随时赎回 USDC', 'ERC-4626 vault — redeem USDC anytime')
+        });
+      }
+    }
+
+    if (hypeRes) {
+      const raw = sliceEvmUint256WordHex(hypeRes, 0);
+      const amt = Number(fromBaseUnits(raw, 18));
+      if (amt > 0.00001) {
+        positions.push({
+          type: 'liquid_lst',
+          poolId: 'hyper_khype',
+          chain: 'hype',
+          symbol: 'kHYPE',
+          outSymbol: 'HYPE',
+          amount: amt,
+          rawAmount: raw,
+          decimals: 18,
+          canExit: true,
+          title: 'Kinetiq kHYPE',
+          subtitle: t('可随时兑换回 HYPE', 'Exit kHYPE to HYPE anytime')
+        });
+      }
+    }
+
+    return positions;
+  }
+
+  /**
+   * NEAR 流动性质押合约解质押/提取 (lst.rhealab.near, meta-pool.near, linear-protocol.near, v2-nearx.stader-labs.near, xtoken.rhealab.near)
+   */
+  async function unstakeFromNearLst({
+    wallet,
+    contractId,
+    amount = null,
+    action = 'unstake_all',
+    requestId = null
+  } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const cid = String(contractId || '').trim();
+    const allowedContracts = new Set([
+      'lst.rhealab.near',
+      'meta-pool.near',
+      'linear-protocol.near',
+      'v2-nearx.stader-labs.near',
+      'xtoken.rhealab.near'
+    ]);
+    if (!allowedContracts.has(cid)) {
+      throw new Error(t(`不支持的 NEAR 质押合约: ${cid}`, `Unsupported NEAR LST contract: ${cid}`));
+    }
+    await ensureWalletSigningKeysAsync(wallet);
+    const accountId = wallet.nearNamedAccount || wallet.nearAddress;
+    if (!accountId || !wallet.nearPublicKey || !wallet.nearPrivateKey) {
+      throw new Error(t('NEAR 签名凭据不可用', 'NEAR signing credentials unavailable'));
+    }
+    const nearGas = resolveWalletChainBalance(wallet, 'near');
+    if (nearGas < 0.03) {
+      throw new Error(t(`NEAR 余额不足以支付 Gas (当前: ${nearGas.toFixed(4)} NEAR)`, `Insufficient NEAR for gas (Available: ${nearGas.toFixed(4)} NEAR)`));
+    }
+
+    let methodName = String(action || 'unstake_all');
+    let argsObj = {};
+    let depositYocto = '0';
+    let gas = '80000000000000';
+
+    if (cid === 'xtoken.rhealab.near') {
+      depositYocto = '1'; // xtoken.rhealab.near methods are #[payable]
+      gas = '100000000000000';
+      if (methodName === 'claim_unstake') {
+        if (!requestId) throw new Error(t('缺少 xRHEA 解质押请求 ID', 'Missing xRHEA unstake request ID'));
+        argsObj = { request_id: String(requestId) };
+      } else {
+        methodName = 'unstake';
+        const rawAmt = toBaseUnits(amount, 18);
+        if (!/^\d+$/.test(rawAmt) || BigInt(rawAmt) <= 0n) {
+          throw new Error(t('解质押数量必须大于 0', 'Unstake amount must be positive'));
+        }
+        argsObj = { amount: rawAmt, client_echo: null };
+      }
+    } else if (methodName === 'liquid_unstake') {
+      if (cid !== 'meta-pool.near') {
+        throw new Error(t('仅 Meta Pool 支持 liquid_unstake', 'Only Meta Pool supports liquid_unstake'));
+      }
+      const rawAmt = toBaseUnits(amount, 24);
+      if (!/^\d+$/.test(rawAmt) || BigInt(rawAmt) <= 0n) {
+        throw new Error(t('解质押数量必须大于 0', 'Unstake amount must be positive'));
+      }
+      const est = await viewNearContractCall('meta-pool.near', 'get_near_amount_sell_st_near', { st_near_amount: rawAmt }).catch(() => null);
+      const minExpected = est && /^\d+$/.test(String(est))
+        ? computeSlippageMinAmount(String(est), 200)
+        : '1';
+      argsObj = { st_near_to_burn: rawAmt, min_expected_near: minExpected };
+    } else if (methodName === 'unstake') {
+      const rawAmt = toBaseUnits(amount, 24);
+      if (!/^\d+$/.test(rawAmt) || BigInt(rawAmt) <= 0n) {
+        throw new Error(t('解质押数量必须大于 0', 'Unstake amount must be positive'));
+      }
+      argsObj = { amount: rawAmt };
+    } else if (methodName === 'withdraw_all' || methodName === 'unstake_all') {
+      argsObj = {};
+    } else {
+      throw new Error(t(`不支持的操作类型: ${methodName}`, `Unsupported action: ${methodName}`));
+    }
+
+    const txHash = await api.signAndSendNearFunctionCall({
+      accountId,
+      publicKeyStr: wallet.nearPublicKey,
+      privateKeyStr: wallet.nearPrivateKey,
+      receiverId: cid,
+      methodName,
+      argsJson: JSON.stringify(argsObj),
+      gas,
+      depositYocto
+    });
+    return { txHash, explorerUrl: `${NEAR_EXPLORER_TX}${txHash}`, contractId: cid, action: methodName };
+  }
+
+  /**
+   * Rhea oRHEA 锁仓到期领取 (orhea-conv.rhealab.near claim / batch_claim, depositYocto: '0')
+   */
+  async function claimRheaOrheaConversion({ wallet, conversionIds = [] } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    await ensureWalletSigningKeysAsync(wallet);
+    const accountId = wallet.nearNamedAccount || wallet.nearAddress;
+    if (!accountId || !wallet.nearPublicKey || !wallet.nearPrivateKey) {
+      throw new Error(t('NEAR 签名凭据不可用', 'NEAR signing credentials unavailable'));
+    }
+    const nearGas = resolveWalletChainBalance(wallet, 'near');
+    if (nearGas < 0.03) {
+      throw new Error(t(`NEAR 余额不足以支付 Gas (当前: ${nearGas.toFixed(4)} NEAR)`, `Insufficient NEAR for gas (Available: ${nearGas.toFixed(4)} NEAR)`));
+    }
+
+    let ids = Array.isArray(conversionIds) ? conversionIds.filter(Boolean).map((x) => String(x)) : [];
+    if (ids.length === 0) {
+      const convs = await viewNearContractCall('orhea-conv.rhealab.near', 'get_account_conversions', { account_id: accountId }).catch(() => null);
+      const nowNs = BigInt(Date.now()) * 1000000n;
+      if (Array.isArray(convs)) {
+        for (const c of convs) {
+          if (!c) continue;
+          const cid = c.conversion_id ?? c.id;
+          const relTime = BigInt(String(c.release_timestamp ?? c.unlock_time ?? c.end_timestamp ?? '0'));
+          if (cid !== undefined && cid !== null && relTime > 0n && relTime <= nowNs) {
+            ids.push(String(cid));
+          }
+        }
+      }
+    }
+    if (ids.length === 0) {
+      throw new Error(t('暂无已到期可领取的 oRHEA 兑换记录', 'No matured oRHEA conversions ready to claim'));
+    }
+
+    const useBatch = ids.length > 1;
+    const methodName = useBatch ? 'batch_claim' : 'claim';
+    const argsJson = useBatch
+      ? JSON.stringify({ account_id: accountId, conversion_ids: ids })
+      : JSON.stringify({ account_id: accountId, conversion_id: ids[0] });
+    const txHash = await api.signAndSendNearFunctionCall({
+      accountId,
+      publicKeyStr: wallet.nearPublicKey,
+      privateKeyStr: wallet.nearPrivateKey,
+      receiverId: 'orhea-conv.rhealab.near',
+      methodName,
+      argsJson,
+      gas: useBatch ? '150000000000000' : '100000000000000',
+      depositYocto: '0'
+    });
+    return { txHash, explorerUrl: `${NEAR_EXPLORER_TX}${txHash}`, claimedCount: ids.length, conversionIds: ids };
+  }
+
+  /**
+   * EVM / Arc ERC-4626 金库赎回（支持 Steakhouse Prime USDC redeem 以及 Ethena sUSDe 冷却 cooldownShares -> unstake）
+   */
+  async function redeemErc4626Vault({ wallet, poolId, shares = 'max', mode = 'auto' } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const pool = findStakingPool(poolId);
+    if (!pool || !pool.isErc4626) {
+      throw new Error(t('未找到对应的 ERC-4626 理财金库', 'ERC-4626 vault pool not found'));
+    }
+    await ensureWalletSigningKeysAsync(wallet);
+    const hasNearMpc = Boolean((wallet.nearNamedAccount || wallet.nearAddress) && wallet.nearPublicKey && wallet.nearPrivateKey);
+    if (!wallet.evmPrivateKey && !hasNearMpc) {
+      throw new Error(t('EVM 签名凭据不可用', 'EVM signing credentials unavailable'));
+    }
+    const gasBal = resolveWalletChainBalance(wallet, pool.chain);
+    const minGas = DEFAULT_GAS_BUFFERS[pool.chain] || 0.001;
+    if (gasBal < minGas) {
+      throw new Error(t(`${pool.chainLabel} 原生 Gas 不足 (当前: ${gasBal.toFixed(5)})`, `Insufficient native gas on ${pool.chainLabel} (Available: ${gasBal.toFixed(5)})`));
+    }
+    const ethersLib = getEthersLib();
+    if (!ethersLib) throw new Error(t('EVM 签名库 ethers 不可用', 'EVM signer library unavailable'));
+    const evmSender = resolveWalletEvmSender(wallet, ethersLib);
+    const sendCall = (data) => (wallet.evmPrivateKey
+      ? sendEvmSignedTransaction({ chainKey: pool.chain, privateKey: wallet.evmPrivateKey, to: pool.contract, data, value: '0' })
+      : sendEvmMpcSignedTransaction({ wallet, chainKey: pool.chain, to: pool.contract, data, value: '0', path: 'ethereum-1' }));
+
+    const paddedSender = evmSender.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+    const balHex = await ethReadCall(pool.chain, pool.contract, '0x70a08231' + paddedSender, 6000);
+    const currentSharesBig = balHex ? BigInt(sliceEvmUint256WordHex(balHex, 0)) : 0n;
+    const requestedSharesBig = String(shares).toLowerCase() === 'max'
+      ? currentSharesBig
+      : BigInt(toBaseUnits(shares, pool.outDecimals || 18));
+
+    if (pool.id === 'ethena_susde') {
+      const ethenaIface = new ethersLib.Interface([
+        'function cooldownDuration() view returns (uint24)',
+        'function cooldowns(address) view returns (uint104 cooldownEnd, uint152 underlyingAmount)',
+        'function cooldownShares(uint256 shares) returns (uint256 assets)',
+        'function unstake(address receiver)',
+        'function redeem(uint256 shares, address receiver, address _owner) returns (uint256 assets)'
+      ]);
+      const [cdDurHex, cdStateHex] = await Promise.all([
+        ethReadCall(pool.chain, pool.contract, ethenaIface.encodeFunctionData('cooldownDuration', []), 5500),
+        ethReadCall(pool.chain, pool.contract, ethenaIface.encodeFunctionData('cooldowns', [evmSender]), 5500)
+      ]);
+      const cdDur = cdDurHex ? Number(sliceEvmUint256WordHex(cdDurHex, 0)) : 604800;
+      const cooldownEnd = cdStateHex ? Number(sliceEvmUint256WordHex(cdStateHex, 0)) : 0;
+      const underlyingAmt = cdStateHex ? BigInt(sliceEvmUint256WordHex(cdStateHex, 1)) : 0n;
+      const nowSec = Math.floor(Date.now() / 1000);
+
+      if (cdDur > 0) {
+        if (mode === 'unstake' || (underlyingAmt > 0n && nowSec >= cooldownEnd)) {
+          const data = ethenaIface.encodeFunctionData('unstake', [evmSender]);
+          const res = await sendCall(data);
+          return { ...res, poolId: pool.id, step: 'unstaked' };
+        }
+        if (requestedSharesBig > 0n) {
+          const data = ethenaIface.encodeFunctionData('cooldownShares', [requestedSharesBig.toString()]);
+          const res = await sendCall(data);
+          return { ...res, poolId: pool.id, step: 'cooldown_started' };
+        }
+        if (underlyingAmt > 0n && nowSec < cooldownEnd) {
+          const remainHours = Math.max(1, Math.ceil((cooldownEnd - nowSec) / 3600));
+          throw new Error(t(`sUSDe 仍在冷却期中，预计约 ${remainHours} 小时后可领取 USDe`, `sUSDe cooldown active (~${remainHours}h remaining)`));
+        }
+        throw new Error(t('无可赎回或待领取的 sUSDe 持仓', 'No sUSDe balance or matured cooldown to claim'));
+      }
+    }
+
+    if (requestedSharesBig <= 0n) {
+      throw new Error(t('金库可赎回份额为 0', 'No vault shares available to redeem'));
+    }
+    const erc4626Iface = new ethersLib.Interface([
+      'function redeem(uint256 shares, address receiver, address owner) returns (uint256 assets)'
+    ]);
+    const data = erc4626Iface.encodeFunctionData('redeem', [requestedSharesBig.toString(), evmSender, evmSender]);
+    const res = await sendCall(data);
+    return { ...res, poolId: pool.id, step: 'redeemed' };
+  }
+
+  /**
+   * Jupiter DAO (voTpe3tHQ7AjQHMapgSue2HJFAh2cGsdokqN3XqmVSj) 解锁与提取 JUP
+   * 支持 toggleMaxLock(false) 开启 30 天解锁倒计时，以及到期后执行 withdraw 提取 JUP
+   */
+  async function unstakeJupiterDao({ wallet, action = 'auto' } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    await ensureWalletSigningKeysAsync(wallet);
+    const hasNearMpc = Boolean((wallet.nearNamedAccount || wallet.nearAddress) && wallet.nearPublicKey && wallet.nearPrivateKey);
+    if (!wallet.solAddress || (!wallet.solPrivateSeedHex && !hasNearMpc)) {
+      throw new Error(t('Solana 签名凭据不可用', 'Solana signing credentials unavailable'));
+    }
+    const solGas = resolveWalletChainBalance(wallet, 'sol');
+    if (solGas < DEFAULT_GAS_BUFFERS.sol) {
+      throw new Error(t(`SOL 余额不足以支付交易费 (当前: ${solGas.toFixed(4)} SOL)`, `Insufficient SOL for gas (Available: ${solGas.toFixed(4)} SOL)`));
+    }
+
+    const ownerStr = wallet.solAddress;
+    const voterProgId = 'voTpe3tHQ7AjQHMapgSue2HJFAh2cGsdokqN3XqmVSj';
+    const lockerStr = 'CVMdMd79no569tjc5Sq7kzz8isbfCcFyBS5TLGsrZ5dN';
+    const jupMintStr = 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN';
+    const tokProg = SPL_TOKEN_PROGRAM_ID;
+    const ataProg = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+    const sysProg = '11111111111111111111111111111111';
+
+    const escrowPda = await findSolanaPdaAsync(
+      [new TextEncoder().encode('Escrow'), base58Decode(lockerStr), base58Decode(ownerStr)],
+      base58Decode(voterProgId)
+    );
+    const escrowInfo = await callSolanaRpc('getAccountInfo', [escrowPda.address, { encoding: 'base64' }], 6000);
+    if (!escrowInfo || !escrowInfo.value || !escrowInfo.value.data || !escrowInfo.value.data[0]) {
+      throw new Error(t('未找到您的 Jupiter DAO 锁仓账户', 'Jupiter DAO escrow account not found'));
+    }
+    const buf = base64ToBytes(String(escrowInfo.value.data[0]));
+    if (buf.length < 162) {
+      throw new Error(t('Jupiter DAO Escrow 账户数据长度异常', 'Invalid Jupiter DAO escrow account data'));
+    }
+    const amountRaw = decodeU64LE(buf, 105);
+    const escrowEndsAtRaw = decodeU64LE(buf, 121);
+    const escrowEndsAtSec = Number(BigInt.asIntN(64, escrowEndsAtRaw));
+    const isMaxLock = buf[161] === 1;
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (amountRaw <= 0n) {
+      throw new Error(t('Jupiter DAO 当前可提取 JUP 数量为 0', 'No locked JUP in Jupiter DAO escrow'));
+    }
+
+    const instructions = [];
+    let performedStep = '';
+    if (action === 'toggle_max_lock' || (action === 'auto' && isMaxLock)) {
+      if (!isMaxLock) {
+        throw new Error(t('当前已处于解锁倒计时状态，无需重复关闭永久锁仓', 'Max lock is already disabled'));
+      }
+      instructions.push({
+        programId: voterProgId,
+        keys: [
+          { pubkey: lockerStr, isSigner: false, isWritable: false },
+          { pubkey: escrowPda.address, isSigner: false, isWritable: true },
+          { pubkey: ownerStr, isSigner: true, isWritable: false }
+        ],
+        data: hexToBytes('a39da184b36b7f8f00') // toggle_max_lock(is_max_lock: false)
+      });
+      performedStep = 'cooldown_started';
+    } else if (!isMaxLock && nowSec >= escrowEndsAtSec) {
+      const [escrowTokensPda, destTokensPda] = await Promise.all([
+        findSolanaPdaAsync([escrowPda.bytes, base58Decode(tokProg), base58Decode(jupMintStr)], base58Decode(ataProg)),
+        findSolanaPdaAsync([base58Decode(ownerStr), base58Decode(tokProg), base58Decode(jupMintStr)], base58Decode(ataProg))
+      ]);
+      // Ensure user's destination JUP ATA exists (CreateIdempotent instruction = 1)
+      instructions.push({
+        programId: ataProg,
+        keys: [
+          { pubkey: ownerStr, isSigner: true, isWritable: true },
+          { pubkey: destTokensPda.address, isSigner: false, isWritable: true },
+          { pubkey: ownerStr, isSigner: false, isWritable: false },
+          { pubkey: jupMintStr, isSigner: false, isWritable: false },
+          { pubkey: sysProg, isSigner: false, isWritable: false },
+          { pubkey: tokProg, isSigner: false, isWritable: false }
+        ],
+        data: new Uint8Array([1])
+      });
+      instructions.push({
+        programId: voterProgId,
+        keys: [
+          { pubkey: lockerStr, isSigner: false, isWritable: true },
+          { pubkey: escrowPda.address, isSigner: false, isWritable: true },
+          { pubkey: ownerStr, isSigner: true, isWritable: false },
+          { pubkey: escrowTokensPda.address, isSigner: false, isWritable: true },
+          { pubkey: destTokensPda.address, isSigner: false, isWritable: true },
+          { pubkey: ownerStr, isSigner: true, isWritable: true },
+          { pubkey: tokProg, isSigner: false, isWritable: false }
+        ],
+        data: hexToBytes('b712469c946da122') // withdraw()
+      });
+      performedStep = 'withdrawn';
+    } else {
+      const remainDays = Math.max(1, Math.ceil((escrowEndsAtSec - nowSec) / 86400));
+      throw new Error(t(`JUP 正在 30 天解锁冷却期中，还剩约 ${remainDays} 天可提取`, `JUP unstaking cooldown active (~${remainDays} days remaining)`));
+    }
+
+    const res = await buildAndBroadcastSolanaInstructionsAsync({ wallet, instructions });
+    return {
+      ...res,
+      poolId: 'jupiter_jup',
+      step: performedStep
+    };
+  }
+
+  /**
+   * 流动性质押代币极速退出 (rNEAR->NEAR / JitoSOL,jupSOL,mSOL,INF->SOL / kHYPE->HYPE / stETH->ETH)
+   */
+  async function exitLiquidStakingToken({ wallet, poolId, amount, slippageBps = 100 } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const pool = findStakingPool(poolId);
+    if (!pool) throw new Error(t(`未找到质押池: ${poolId}`, `Staking pool not found: ${poolId}`));
+    const amtNum = Number(amount);
+    if (!Number.isFinite(amtNum) || amtNum <= 0) {
+      throw new Error(t('请输入有效的退出数量', 'Enter a valid positive exit amount'));
+    }
+    await ensureWalletSigningKeysAsync(wallet);
+
+    if (pool.chain === 'near') {
+      const lstContractMap = {
+        rhea_rnear: 'lst.rhealab.near',
+        metapool_stnear: 'meta-pool.near',
+        linear_near: 'linear-protocol.near',
+        stader_nearx: 'v2-nearx.stader-labs.near'
+      };
+      const lstContract = lstContractMap[pool.id];
+      if (!lstContract) throw new Error(t('该 NEAR 池暂不支持一键兑换退出', 'Instant swap exit unsupported for this NEAR pool'));
+      const rawAmt = toBaseUnits(amtNum, pool.decimals || 24);
+      const q = await quoteNearRefFinanceSwap({ tokenIn: lstContract, tokenOut: WRAP_NEAR_CONTRACT, amountRaw: rawAmt, slippageBps });
+      if (!q || !q.ok) throw new Error((q && q.error) || t('Ref Finance 退出报价失败', 'Ref Finance exit quote failed'));
+      const res = await executeNearRefFinanceSwap({
+        wallet,
+        routeData: q.routeData,
+        actions: q.actions,
+        poolIds: q.poolIds,
+        minAmountOut: q.minAmountOut,
+        tokenIn: lstContract,
+        tokenOut: WRAP_NEAR_CONTRACT,
+        amountRaw: rawAmt,
+        slippageBps,
+        inputDecimals: pool.decimals || 24,
+        tokenSymbol: pool.outSymbol || 'LST'
+      });
+      return { ...res, poolId: pool.id };
+    }
+
+    if (pool.chain === 'sol' && pool.mintOut) {
+      const rawAmt = toBaseUnits(amtNum, pool.decimals || 9);
+      const quote = await quoteSolanaJupiterSwap({
+        inputMint: pool.mintOut,
+        outputMint: WSOL_MINT,
+        amountRaw: rawAmt,
+        slippageBps,
+        platformFeeBps: 0
+      });
+      const res = await executeSolanaJupiterSwap({
+        wallet,
+        quoteResponse: quote,
+        wrapAndUnwrapSol: true,
+        inputDecimals: pool.decimals || 9
+      });
+      return { ...res, poolId: pool.id };
+    }
+
+    if (pool.chain === 'eth' || pool.chain === 'hype') {
+      const evmSender = resolveWalletEvmSender(wallet);
+      const rawAmt = toBaseUnits(amtNum, pool.decimals || 18);
+      const q = await quoteEvmDexSwap({
+        chainKey: pool.chain,
+        srcToken: pool.contract,
+        destToken: NATIVE_EVM_SENTINEL,
+        amountRaw: rawAmt,
+        srcDecimals: pool.decimals || 18,
+        destDecimals: 18,
+        slippageBps,
+        feeBps: 0,
+        fromAddress: evmSender
+      });
+      if (!q || !q.ok) throw new Error((q && q.error) || t('EVM 退出报价失败', 'EVM exit quote failed'));
+      const res = await executeEvmDexSwap({
+        wallet,
+        chainKey: pool.chain,
+        routeSource: q.routeSource,
+        routeData: q.routeData,
+        srcToken: pool.contract,
+        destToken: NATIVE_EVM_SENTINEL,
+        amountRaw: rawAmt,
+        srcDecimals: pool.decimals || 18,
+        slippageBps,
+        feeBps: 0
+      });
+      return { ...res, poolId: pool.id };
+    }
+
+    throw new Error(t('该质押池不支持此退出方式', 'Exit not supported for this pool'));
+  }
+
   const api = {
     NEAR_RPC_URL,
     nearRpcPostAsync,
     SOLANA_RPC_ENDPOINTS,
     EVM_CHAINS,
+    MULTICALL3_ADDRESS,
     STAKING_POOLS,
     V1_SIGNER_CONTRACT,
     REF_FINANCE_CONTRACT,
@@ -6529,6 +8624,7 @@
     discoverNearAccountsByPublicKeyAsync,
     fetchNearAccountStakingPositionsAsync,
     fetchSolanaAccountStakingPositionsAsync,
+    fetchEvmAccountStakingPositionsAsync,
     ensureWalletSigningKeysAsync,
     deriveMpcEvmAddressAsync,
     validateSufficientChainBalance,
@@ -6541,9 +8637,17 @@
     buildSolanaCloseOrBurnInstructions,
     scanSolanaReclaimableAccounts,
     executeSolanaRentReclaim,
+    fetchPearlNativeBalance,
     buildSignedPearlTaprootTx,
     pearlOutputScriptPubKey,
     executePearlTransfer,
+    bitcoinOutputScriptPubKey,
+    buildSignedBitcoinTaprootTx,
+    fetchBitcoinNativeBalance,
+    executeBitcoinTransfer,
+    encodeMulticall3Aggregate3,
+    decodeMulticall3Aggregate3Result,
+    callEvmRpc,
     fetchEvmNativeAndErc20Balance,
     fetchEvmChainBalancesBatch,
     quoteArcNetworkDexSwap,
@@ -6563,11 +8667,13 @@
     addNearAccessKeyAsync,
     deleteNearAccessKeyAsync,
     rotateNearAccountKeyAsync,
-    activateUniversalAccountAsync,
     quoteNearRefFinanceSwap,
     executeNearRefFinanceSwap,
     quoteNearDclPoolSwap,
     executeNearDclPoolSwap,
+    ensureNearNep141StorageRegistered,
+    scanNearReclaimableStorageAsync,
+    executeNearStorageReclaim,
     registerNearNamedAccountOnChain,
     requestNearMpcChainSignature,
     findStakingPool,
@@ -6578,6 +8684,11 @@
     executePoolStake,
     unstakeFromNearValidator,
     withdrawFromNearValidator,
+    unstakeFromNearLst,
+    claimRheaOrheaConversion,
+    redeemErc4626Vault,
+    unstakeJupiterDao,
+    exitLiquidStakingToken,
     withdrawFromAaveV3,
     withdrawFromBurrow,
     toBaseUnits,

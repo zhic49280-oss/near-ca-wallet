@@ -4,9 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#06080F" />
-  <title>NEAR Chain Abstraction Wallet</title>
+  <title>Nexus Wallet — NEAR Chain Abstraction</title>
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon.png?v=6.3" />
+  <link rel="apple-touch-icon" sizes="192x192" href="assets/nexus-logo-192.png?v=6.3" />
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=5.5" />
+  <link rel="stylesheet" href="style.css?v=6.3" />
 </head>
 <body>
   <div class="ambient-bg" aria-hidden="true"></div>
@@ -23,7 +25,7 @@
 
       <div class="header-actions">
         <button type="button" id="header-mpc-btn" class="header-chip-btn mpc-pill" onclick="focusMpcInspector()">
-          <span>v1.signer</span>
+          <span>MPC</span>
         </button>
         <button type="button" id="header-wc-btn" class="header-chip-btn" onclick="openWalletConnectSheet()">
           <span id="header-wc-dot" class="wc-dot"></span>
@@ -39,29 +41,21 @@
       <!-- ==================== Onboarding View ==================== -->
       <section id="view-onboarding" class="view-section hidden">
         <div class="ios-glass-card hero-card" style="padding: 24px 18px; text-align: center;">
-          <div style="width: 56px; height: 56px; margin: 0 auto 14px; border-radius: 18px; background: linear-gradient(135deg, rgba(0,236,151,0.22), rgba(56,189,248,0.22)); border: 1px solid rgba(0,236,151,0.4); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 20px; color: #00EC97;">
-            N
-          </div>
+          <img src="assets/nexus-logo-512.png?v=6.3" alt="Nexus Wallet" style="width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 18px; border: 1px solid rgba(0,236,151,0.35); display: block; object-fit: cover; box-shadow: 0 8px 24px rgba(0,236,151,0.16);" />
           <span class="ca-badge" data-i18n="onboard.badge">NEAR 链抽象自托管账户</span>
           <h1 style="margin: 12px 0 8px; font-size: 21px; font-weight: 800; color: #fff;" data-i18n="onboard.title">一个 NEAR 账户，畅通全链资产</h1>
-          <p style="margin: 0 0 20px; font-size: 12.5px; color: var(--text-secondary);" data-i18n="onboard.subtitle">支持 NEAR Intents 0-Gas 跨链闪兑、MPC v1.signer 与多链合约直连</p>
+          <p style="margin: 0 0 20px; font-size: 12.5px; color: var(--text-secondary);" data-i18n="onboard.subtitle">一站式多链自托管资产管理、跨链闪兑与链上理财</p>
 
           <div id="onboard-choice-panel" class="flex flex-col gap-2">
             <button type="button" class="btn-primary" onclick="openCreateWalletFlow()" data-i18n="onboard.createBtn">创建 NEAR 链抽象钱包</button>
-            <button type="button" class="btn-secondary" onclick="openCreatePqWalletFlow()" data-i18n="onboard.createPqBtn">创建后量子安全账户 (ML-DSA-65)</button>
             <button type="button" class="btn-secondary" onclick="openImportWalletFlow()" data-i18n="onboard.importBtn">导入 12 / 24 词助记词</button>
           </div>
 
           <div id="onboard-create-panel" class="hidden flex flex-col gap-3" style="text-align: left; margin-top: 10px;">
             <div class="flex items-center justify-between gap-2">
               <div id="onboard-create-title" style="font-weight: 700; font-size: 14px;" data-i18n="onboard.createTitle">备份您的助记词</div>
-              <span id="onboard-create-pq-badge" class="ca-badge hidden" data-i18n="onboard.pqBadge">后量子 ML-DSA-65</span>
             </div>
             <div id="onboard-create-hint" style="font-size: 12px; color: var(--text-secondary);" data-i18n="onboard.createHint">请妥善离线保存以下 12 个单词，它是恢复所有链上资产的唯一凭证</div>
-            <div id="onboard-pq-addr-preview" class="hidden meta-row" style="font-size: 11px;">
-              <span class="meta-key" data-i18n="onboard.pqAddrLabel">后量子地址</span>
-              <span id="onboard-pq-addr-val" class="mono" style="word-break: break-all;">--</span>
-            </div>
             <div id="onboard-seed-grid" class="seed-grid"></div>
             <button type="button" class="btn-ghost-sm" style="align-self: flex-start;" onclick="copyPendingMnemonic()" data-i18n="onboard.copySeedBtn">复制助记词</button>
             <input id="onboard-create-name" type="text" class="input-field" data-i18n-placeholder="onboard.walletNamePlaceholder" placeholder="钱包名称（可选）" />
@@ -74,13 +68,8 @@
 
           <div id="onboard-import-panel" class="hidden flex flex-col gap-3" style="text-align: left; margin-top: 10px;">
             <div style="font-weight: 700; font-size: 14px;" data-i18n="onboard.importTitle">导入恢复助记词</div>
-            <div class="flex gap-2">
-              <button type="button" id="btn-import-mode-std" class="btn-primary flex-1" style="padding: 8px 10px; font-size: 12px;" onclick="setOnboardImportMode('standard')" data-i18n="onboard.importModeStd">标准全链账户</button>
-              <button type="button" id="btn-import-mode-pq" class="btn-secondary flex-1" style="padding: 8px 10px; font-size: 12px;" onclick="setOnboardImportMode('post_quantum')" data-i18n="onboard.importModePq">后量子账户</button>
-            </div>
             <textarea id="onboard-import-phrase" class="input-field mono" data-i18n-placeholder="onboard.importPlaceholder" placeholder="输入 12 或 24 个英文助记词，使用空格分隔" oninput="validateOnboardImportLive()"></textarea>
             <div id="onboard-import-status" style="font-size: 11.5px; color: var(--text-secondary);"></div>
-            <input id="onboard-import-near-id" type="text" class="input-field hidden mono" data-i18n-placeholder="onboard.importNearIdPlaceholder" placeholder="已绑定的 .near 账户名（可选）" />
             <input id="onboard-import-name" type="text" class="input-field" data-i18n-placeholder="onboard.walletNamePlaceholder" placeholder="钱包名称（可选）" />
             <div class="flex gap-2">
               <button type="button" class="btn-secondary" onclick="cancelOnboardSubPanel()" data-i18n="onboard.cancelBtn">返回</button>
@@ -92,10 +81,13 @@
 
       <!-- ==================== Tab 1: Assets (#view-wallet) ==================== -->
       <section id="view-wallet" class="view-section hidden">
+        <div id="home-ptr-indicator" class="home-ptr-indicator" aria-live="polite">
+          <span class="ptr-spinner"></span>
+          <span id="home-ptr-text" data-i18n="home.ptrPull">下拉刷新链上余额</span>
+        </div>
         <div class="ios-glass-card hero-card">
           <div class="hero-top-row">
             <span class="hero-caption" data-i18n="home.totalBalance">统一资产总览 (USD)</span>
-            <button type="button" id="btn-refresh-balances" class="btn-ghost-sm hidden" onclick="refreshAllBalancesAsync(true)">↻</button>
           </div>
           <div id="hero-total-usd" class="hero-balance">--</div>
 
@@ -132,7 +124,6 @@
 
         <div class="section-header-row">
           <h2 class="section-title" data-i18n="home.assetsTitle">聚合资产列表</h2>
-          <span id="home-sync-status" class="section-sub hidden" data-i18n="home.syncIdle">点击刷新链上余额</span>
         </div>
 
         <div id="home-unified-asset-list" class="asset-list"></div>
@@ -142,7 +133,7 @@
       <section id="view-swap" class="view-section hidden">
         <div class="section-header" style="margin-bottom: 2px;">
           <span class="section-title" data-i18n="swap.title">全链统一闪兑</span>
-          <span class="ca-badge">v1.signer</span>
+          <span class="ca-badge" data-i18n="header.caBadge">NEAR CA</span>
         </div>
 
         <!-- Swap Main Card -->
@@ -211,7 +202,7 @@
             <button type="button" id="swap-details-toggle" class="meta-toggle-btn" onclick="toggleSwapDetails()" aria-expanded="false">
               <span class="meta-key" data-i18n="swap.detailsLabel">更多设置</span>
               <span class="flex items-center gap-1">
-                <span id="swap-details-summary" class="meta-summary">滑点 1%</span>
+                <span id="swap-details-summary" class="meta-summary" data-i18n="swap.detailsDefaultSummary">滑点 1%</span>
                 <span id="swap-details-chevron" class="meta-chevron">▾</span>
               </span>
             </button>
@@ -242,7 +233,7 @@
             </div>
           </div>
 
-          <div id="swap-error-banner" class="hidden" style="font-size: 12px; color: var(--rose-alert); padding: 6px 10px; border-radius: 10px; background: rgba(251,113,133,0.1); border: 1px solid rgba(251,113,133,0.25);"></div>
+          <div id="swap-error-banner" class="swap-error-banner hidden"></div>
 
           <button type="button" id="btn-execute-swap" class="btn-primary" onclick="executeActiveSwap()" data-i18n="swap.executeBtn">确认闪兑</button>
         </div>
@@ -380,11 +371,11 @@
           </div>
         </div>
 
-        <!-- 2. NEAR MPC Chain Signatures (v1.signer) Inspector -->
+        <!-- 2. NEAR MPC Chain Signatures Inspector -->
         <div id="hub-mpc-card" class="ios-glass-card flex flex-col gap-3">
           <div class="flex items-center justify-between">
-            <span style="font-weight: 700; font-size: 14px;" data-i18n="hub.mpcTitle">NEAR MPC 链签名 (v1.signer)</span>
-            <span class="ca-badge">v1.signer</span>
+            <span style="font-weight: 700; font-size: 14px;" data-i18n="hub.mpcTitle">多链派生与签名授权</span>
+            <span class="ca-badge">MPC</span>
           </div>
           <div class="meta-list">
             <div class="meta-row">
@@ -392,13 +383,13 @@
               <input id="hub-mpc-path-input" type="text" class="input-field mono" value="ethereum-1" style="width: 145px; padding: 5px 8px; font-size: 11.5px;" oninput="recomputeHubMpcAddress()" />
             </div>
             <div class="meta-row">
-              <span class="meta-key" data-i18n="hub.mpcDerivedAddr">MPC 派生 EVM 地址</span>
+              <span class="meta-key" data-i18n="hub.mpcDerivedAddr">派生地址</span>
               <button type="button" class="btn-ghost-sm" onclick="copyHubMpcAddress()" data-i18n="common.copy">复制</button>
             </div>
             <div id="hub-mpc-evm-address" class="mono text-cyan" style="font-size: 11.5px; word-break: break-all;">--</div>
           </div>
-          <input id="hub-mpc-payload-input" type="text" class="input-field mono" data-i18n-placeholder="hub.mpcPayloadPlaceholder" placeholder="输入消息或 32 字节 Hex 哈希进行 MPC 签名" />
-          <button type="button" class="btn-secondary" onclick="executeHubMpcSign()" data-i18n="hub.mpcSignBtn">调用 v1.signer 签名</button>
+          <input id="hub-mpc-payload-input" type="text" class="input-field mono" data-i18n-placeholder="hub.mpcPayloadPlaceholder" placeholder="输入消息或 32 字节 Hex 哈希进行链抽象签名" />
+          <button type="button" class="btn-secondary" onclick="executeHubMpcSign()" data-i18n="hub.mpcSignBtn">发起签名</button>
           <div id="hub-mpc-receipt" class="hidden meta-list" style="border-color: rgba(56,189,248,0.35);"></div>
         </div>
 
@@ -443,9 +434,12 @@
             <button type="button" class="btn-secondary" onclick="openSolRentReclaimSheet()" data-i18n="hub.solRentOpenBtn">扫描回收</button>
           </div>
           <div class="flex items-center justify-between">
+            <span style="font-weight: 700; font-size: 13.5px;" data-i18n="hub.nearStorageTitle">NEAR 存储押金回收</span>
+            <button type="button" class="btn-secondary" onclick="openNearStorageReclaimSheet()" data-i18n="hub.nearStorageOpenBtn">扫描回收</button>
+          </div>
+          <div class="flex items-center justify-between">
             <span style="font-weight: 700; font-size: 13.5px;" data-i18n="hub.securityTitle">安全与偏好设置</span>
             <div class="flex gap-2">
-              <button type="button" class="btn-ghost-sm" onclick="openPinSheet()" data-i18n="hub.pinBtn">设置 / 修改 PIN 密码</button>
               <button type="button" class="btn-ghost-sm" onclick="toggleLanguage()" data-i18n="hub.langBtn">切换语言 (中/EN)</button>
             </div>
           </div>
@@ -503,8 +497,12 @@
             <button type="button" class="btn-ghost-sm" onclick="openContactsPicker('send')" data-i18n="common.contacts">地址簿</button>
           </div>
         </div>
-        <input id="send-recipient-input" type="text" class="input-field mono" data-i18n-placeholder="sheet.sendToPlaceholder" placeholder="输入 .near / 0x / Solana / prl1p 地址" oninput="handleSendRecipientInput()" />
+        <input id="send-recipient-input" type="text" class="input-field mono" data-i18n-placeholder="sheet.sendToPlaceholder" placeholder="输入 .near / 0x / Solana / prl1p / bc1 地址" oninput="handleSendRecipientInput()" />
         <div id="send-detected-net" style="font-size: 11px; color: var(--cyan-glow);"></div>
+        <div id="send-evm-chain-row" class="flex flex-col gap-1 hidden" style="margin-top: 4px;">
+          <span style="font-size: 11.5px; color: var(--text-secondary);" data-i18n="sheet.sendEvmChainLabel">目标 EVM 网络</span>
+          <div id="send-evm-chain-pills" class="pill-scroll"></div>
+        </div>
       </div>
 
       <div class="flex flex-col gap-1">
@@ -646,10 +644,10 @@
 
       <!-- Pool Selector -->
       <div class="segmented-control">
-        <button type="button" class="segmented-btn active" data-pool="auto" onclick="setMiningPoolKey('auto')">Auto</button>
+        <button type="button" class="segmented-btn active" data-pool="auto" onclick="setMiningPoolKey('auto')" data-i18n="sheet.miningPoolAuto">自动</button>
         <button type="button" class="segmented-btn" data-pool="kryptex" onclick="setMiningPoolKey('kryptex')">Kryptex</button>
         <button type="button" class="segmented-btn" data-pool="herominers" onclick="setMiningPoolKey('herominers')">HeroMiners</button>
-        <button type="button" class="segmented-btn" data-pool="onchain" onclick="setMiningPoolKey('onchain')">On-Chain</button>
+        <button type="button" class="segmented-btn" data-pool="onchain" onclick="setMiningPoolKey('onchain')" data-i18n="sheet.miningPoolOnchain">链上</button>
       </div>
 
       <!-- Network Telemetry Bar -->
@@ -695,11 +693,11 @@
           <table class="rig-table">
             <thead>
               <tr>
-                <th>Rig</th>
-                <th>Status</th>
+                <th data-i18n="sheet.miningColRig">矿机</th>
+                <th data-i18n="sheet.miningColStatus">状态</th>
                 <th>30m</th>
                 <th>24h</th>
-                <th>Shares</th>
+                <th data-i18n="sheet.miningColShares">份额</th>
               </tr>
             </thead>
             <tbody id="mining-workers-tbody"></tbody>
@@ -792,7 +790,6 @@
         <button type="button" class="btn-primary flex-1" onclick="startAdditionalWalletCreate()" data-i18n="sheet.walletsCreateBtn">新建钱包</button>
         <button type="button" class="btn-secondary flex-1" onclick="startAdditionalWalletImport()" data-i18n="sheet.walletsImportBtn">导入助记词</button>
       </div>
-      <button type="button" class="btn-secondary" onclick="startAdditionalPqWalletCreate()" data-i18n="sheet.walletsCreatePqBtn">新建后量子账户 (ML-DSA-65)</button>
     </div>
   </div>
 
@@ -833,13 +830,6 @@
         <span class="meta-key" data-i18n="sheet.keysAccountLabel">当前账户</span>
         <span id="near-keys-account-id" class="mono">--</span>
       </div>
-      <div id="near-keys-activate-card" class="hidden ios-glass-card flex flex-col gap-2" style="padding: 12px; border-color: rgba(0,236,151,0.35);">
-        <div style="font-size: 12.5px; font-weight: 700;" data-i18n="sheet.keysActivateTitle">激活 0u 后量子地址</div>
-        <div class="flex gap-2 items-center">
-          <select id="near-keys-funding-select" class="input-field flex-1" style="padding: 8px 10px;"></select>
-          <button type="button" class="btn-primary" style="padding: 8px 14px;" onclick="activateUniversalAccountFromSheet()" data-i18n="sheet.keysActivateBtn">激活 (0.05 NEAR)</button>
-        </div>
-      </div>
       <div class="flex items-center justify-between">
         <span style="font-size: 12.5px; font-weight: 700;" data-i18n="sheet.keysListTitle">链上访问密钥</span>
         <button type="button" class="btn-ghost-sm" onclick="refreshNearAccessKeysSheet()" data-i18n="common.refresh">刷新</button>
@@ -848,10 +838,6 @@
 
       <div class="ios-glass-card flex flex-col gap-2" style="padding: 12px; margin-top: 6px;">
         <div style="font-size: 13px; font-weight: 700;" data-i18n="sheet.keysRotateTitle">更换助记词 / 升级密钥</div>
-        <div class="flex gap-2">
-          <button type="button" id="btn-rotate-mode-std" class="btn-primary flex-1" style="padding: 8px 10px; font-size: 12px;" onclick="setRotateKeyMode('standard')" data-i18n="sheet.keysRotateStdBtn">新普通助记词 (12词)</button>
-          <button type="button" id="btn-rotate-mode-pq" class="btn-secondary flex-1" style="padding: 8px 10px; font-size: 12px;" onclick="setRotateKeyMode('post_quantum')" data-i18n="sheet.keysRotatePqBtn">后量子密钥 (24词)</button>
-        </div>
         <textarea id="near-keys-rotate-mnemonic" class="input-field mono" style="min-height: 64px;" data-i18n-placeholder="sheet.keysRotatePlaceholder" placeholder="点击下方生成新助记词，或粘贴已有助记词"></textarea>
         <div class="flex gap-2">
           <button type="button" class="btn-secondary flex-1" onclick="generateRotateMnemonicInSheet()" data-i18n="sheet.keysGenSeedBtn">生成新助记词</button>
@@ -880,6 +866,27 @@
       <div id="sol-rent-list" class="flex flex-col gap-2" style="max-height: 290px; overflow-y: auto;"></div>
       <div style="font-size: 11.5px; color: var(--text-secondary);" data-i18n="sheet.solRentNote">仅关闭空账户或销毁勾选的微额粉尘代币以退回 SOL 租金，销毁后代币不可恢复。</div>
       <button type="button" id="btn-execute-sol-rent" class="btn-primary" onclick="executeSolRentReclaimUI()" data-i18n="sheet.solRentExecuteBtn">一键回收并领取</button>
+    </div>
+  </div>
+
+  <!-- Sheet: NEAR Storage Deposit Reclaim -->
+  <div id="sheet-near-storage" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.nearStorageTitle">NEAR 存储押金回收</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div class="meta-row" style="font-size: 12px;">
+        <span class="meta-key" data-i18n="sheet.nearStorageSummaryLabel">扫描结果</span>
+        <div class="flex items-center gap-2">
+          <span id="near-storage-summary" class="meta-val">--</span>
+          <button type="button" class="btn-ghost-sm" onclick="scanNearStorageReclaimUI()" data-i18n="common.refresh">刷新</button>
+        </div>
+      </div>
+      <div id="near-storage-list" class="flex flex-col gap-2" style="max-height: 290px; overflow-y: auto;"></div>
+      <div style="font-size: 11.5px; color: var(--text-secondary);" data-i18n="sheet.nearStorageNote">仅对当前代币余额为 0 的 NEP-141 合约注销空账本并退回 NEAR 存储押金（每笔约消耗 0.00018 NEAR Gas）。</div>
+      <button type="button" id="btn-execute-near-storage" class="btn-primary" onclick="executeNearStorageReclaimUI()" data-i18n="sheet.nearStorageExecuteBtn">一键回收存储押金</button>
     </div>
   </div>
 
@@ -924,17 +931,13 @@
     </div>
   </div>
 
-  <!-- Scripts in Exact Required Order -->
-  <script src="bip39-wordlist.js"></script>
-  <script src="qrcode.min.js"></script>
-  <script src="ethers.umd.min.js"></script>
-  <script src="ml-dsa-65.umd.min.js"></script>
-  <script src="src/crypto-engine.js?v=5.5"></script>
-  <script src="src/token-registry.js?v=5.5"></script>
-  <script src="src/near-intents.js?v=5.5"></script>
-  <script src="src/chain-contracts.js?v=5.5"></script>
-  <script src="src/mining-pro.js?v=5.5"></script>
-  <script src="src/state.js?v=5.5"></script>
-  <script src="src/ui-controller.js?v=5.5"></script>
+  <!-- Scripts in Exact Required Order (ethers, qrcode, mining-pro lazy-loaded on demand) -->
+  <script defer src="bip39-wordlist.js?v=6.3"></script>
+  <script defer src="src/crypto-engine.js?v=6.3"></script>
+  <script defer src="src/token-registry.js?v=6.3"></script>
+  <script defer src="src/near-intents.js?v=6.3"></script>
+  <script defer src="src/chain-contracts.js?v=6.3"></script>
+  <script defer src="src/state.js?v=6.3"></script>
+  <script defer src="src/ui-controller.js?v=6.3"></script>
 </body>
 </html>

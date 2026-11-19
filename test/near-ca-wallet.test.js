@@ -127,7 +127,7 @@ test('Module 1: BIP-39 12-word and 24-word mnemonic generation & checksum valida
   // Mutating last word breaks BIP-39 checksum while words remain in wordlist
   const badChecksum = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon';
   const vBadCs = cryptoEngine.validateMnemonic(badChecksum);
-  assert.equal(vBadCs.valid, true);
+  assert.equal(vBadCs.valid, false);
   assert.equal(vBadCs.checksumValid, false);
 
   // Unknown BIP-39 word fails validation with invalidWords detail
@@ -156,13 +156,15 @@ test('Module 1: Multi-chain derivation (Pure NEAR Master + v1.signer MPC) & low-
   assert.equal(all.nearPrivateSeedHex, '0c158d858a52316667d03d1d04aad51b3b542cd705215810629b78c501492fba');
   assert.deepEqual(all.near, nearOnly);
 
-  // deriveAllChainKeysAsync derives external chain addresses via v1.signer MPC from NEAR Master Account, and Pearl via BIP-86
+  // deriveAllChainKeysAsync derives EVM/Solana via MPC from NEAR Master Account, and Pearl/Bitcoin locally via BIP-86
   const expectedMpc = cryptoEngine.deriveNearMpcAllAddresses(all.nearAddress);
+  const btcOnly = await cryptoEngine.deriveBitcoinFromSeedAsync(TEST_MNEMONIC);
   assert.equal(all.evmAddress, expectedMpc.evmAddress);
   assert.equal(all.mpcEvmAddress, expectedMpc.evmAddress);
   assert.equal(all.solAddress, expectedMpc.solAddress);
   assert.equal(all.pearlAddress, 'prl1pr6yuq8u2r95wjzzgpdy8cpnncpl7l8zgy6x5q0367pnc53s2famqg7pt74');
-  assert.equal(all.btcAddress, expectedMpc.btcAddress);
+  assert.equal(all.btcAddress, btcOnly.address);
+  assert.equal(all.btcAddress, 'bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr');
   assert.equal(cryptoEngine.validatePearlAddress(all.pearlAddress).valid, true);
   assert.equal(cryptoEngine.validateChainAddress('btc', all.btcAddress).valid, true);
 
@@ -679,13 +681,14 @@ test('Module 4: ensureWalletSigningKeysAsync self-heals NEAR Master credentials 
   assert.equal(healed.nearPrivateSeedHex, '0c158d858a52316667d03d1d04aad51b3b542cd705215810629b78c501492fba');
 
   const expectedImplicitMpc = cryptoEngine.deriveNearMpcAllAddresses(healed.nearAddress);
+  const expectedBtcBip86 = 'bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr';
   assert.equal(healed.mpcEvmAddress, expectedImplicitMpc.evmAddress);
   assert.equal(healed.evmAddress, expectedImplicitMpc.evmAddress);
   assert.equal(healed.solAddress, expectedImplicitMpc.solAddress);
   assert.equal(healed.address, 'prl1pr6yuq8u2r95wjzzgpdy8cpnncpl7l8zgy6x5q0367pnc53s2famqg7pt74');
-  assert.equal(healed.btcAddress, expectedImplicitMpc.btcAddress);
+  assert.equal(healed.btcAddress, expectedBtcBip86);
 
-  // Binding a named .near account updates all MPC external chain addresses to alice.near, while Pearl remains BIP-86
+  // Binding a named .near account updates EVM/Solana MPC external chain addresses to alice.near, while Pearl & Bitcoin remain BIP-86
   const namedWallet = { ...healed, nearNamedAccount: 'alice.near', mpcEvmAddress: '' };
   await chainContracts.ensureWalletSigningKeysAsync(namedWallet);
   const expectedAliceMpc = cryptoEngine.deriveNearMpcAllAddresses('alice.near');
@@ -693,7 +696,7 @@ test('Module 4: ensureWalletSigningKeysAsync self-heals NEAR Master credentials 
   assert.equal(namedWallet.evmAddress, expectedAliceMpc.evmAddress);
   assert.equal(namedWallet.solAddress, 'HQmZYaq41vBMykpmg7Y8gHyuARUmRBeokPakEBpWvx2A');
   assert.equal(namedWallet.address, 'prl1pr6yuq8u2r95wjzzgpdy8cpnncpl7l8zgy6x5q0367pnc53s2famqg7pt74');
-  assert.equal(namedWallet.btcAddress, expectedAliceMpc.btcAddress);
+  assert.equal(namedWallet.btcAddress, expectedBtcBip86);
 });
 
 test('Module 4: validateSufficientChainBalance blocks 0-balance Jupiter swap, EVM DEX swap, and staking BEFORE network calls', async () => {
@@ -1371,9 +1374,8 @@ test('Module 2 & 3: PRL -> QTC composite fallthrough + 1Click DEPRECATED filteri
     assert.ok(resolved.primaryUrl, `Missing primary icon URL for ${sym}`);
   }
   assert.equal(tokenRegistry.sanitizeImageUrl('data:image/svg+xml;utf8,<svg onload=alert(1)>'), '');
-  assert.equal(
-    tokenRegistry.resolveTokenIcon({ symbol: 'QTC', blockchain: 'qtc' }).primaryUrl,
-    'https://static.datapi.jup.ag/token-icons/0d58709eb553999608b6d798b17018d4974eb86a3eaa68a4f05614056fb9e9bd.webp'
+  assert.ok(
+    tokenRegistry.resolveTokenIcon({ symbol: 'QTC', blockchain: 'qtc' }).primaryUrl.startsWith('data:image/svg+xml;base64,')
   );
 
   // 2. DEPRECATED / TESTNEBULA filtering + Ref & CoinGecko icon hydration + PRL -> QTC fallthrough
@@ -1500,7 +1502,7 @@ test('Module 1, 3 & 4: Quantus (QTC qz...) address validation, 1Click cross-chai
   assert.equal(cryptoEngine.validateChainAddress('qtc', sampleQtcAddr).valid, true);
   assert.equal(cryptoEngine.validateChainAddress('qtc', 'invalid-qtc').valid, false);
   assert.equal(tokenRegistry.getChainMeta('qtc').shortName, 'QTC');
-  assert.equal(tokenRegistry.getChainMeta('quantus').name, 'Quantus Mainnet (需填 qz... 地址)');
+  assert.equal(tokenRegistry.getChainMeta('quantus').name, 'Quantus Network');
 
   const encodeJsonBytes = (obj) => Array.from(Buffer.from(JSON.stringify(obj), 'utf8'));
   let capturedSendCall = null;
@@ -1730,18 +1732,14 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
   const styleCss = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
   const swJs = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
 
-  // Verify HTML loads all 7 src modules in strict dependency order
-  const scriptSrcs = [...indexHtml.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) => m[1]);
+  // Verify HTML loads core eager scripts in strict dependency order
+  const scriptSrcs = [...indexHtml.matchAll(/<script[^>]*\bsrc="([^"]+)"/g)].map((m) => m[1]);
   const expectedScripts = [
     'bip39-wordlist.js',
-    'qrcode.min.js',
-    'ethers.umd.min.js',
-    'ml-dsa-65.umd.min.js',
     'src/crypto-engine.js',
     'src/token-registry.js',
     'src/near-intents.js',
     'src/chain-contracts.js',
-    'src/mining-pro.js',
     'src/state.js',
     'src/ui-controller.js'
   ];
@@ -1757,7 +1755,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
   const versionedHtmlAssets = [
     ...indexHtml.matchAll(/(?:href|src)="((?:style\.css|src\/[^"]+\.js)\?v=[^"]+)"/g)
   ].map((m) => `./${m[1]}`);
-  assert.equal(versionedHtmlAssets.length, 8);
+  assert.equal(versionedHtmlAssets.length, 7);
   for (const asset of versionedHtmlAssets) {
     assert.ok(swJs.includes(`'${asset}'`), `sw.js CORE_ASSETS must include ${asset}`);
   }
@@ -1767,7 +1765,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
   const listMatch = syncScript.match(/const FILES_TO_SYNC = \[([\s\S]*?)\];/);
   assert.ok(listMatch, 'scripts/sync-assets.js must define FILES_TO_SYNC');
   const filesToSync = [...listMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  assert.equal(filesToSync.length, 16);
+  assert.equal(filesToSync.length, 18);
 
   const targets = [
     path.join(ROOT_DIR, 'dist'),
@@ -2079,9 +2077,8 @@ test('Arc Network: EVM_CHAINS.arc config, balance pre-validation, and USDC-only 
 });
 
 test('v1.8: Official QTC icon, zero ref-new-1 S3 URLs, sanitizeImageUrl SVG/base64, ft_metadata hydration & receipt token filtering', async () => {
-  assert.equal(
-    tokenRegistry.TOKEN_ICON_MAP.QTC,
-    'https://static.datapi.jup.ag/token-icons/0d58709eb553999608b6d798b17018d4974eb86a3eaa68a4f05614056fb9e9bd.webp'
+  assert.ok(
+    tokenRegistry.TOKEN_ICON_MAP.QTC.startsWith('data:image/svg+xml;base64,')
   );
   for (const [sym, url] of Object.entries(tokenRegistry.TOKEN_ICON_MAP)) {
     assert.equal(String(url).includes('ref-new-1.s3.amazonaws.com'), false, `TOKEN_ICON_MAP.${sym} must not use 403 S3 URL`);
@@ -2179,13 +2176,13 @@ test('v1.8: Favorite tokens bar, Arc receive/hub/picker support, no xStocks filt
     };
     try {
       uiController.renderTokenPickerList();
-      assert.ok(domNodes['token-picker-favorites'].innerHTML.includes('selectSwapToken'));
-      assert.ok(domNodes['token-picker-chains'].innerHTML.includes("setTokenPickerChain('arc')"));
-      assert.equal(domNodes['token-picker-chains'].innerHTML.includes("setTokenPickerChain('xstock')"), false, 'xStocks filter pill must be removed');
-      assert.ok(domNodes['token-picker-list'].innerHTML.includes('toggleFavoriteSwapToken'));
+      assert.ok(domNodes['token-picker-favorites'].innerHTML.includes('data-action="select-swap-token"'));
+      assert.ok(domNodes['token-picker-chains'].innerHTML.includes('data-action="set-picker-chain" data-chain="arc"'));
+      assert.equal(domNodes['token-picker-chains'].innerHTML.includes('data-chain="xstock"'), false, 'xStocks filter pill must be removed');
+      assert.ok(domNodes['token-picker-list'].innerHTML.includes('data-action="toggle-fav-token"'));
 
       uiController.openReceiveSheet('arc');
-      assert.ok(domNodes['receive-network-pills'].innerHTML.includes("selectReceiveNetwork('arc')"));
+      assert.ok(domNodes['receive-network-pills'].innerHTML.includes('data-action="select-receive-network" data-net="arc"'));
       assert.equal(domNodes['receive-addr-value'].textContent, w.mpcEvmAddress);
 
       uiController.switchTab('hub');
@@ -2201,7 +2198,7 @@ test('v1.9: Whitish Circle Arc icon/badge, QTC orange badge, 18 Arc Mainnet toke
   const arcMeta = tokenRegistry.getChainMeta('arc');
   assert.equal(arcMeta.color, '#F8FAFC');
   assert.equal(arcMeta.textColor, '#0F172A');
-  assert.ok(arcMeta.logoUrl.endsWith('/arc-dark.svg'));
+  assert.ok(arcMeta.logoUrl.startsWith('data:image/svg+xml;base64,'));
   assert.ok(arcMeta.badgeSvg.includes('#F8FAFC') && arcMeta.badgeSvg.includes('#0F172A'));
 
   const qtcMeta = tokenRegistry.getChainMeta('qtc');
@@ -2307,7 +2304,8 @@ test('v1.9: Arc Mainnet (5042) same-chain Kyber vs LI.FI multi-pool quoting & cr
       destToken: '0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a',
       amountRaw: '1000000000000000000', // 1 USDC in 18 dec -> must normalize to 1000000 (6 dec)
       srcDecimals: 18,
-      destDecimals: 6
+      destDecimals: 6,
+      fromAddress: '0xa2869D3977DEa9afc9B9c069491ac08F06F9e458'
     });
     assert.equal(seenKyberTokenIn?.toLowerCase(), '0x3600000000000000000000000000000000000000');
     assert.equal(seenKyberAmount, '1000000');
@@ -2597,7 +2595,7 @@ test('v1.9 Requirement #6: Rhea 3 pools + 16-pool Staking Hub live rates, tx sig
     assert.equal(byId.jupiter_jup.inSymbol, 'JUP');
     assert.equal(byId.jupiter_jup.outSymbol, 'Staked JUP');
     assert.equal(byId.jupiter_jup.rate, 1.0);
-    assert.ok(Math.abs(byId.jupiter_jup.apy - 17.02) < 0.1);
+    assert.equal(byId.jupiter_jup.apy, null);
     assert.equal(byId.jupiter_jup.stakersCount, 836170);
     assert.ok(byId.jupiter_jup.tvlText && byId.jupiter_jup.tvlText.includes('JUP'));
     assert.equal(byId.jupiter_sol.apy, 5.15);
@@ -2961,9 +2959,10 @@ function createMockDomElement(id, extra = {}) {
 test('v2.1 Native iOS/Android Capacitor Security Bridge Files & Config', () => {
   const capConfigPath = path.join(ROOT_DIR, 'capacitor.config.json');
   const capConfig = JSON.parse(fs.readFileSync(capConfigPath, 'utf8'));
-  assert.equal(capConfig.appId, 'io.near.cawallet');
+  assert.equal(capConfig.appId, 'io.nexus.wallet');
+  assert.equal(capConfig.appName, 'Nexus Wallet');
   assert.equal(capConfig.webDir, 'dist');
-  assert.equal(capConfig.plugins.LocalAuthentication.allowDeviceCredential, true);
+  assert.equal(capConfig.plugins.CapacitorHttp.enabled, true);
 
   const infoPlist = fs.readFileSync(path.join(ROOT_DIR, 'ios', 'App', 'App', 'Info.plist'), 'utf8');
   assert.match(infoPlist, /NSFaceIDUsageDescription/);
@@ -2979,12 +2978,12 @@ test('v2.1 Native iOS/Android Capacitor Security Bridge Files & Config', () => {
   const manifest = fs.readFileSync(path.join(ROOT_DIR, 'android', 'app', 'src', 'main', 'AndroidManifest.xml'), 'utf8');
   assert.match(manifest, /android\.permission\.USE_BIOMETRIC/);
   assert.match(manifest, /android\.permission\.USE_FINGERPRINT/);
-  assert.match(manifest, /io\.pearl\.wallet\.MainActivity/);
+  assert.match(manifest, /io\.nexus\.wallet\.MainActivity/);
 
-  const mainActivity = fs.readFileSync(path.join(ROOT_DIR, 'android', 'app', 'src', 'main', 'java', 'io', 'pearl', 'wallet', 'MainActivity.java'), 'utf8');
+  const mainActivity = fs.readFileSync(path.join(ROOT_DIR, 'android', 'app', 'src', 'main', 'java', 'io', 'nexus', 'wallet', 'MainActivity.java'), 'utf8');
   assert.match(mainActivity, /registerPlugin\(NativeSecurityPlugin\.class\)/);
 
-  const javaPlugin = fs.readFileSync(path.join(ROOT_DIR, 'android', 'app', 'src', 'main', 'java', 'io', 'pearl', 'wallet', 'NativeSecurityPlugin.java'), 'utf8');
+  const javaPlugin = fs.readFileSync(path.join(ROOT_DIR, 'android', 'app', 'src', 'main', 'java', 'io', 'nexus', 'wallet', 'NativeSecurityPlugin.java'), 'utf8');
   assert.match(javaPlugin, /@CapacitorPlugin\(name = "NativeSecurity"\)/);
   assert.match(javaPlugin, /getSecurityCapabilities/);
   assert.match(javaPlugin, /authenticateWithBiometrics/);
@@ -3247,18 +3246,18 @@ test('v2.1 Native Capacitor Auth, WebAuthn Passkey & Interactive #sheet-security
       assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), true);
       assert.equal(domMap.get('security-auth-reason').textContent, 'Confirm Transfer');
 
-      ['9', '9', '9', '9', '9', '9'].forEach((d) => uiController.pressSecurityPinDigit(d));
+      for (const d of ['9', '9', '9', '9', '9', '9']) await uiController.pressSecurityPinDigit(d);
       assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), true);
       assert.equal(pinDots.filter((d) => d.classList.contains('filled')).length, 0);
 
-      uiController.pressSecurityPinDigit('1');
-      uiController.pressSecurityPinDigit('9');
+      await uiController.pressSecurityPinDigit('1');
+      await uiController.pressSecurityPinDigit('9');
       uiController.backspaceSecurityPin();
       assert.equal(pinDots.filter((d) => d.classList.contains('filled')).length, 1);
       uiController.clearSecurityPin();
       assert.equal(pinDots.filter((d) => d.classList.contains('filled')).length, 0);
 
-      ['1', '2', '3', '4', '5', '6'].forEach((d) => uiController.pressSecurityPinDigit(d));
+      for (const d of ['1', '2', '3', '4', '5', '6']) await uiController.pressSecurityPinDigit(d);
       assert.equal(await authPromise, true);
       assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), false);
       await uiController.renderHubBiometricCardAsync?.();
@@ -3432,7 +3431,8 @@ test('v2.8 Task 2: Multi-chain staking positions discovery (NEAR oRHEA + Solana 
     const convPos = nearPos.find((p) => p.type === 'lock_convert');
     assert.equal(valPos.poolId, 'astro-stakers.poolv1.near');
     assert.equal(valPos.totalNear, 15);
-    assert.equal(convPos.poolId, 'orhea-conv.rhealab.near');
+    assert.equal(convPos.poolId, 'rhea_orhea_convert');
+    assert.equal(convPos.contractId, 'orhea-conv.rhealab.near');
     assert.equal(convPos.symbol, 'oRHEA');
     assert.equal(convPos.totalAmount, 30);
 
@@ -3675,7 +3675,7 @@ test('v2.9: OKX-style Token Detail Sheet (openTokenDetailSheet, setTokenDetailCh
       // 1. Home list hides chain mini-pills and opens Token Detail Sheet on click
       uiController.renderUnifiedAssetList();
       const homeHtml = domMap.get('home-unified-asset-list').innerHTML;
-      assert.ok(homeHtml.includes("openTokenDetailSheet('PRL')"));
+      assert.ok(homeHtml.includes('data-action="open-token-detail" data-symbol="PRL"'));
       assert.equal(homeHtml.includes('net-mini-pill'), false, 'Home list must not render net-mini-pill');
 
       // 2. Record local wallet activity & verify normalization preserves activityHistory
@@ -3726,9 +3726,9 @@ test('v2.9: OKX-style Token Detail Sheet (openTokenDetailSheet, setTokenDetailCh
         assert.equal(domMap.get('token-detail-title').textContent, 'PRL');
         assert.equal(domMap.get('token-detail-balance').textContent, '150');
         assert.equal(domMap.get('token-detail-usd').textContent, '$63.00');
-        assert.ok(domMap.get('token-detail-chains').innerHTML.includes("setTokenDetailChain('all')"));
-        assert.ok(domMap.get('token-detail-chains').innerHTML.includes("setTokenDetailChain('prl')"));
-        assert.ok(domMap.get('token-detail-chains').innerHTML.includes("setTokenDetailChain('near')"));
+        assert.ok(domMap.get('token-detail-chains').innerHTML.includes('data-action="set-token-detail-chain" data-chain="all"'));
+        assert.ok(domMap.get('token-detail-chains').innerHTML.includes('data-action="set-token-detail-chain" data-chain="prl"'));
+        assert.ok(domMap.get('token-detail-chains').innerHTML.includes('data-action="set-token-detail-chain" data-chain="near"'));
         assert.equal(domMap.get('token-detail-breakdown-card').classList.contains('hidden'), false);
         assert.ok(domMap.get('token-detail-breakdown-list').innerHTML.includes('Pearl Network'));
 
@@ -4249,10 +4249,11 @@ test('v3.2: Pool icons on all 21 pools, Burrow TVL USD consistency, silent home 
     state.setLanguage(prevLang);
   }
 
-  // 3. Silent home sync UI in index.html + build-ios-ipa.yml git add fix
+  // 3. Pull-to-Refresh replaces hidden manual refresh button + build-ios-ipa.yml git add fix
   const html = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
-  assert.ok(/id="btn-refresh-balances"[^>]*\bhidden\b/.test(html), '#btn-refresh-balances must be hidden');
-  assert.ok(/id="home-sync-status"[^>]*\bhidden\b/.test(html), '#home-sync-status must be hidden');
+  assert.ok(html.includes('id="home-ptr-indicator"'), 'Home view must include Pull-to-Refresh indicator');
+  assert.equal(html.includes('id="btn-refresh-balances"'), false, 'Hidden manual refresh button must be removed');
+  assert.equal(html.includes('id="home-sync-status"'), false, 'Legacy hidden sync status must be removed');
 
   const iosYml = fs.readFileSync(path.join(ROOT_DIR, '.github', 'workflows', 'build-ios-ipa.yml'), 'utf8');
   assert.equal(iosYml.includes('git add sidestore-source.json build/NEAR-CA-Wallet-unsigned.ipa'), false, 'Workflow must not git add ignored build/ IPA');
@@ -4285,9 +4286,10 @@ test('v3.3: Zero-GFW-block distinct pool icons, server Cache-Control no-store, s
     assert.ok(!mapped.includes('raw.githubusercontent.com') && !mapped.includes('assets.coingecko.com'), `TOKEN_ICON_MAP[${sym}] must not use GFW-blocked domains`);
   }
 
-  // 2. server.js no-store Cache-Control & state.js cache key v3
+  // 2. server.js Cache-Control rules & state.js cache key v3
   const serverSrc = fs.readFileSync(path.join(ROOT_DIR, 'server.js'), 'utf8');
-  assert.ok(serverSrc.includes("'Cache-Control': 'no-store, no-cache, must-revalidate'"), 'server.js must set no-store Cache-Control');
+  assert.ok(serverSrc.includes('no-store, no-cache, must-revalidate'), 'server.js must set no-store Cache-Control on unversioned entry');
+  assert.ok(serverSrc.includes('public, max-age=31536000, immutable'), 'server.js must set immutable cache on ?v= static assets');
   assert.equal(state.STAKING_METRICS_STORAGE_KEY, 'near_ca_staking_metrics_v3');
 
   // 3. tvlTokenAmount populated on the 7 NEAR/JUP pools & renderEarnView appends ($USD)
@@ -4411,120 +4413,7 @@ test('v3.3: Zero-GFW-block distinct pool icons, server Cache-Control no-store, s
 });
 
 
-test('v3.4 Post-Quantum: ML-DSA-65 24-word derivation, 0u Universal Account ID, Borsh AddKey/DeleteKey & tx signing', async () => {
-  const words24 = cryptoEngine.generateMnemonic(24);
-  assert.equal(words24.length, 24);
-  const phrase24 = words24.join(' ');
-  const pq = await cryptoEngine.deriveNearMlDsa65FromMnemonicAsync(phrase24, 0);
-
-  assert.ok(pq.publicKey.startsWith('ml-dsa-65:'), 'publicKey must start with ml-dsa-65:');
-  assert.ok(pq.secretKey.startsWith('ml-dsa-65:'), 'secretKey must start with ml-dsa-65:');
-  assert.ok(pq.publicKeyHandle.startsWith('ml-dsa-65-hash:'), 'publicKeyHandle must start with ml-dsa-65-hash:');
-  assert.equal(cryptoEngine.decodeNearMlDsa65PublicKey(pq.publicKey).length, 1952);
-  assert.ok(cryptoEngine.isNearUniversalAccount(pq.universalAccountId), 'universalAccountId must be 54-char 0u Crockford base32');
-  assert.equal(cryptoEngine.validateChainAddress('near', pq.universalAccountId).valid, true);
-  assert.equal(cryptoEngine.detectAddressNetwork(pq.universalAccountId), 'near');
-
-  // Sign & verify 32-byte hash round-trip
-  const msgHash = cryptoEngine.sha256Bytes('near-post-quantum-tx-test');
-  const sig = cryptoEngine.signNearHashMlDsa65(msgHash, pq.secretKey);
-  assert.equal(sig.length, 3309);
-  assert.equal(cryptoEngine.verifyNearHashMlDsa65(msgHash, sig, pq.publicKey), true);
-
-  // Import from raw secret key matches derived keys & 0u address
-  const reimported = cryptoEngine.importNearMlDsa65FromSecretKey(pq.secretKey);
-  assert.equal(reimported.publicKey, pq.publicKey);
-  assert.equal(reimported.universalAccountId, pq.universalAccountId);
-
-  // State isolation for post_quantum wallet + self-healing
-  const pqWallet = state.normalizeWalletRecord({
-    id: 'test_pq_1',
-    name: 'Test PQ Vault',
-    accountType: 'post_quantum',
-    mnemonic: phrase24,
-    nearUniversalAddress: pq.universalAccountId,
-    nearBalance: 2
-  });
-  assert.equal(state.isPostQuantumWallet(pqWallet), true);
-  assert.equal(pqWallet.evmAddress, '');
-  assert.equal(pqWallet.solAddress, '');
-  assert.equal(pqWallet.btcAddress, '');
-  assert.equal(pqWallet.address, '');
-  await chainContracts.ensureWalletSigningKeysAsync(pqWallet);
-  assert.equal(pqWallet.nearMlDsa65PublicKey, pq.publicKey);
-  assert.equal(pqWallet.nearMlDsa65PrivateKey, pq.secretKey);
-
-  // Borsh AddKey / DeleteKey encoding
-  const addBytes = chainContracts.buildAddKeyActionBytes({ newPublicKeyStr: pq.publicKey });
-  assert.equal(addBytes[0], 5); // Action::AddKey
-  assert.equal(addBytes[1], 2); // KeyType::MLDSA65
-  assert.equal(addBytes.length, 1 + 1 + 1952 + 8 + 1);
-
-  const delBytes = chainContracts.buildDeleteKeyActionBytes({ targetPublicKeyStr: pq.publicKey });
-  assert.equal(delBytes[0], 6); // Action::DeleteKey
-  assert.equal(delBytes[1], 2);
-  assert.equal(delBytes.length, 1 + 1 + 1952);
-
-  // Mocked RPC: ML-DSA-65 NEAR Transfer signing & DeleteKey last-FullAccess-key guard
-  const origFetch = globalThis.fetch;
-  let capturedSignedB64 = '';
-  try {
-    globalThis.fetch = async (_url, opts) => {
-      const body = JSON.parse(opts.body);
-      if (body.method === 'query' && body.params.request_type === 'view_access_key') {
-        return new Response(JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          result: {
-            nonce: 10,
-            permission: 'FullAccess',
-            block_hash: cryptoEngine.base58Encode(new Uint8Array(32).fill(7))
-          }
-        }), { status: 200 });
-      }
-      if (body.method === 'query' && body.params.request_type === 'view_access_key_list') {
-        return new Response(JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          result: {
-            keys: [{ public_key: pq.publicKeyHandle, access_key: { nonce: 10, permission: 'FullAccess' } }]
-          }
-        }), { status: 200 });
-      }
-      if (body.method === 'broadcast_tx_commit') {
-        capturedSignedB64 = body.params[0];
-        return new Response(JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          result: {
-            transaction: { hash: 'PQTxHash11111111111111111111111111111111111' },
-            status: { SuccessValue: '' }
-          }
-        }), { status: 200 });
-      }
-      throw new Error(`Unexpected RPC call: ${body.method}`);
-    };
-
-    const txRes = await chainContracts.signAndSendNearTransfer({
-      wallet: pqWallet,
-      receiverId: 'bob.near',
-      amountNear: 0.25
-    });
-    assert.equal(txRes.txHash, 'PQTxHash11111111111111111111111111111111111');
-    const signedBytes = cryptoEngine.base64ToBytes(capturedSignedB64);
-    // Last 3310 bytes must be Signature::MLDSA65 (0x02) + 3309-byte signature
-    assert.equal(signedBytes[signedBytes.length - 3310], 2);
-
-    await assert.rejects(
-      chainContracts.deleteNearAccessKeyAsync({ wallet: pqWallet, targetPublicKeyStr: pq.publicKeyHandle }),
-      /last FullAccess key|最后一把 FullAccess/
-    );
-  } finally {
-    globalThis.fetch = origFetch;
-  }
-});
-
-test('v4.0 Optimization: raceWithGraceWindow, fetchEvmChainBalancesBatch, executeSolanaSplTransfer & Earn Withdrawals', async () => {
+test('v4.0 Optimization: raceWithGraceWindow, fetchEvmChainBalancesBatch (Multicall3 + Batch fallback), executeSolanaSplTransfer & Earn Withdrawals', async () => {
   // 1. raceWithGraceWindow returns fast winner + grace window without waiting for hanging promise
   const start = Date.now();
   const fast = new Promise((r) => setTimeout(() => r({ ok: true, out: 100 }), 15));
@@ -4537,19 +4426,51 @@ test('v4.0 Optimization: raceWithGraceWindow, fetchEvmChainBalancesBatch, execut
   assert.equal(raced[1]?.value?.out, 120);
   assert.equal(raced[2], null);
 
-  // 2. fetchEvmChainBalancesBatch batches eth_getBalance + multiple eth_call in 1 HTTP call
+  // 2a. fetchEvmChainBalancesBatch uses Multicall3 aggregate3 single eth_call first
   const origFetch = globalThis.fetch;
   try {
-    let rpcCallCount = 0;
+    let mcCallCount = 0;
+    const ethersLib = require('../ethers.umd.min.js');
+    const mcIface = new ethersLib.Interface(['function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) payable returns (tuple(bool success, bytes returnData)[])']);
+    const encodedMcResp = mcIface.encodeFunctionResult('aggregate3', [[
+      { success: true, returnData: '0x0000000000000000000000000000000000000000000000000de0b6b3a7640000' }, // 1 ETH
+      { success: true, returnData: '0x0000000000000000000000000000000000000000000000000000000005f5e100' }, // 100 USDC (6 dec)
+      { success: true, returnData: '0x00000000000000000000000000000000000000000000000000000000004c4b40' }  // 5 USDT (6 dec)
+    ]]);
     globalThis.fetch = async (url, init) => {
-      rpcCallCount += 1;
+      mcCallCount += 1;
       const payload = JSON.parse(init.body);
-      assert.ok(Array.isArray(payload), 'Expected JSON-RPC batch array');
+      assert.equal(payload.method, 'eth_call');
+      assert.equal(payload.params[0].to, '0xcA11bde05977b3631167028862bE2a173976CA11');
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: payload.id, result: encodedMcResp }), { status: 200 });
+    };
+    const mcRes = await chainContracts.fetchEvmChainBalancesBatch(
+      'eth',
+      '0x1111111111111111111111111111111111111111',
+      [
+        { contract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
+        { contract: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 }
+      ]
+    );
+    assert.equal(mcCallCount, 1);
+    assert.equal(mcRes.nativeFormatted, 1);
+    assert.equal(mcRes.tokens['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'].formatted, 100);
+    assert.equal(mcRes.tokens['0xdac17f958d2ee523a2206206994597c13d831ec7'].formatted, 5);
+
+    // 2b. Fallback to JSON-RPC batch if Multicall3 returns revert/failure
+    let batchFallbackCalls = 0;
+    globalThis.fetch = async (url, init) => {
+      const payload = JSON.parse(init.body);
+      if (!Array.isArray(payload) && payload.method === 'eth_call' && payload.params[0].to === '0xcA11bde05977b3631167028862bE2a173976CA11') {
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: payload.id, error: { code: -32000, message: 'execution reverted' } }), { status: 200 });
+      }
+      batchFallbackCalls += 1;
+      assert.ok(Array.isArray(payload), 'Expected JSON-RPC batch fallback array');
       assert.equal(payload.length, 3);
       return new Response(JSON.stringify([
-        { jsonrpc: '2.0', id: 0, result: '0xde0b6b3a7640000' }, // 1 ETH
-        { jsonrpc: '2.0', id: 1, result: '0x0000000000000000000000000000000000000000000000000000000005f5e100' }, // 100 USDC (6 dec)
-        { jsonrpc: '2.0', id: 2, result: '0x00000000000000000000000000000000000000000000000000000000004c4b40' }  // 5 USDT (6 dec)
+        { jsonrpc: '2.0', id: 0, result: '0x1bc16d674ec80000' }, // 2 ETH
+        { jsonrpc: '2.0', id: 1, result: '0x000000000000000000000000000000000000000000000000000000000bebc200' }, // 200 USDC
+        { jsonrpc: '2.0', id: 2, result: '0x0000000000000000000000000000000000000000000000000000000000989680' }  // 10 USDT
       ]), { status: 200 });
     };
     const batchRes = await chainContracts.fetchEvmChainBalancesBatch(
@@ -4560,10 +4481,10 @@ test('v4.0 Optimization: raceWithGraceWindow, fetchEvmChainBalancesBatch, execut
         { contract: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 }
       ]
     );
-    assert.equal(rpcCallCount, 1);
-    assert.equal(batchRes.nativeFormatted, 1);
-    assert.equal(batchRes.tokens['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'].formatted, 100);
-    assert.equal(batchRes.tokens['0xdac17f958d2ee523a2206206994597c13d831ec7'].formatted, 5);
+    assert.ok(batchFallbackCalls >= 1);
+    assert.equal(batchRes.nativeFormatted, 2);
+    assert.equal(batchRes.tokens['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'].formatted, 200);
+    assert.equal(batchRes.tokens['0xdac17f958d2ee523a2206206994597c13d831ec7'].formatted, 10);
   } finally {
     globalThis.fetch = origFetch;
   }
@@ -4848,7 +4769,7 @@ test('v5.4 True Net Swap Output & Source Gating & Active Order Persistence / UX'
   // 2. Source chain gating
   assert.equal(uiController.isSwapOriginSupported({ blockchain: 'prl' }), true);
   assert.equal(uiController.isSwapOriginSupported({ blockchain: 'arc' }), true);
-  assert.equal(uiController.isSwapOriginSupported({ blockchain: 'btc' }), false);
+  assert.equal(uiController.isSwapOriginSupported({ blockchain: 'btc' }), true);
   assert.equal(uiController.isSwapOriginSupported({ blockchain: 'qtc' }), false);
 
   // 3. Persistent active swap order across initState + clearSavedSwapOrder
@@ -5110,4 +5031,624 @@ test('v5.5 Upfront NEAR Hub & MPC Gas Pre-Validation before Multi-Stage Swaps', 
   const solOk = uiController.validateSwapNearGasRequirement({ wallet: fundedNearWallet, fromToken: solTok, toToken: ethTok });
   assert.equal(solOk.ok, true);
   assert.equal(solOk.requiredNear, 0.01);
+});
+
+test('v6.0 Regression Suite: Bitcoin BIP-86/Taproot, PBKDF2 PIN, Checksums, Multicall3/Ethena, Zero Fake APY, Mining Pro & Server SSRF/XSS', async () => {
+  // 1. Bitcoin BIP-86 derivation, Taproot Tx builder + Schnorr verify + dust guard
+  const btc1 = await cryptoEngine.deriveBitcoinFromSeedAsync(TEST_MNEMONIC, "m/86'/0'/0'/0/0", true);
+  const btc2 = await cryptoEngine.deriveBitcoinFromSeedAsync(TEST_MNEMONIC, "m/86'/0'/0'/0/1", true);
+  assert.equal(btc1.address, 'bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr');
+  assert.ok(btc1.tweakedPrivateKeyHex && btc1.pubkeyHex);
+
+  const builtBtc = chainContracts.buildSignedBitcoinTaprootTx({
+    fromAddress: btc1.address,
+    toAddress: btc2.address,
+    amountSats: '50000',
+    feeSats: '1500',
+    utxos: [{ txid: 'aa'.repeat(32), vout: 0, value: 100000, status: { confirmed: true } }],
+    tweakedPrivateKeyHex: btc1.tweakedPrivateKeyHex
+  });
+  assert.ok(builtBtc.rawHex.startsWith('020000000001'));
+  assert.equal(builtBtc.changeSats, '48500');
+
+  assert.throws(
+    () =>
+      chainContracts.buildSignedBitcoinTaprootTx({
+        fromAddress: btc1.address,
+        toAddress: btc2.address,
+        amountSats: '200', // below 546 sat dust limit
+        feeSats: '1500',
+        utxos: [{ txid: 'aa'.repeat(32), vout: 0, value: 100000, status: { confirmed: true } }],
+        tweakedPrivateKeyHex: btc1.tweakedPrivateKeyHex
+      }),
+    /粉尘|dust/i
+  );
+
+  // 2. Strict Bech32 / Bech32m / Base58Check checksum rejection
+  const mutatedBtc = btc1.address.slice(0, -1) + (btc1.address.endsWith('r') ? 'q' : 'r');
+  assert.equal(cryptoEngine.validateChainAddress('btc', mutatedBtc).valid, false);
+  const prl1 = (await cryptoEngine.derivePearlFromSeedAsync(TEST_MNEMONIC, "m/86'/808276'/0'/0/0", true)).address;
+  const mutatedPrl = prl1.slice(0, -1) + (prl1.endsWith('4') ? '5' : '4');
+  assert.equal(cryptoEngine.validatePearlAddress(mutatedPrl).valid, false);
+  const validLegacyBtc = '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa';
+  const mutatedLegacyBtc = validLegacyBtc.slice(0, -1) + 'b';
+  assert.throws(() => cryptoEngine.base58CheckDecode(mutatedLegacyBtc));
+  assert.equal(cryptoEngine.validateChainAddress('btc', mutatedLegacyBtc).valid, false);
+
+  // 3. PBKDF2 PIN hashing (zero plaintext PIN storage)
+  const pinWallet = { id: 'w_v6_pin', name: 'PIN Vault' };
+  assert.equal(state.hasWalletPin(pinWallet), false);
+  await state.setWalletPinAsync(pinWallet, '246810');
+  assert.equal(state.hasWalletPin(pinWallet), true);
+  assert.ok(!pinWallet.pin && pinWallet.pinHash && pinWallet.pinSalt);
+  assert.equal(await state.verifyWalletPinAsync(pinWallet, '246810'), true);
+  assert.equal(await state.verifyWalletPinAsync(pinWallet, '000000'), false);
+
+  // 4. Multicall3 round-trip & Ethena selectors (0x01320fe2 / 0x35269315)
+  const sampleCalls = [
+    { target: '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', allowFailure: true, callData: '0x70a08231' + '11'.repeat(32) },
+    { target: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', allowFailure: true, callData: '0x35269315' }
+  ];
+  const mcEncoded = chainContracts.encodeMulticall3Aggregate3(sampleCalls);
+  assert.ok(mcEncoded.startsWith('0x82ad56cb'));
+
+  let capturedMcData = '';
+  await withMockedFetch(async (url, opts) => {
+    const body = opts?.body ? JSON.parse(opts.body) : null;
+    if (body && body.method === 'eth_call' && body.params?.[0]?.to === '0xcA11bde05977b3631167028862bE2a173976CA11') {
+      capturedMcData = body.params[0].data;
+      const ethersLib = require('../ethers.umd.min.js');
+      const mcIface = new ethersLib.Interface(['function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) payable returns (tuple(bool success, bytes returnData)[])']);
+      const wordOne = '0x' + '00'.repeat(31) + '01';
+      const wZero = '0x' + '00'.repeat(32);
+      const retHex = mcIface.encodeFunctionResult('aggregate3', [[
+        { success: true, returnData: wZero },
+        { success: true, returnData: wZero },
+        { success: true, returnData: wZero },
+        { success: true, returnData: '0x0000000000000000000000000000000000000000000000056bc75e2d63100000' }, // 100 sUSDe
+        { success: true, returnData: '0x' + '00'.repeat(32) + '00'.repeat(32) },
+        { success: true, returnData: wordOne.slice(0, 66) }
+      ]]);
+      return jsonResponse({ jsonrpc: '2.0', id: body.id, result: retHex });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const evmPos = await chainContracts.fetchEvmAccountStakingPositionsAsync({
+      evmAddress: '0xa2869D3977DEa9afc9B9c069491ac08F06F9e458'
+    });
+    assert.ok(capturedMcData.includes('01320fe2'), 'Multicall3 must use verified cooldowns(address) selector 0x01320fe2');
+    assert.ok(capturedMcData.includes('35269315'), 'Multicall3 must use verified cooldownDuration() selector 0x35269315');
+    assert.ok(evmPos.some((p) => p.poolId === 'ethena_susde' && p.needsCooldown === true));
+  });
+
+  // 5. Zero fake APY & zero 0x1111...1111 placeholder
+  await withMockedFetch(async () => jsonResponse({}, 404), async () => {
+    const offlinePools = await chainContracts.fetchLiveStakingMetrics({ useCache: false });
+    const byId = Object.fromEntries(offlinePools.map((p) => [p.id, p]));
+    assert.equal(byId.rhea_orhea_convert.apy, null);
+    assert.equal(byId.stader_nearx.apy, null);
+    assert.equal(byId.jupiter_jup.apy, null);
+  });
+  const intentsSrc = fs.readFileSync(path.join(ROOT_DIR, 'src', 'near-intents.js'), 'utf8');
+  assert.equal(intentsSrc.includes('0x1111111111111111111111111111111111111111'), false);
+
+  // 6. Mining Pro: realHashrate NOT scaled by 2^32 & canonical PRLSCAN_TX_EXPLORER_BASE
+  assert.equal(miningPro.PRLSCAN_TX_EXPLORER_BASE, 'https://explorer.prlscan.com/tx/');
+  await withMockedFetch(async (url) => {
+    if (url.includes('pearl.herominers.com/api/stats_address')) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      return jsonResponse({
+        stats: { hashrate: 100, balance: '0', paid: '0', minPaymentThreshold: '0' },
+        workers: [{ name: 'real-rig', hashrate: 100, realHashrate: 250_000_000_000, lastShare: nowSec, shares_good: 10, shares_invalid: 0, shares_stale: 0 }],
+        payments: []
+      });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const heroRes = await miningPro.queryMinerDeepStats(prl1, 'herominers');
+    assert.equal(heroRes.workers[0].hashrate30m, 250_000_000_000, 'realHashrate must not be multiplied by 2^32');
+  });
+
+  // 7. server.js SSRF & path-traversal protection
+  const http = require('http');
+  const srv = require('../server.js');
+  await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = srv.address().port;
+    const rawReq = (reqPath) =>
+      new Promise((resolve, reject) => {
+        const req = http.request({ host: '127.0.0.1', port, path: reqPath, method: 'GET' }, (res) => {
+          res.resume();
+          resolve(res.statusCode);
+        });
+        req.on('error', reject);
+        req.end();
+      });
+    assert.equal(await rawReq('/pearl-proxy?path=//evil.com'), 400);
+    assert.equal(await rawReq('/kryptex-proxy?path=/api/../../evil'), 400);
+    assert.equal(await rawReq('/.git/config'), 403);
+    assert.equal(await rawReq('/../package.json'), 403);
+    assert.equal(await rawReq('/%2e%2e/package.json'), 403);
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
+  }
+
+  // 8. Zero inline onclick=/onerror=/onchange= & zero PQ remnants in src/ & index.html
+  const uiSrc = fs.readFileSync(path.join(ROOT_DIR, 'src', 'ui-controller.js'), 'utf8');
+  const regSrc = fs.readFileSync(path.join(ROOT_DIR, 'src', 'token-registry.js'), 'utf8');
+  const htmlSrc = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  assert.equal(/(?<!\.)\bon(?:click|error|change)\s*=/i.test(uiSrc), false);
+  assert.equal(/(?<!\.)\bon(?:click|error|change)\s*=/i.test(regSrc), false);
+  for (const src of [uiSrc, htmlSrc]) {
+    assert.equal(/ml-dsa|post_quantum|postQuantum|activateUniversalAccount/i.test(src), false);
+  }
+});
+
+test('v6.1 Audit & Performance Regression Suite: Hydration, SWR Cache, Precheck, Abort, 1Click Native IDs, Mining, SW & Gzip', async () => {
+  const zlib = require('zlib');
+  const http = require('http');
+
+  // 1. setLiveDefuseTokens syncs prices onto core catalog & resolveTokenIcon prioritizes inline data icons over remote URLs
+  const nearCore = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t && t.assetId === 'nep141:wrap.near');
+  const prevNearPrice = nearCore ? nearCore.price : null;
+  const prevNearUpdatedAt = nearCore ? nearCore.priceUpdatedAt : null;
+  const prevLive = state.liveTokens;
+  try {
+    tokenRegistry.setLiveDefuseTokens([
+      {
+        assetId: 'nep141:wrap.near',
+        symbol: 'NEAR',
+        blockchain: 'near',
+        decimals: 24,
+        price: 3.21,
+        priceUpdatedAt: '2026-01-01T00:00:00Z'
+      }
+    ]);
+    assert.equal(nearCore.price, 3.21);
+    const ethIcon = tokenRegistry.resolveTokenIcon({
+      symbol: 'ETH',
+      blockchain: 'eth',
+      logoURI: 'https://assets.coingecko.com/coins/images/279/large/ethereum.png'
+    });
+    assert.ok(ethIcon.primaryUrl.startsWith('data:image/'));
+    const customSvgIcon = tokenRegistry.resolveTokenIcon({
+      symbol: 'ETH',
+      blockchain: 'eth',
+      logoURI: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='
+    });
+    assert.equal(customSvgIcon.primaryUrl, 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=');
+  } finally {
+    if (nearCore) {
+      nearCore.price = prevNearPrice;
+      nearCore.priceUpdatedAt = prevNearUpdatedAt;
+    }
+    tokenRegistry.setLiveDefuseTokens(Array.isArray(prevLive) ? prevLive : []);
+  }
+
+  // 2. state.js: op/pol/avax balance keys, accountType preservation, pinIterations clamp, and 24h SWR cache TTL
+  const norm = state.normalizeWalletRecord({
+    id: 'w_v61_norm',
+    mnemonic: TEST_MNEMONIC,
+    accountType: 'imported_key',
+    pinIterations: 50,
+    nativeBalances: { op: 1.25, pol: 9.5, avax: 0.75 }
+  });
+  assert.equal(norm.accountType, 'imported_key');
+  assert.equal(norm.pinIterations, 1000);
+  assert.equal(norm.nativeBalances.op, 1.25);
+  assert.equal(norm.nativeBalances.pol, 9.5);
+  assert.equal(norm.nativeBalances.avax, 0.75);
+  assert.equal(norm.multiBalances.op, 1.25);
+  assert.equal(norm.multiBalances.pol, 9.5);
+  assert.equal(norm.multiBalances.avax, 0.75);
+
+  await withMockedStorage({
+    [state.LIVE_TOKENS_STORAGE_KEY]: JSON.stringify({
+      updatedAt: Date.now() - 12 * 3600_000,
+      tokens: [{ assetId: 'nep141:wrap.near', symbol: 'NEAR', blockchain: 'near', decimals: 24, price: 2.88 }]
+    })
+  }, async () => {
+    const prevList = state.liveTokens;
+    try {
+      state.liveTokens = [];
+      const loaded = state.loadCachedLiveTokens();
+      assert.ok(Array.isArray(loaded) && loaded.length === 1);
+      assert.equal(loaded[0].price, 2.88);
+    } finally {
+      state.liveTokens = prevList;
+    }
+  });
+
+  // 3. Upfront SPL balance check runs before any RPC call
+  let splFetchCount = 0;
+  await withMockedFetch(async () => {
+    splFetchCount += 1;
+    return jsonResponse({}, 500);
+  }, async () => {
+    await assert.rejects(
+      () => chainContracts.executeSolanaSplTransfer({
+        wallet: {
+          mnemonic: TEST_MNEMONIC,
+          solAddress: '11111111111111111111111111111111',
+          nativeBalances: { sol: 0 },
+          splBalances: {}
+        },
+        mintAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        toAddress: '11111111111111111111111111111111',
+        amount: 10,
+        decimals: 6,
+        tokenBalance: 0
+      }),
+      /余额不足|Insufficient/i
+    );
+  });
+  assert.equal(splFetchCount, 0);
+
+  // 4. quoteIntentSwapOrWithdraw (quoteRawOneClick) honors external AbortSignal AND 10s quote dedup/cache
+  let quoteFetchCalls = 0;
+  await withMockedFetch(async (url, opts) => {
+    quoteFetchCalls += 1;
+    if (opts && opts.signal && opts.signal.aborted) {
+      throw new Error('Already aborted');
+    }
+    if (opts && opts.signal) {
+      return new Promise((_, reject) => {
+        const onAbort = () => reject(new Error('Aborted by external signal'));
+        if (opts.signal.aborted) return onAbort();
+        opts.signal.addEventListener('abort', onAbort, { once: true });
+      });
+    }
+    return jsonResponse({}, 500);
+  }, async () => {
+    const extCtrl = new AbortController();
+    setTimeout(() => extCtrl.abort(), 15);
+    const res = await nearIntents.quoteIntentSwapOrWithdraw({
+      originAsset: 'nep141:wrap.near',
+      destinationAsset: 'nep141:sol.omft.near',
+      amountRaw: '1000000000000000000000000',
+      recipient: '11111111111111111111111111111111',
+      refundTo: 'alice.near',
+      dry: true,
+      signal: extCtrl.signal
+    });
+    assert.equal(res.ok, false);
+  });
+  assert.equal(quoteFetchCalls, 1);
+
+  let dedupCalls = 0;
+  await withMockedFetch(async () => {
+    dedupCalls += 1;
+    return jsonResponse({
+      quote: {
+        amountOut: '5000000',
+        minAmountOut: '4950000',
+        amountInUsd: '2.50',
+        amountOutUsd: '2.49'
+      }
+    });
+  }, async () => {
+    const [q1, q2] = await Promise.all([
+      nearIntents.quoteIntentSwapOrWithdraw({
+        originAsset: 'nep141:wrap.near',
+        destinationAsset: 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+        amountRaw: '1234567890000000000000000',
+        recipient: 'alice.near',
+        refundTo: 'alice.near',
+        dry: true
+      }),
+      nearIntents.quoteIntentSwapOrWithdraw({
+        originAsset: 'nep141:wrap.near',
+        destinationAsset: 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+        amountRaw: '1234567890000000000000000',
+        recipient: 'alice.near',
+        refundTo: 'alice.near',
+        dry: true
+      })
+    ]);
+    assert.equal(q1.ok, true);
+    assert.equal(q2.ok, true);
+    assert.equal(dedupCalls, 1);
+  });
+
+  // 5. POL/AVAX/OP 1Click native asset resolution + HeroMiners zero threshold fallback
+  assert.equal(nearIntents.resolveOneClickAssetId({ symbol: 'POL', blockchain: 'pol' }), 'nep141:pol.omdep.near');
+  assert.equal(nearIntents.resolveOneClickAssetId({ symbol: 'AVAX', blockchain: 'avax' }), 'nep141:avax.omdep.near');
+  assert.equal(nearIntents.resolveOneClickAssetId({ symbol: 'OP', blockchain: 'op' }), 'nep245:v2_1.omni.hot.tg:10_11111111111111111111');
+
+  await withMockedFetch(async (url) => {
+    if (url.includes('pearl.herominers.com/api/stats_address')) {
+      return jsonResponse({
+        stats: { hashrate: 50, balance: '100000000', paid: '0', minPaymentThreshold: '0' },
+        workers: [],
+        payments: []
+      });
+    }
+    if (url.includes('pearl.herominers.com/api/stats')) {
+      return jsonResponse({
+        network: { height: 1000 },
+        pool: { minPaymentThreshold: 500000000 },
+        config: { coinUnits: 100000000, minPaymentThreshold: 500000000 }
+      });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const derived = cryptoEngine.derivePearlFromSeed(TEST_MNEMONIC, "m/86'/808276'/0'/0/0", true);
+    const heroStats = await miningPro.queryMinerDeepStats(derived.address, 'herominers');
+    assert.equal(heroStats.payoutThresholdPrl, 5);
+  });
+
+  // 6. sw.js v6.3 cross-origin pass-through + server.js gzip + OPTIONS preflight
+  const swSrc = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
+  assert.match(swSrc, /nexus-wallet-v6\.3/);
+  assert.match(swSrc, /\.\/bip39-wordlist\.js\?v=6\.3/);
+  assert.match(swSrc, /if\s*\(reqUrl\.origin\s*!==\s*self\.location\.origin\)\s*\{\s*return;\s*\}/);
+
+  const srv = require('../server.js');
+  await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = srv.address().port;
+    const gzRes = await new Promise((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1',
+        port,
+        path: '/style.css?v=6.3',
+        method: 'GET',
+        headers: { 'Accept-Encoding': 'gzip' }
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(gzRes.status, 200);
+    assert.equal(gzRes.headers['content-encoding'], 'gzip');
+    assert.match(String(gzRes.headers['vary'] || ''), /Accept-Encoding/i);
+    const gunzipped = zlib.gunzipSync(gzRes.body).toString('utf8');
+    assert.equal(gunzipped, fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8'));
+
+    const optStatus = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/pearl-proxy', method: 'OPTIONS' }, (res) => {
+        res.resume();
+        resolve(res.statusCode);
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(optStatus, 204);
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
+  }
+});
+
+test('v6.3 Regression Suite: NEAR Storage Reclaim, Dynamic storage_minimum_balance, Validator Dust Guard, Dynamic NEAR FT & Minimal History', async () => {
+  const encodeJsonBytes = (obj) => Array.from(Buffer.from(JSON.stringify(obj), 'utf8'));
+
+  // 1. Dynamic NEAR NEP-141 discovery (unknown token + ft_metadata + FastNear null balance RPC fallback)
+  await withMockedFetch(async (url, opts) => {
+    if (url.includes('api.fastnear.com/v1/account/alice.near/ft')) {
+      return jsonResponse({
+        account_id: 'alice.near',
+        tokens: [
+          { contract_id: 'token.rhealab.near', balance: null },
+          { contract_id: 'npro.nearmobile.near', balance: '2500000000000000000000000' }
+        ]
+      });
+    }
+    if (opts && opts.body) {
+      const rpc = JSON.parse(opts.body);
+      const cid = rpc.params && rpc.params.account_id;
+      const method = rpc.params && rpc.params.method_name;
+      if (cid === 'token.rhealab.near' && method === 'ft_balance_of') {
+        return jsonResponse({ jsonrpc: '2.0', id: rpc.id, result: { result: encodeJsonBytes('101500000000000000000') } });
+      }
+      if (cid === 'npro.nearmobile.near' && method === 'ft_metadata') {
+        return jsonResponse({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { result: encodeJsonBytes({ symbol: 'NPRO', name: 'NEAR Mobile', decimals: 24, icon: '' }) }
+        });
+      }
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const nepMap = await nearIntents.fetchNearNep141Balances('alice.near');
+    assert.equal(nepMap['token.rhealab.near'].formatted, 101.5);
+    assert.equal(nepMap['npro.nearmobile.near'].formatted, 2.5);
+    assert.equal(nepMap['npro.nearmobile.near'].symbol, 'NPRO');
+  });
+
+  // 2. scanNearReclaimableStorageAsync & executeNearStorageReclaim
+  const sentNearCalls = [];
+  const origNearCall = chainContracts.signAndSendNearFunctionCall;
+  chainContracts.signAndSendNearFunctionCall = async (params) => {
+    sentNearCalls.push(params);
+    return 'near_tx_v63_' + sentNearCalls.length;
+  };
+  try {
+    await withMockedFetch(async (url, opts) => {
+      if (url.includes('api.fastnear.com/v1/account/alice.near/ft')) {
+        return jsonResponse({
+          account_id: 'alice.near',
+          tokens: [
+            { contract_id: 'wrap.near', balance: '0' },
+            { contract_id: 'token.rhealab.near', balance: '101500000000000000000' }
+          ]
+        });
+      }
+      if (opts && opts.body) {
+        const rpc = JSON.parse(opts.body);
+        const cid = rpc.params && rpc.params.account_id;
+        const method = rpc.params && rpc.params.method_name;
+        if (method === 'storage_balance_of') {
+          if (cid === 'wrap.near' || cid === 'token.rhealab.near') {
+            return jsonResponse({ jsonrpc: '2.0', id: rpc.id, result: { result: encodeJsonBytes({ total: '1250000000000000000000', available: '0' }) } });
+          }
+          return jsonResponse({ jsonrpc: '2.0', id: rpc.id, result: { result: encodeJsonBytes(null) } });
+        }
+        if (method === 'ft_balance_of') {
+          if (cid === 'token.rhealab.near') {
+            return jsonResponse({ jsonrpc: '2.0', id: rpc.id, result: { result: encodeJsonBytes('101500000000000000000') } });
+          }
+          return jsonResponse({ jsonrpc: '2.0', id: rpc.id, result: { result: encodeJsonBytes('0') } });
+        }
+        if (cid === 'npro.nearmobile.near' && method === 'storage_minimum_balance') {
+          return jsonResponse({ jsonrpc: '2.0', id: rpc.id, result: { result: encodeJsonBytes('2500000000000000000000') } });
+        }
+      }
+      return jsonResponse({}, 404);
+    }, async () => {
+      const scanRes = await chainContracts.scanNearReclaimableStorageAsync('alice.near');
+      assert.equal(scanRes.ok, true);
+      const wrapAcc = scanRes.accounts.find((a) => a.contractId === 'wrap.near');
+      const rheaAcc = scanRes.accounts.find((a) => a.contractId === 'token.rhealab.near');
+      assert.ok(wrapAcc && wrapAcc.isEmpty === true && wrapAcc.canReclaim === true);
+      assert.ok(Math.abs(wrapAcc.depositNear - 0.00125) < 1e-8);
+      assert.ok(rheaAcc && rheaAcc.isEmpty === false && rheaAcc.canReclaim === false);
+
+      const testKeys = await cryptoEngine.deriveNearFromSeedAsync(TEST_MNEMONIC);
+      const testWallet = {
+        mnemonic: TEST_MNEMONIC,
+        nearNamedAccount: 'alice.near',
+        nearAddress: testKeys.nearAddress,
+        nearPublicKey: testKeys.nearPublicKey,
+        nearPrivateKey: testKeys.nearPrivateKey,
+        nativeBalances: { near: 1.5 }
+      };
+
+      const reclaimRes = await chainContracts.executeNearStorageReclaim({
+        wallet: testWallet,
+        contracts: ['wrap.near']
+      });
+      assert.equal(reclaimRes.ok, true);
+      assert.equal(reclaimRes.reclaimedCount, 1);
+      assert.equal(sentNearCalls[0].receiverId, 'wrap.near');
+      assert.equal(sentNearCalls[0].methodName, 'storage_unregister');
+      assert.equal(JSON.parse(sentNearCalls[0].argsJson).force, false);
+      assert.equal(sentNearCalls[0].depositYocto, '1');
+
+      // 3. ensureNearNep141StorageRegistered queries storage_minimum_balance
+      await chainContracts.ensureNearNep141StorageRegistered({
+        resolvedWallet: testWallet,
+        accountId: 'alice.near',
+        tokenContract: 'npro.nearmobile.near'
+      });
+      const depCall = sentNearCalls[sentNearCalls.length - 1];
+      assert.equal(depCall.receiverId, 'npro.nearmobile.near');
+      assert.equal(depCall.methodName, 'storage_deposit');
+      assert.equal(depCall.depositYocto, '2500000000000000000000');
+    });
+  } finally {
+    chainContracts.signAndSendNearFunctionCall = origNearCall;
+  }
+
+  // 4. fetchNearAccountStakingPositionsAsync filters < 0.0005 NEAR dust and blocks withdraw when unstaked_balance === 0
+  await withMockedFetch(async (url, opts) => {
+    if (url.includes('api.fastnear.com/v1/account/alice.near/full')) {
+      return jsonResponse({
+        pools: [
+          { pool_id: 'meteor.poolv1.near' },
+          { pool_id: 'figment.poolv1.near' }
+        ]
+      });
+    }
+    if (opts && opts.body) {
+      const rpc = JSON.parse(opts.body);
+      const cid = rpc.params && rpc.params.account_id;
+      const method = rpc.params && rpc.params.method_name;
+      if (cid === 'meteor.poolv1.near' && method === 'get_account') {
+        return jsonResponse({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { result: encodeJsonBytes({ staked_balance: '50879158645145494110', unstaked_balance: '0', can_withdraw: true }) }
+        });
+      }
+      if (cid === 'figment.poolv1.near' && method === 'get_account') {
+        return jsonResponse({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { result: encodeJsonBytes({ staked_balance: '1000000000000000000000000', unstaked_balance: '0', can_withdraw: true }) }
+        });
+      }
+    }
+    return jsonResponse({ jsonrpc: '2.0', id: 1, result: { result: encodeJsonBytes(null) } });
+  }, async () => {
+    const pos = await chainContracts.fetchNearAccountStakingPositionsAsync('alice.near');
+    assert.equal(pos.find((p) => p.poolId === 'meteor.poolv1.near'), undefined, 'Must filter 0.00005 NEAR residual dust');
+    const fig = pos.find((p) => p.poolId === 'figment.poolv1.near');
+    assert.ok(fig, 'Valid 1 NEAR stake must remain');
+    assert.equal(fig.canWithdraw, false, 'canWithdraw must be false when unstaked_balance === 0');
+  });
+
+  // 5. Minimal token detail activity renders +/- signs on stake/unstake and drops Mining badge
+  await withMockedStorage({}, async () => {
+    const prevDoc = globalThis.document;
+    const prevWallets = state.wallets.slice();
+    const prevActiveId = state.activeWalletId;
+    const domMap = new Map();
+    const makeEl = (id) => {
+      if (!domMap.has(id)) {
+        domMap.set(id, {
+          id,
+          className: '',
+          innerHTML: '',
+          textContent: '',
+          href: '',
+          value: '',
+          disabled: false,
+          setAttribute() {},
+          removeAttribute() {},
+          classList: {
+            _set: new Set(),
+            add(c) { this._set.add(c); },
+            remove(c) { this._set.delete(c); },
+            toggle(c, f) { if (f === undefined) { if (this._set.has(c)) this._set.delete(c); else this._set.add(c); } else if (f) this._set.add(c); else this._set.delete(c); },
+            contains(c) { return this._set.has(c); }
+          }
+        });
+      }
+      return domMap.get(id);
+    };
+    [
+      'sheet-backdrop', 'sheet-token-detail', 'token-detail-icon', 'token-detail-title',
+      'token-detail-chains', 'token-detail-balance', 'token-detail-usd',
+      'token-detail-addr-row', 'token-detail-addr', 'token-detail-explorer-link',
+      'token-detail-breakdown-card', 'token-detail-breakdown-list',
+      'token-detail-earn-card', 'token-detail-earn-list', 'token-detail-history-list',
+      'token-detail-price-label', 'token-detail-price-val'
+    ].forEach(makeEl);
+    globalThis.document = {
+      getElementById: (id) => domMap.get(id) || null,
+      querySelector: () => null,
+      querySelectorAll: () => []
+    };
+    try {
+      const w = state.normalizeWalletRecord({
+        id: 'w_v63_hist',
+        mnemonic: TEST_MNEMONIC,
+        nearNamedAccount: 'alice.near',
+        nativeBalances: { near: 5 },
+        activityHistory: [
+          { id: 's1', type: 'stake', symbol: 'RHEA', toSymbol: 'xRHEA', chain: 'near', amount: 100, txHash: 'stake_tx_1', title: 'Rhea', timestamp: 1700000300 },
+          { id: 'u1', type: 'unstake', symbol: 'RHEA', chain: 'near', amount: 50, txHash: 'unstake_tx_1', title: 'Rhea', timestamp: 1700000400 }
+        ],
+        nearNep141Balances: { 'token.rhealab.near': { raw: '100000000000000000000', formatted: 100 } }
+      });
+      state.wallets = [w];
+      state.activeWalletId = w.id;
+      await withMockedFetch(async () => jsonResponse({ txns: [] }), async () => {
+        uiController.openTokenDetailSheet('RHEA');
+        await new Promise((r) => setTimeout(r, 20));
+        const histHtml = domMap.get('token-detail-history-list').innerHTML;
+        assert.ok(histHtml.includes('-100 RHEA'));
+        assert.ok(histHtml.includes('+50 RHEA'));
+        assert.equal(histHtml.includes('挖矿') || histHtml.includes('>Mining<'), false);
+      });
+    } finally {
+      globalThis.document = prevDoc;
+      state.wallets = prevWallets;
+      state.activeWalletId = prevActiveId;
+    }
+  });
 });

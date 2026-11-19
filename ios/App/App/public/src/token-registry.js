@@ -34,7 +34,7 @@
             const decoded = typeof atob === 'function'
               ? atob(b64)
               : (typeof Buffer !== 'undefined' ? Buffer.from(b64, 'base64').toString('utf8') : '');
-            if (/<script|\bon\w+\s*=|javascript:|<iframe|<object/i.test(decoded)) return '';
+            if (/<script|\bon\w+\s*=|javascript:|<iframe|<object|<foreignObject/i.test(decoded)) return '';
           } catch (_) {
             return '';
           }
@@ -123,11 +123,11 @@
     AETHWETH: ICON_ETH_DATA,
     STETH: ICON_STETH_DATA,
     WSTETH: 'https://coin-images.coingecko.com/coins/images/18834/large/wstETH.png?1696518295',
-    BTC: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/bitcoin/info/logo.png',
-    WBTC: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599/logo.png',
+    BTC: makeLocalIcon('btc'),
+    WBTC: makeLocalIcon('wbtc'),
     CBBTC: 'https://assets.coingecko.com/coins/images/40143/standard/cbbtc.webp',
-    SOL: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/info/logo.png',
-    WSOL: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/info/logo.png',
+    SOL: makeLocalIcon('sol'),
+    WSOL: makeLocalIcon('sol'),
     JITOSOL: 'https://static.datapi.jup.ag/token-icons/86932ec91f48cf380c8b694112b68ec9c18528deecfb82b11a88dadd927c2c6e.webp',
     JUP: ICON_JUP_DATA,
     'STAKED JUP': ICON_JUP_DATA,
@@ -139,38 +139,44 @@
     BUSDC: ICON_USDC_DATA,
     USDG: 'https://assets.coingecko.com/coins/images/51281/standard/GDN_USDG_Token_200x200.png',
     USDE: ICON_SUSDE_DATA,
-    DAI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x6B175474E89094C44Da98b954EedeAC495271d0F/logo.png',
-    BNB: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/smartchain/info/logo.png',
-    WBNB: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/smartchain/info/logo.png',
+    DAI: makeLocalIcon('dai'),
+    BNB: makeLocalIcon('bnb'),
+    WBNB: makeLocalIcon('bnb'),
     CAKE: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/smartchain/assets/0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82/logo.png',
-    ARB: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/arbitrum/assets/0x912CE59144191C1204E64559FE8253a0e49E6548/logo.png',
-    OP: 'https://coin-images.coingecko.com/coins/images/25244/large/Token.png?1774456081',
+    ARB: makeLocalIcon('arb'),
+    OP: makeLocalIcon('op'),
+    BASE: makeLocalIcon('base'),
+    ARC: makeLocalIcon('arc'),
     UNI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984/logo.png',
     AERO: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/base/assets/0x940181a94A35A4569E4529A3CDfB74e38FD98631/logo.png',
-    HYPE: ICON_KHYPE_DATA,
-    PONS: 'https://storage.googleapis.com/ks-setting-1d682dca/99cb6fd9-ad94-4b7c-a722-d445a9b9ceef1784090007449.jpg',
-    TRX: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/tron/info/logo.png',
-    XRP: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ripple/info/logo.png',
-    DOGE: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/doge/info/logo.png',
-    SUI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/sui/info/logo.png',
-    TON: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ton/info/logo.png',
-    APT: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/aptos/info/logo.png',
+    HYPE: makeLocalIcon('hype'),
+    WHYPE: makeLocalIcon('whype'),
+    PONS: makeCircleIconDataUri('#10B981', '<text x="16" y="20.5" text-anchor="middle" fill="#FFF" font-size="10.5" font-weight="800" font-family="system-ui,sans-serif">PONS</text>'),
+    TRX: makeLocalIcon('trx'),
+    XRP: makeLocalIcon('xrp'),
+    DOGE: makeLocalIcon('doge'),
+    SUI: makeLocalIcon('sui'),
+    TON: makeLocalIcon('ton'),
+    APT: makeLocalIcon('apt'),
     CASHCAT: 'https://coin-images.coingecko.com/coins/images/102174280/large/cashcat-logo.jpg?1782922765',
-    QTC: QTC_OFFICIAL_ICON_URL,
+    QTC: makeLocalIcon('qtc'),
     XAUT: 'https://coin-images.coingecko.com/coins/images/10481/large/logo.png?1774627372',
     BOME: 'https://image.mitte.gg/token-images/jWnhrsw1ncGBEAMBoBptZE',
     GNO: 'https://coin-images.coingecko.com/coins/images/662/large/logo_square_simple_300px.png?1696501854',
     COW: 'https://coin-images.coingecko.com/coins/images/24384/large/CoW-token_logo.png?1719524382',
     SAFE: 'https://coin-images.coingecko.com/coins/images/27032/large/Artboard_1_copy_8circle-1.png?1696526084',
     AAVE: 'https://coin-images.coingecko.com/coins/images/12645/large/aave-token-round.png?1720472354',
-    LINK: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x514910771AF9Ca656af840dff83E8264EcF986CA/logo.png',
+    LINK: makeLocalIcon('link'),
     STRK: 'https://coin-images.coingecko.com/coins/images/26433/large/starknet.png?1696525507',
     BERA: 'https://coin-images.coingecko.com/coins/images/25235/large/BERA.png?1738822008',
     OKB: 'https://coin-images.coingecko.com/coins/images/4463/large/WeChat_Image_20220118095654.png?1696505053',
-    POL: 'https://coin-images.coingecko.com/coins/images/32440/large/pol.png?1759114181',
+    POL: makeLocalIcon('pol'),
     KAITO: 'https://coin-images.coingecko.com/coins/images/54411/large/Qm4DW488_400x400.jpg?1739552780',
     GRAM: 'https://coin-images.coingecko.com/coins/images/17980/large/Gram_Circular_Badge.png?1781524778',
-    AVAX: 'https://coin-images.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png?1696512369',
+    AVAX: makeLocalIcon('avax'),
+    RHEA: makeLocalIcon('rhea'),
+    USDBC: makeLocalIcon('usdbc'),
+    PURR: makeLocalIcon('purr'),
     XLM: 'https://coin-images.coingecko.com/coins/images/100/large/fmpFRHHQ_400x400.jpg?1735231350',
     ADA: 'https://coin-images.coingecko.com/coins/images/975/large/cardano.png?1696502090',
     LTC: 'https://coin-images.coingecko.com/coins/images/2/large/litecoin.png?1696501400',
@@ -185,11 +191,11 @@
     GMX: 'https://coin-images.coingecko.com/coins/images/18323/large/arbit.png?1696517814',
     MOG: 'https://coin-images.coingecko.com/coins/images/31059/large/MOG_LOGO_200x200.png?1696529893',
     MOVE: 'https://coin-images.coingecko.com/coins/images/39345/large/movement-testnet-token.png?1721878759',
-    EURC: 'https://raw.githubusercontent.com/ulyanas/frontend-configs/add-usdc-eurc-latest-token-icons/configs/token-icons/EURC_latest.svg',
-    WUSDC: 'https://raw.githubusercontent.com/ulyanas/frontend-configs/add-usdc-eurc-latest-token-icons/configs/token-icons/USDC_latest.svg',
-    XYUSDC: 'https://raw.githubusercontent.com/ulyanas/frontend-configs/add-usdc-eurc-latest-token-icons/configs/token-icons/USDC_latest.svg',
+    EURC: makeCircleIconDataUri('#1D6FD8', '<text x="16" y="22" text-anchor="middle" fill="#FFF" font-size="16" font-weight="800" font-family="system-ui,sans-serif">€</text>'),
+    WUSDC: ICON_USDC_DATA,
+    XYUSDC: ICON_USDC_DATA,
     USYC: 'https://assets.coingecko.com/coins/images/31057/standard/usyc.png',
-    CIRBTC: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/bitcoin/info/logo.png',
+    CIRBTC: makeLocalIcon('btc'),
     RAY: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/assets/4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R/logo.png',
     ORCA: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/assets/orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE/logo.png',
     PYTH: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/assets/HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3/logo.png',
@@ -231,21 +237,14 @@
     CRCLX: 'https://static.datapi.jup.ag/token-icons/9dd17a6ce597b2622a41682672f1db6b9bd78c462405d5d19f2ecf7ca821e9cc.webp',
     GLDX: 'https://static.datapi.jup.ag/token-icons/4b57f2ddf52a0b96ed41fa9678f5540a6f08ca0aa81e735a884c8106e7ea8add.webp',
     SPCXX: 'https://static.datapi.jup.ag/token-icons/408050c7fcb89ee19487cf7b549476b645151a6bb777dc925bba09fb49eb69e1.webp',
-    JITOSOL: 'https://static.datapi.jup.ag/token-icons/86932ec91f48cf380c8b694112b68ec9c18528deecfb82b11a88dadd927c2c6e.webp',
     JUPSOL: 'https://static.datapi.jup.ag/token-icons/f65f73e25b3eadcdd65ac25be847bf9d2766822164fb118b37bb3824ee3cb69b.webp',
     INF: ICON_INF_DATA,
-    STETH: ICON_STETH_DATA,
     SUSDE: ICON_SUSDE_DATA,
     KHYPE: ICON_KHYPE_DATA,
     STEAKUSDC: ICON_USDC_DATA,
     ABASUSDC: ICON_USDC_DATA,
     AETHUSDC: ICON_USDC_DATA,
-    AARBUSDCN: ICON_USDC_DATA,
-    AETHWETH: ICON_ETH_DATA,
-    BNEAR: ICON_NEAR_DATA,
-    BUSDT: ICON_USDT_DATA,
-    BUSDC: ICON_USDC_DATA,
-    'STAKED JUP': ICON_JUP_DATA
+    AARBUSDCN: ICON_USDC_DATA
   };
 
   const DYNAMIC_ICON_BY_SYMBOL = Object.create(null);
@@ -333,6 +332,78 @@
     gnosis: 'gnosis'
   };
 
+  function encodeUtf8Base64(str) {
+    try {
+      if (typeof Buffer !== 'undefined' && typeof Buffer.from === 'function') {
+        return Buffer.from(str, 'utf8').toString('base64');
+      }
+    } catch (_) {}
+    try {
+      if (typeof TextEncoder !== 'undefined' && typeof btoa === 'function') {
+        const bytes = new TextEncoder().encode(str);
+        let bin = '';
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return btoa(bin);
+      }
+    } catch (_) {}
+    if (typeof btoa === 'function') {
+      return btoa(unescape(encodeURIComponent(str)));
+    }
+    return '';
+  }
+
+  function makeCircleIconDataUri(bg, contentHtml, ringColor) {
+    const ring = ringColor ? `<circle cx="16" cy="16" r="15" stroke="${ringColor}" stroke-width="1.5" fill="none"/>` : '';
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="16" fill="${bg}"/>${ring}${contentHtml}</svg>`;
+    const b64 = encodeUtf8Base64(svg);
+    return b64 ? `data:image/svg+xml;base64,${b64}` : '';
+  }
+
+  var _localIconCache;
+  function makeLocalIcon(key) {
+    _localIconCache = _localIconCache || {};
+    const k = String(key || '').toLowerCase();
+    if (_localIconCache[k]) return _localIconCache[k];
+    const specs = {
+      near: ['#00EC97', '<path d="M21.4 9.2l-3.8 5.6c-.3.4.3.9.7.6l3.6-3v7.2c0 .2-.3.3-.4.1L12 8.2a2 2 0 00-1.6-.6H10a2 2 0 00-2 2v12.8a2 2 0 002 2c.7 0 1.4-.4 1.8-1l3.8-5.6c.3-.4-.3-.9-.7-.6l-3.6 3V13c0-.2.3-.3.4-.1l9.5 11.5c.4.5 1 .8 1.6.8h.4a2 2 0 002-2V10.4a2 2 0 00-2-2c-.7 0-1.4.4-1.8.8z" fill="#000"/>'],
+      eth: ['#627EEA', '<path d="M16 5.5L9.5 16l6.5 3.9 6.5-3.9L16 5.5zm0 16.4l-6.5-3.9L16 26.5l6.5-8.5-6.5 3.9z" fill="#FFF"/>'],
+      weth: ['#1E293B', '<path d="M16 5.5L9.5 16l6.5 3.9 6.5-3.9L16 5.5zm0 16.4l-6.5-3.9L16 26.5l6.5-8.5-6.5 3.9z" fill="#A5B4FC"/>', '#627EEA'],
+      btc: ['#F7931A', '<text x="16" y="22.5" text-anchor="middle" fill="#FFF" font-size="18" font-weight="800" font-family="system-ui,sans-serif">₿</text>'],
+      wbtc: ['#282828', '<text x="16" y="22.5" text-anchor="middle" fill="#F09242" font-size="18" font-weight="800" font-family="system-ui,sans-serif">₿</text>', '#F09242'],
+      sol: ['#141726', '<path d="M9.5 20.5h13l-2 2h-13l2-2zm0-11h13l-2 2h-13l2-2zm11 5.5h-13l2 2h13l-2-2z" fill="#14F195"/>'],
+      bnb: ['#F3BA2F', '<path d="M16 7.5l3.5 3.5-3.5 3.5-3.5-3.5L16 7.5zm-6.4 8.5L12 13.6l2.4 2.4L12 18.4 9.6 16zm12.8 0L20 13.6 17.6 16l2.4 2.4L22.4 16zM16 17.5l3.5 3.5-3.5 3.5-3.5-3.5 3.5-3.5z" fill="#FFF"/>'],
+      base: ['#0052FF', '<circle cx="16" cy="16" r="8.5" fill="#FFF"/><rect x="7" y="14.5" width="9.5" height="3" fill="#0052FF"/>'],
+      arb: ['#213147', '<path d="M16 6l8.4 5v10L16 26l-8.4-5V11L16 6z" stroke="#12AAFF" stroke-width="2.2"/><path d="M12.6 20.8L16 11.2l3.4 9.6" stroke="#FFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>'],
+      op: ['#FF0420', '<text x="16" y="20.5" text-anchor="middle" fill="#FFF" font-size="12.5" font-weight="900" font-family="system-ui,sans-serif">OP</text>'],
+      pol: ['#8247E5', '<path d="M20.4 12.4L16 10l-4.4 2.4v4.8L16 19.6l4.4-2.4v-4.8z" stroke="#FFF" stroke-width="2.4" stroke-linejoin="round"/>'],
+      trx: ['#EB0029', '<path d="M9 9.5l14.4 2.5-6.6 11.6L9 9.5z" stroke="#FFF" stroke-width="2" stroke-linejoin="round"/>'],
+      sui: ['#4DA2FF', '<path d="M16 6.8c-3.4 4.8-5.4 8-5.4 11.4a5.4 5.4 0 0010.8 0c0-3.4-2-6.6-5.4-11.4z" fill="#FFF"/>'],
+      ton: ['#0098EA', '<path d="M9 10.5h14l-7 12.2-7-12.2z" stroke="#FFF" stroke-width="2.2" stroke-linejoin="round"/>'],
+      apt: ['#111827', '<path d="M8 12h16M10 16h12M12 20h8" stroke="#FFF" stroke-width="2.2" stroke-linecap="round"/>'],
+      doge: ['#C2A633', '<text x="16" y="21.5" text-anchor="middle" fill="#FFF" font-size="16" font-weight="800" font-family="system-ui,sans-serif">Ð</text>'],
+      xrp: ['#23292F', '<path d="M9 9.5l7 6.8 7-6.8M9 22.5l7-6.8 7 6.8" stroke="#FFF" stroke-width="2.4" stroke-linecap="round"/>'],
+      avax: ['#E84142', '<path d="M16 8l7.6 14.4H8.4L16 8z" fill="#FFF"/>'],
+      hype: ['#072723', '<path d="M11.4 10.6c-3 0-5.2 2.4-5.2 5.4s2.2 5.4 5.2 5.4c2.2 0 3.6-1.4 4.6-2.8.8 1.2 1.8 2.2 3.6 2.2 2.4 0 4.2-2 4.2-4.8s-1.8-4.8-4.2-4.8c-1.8 0-2.8 1-3.6 2.2-1-1.4-2.4-2.8-4.6-2.8z" fill="#97FCE4"/>', '#97FCE4'],
+      whype: ['#0E1F1D', '<path d="M11.4 10.6c-3 0-5.2 2.4-5.2 5.4s2.2 5.4 5.2 5.4c2.2 0 3.6-1.4 4.6-2.8.8 1.2 1.8 2.2 3.6 2.2 2.4 0 4.2-2 4.2-4.8s-1.8-4.8-4.2-4.8c-1.8 0-2.8 1-3.6 2.2-1-1.4-2.4-2.8-4.6-2.8z" fill="#5EEAD4"/>', '#14B8A6'],
+      arc: ['#F8FAFC', '<g transform="translate(6, 5) scale(0.68)"><path fill="#0F172A" d="M1 30c.243-7.345 1.489-14.199 3.57-19.53C7.206 3.72 11.023 0 15.314 0c4.292 0 8.109 3.719 10.745 10.472 1.371 3.512 2.38 7.685 2.978 12.225.054.405.1.817.146 1.229.015.025.024.049.02.068 0 0 .352 2.194.427 6.007h-.04c-.52-.428-6.666-5.256-16.854-3.858a63.94 63.94 0 0 1 .639-5.009l.044-.243c3.995-.12 7.493.343 10.175.952-.01-.064-.018-.13-.03-.193-.55-3.432-1.364-6.575-2.413-9.26-1.714-4.392-3.952-7.12-5.838-7.12-1.885 0-4.123 2.728-5.837 7.12a37.113 37.113 0 0 0-1.132 3.389 50.654 50.654 0 0 0-1.196 5.355c-.474 2.786-.769 5.773-.877 8.868H1V30Z"/></g>', '#CBD5E1'],
+      hood: ['#00C805', '<path d="M10 22.4c5.6-2 9.2-6.6 11.4-13.2-4.8 1.8-8.8 5-11.4 10.4v2.8z" fill="#041304"/>'],
+      gnosis: ['#04795B', '<circle cx="16" cy="16" r="7.5" stroke="#FFF" stroke-width="2"/><circle cx="13" cy="15" r="1.4" fill="#FFF"/><circle cx="19" cy="15" r="1.4" fill="#FFF"/>'],
+      qtc: ['#0A0A0A', '<circle cx="15" cy="15" r="7.5" stroke="#F97316" stroke-width="2.6"/><path d="M20.2 20l4.2 4.2" stroke="#F97316" stroke-width="2.6" stroke-linecap="round"/>', '#F97316'],
+      usdc: ['#2775CA', '<text x="16" y="22" text-anchor="middle" fill="#FFF" font-size="16" font-weight="800" font-family="system-ui,sans-serif">$</text>'],
+      usdt: ['#26A17B', '<text x="16" y="22" text-anchor="middle" fill="#FFF" font-size="16" font-weight="800" font-family="system-ui,sans-serif">₮</text>'],
+      usdbc: ['#2775CA', '<text x="16" y="21.5" text-anchor="middle" fill="#FFF" font-size="15" font-weight="800" font-family="system-ui,sans-serif">$</text>', '#93C5FD'],
+      dai: ['#F5AC37', '<path d="M11 10.5h5.5a5.5 5.5 0 010 11H11v-11zm-2 4h14M9 17.5h14" stroke="#FFF" stroke-width="2" stroke-linecap="round"/>'],
+      link: ['#2A5ADA', '<path d="M16 7.5L23.5 11.8v8.4L16 24.5l-7.5-4.3v-8.4L16 7.5z" stroke="#FFF" stroke-width="2.4" stroke-linejoin="round"/>'],
+      jup: ['#131B2E', '<circle cx="16" cy="16" r="6" fill="#22C55E"/><path d="M8.5 19.5c4.5-2 10.5-4 15-7" stroke="#A7F3D0" stroke-width="2" stroke-linecap="round"/>'],
+      rhea: ['#0B1F1A', '<path d="M11 22V10h5.5a3.8 3.8 0 010 7.6H11m5.5 0L21 22" stroke="#10B981" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>', '#10B981'],
+      purr: ['#0F172A', '<text x="16" y="20" text-anchor="middle" fill="#97FCE4" font-size="9.5" font-weight="800" font-family="system-ui,sans-serif">PURR</text>', '#97FCE4']
+    };
+    const s = specs[k] || ['#334155', `<text x="16" y="20" text-anchor="middle" fill="#FFF" font-size="11" font-weight="800" font-family="system-ui,sans-serif">${k.slice(0, 4).toUpperCase()}</text>`];
+    const uri = makeCircleIconDataUri(s[0], s[1], s[2]);
+    _localIconCache[k] = uri;
+    return uri;
+  }
+
   function makeChainBadgeSvg(bg, fg, glyphHtml) {
     return `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="8" fill="${bg}"/>${glyphHtml}</svg>`;
   }
@@ -344,7 +415,7 @@
       shortName: 'NEAR',
       color: '#00EC97',
       textColor: '#000000',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/near/info/logo.png',
+      logoUrl: makeLocalIcon('near'),
       badgeSvg: makeChainBadgeSvg(
         '#00EC97',
         '#000',
@@ -357,7 +428,7 @@
       shortName: 'ETH',
       color: '#627EEA',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png',
+      logoUrl: makeLocalIcon('eth'),
       badgeSvg: makeChainBadgeSvg(
         '#627EEA',
         '#FFF',
@@ -370,7 +441,7 @@
       shortName: 'SOL',
       color: '#9945FF',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/info/logo.png',
+      logoUrl: makeLocalIcon('sol'),
       badgeSvg: makeChainBadgeSvg(
         '#141726',
         '#FFF',
@@ -383,7 +454,7 @@
       shortName: 'BASE',
       color: '#0052FF',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/base/info/logo.png',
+      logoUrl: makeLocalIcon('base'),
       badgeSvg: makeChainBadgeSvg(
         '#0052FF',
         '#FFF',
@@ -396,7 +467,7 @@
       shortName: 'ARB',
       color: '#12AAFF',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/arbitrum/info/logo.png',
+      logoUrl: makeLocalIcon('arb'),
       badgeSvg: makeChainBadgeSvg(
         '#213147',
         '#FFF',
@@ -409,7 +480,7 @@
       shortName: 'BSC',
       color: '#F3BA2F',
       textColor: '#000000',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/smartchain/info/logo.png',
+      logoUrl: makeLocalIcon('bnb'),
       badgeSvg: makeChainBadgeSvg(
         '#F3BA2F',
         '#FFF',
@@ -422,7 +493,7 @@
       shortName: 'BTC',
       color: '#F7931A',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/bitcoin/info/logo.png',
+      logoUrl: makeLocalIcon('btc'),
       badgeSvg: makeChainBadgeSvg(
         '#F7931A',
         '#FFF',
@@ -435,7 +506,7 @@
       shortName: 'TRX',
       color: '#EB0029',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/tron/info/logo.png',
+      logoUrl: makeLocalIcon('trx'),
       badgeSvg: makeChainBadgeSvg(
         '#EB0029',
         '#FFF',
@@ -448,7 +519,7 @@
       shortName: 'HYPE',
       color: '#97FCE4',
       textColor: '#072723',
-      logoUrl: 'https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg',
+      logoUrl: makeLocalIcon('hype'),
       badgeSvg: makeChainBadgeSvg(
         '#072723',
         '#97FCE4',
@@ -461,7 +532,7 @@
       shortName: 'HOOD',
       color: '#00C805',
       textColor: '#000000',
-      logoUrl: '',
+      logoUrl: makeLocalIcon('hood'),
       badgeSvg: makeChainBadgeSvg(
         '#00C805',
         '#041304',
@@ -474,7 +545,7 @@
       shortName: 'ARC',
       color: '#F8FAFC',
       textColor: '#0F172A',
-      logoUrl: 'https://raw.githubusercontent.com/ulyanas/frontend-configs/add-usdc-eurc-latest-token-icons/configs/network-icons/arc-dark.svg',
+      logoUrl: makeLocalIcon('arc'),
       badgeSvg: makeChainBadgeSvg(
         '#F8FAFC',
         '#0F172A',
@@ -500,7 +571,7 @@
       shortName: 'OP',
       color: '#FF0420',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/optimism/info/logo.png',
+      logoUrl: makeLocalIcon('op'),
       badgeSvg: makeChainBadgeSvg(
         '#FF0420',
         '#FFF',
@@ -513,7 +584,7 @@
       shortName: 'POL',
       color: '#8247E5',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/polygon/info/logo.png',
+      logoUrl: makeLocalIcon('pol'),
       badgeSvg: makeChainBadgeSvg(
         '#8247E5',
         '#FFF',
@@ -526,7 +597,7 @@
       shortName: 'SUI',
       color: '#4DA2FF',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/sui/info/logo.png',
+      logoUrl: makeLocalIcon('sui'),
       badgeSvg: makeChainBadgeSvg(
         '#4DA2FF',
         '#FFF',
@@ -539,7 +610,7 @@
       shortName: 'TON',
       color: '#0098EA',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ton/info/logo.png',
+      logoUrl: makeLocalIcon('ton'),
       badgeSvg: makeChainBadgeSvg(
         '#0098EA',
         '#FFF',
@@ -552,7 +623,7 @@
       shortName: 'APT',
       color: '#111827',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/aptos/info/logo.png',
+      logoUrl: makeLocalIcon('apt'),
       badgeSvg: makeChainBadgeSvg(
         '#111827',
         '#FFF',
@@ -565,7 +636,7 @@
       shortName: 'DOGE',
       color: '#C2A633',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/doge/info/logo.png',
+      logoUrl: makeLocalIcon('doge'),
       badgeSvg: makeChainBadgeSvg(
         '#C2A633',
         '#FFF',
@@ -578,7 +649,7 @@
       shortName: 'XRP',
       color: '#23292F',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ripple/info/logo.png',
+      logoUrl: makeLocalIcon('xrp'),
       badgeSvg: makeChainBadgeSvg(
         '#23292F',
         '#FFF',
@@ -591,20 +662,33 @@
       shortName: 'AVAX',
       color: '#E84142',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/avalanchec/info/logo.png',
+      logoUrl: makeLocalIcon('avax'),
       badgeSvg: makeChainBadgeSvg(
         '#E84142',
         '#FFF',
         '<path d="M8 4l3.8 7.2H4.2L8 4z" fill="#FFF"/>'
       )
     },
+    gnosis: {
+      key: 'gnosis',
+      name: 'Gnosis Chain',
+      shortName: 'GNO',
+      color: '#04795B',
+      textColor: '#FFFFFF',
+      logoUrl: makeLocalIcon('gnosis'),
+      badgeSvg: makeChainBadgeSvg(
+        '#04795B',
+        '#FFF',
+        '<circle cx="8" cy="8" r="4" stroke="#FFF" stroke-width="1.3"/><circle cx="6.5" cy="7.5" r="0.8" fill="#FFF"/><circle cx="9.5" cy="7.5" r="0.8" fill="#FFF"/>'
+      )
+    },
     qtc: {
       key: 'qtc',
-      name: 'Quantus Mainnet (需填 qz... 地址)',
+      name: 'Quantus Network',
       shortName: 'QTC',
       color: '#F97316',
       textColor: '#FFFFFF',
-      logoUrl: QTC_OFFICIAL_ICON_URL,
+      logoUrl: makeLocalIcon('qtc'),
       badgeSvg: makeChainBadgeSvg(
         '#0A0A0A',
         '#F97316',
@@ -735,23 +819,31 @@
       || DYNAMIC_ICON_BY_SYMBOL[symClean]
       || '';
 
-    let contractTwUrl = '';
-    const twChain = TRUSTWALLET_CHAIN_SLUGS[chainKey] || TRUSTWALLET_CHAIN_SLUGS[String(blockchain || '').toLowerCase()];
-    if (twChain && contractAddress) {
-      const formattedAddr = formatContractForTrustWallet(twChain, contractAddress);
-      if (formattedAddr) {
-        contractTwUrl = `https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/${twChain}/assets/${formattedAddr}/logo.png`;
-      }
+    const explicitIsData = Boolean(explicitUrl && explicitUrl.startsWith('data:image/'));
+    const preferredOrder = (mappedUrl && mappedUrl.startsWith('data:image/') && !explicitIsData)
+      ? [mappedUrl, explicitUrl]
+      : [explicitUrl, mappedUrl];
+
+    const unique = [];
+    for (const u of preferredOrder) {
+      if (u && !unique.includes(u)) unique.push(u);
     }
 
-    const ccIconsUrl = symLower && /^[a-z0-9]+$/.test(symLower)
-      ? `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/${symLower}.png`
-      : '';
-
-    const candidates = [explicitUrl, mappedUrl, contractTwUrl, ccIconsUrl].filter(Boolean);
-    const unique = [];
-    for (const u of candidates) {
-      if (!unique.includes(u)) unique.push(u);
+    if (unique.length < 2) {
+      let contractTwUrl = '';
+      const twChain = TRUSTWALLET_CHAIN_SLUGS[chainKey] || TRUSTWALLET_CHAIN_SLUGS[String(blockchain || '').toLowerCase()];
+      if (twChain && contractAddress) {
+        const formattedAddr = formatContractForTrustWallet(twChain, contractAddress);
+        if (formattedAddr) {
+          contractTwUrl = `https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/${twChain}/assets/${formattedAddr}/logo.png`;
+        }
+      }
+      const ccIconsUrl = symLower && /^[a-z0-9]+$/.test(symLower)
+        ? `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/${symLower}.png`
+        : '';
+      for (const u of [contractTwUrl, ccIconsUrl]) {
+        if (u && !unique.includes(u)) unique.push(u);
+      }
     }
 
     return {
@@ -781,7 +873,7 @@
       const safeAlt = escapeHtml(String(symbol).toUpperCase());
       const safeFb = escapeHtml(fallbackUrl);
       const hiddenFallbackSvg = fallbackSvg.replace('<svg ', '<svg style="display:none" ');
-      iconInner = `<img src="${escapeHtml(primaryUrl)}" alt="${safeAlt}" data-fb="${safeFb}" width="${s}" height="${s}" style="width:${s}px;height:${s}px" class="rounded-full object-cover flex-shrink-0 bg-white/[0.06]" onerror="if(this.dataset.fb&&this.src!==this.dataset.fb){var n=this.dataset.fb;this.dataset.fb='';this.src=n;}else{this.style.display='none';if(this.nextElementSibling)this.nextElementSibling.style.display='inline-flex';}" />${hiddenFallbackSvg}`;
+      iconInner = `<img src="${escapeHtml(primaryUrl)}" alt="${safeAlt}" data-fb="${safeFb}" width="${s}" height="${s}" style="width:${s}px;height:${s}px" class="rounded-full object-cover flex-shrink-0 bg-white/[0.06] token-img-fb" />${hiddenFallbackSvg}`;
     } else {
       iconInner = fallbackSvg;
     }
@@ -1228,11 +1320,11 @@
       { symbol: 'sUSDe', name: 'Staked USDe', blockchain: 'eth', assetId: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', contractAddress: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', decimals: 18, networkName: 'Ethereum', price: null }
     ],
     base: [
-      { symbol: 'ETH', name: 'Ethereum', blockchain: 'base', assetId: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', contractAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', decimals: 18, networkName: 'Base', price: null },
+      { symbol: 'ETH', name: 'Ethereum', blockchain: 'base', assetId: 'base:native:eth', contractAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', decimals: 18, networkName: 'Base', price: null },
       { symbol: 'USDC', name: 'USD Coin', blockchain: 'base', assetId: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', contractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6, networkName: 'Base', price: null },
       { symbol: 'EURC', name: 'Euro Coin', blockchain: 'base', assetId: '0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42', contractAddress: '0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42', decimals: 6, networkName: 'Base', price: null },
       { symbol: 'WETH', name: 'Wrapped Ether', blockchain: 'base', assetId: '0x4200000000000000000000000000000000000006', contractAddress: '0x4200000000000000000000000000000000000006', decimals: 18, networkName: 'Base', price: null },
-      { symbol: 'cbBTC', name: 'Coinbase Wrapped BTC', blockchain: 'base', assetId: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf', contractAddress: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf', decimals: 8, networkName: 'Base', price: null },
+      { symbol: 'cbBTC', name: 'Coinbase Wrapped BTC', blockchain: 'base', assetId: 'base:cbBTC', contractAddress: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf', decimals: 8, networkName: 'Base', price: null },
       { symbol: 'AERO', name: 'Aerodrome', blockchain: 'base', assetId: '0x940181a94A35A4569E4529A3CDfB74e38FD98631', contractAddress: '0x940181a94A35A4569E4529A3CDfB74e38FD98631', decimals: 18, networkName: 'Base', price: null },
       { symbol: 'VIRTUAL', name: 'Virtuals Protocol', blockchain: 'base', assetId: '0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b', contractAddress: '0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b', decimals: 18, networkName: 'Base', price: null },
       { symbol: 'DEGEN', name: 'Degen', blockchain: 'base', assetId: '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed', contractAddress: '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed', decimals: 18, networkName: 'Base', price: null },
@@ -1242,7 +1334,7 @@
       { symbol: 'DAI', name: 'Dai Stablecoin', blockchain: 'base', assetId: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', contractAddress: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', decimals: 18, networkName: 'Base', price: null }
     ],
     arb: [
-      { symbol: 'ETH', name: 'Ethereum', blockchain: 'arb', assetId: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', contractAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', decimals: 18, networkName: 'Arbitrum', price: null },
+      { symbol: 'ETH', name: 'Ethereum', blockchain: 'arb', assetId: 'arb:native:eth', contractAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', decimals: 18, networkName: 'Arbitrum', price: null },
       { symbol: 'USDC', name: 'USD Coin', blockchain: 'arb', assetId: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', contractAddress: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', decimals: 6, networkName: 'Arbitrum', price: null },
       { symbol: 'USDT', name: 'Tether USD', blockchain: 'arb', assetId: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', contractAddress: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', decimals: 6, networkName: 'Arbitrum', price: null },
       { symbol: 'ARB', name: 'Arbitrum', blockchain: 'arb', assetId: '0x912CE59144191C1204E64559FE8253a0e49E6548', contractAddress: '0x912CE59144191C1204E64559FE8253a0e49E6548', decimals: 18, networkName: 'Arbitrum', price: null },
@@ -1256,7 +1348,7 @@
       { symbol: 'wstETH', name: 'Wrapped stETH', blockchain: 'arb', assetId: '0x5979D7b546E38E414F7E9822514be443A4800529', contractAddress: '0x5979D7b546E38E414F7E9822514be443A4800529', decimals: 18, networkName: 'Arbitrum', price: null }
     ],
     bsc: [
-      { symbol: 'BNB', name: 'BNB', blockchain: 'bsc', assetId: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', contractAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', decimals: 18, networkName: 'BNB Smart Chain', price: null },
+      { symbol: 'BNB', name: 'BNB', blockchain: 'bsc', assetId: 'bsc:native:bnb', contractAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', decimals: 18, networkName: 'BNB Smart Chain', price: null },
       { symbol: 'USDT', name: 'Tether USD', blockchain: 'bsc', assetId: '0x55d398326f99059fF775485246999027B3197955', contractAddress: '0x55d398326f99059fF775485246999027B3197955', decimals: 18, networkName: 'BNB Smart Chain', price: null },
       { symbol: 'USDC', name: 'USD Coin', blockchain: 'bsc', assetId: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', contractAddress: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', decimals: 18, networkName: 'BNB Smart Chain', price: null },
       { symbol: 'FDUSD', name: 'First Digital USD', blockchain: 'bsc', assetId: '0xc5f0f7b66764F6ec8C8Dff7BA683102295E16409', contractAddress: '0xc5f0f7b66764F6ec8C8Dff7BA683102295E16409', decimals: 18, networkName: 'BNB Smart Chain', price: null },
@@ -1267,10 +1359,10 @@
       { symbol: 'SOL', name: 'Wrapped SOL (BSC)', blockchain: 'bsc', assetId: '0x570A5D26f7765Ecb712C0924E4De545B89fD43dF', contractAddress: '0x570A5D26f7765Ecb712C0924E4De545B89fD43dF', decimals: 18, networkName: 'BNB Smart Chain', price: null },
       { symbol: 'XRP', name: 'XRP Token (BSC)', blockchain: 'bsc', assetId: '0x1D2F0da169ceB9fC7B3144628dB156f3F6c60dBE', contractAddress: '0x1D2F0da169ceB9fC7B3144628dB156f3F6c60dBE', decimals: 18, networkName: 'BNB Smart Chain', price: null },
       { symbol: 'DOGE', name: 'Dogecoin (BSC)', blockchain: 'bsc', assetId: '0xbA2aE424d960c26247Dd6c32edC70B295c744C43', contractAddress: '0xbA2aE424d960c26247Dd6c32edC70B295c744C43', decimals: 8, networkName: 'BNB Smart Chain', price: null },
-      { symbol: 'LINK', name: 'Chainlink (BSC)', blockchain: 'bsc', assetId: '0xF8A0BF9cF54Bb92F17374d9e9A326e6a511a1D2b', contractAddress: '0xF8A0BF9cF54Bb92F17374d9e9A326e6a511a1D2b', decimals: 18, networkName: 'BNB Smart Chain', price: null }
+      { symbol: 'LINK', name: 'Chainlink (BSC)', blockchain: 'bsc', assetId: '0xf8a0bf9Cf54bb92f17374D9e9a326e6a511a1D2B', contractAddress: '0xf8a0bf9Cf54bb92f17374D9e9a326e6a511a1D2B', decimals: 18, networkName: 'BNB Smart Chain', price: null }
     ],
     hype: [
-      { symbol: 'HYPE', name: 'HYPE (HyperEVM)', blockchain: 'hype', assetId: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', contractAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', decimals: 18, networkName: 'HyperEVM', price: null },
+      { symbol: 'HYPE', name: 'HYPE (HyperEVM)', blockchain: 'hype', assetId: 'hype:native:hype', contractAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', decimals: 18, networkName: 'HyperEVM', price: null },
       { symbol: 'WHYPE', name: 'Wrapped HYPE', blockchain: 'hype', assetId: '0x5555555555555555555555555555555555555555', contractAddress: '0x5555555555555555555555555555555555555555', decimals: 18, networkName: 'HyperEVM', price: null },
       { symbol: 'USDC', name: 'USD Coin', blockchain: 'hype', assetId: '0xb88339CB7199b77E23DB6E890353E22632Ba630f', contractAddress: '0xb88339CB7199b77E23DB6E890353E22632Ba630f', decimals: 6, networkName: 'HyperEVM', price: null },
       { symbol: 'USDe', name: 'Ethena USDe', blockchain: 'hype', assetId: '0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34', contractAddress: '0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34', decimals: 18, networkName: 'HyperEVM', price: null },
@@ -1278,12 +1370,12 @@
       { symbol: 'PURR', name: 'Purr', blockchain: 'hype', assetId: '0x9b498C3c8A0b8CD8BA1D9851d40D186F1872b44E', contractAddress: '0x9b498C3c8A0b8CD8BA1D9851d40D186F1872b44E', decimals: 18, networkName: 'HyperEVM', price: null }
     ],
     hood: [
-      { symbol: 'ETH', name: 'ETH (Robinhood)', blockchain: 'hood', assetId: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', contractAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', decimals: 18, networkName: 'Robinhood Chain', price: null },
+      { symbol: 'ETH', name: 'ETH (Robinhood)', blockchain: 'hood', assetId: 'hood:native:eth', contractAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', decimals: 18, networkName: 'Robinhood Chain', price: null },
       { symbol: 'PONS', name: 'Pons', blockchain: 'hood', assetId: '0x39dBED3a2bd333467115dE45665cC57F813C4571', contractAddress: '0x39dBED3a2bd333467115dE45665cC57F813C4571', decimals: 18, networkName: 'Robinhood Chain', price: null },
       { symbol: 'USDG', name: 'Global Dollar', blockchain: 'hood', assetId: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168', contractAddress: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168', decimals: 6, networkName: 'Robinhood Chain', price: null },
       { symbol: 'CASHCAT', name: 'Cash Cat', blockchain: 'hood', assetId: '0x020bfc650a365f8bb26819deaabf3e21291018b4', contractAddress: '0x020bfc650a365f8bb26819deaabf3e21291018b4', decimals: 18, networkName: 'Robinhood Chain', price: null },
       { symbol: 'WETH', name: 'Wrapped Ether', blockchain: 'hood', assetId: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73', contractAddress: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73', decimals: 18, networkName: 'Robinhood Chain', price: null },
-      { symbol: 'USDe', name: 'Ethena USDe', blockchain: 'hood', assetId: '0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34', contractAddress: '0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34', decimals: 18, networkName: 'Robinhood Chain', price: null },
+      { symbol: 'USDe', name: 'Ethena USDe', blockchain: 'hood', assetId: 'hood:USDe', contractAddress: '0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34', contractAddressChecksum: '0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34', decimals: 18, networkName: 'Robinhood Chain', price: null },
       { symbol: 'cbBTC', name: 'Coinbase Wrapped BTC', blockchain: 'hood', assetId: '0xcec185eb182c47d1ba1efc84e6959e18cd620be4', contractAddress: '0xcec185eb182c47d1ba1efc84e6959e18cd620be4', decimals: 8, networkName: 'Robinhood Chain', price: null }
     ],
     arc: [
@@ -1305,9 +1397,128 @@
       { symbol: 'oBrain', name: 'oBrain', blockchain: 'arc', assetId: 'arc:0x28f986a61e078795639f239675582a12b4cf7f01', contractAddress: '0x28f986a61e078795639f239675582a12b4cf7f01', decimals: 18, networkName: 'Arc Network', logoURI: 'https://coin-images.coingecko.com/coins/images/102178559/large/1000020833.jpg?1789978080', price: null },
       { symbol: 'MALA', name: 'Malachite', blockchain: 'arc', assetId: 'arc:0x4f7dc89dc44ad08c20d9680d2ee9cfad69bfda55', contractAddress: '0x4f7dc89dc44ad08c20d9680d2ee9cfad69bfda55', decimals: 18, networkName: 'Arc Network', logoURI: 'https://storage.googleapis.com/ks-setting-1d682dca/73e47fb4-0c87-45c7-a7d0-649d08e3c5131789704863682.jpg', price: null },
       { symbol: 'DUKE', name: 'The Duke of Arc', blockchain: 'arc', assetId: 'arc:0x41358defd0dedc90528b3f1835715e907b686e6a', contractAddress: '0x41358defd0dedc90528b3f1835715e907b686e6a', decimals: 18, networkName: 'Arc Network', logoURI: 'https://storage.googleapis.com/ks-setting-1d682dca/6d05fda0-71c8-46ee-b74f-f0c1256188d81789704701735.jpg', price: null },
-      { symbol: 'ARCUS', name: 'Arcus Network', blockchain: 'arc', assetId: 'arc:0xb7c934ff18730c24e6113bb4bc5a68feef16fd29', contractAddress: '0xb7c934ff18730c24e6113bb4bc5a68feef16fd29', decimals: 18, networkName: 'Arc Network', logoURI: 'https://coin-images.coingecko.com/coins/images/102178538/large/8zcl45cyifee1l43r937gdp2gf1d.?1789888138', price: null }
+      { symbol: 'ARCUS', name: 'Arcus Network', blockchain: 'arc', assetId: 'arc:0xb7c934ff18730c24e6113bb4bc5a68feef16fd29', contractAddress: '0xb7c934ff18730c24e6113bb4bc5a68feef16fd29', decimals: 18, networkName: 'Arc Network', logoURI: '', price: null }
     ]
   };
+
+  let _liveDefuseTokens = [];
+  const _byAssetId = new Map();
+  const _byChainAssetId = new Map();
+  const _byChainContract = new Map();
+  const _bySymbol = new Map();
+
+  function _indexToken(tok) {
+    if (!tok || !tok.assetId) return;
+    const chain = getChainMeta(tok.blockchain || '').key;
+    const aid = String(tok.assetId).trim().toLowerCase();
+    const contract = tok.contractAddress ? String(tok.contractAddress).trim().toLowerCase() : '';
+    const sym = tok.symbol ? String(tok.symbol).trim().toLowerCase() : '';
+    if (!_byAssetId.has(aid)) _byAssetId.set(aid, tok);
+    if (chain) {
+      const caKey = `${chain}|${aid}`;
+      if (!_byChainAssetId.has(caKey)) _byChainAssetId.set(caKey, tok);
+      if (contract) {
+        const ccKey = `${chain}|${contract}`;
+        if (!_byChainContract.has(ccKey)) _byChainContract.set(ccKey, tok);
+      }
+    }
+    if (sym && !_bySymbol.has(sym)) _bySymbol.set(sym, tok);
+  }
+
+  function rebuildTokenIndexes() {
+    _byAssetId.clear();
+    _byChainAssetId.clear();
+    _byChainContract.clear();
+    _bySymbol.clear();
+    for (const t of _liveDefuseTokens) _indexToken(t);
+    for (const t of UNIFIED_CORE_TOKENS) _indexToken(t);
+    for (const list of Object.values(DEX_CHAIN_TOKENS)) {
+      if (Array.isArray(list)) {
+        for (const t of list) _indexToken(t);
+      }
+    }
+  }
+
+  const _CANON_PRICE_SYM_MAP = {
+    WNEAR: 'NEAR',
+    WETH: 'ETH',
+    WBTC: 'BTC',
+    BTCB: 'BTC',
+    CBBTC: 'BTC',
+    CIRBTC: 'BTC',
+    WSOL: 'SOL',
+    WBNB: 'BNB',
+    WHYPE: 'HYPE',
+    USDBC: 'USDC',
+    WUSDC: 'USDC',
+    WMATIC: 'POL',
+    MATIC: 'POL',
+    WAVAX: 'AVAX'
+  };
+
+  function syncPricesToStaticCatalogs(liveList) {
+    if (!Array.isArray(liveList) || liveList.length === 0) return;
+    const byAsset = new Map();
+    const byChainContract = new Map();
+    const byExactSym = new Map();
+    const byCanonSym = new Map();
+
+    for (const item of liveList) {
+      if (!item || typeof item !== 'object') continue;
+      const aid = String(item.assetId || '').trim().toLowerCase();
+      const chainKey = getChainMeta(item.blockchain || '').key;
+      const contract = String(item.contractAddress || '').trim().toLowerCase();
+      const sym = String(item.symbol || '').trim().toUpperCase().replace(/^\$/, '');
+      const hasPrice = typeof item.price === 'number' && Number.isFinite(item.price) && item.price > 0;
+      if (aid && !byAsset.has(aid)) byAsset.set(aid, item);
+      if (chainKey && contract && !byChainContract.has(`${chainKey}|${contract}`)) {
+        byChainContract.set(`${chainKey}|${contract}`, item);
+      }
+      if (hasPrice && sym) {
+        if (!byExactSym.has(sym)) byExactSym.set(sym, item);
+        const canon = _CANON_PRICE_SYM_MAP[sym] || sym;
+        if (!byCanonSym.has(canon)) byCanonSym.set(canon, item);
+      }
+    }
+
+    const applyToToken = (tok) => {
+      if (!tok || typeof tok !== 'object') return;
+      const aid = String(tok.assetId || '').trim().toLowerCase();
+      const chainKey = getChainMeta(tok.blockchain || '').key;
+      const contract = String(tok.contractAddress || '').trim().toLowerCase();
+      const sym = String(tok.symbol || '').trim().toUpperCase().replace(/^\$/, '');
+      const canon = _CANON_PRICE_SYM_MAP[sym] || sym;
+      const exactMatch = (aid && byAsset.get(aid))
+        || (chainKey && contract && byChainContract.get(`${chainKey}|${contract}`))
+        || null;
+      const symMatch = (sym && byExactSym.get(sym)) || (canon && byCanonSym.get(canon)) || null;
+      const match = (exactMatch && typeof exactMatch.price === 'number' && exactMatch.price > 0)
+        ? exactMatch
+        : (symMatch || exactMatch);
+      if (!match) return;
+      if (typeof match.price === 'number' && Number.isFinite(match.price) && match.price > 0) {
+        tok.price = match.price;
+        if (match.priceUpdatedAt) tok.priceUpdatedAt = match.priceUpdatedAt;
+      }
+      if (!tok.logoURI && match.logoURI) {
+        const safeLogo = sanitizeImageUrl(match.logoURI);
+        if (safeLogo) tok.logoURI = safeLogo;
+      }
+    };
+
+    for (const t of UNIFIED_CORE_TOKENS) applyToToken(t);
+    for (const list of Object.values(DEX_CHAIN_TOKENS)) {
+      if (Array.isArray(list)) {
+        for (const t of list) applyToToken(t);
+      }
+    }
+  }
+
+  function setLiveDefuseTokens(list) {
+    _liveDefuseTokens = Array.isArray(list) ? list.filter(t => t && t.assetId) : [];
+    syncPricesToStaticCatalogs(_liveDefuseTokens);
+    rebuildTokenIndexes();
+  }
 
   function getAllCoreTokens() {
     return UNIFIED_CORE_TOKENS.map(t => ({ ...t }));
@@ -1319,20 +1530,38 @@
     return list.map(t => ({ ...t }));
   }
 
-  function findTokenByAssetId(assetId, extraTokens = []) {
+  function findTokenByAssetId(assetId, blockchainOrExtraTokens = [], maybeExtraTokens = []) {
     const id = String(assetId || '').trim();
     if (!id) return null;
+    if (!_byAssetId.size) rebuildTokenIndexes();
+    const blockchain = typeof blockchainOrExtraTokens === 'string'
+      ? getChainMeta(blockchainOrExtraTokens).key
+      : '';
+    const extraTokens = Array.isArray(blockchainOrExtraTokens)
+      ? blockchainOrExtraTokens
+      : (Array.isArray(maybeExtraTokens) ? maybeExtraTokens : []);
     const lower = id.toLowerCase();
-    for (const list of [extraTokens, UNIFIED_CORE_TOKENS, ...Object.values(DEX_CHAIN_TOKENS)]) {
-      if (!Array.isArray(list)) continue;
-      const found = list.find(t => t && String(t.assetId || '').toLowerCase() === lower);
-      if (found) return found;
+    if (extraTokens.length) {
+      if (blockchain) {
+        const exactExtra = extraTokens.find(
+          t => t && String(t.assetId || '').toLowerCase() === lower && getChainMeta(t.blockchain || '').key === blockchain
+        );
+        if (exactExtra) return exactExtra;
+      }
+      const foundExtra = extraTokens.find(t => t && String(t.assetId || '').toLowerCase() === lower);
+      if (foundExtra) return foundExtra;
     }
-    return null;
+    if (blockchain) {
+      const byChainAid = _byChainAssetId.get(`${blockchain}|${lower}`);
+      if (byChainAid) return byChainAid;
+      const byChainContract = _byChainContract.get(`${blockchain}|${lower}`);
+      if (byChainContract) return byChainContract;
+    }
+    return _byAssetId.get(lower) || null;
   }
 
   function getSupportedChains() {
-    return ['near', 'eth', 'sol', 'base', 'arb', 'bsc', 'btc', 'tron', 'hype', 'hood', 'arc', 'prl']
+    return ['near', 'eth', 'sol', 'base', 'arb', 'bsc', 'btc', 'tron', 'hype', 'hood', 'arc', 'prl', 'qtc']
       .map(k => CHAIN_META[k]);
   }
 
@@ -1346,6 +1575,7 @@
     getFallbackTokenIconSvg,
     sanitizeImageUrl,
     registerDynamicTokenIcons,
+    setLiveDefuseTokens,
     resolveTokenIcon,
     renderTokenIconWithBadge,
     getAllCoreTokens,

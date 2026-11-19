@@ -40,28 +40,34 @@ public class NativeSecurityPlugin: CAPPlugin, CAPBridgedPlugin {
         var passcodeError: NSError?
         let passcodeAvailable = passcodeContext.canEvaluatePolicy(.deviceOwnerAuthentication, error: &passcodeError)
 
-        var biometryTypeStr = resolveBiometryTypeString(context.biometryType)
-        if !bioAvailable && biometryTypeStr == "none" && passcodeAvailable {
+        var biometryTypeStr = bioAvailable ? resolveBiometryTypeString(context.biometryType) : "none"
+        if biometryTypeStr == "none" && passcodeAvailable {
             biometryTypeStr = "passcode"
         }
 
-        call.resolve([
-            "platform": "ios",
-            "deviceModel": UIDevice.current.model,
-            "systemName": UIDevice.current.systemName,
-            "systemVersion": UIDevice.current.systemVersion,
-            "biometryType": biometryTypeStr,
-            "supportsBiometrics": bioAvailable,
-            "supportsPasscode": passcodeAvailable
-        ])
+        DispatchQueue.main.async {
+            let device = UIDevice.current
+            call.resolve([
+                "platform": "ios",
+                "deviceModel": device.model,
+                "systemName": device.systemName,
+                "systemVersion": device.systemVersion,
+                "biometryType": biometryTypeStr,
+                "supportsBiometrics": bioAvailable,
+                "supportsPasscode": passcodeAvailable
+            ])
+        }
     }
 
     @objc func authenticateWithBiometrics(_ call: CAPPluginCall) {
-        let reason = call.getString("reason") ?? "Verify identity to authorize NEAR CA Wallet action"
+        let reason = call.getString("reason") ?? "Verify identity to authorize Nexus Wallet action"
         let context = LAContext()
-        context.localizedFallbackTitle = "使用锁屏密码 / Use Passcode"
+        if let fallbackTitle = call.getString("fallbackTitle") {
+            context.localizedFallbackTitle = fallbackTitle
+        } else {
+            context.localizedFallbackTitle = "Use Passcode"
+        }
 
-        // .deviceOwnerAuthentication = Face ID / Touch ID first, automatically falling back to the iPhone unlock passcode.
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
             DispatchQueue.main.async {
@@ -69,7 +75,11 @@ public class NativeSecurityPlugin: CAPPlugin, CAPBridgedPlugin {
             }
             return
         }
-        let detectedType = resolveBiometryTypeString(context.biometryType)
+        var bioErr: NSError?
+        let bioCapable = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &bioErr)
+        let rawType = resolveBiometryTypeString(context.biometryType)
+        let detectedType = (bioCapable && rawType != "none") ? rawType : "passcode"
+
         context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, evalError in
             DispatchQueue.main.async {
                 if success {
@@ -77,7 +87,9 @@ public class NativeSecurityPlugin: CAPPlugin, CAPBridgedPlugin {
                 } else {
                     let code = (evalError as NSError?)?.code
                     let cancelled = code == LAError.userCancel.rawValue || code == LAError.systemCancel.rawValue || code == LAError.appCancel.rawValue
-                    call.reject(evalError?.localizedDescription ?? "Authentication failed", cancelled ? "AUTH_CANCELLED" : "AUTH_FAILED")
+                    let unavailable = code == LAError.passcodeNotSet.rawValue || code == LAError.biometryNotAvailable.rawValue || code == LAError.biometryNotEnrolled.rawValue
+                    let errCode = cancelled ? "AUTH_CANCELLED" : (unavailable ? "AUTH_UNAVAILABLE" : "AUTH_FAILED")
+                    call.reject(evalError?.localizedDescription ?? "Authentication failed", errCode)
                 }
             }
         }
