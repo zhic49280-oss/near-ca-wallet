@@ -60,6 +60,16 @@ jobs:
             project.save
           '
 
+          if [ -d "ios/App/App/Assets.xcassets/AppIcon.appiconset" ]; then
+            sips -z 1024 1024 assets/nexus-logo-512.png --out /tmp/nexus-1024.png >/dev/null
+            for f in ios/App/App/Assets.xcassets/AppIcon.appiconset/*.png; do
+              if [ -f "$f" ]; then cp /tmp/nexus-1024.png "$f"; fi
+            done
+            if [ ! -f "ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png" ]; then
+              cp /tmp/nexus-1024.png ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png
+            fi
+          fi
+
           npx cap sync ios
 
       - name: Build unsigned xcarchive
@@ -103,22 +113,22 @@ jobs:
           IPA_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/NEAR-CA-Wallet-unsigned.ipa"
           cat > sidestore-source.json <<EOF
           {
-            "name": "NEAR CA Wallet Official Source",
+            "name": "Nexus Wallet Official Source",
             "identifier": "io.near.cawallet.source",
             "subtitle": "Self-Custody Chain Abstraction Wallet",
-            "description": "Official SideStore / AltStore auto-update repository for NEAR CA Wallet.",
-            "iconURL": "https://assets.coingecko.com/coins/images/10365/large/near.jpg",
+            "description": "Official SideStore / AltStore auto-update repository for Nexus Wallet.",
+            "iconURL": "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/assets/nexus-logo-512.png",
             "website": "https://github.com/${GITHUB_REPOSITORY}",
             "tintColor": "#10B981",
-            "featuredApps": ["io.near.cawallet"],
+            "featuredApps": ["io.nexus.wallet"],
             "apps": [
               {
-                "name": "NEAR CA Wallet",
-                "bundleIdentifier": "io.near.cawallet",
-                "developerName": "NEAR CA Wallet",
+                "name": "Nexus Wallet",
+                "bundleIdentifier": "io.nexus.wallet",
+                "developerName": "Nexus Wallet",
                 "subtitle": "Chain Abstraction Self-Custody Wallet",
                 "localizedDescription": "NEAR Account-Centric Chain Abstraction Self-Custody Wallet",
-                "iconURL": "https://assets.coingecko.com/coins/images/10365/large/near.jpg",
+                "iconURL": "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/assets/nexus-logo-512.png",
                 "tintColor": "#10B981",
                 "category": "utilities",
                 "version": "${VER}",
