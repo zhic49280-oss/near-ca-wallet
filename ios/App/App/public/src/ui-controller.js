@@ -789,7 +789,7 @@
     } else if (st.activeTab === 'earn') {
       if (!st.staking.filter) st.staking.filter = 'featured';
       renderEarnView();
-      if (!st.staking.pools) refreshStakingMetrics(false);
+      ensureStakingMetricsFresh(300_000);
     } else if (st.activeTab === 'hub') {
       renderHubView();
     } else {
@@ -1325,7 +1325,7 @@
       `;
       const hint = isPq
         ? `<div style="font-size:11.5px;color:var(--text-secondary);padding:4px 2px;">${escapeHtml(t('此账户为独立 ML-DSA-65 后量子金库，仅用于 NEAR 链上资产。', 'Independent ML-DSA-65 post-quantum vault for NEAR assets.'))}</div>`
-        : `<div style="font-size:11.5px;color:var(--text-secondary);padding:4px 2px;">${escapeHtml(t('EVM、Solana、Bitcoin、Pearl 均由当前 NEAR 主账户通过 v1.signer MPC 统一控制。', 'EVM, Solana, Bitcoin & Pearl accounts are controlled by this NEAR Master Account via v1.signer MPC.'))}</div>`;
+        : `<div style="font-size:11.5px;color:var(--text-secondary);padding:4px 2px;">${escapeHtml(t('EVM、Solana、Bitcoin 由当前 NEAR 主账户通过 v1.signer MPC 控制；Pearl (PRL) 由助记词本地 BIP-86 派生。', 'EVM, Solana & Bitcoin are controlled by this NEAR Master Account via v1.signer MPC; Pearl (PRL) is locally derived (BIP-86) from your phrase.'))}</div>`;
       container.innerHTML = warnBox + hint + rows.map((r) => `
         <div class="meta-list">
           <div class="meta-row">
@@ -1466,6 +1466,16 @@
 
   let _isRefreshing = false;
 
+  let _lastStakingPositionsSyncAt = 0;
+
+  function ensureStakingMetricsFresh(maxAgeMs = 300_000) {
+    const st = getState();
+    const stale = !st.staking.pools || !st.staking.updatedAt || (Date.now() - st.staking.updatedAt > maxAgeMs);
+    if (stale && !st.staking.loading) {
+      refreshStakingMetrics(false);
+    }
+  }
+
   async function refreshAllBalancesAsync(showFeedback = false) {
     const st = getState();
     const intents = getIntents();
@@ -1548,23 +1558,27 @@
         }, 80);
       };
 
-      if (nearAccountId && typeof contracts.fetchNearAccountStakingPositionsAsync === 'function') {
-        contracts.fetchNearAccountStakingPositionsAsync(nearAccountId).then((list) => {
-          if (Array.isArray(list)) {
-            wallet.nearStakingPositions = list;
-            st.saveWallets();
-            if (st.activeTab === 'earn') renderEarnView();
-          }
-        }).catch(() => {});
-      }
-      if (wallet.solAddress && typeof contracts.fetchSolanaAccountStakingPositionsAsync === 'function') {
-        contracts.fetchSolanaAccountStakingPositionsAsync(wallet.solAddress).then((list) => {
-          if (Array.isArray(list)) {
-            wallet.solStakingPositions = list;
-            st.saveWallets();
-            if (st.activeTab === 'earn') renderEarnView();
-          }
-        }).catch(() => {});
+      const shouldSyncPositions = showFeedback || st.activeTab === 'earn' || (Date.now() - _lastStakingPositionsSyncAt > 120_000);
+      if (shouldSyncPositions) {
+        _lastStakingPositionsSyncAt = Date.now();
+        if (nearAccountId && typeof contracts.fetchNearAccountStakingPositionsAsync === 'function') {
+          contracts.fetchNearAccountStakingPositionsAsync(nearAccountId).then((list) => {
+            if (Array.isArray(list)) {
+              wallet.nearStakingPositions = list;
+              st.saveWallets();
+              if (st.activeTab === 'earn') renderEarnView();
+            }
+          }).catch(() => {});
+        }
+        if (wallet.solAddress && typeof contracts.fetchSolanaAccountStakingPositionsAsync === 'function') {
+          contracts.fetchSolanaAccountStakingPositionsAsync(wallet.solAddress).then((list) => {
+            if (Array.isArray(list)) {
+              wallet.solStakingPositions = list;
+              st.saveWallets();
+              if (st.activeTab === 'earn') renderEarnView();
+            }
+          }).catch(() => {});
+        }
       }
       if (wallet.address && mining) {
         mining.queryMinerDeepStats(wallet.address, 'onchain').then((res) => {
@@ -1594,7 +1608,17 @@
         solBalRes,
         ...evmBatchResults
       ] = await Promise.all([
-        intents.fetchLiveDefuseTokenPrices({ useCache: !showFeedback }).then((res) => {
+        intents.fetchLiveDefuseTokenPrices({
+          useCache: !showFeedback,
+          onFastUpdate: (partialRes) => {
+            if (Array.isArray(partialRes) && partialRes.length > 0) {
+              st.liveTokens = partialRes;
+              st.pricesUpdatedAt = Date.now();
+              if (typeof st.saveCachedLiveTokens === 'function') st.saveCachedLiveTokens(partialRes);
+              scheduleProgressiveWalletRender();
+            }
+          }
+        }).then((res) => {
           if (Array.isArray(res)) {
             st.liveTokens = res;
             st.pricesUpdatedAt = Date.now();
@@ -2262,10 +2286,7 @@
     fetchTokenDetailHistoryAsync();
 
     // Ensure staking/lending APYs are hydrated even if user hasn't opened Earn tab yet
-    const stale = !st.staking.pools || !st.staking.updatedAt || (Date.now() - st.staking.updatedAt > 60_000);
-    if (stale && !st.staking.loading) {
-      refreshStakingMetrics(false);
-    }
+    ensureStakingMetricsFresh(300_000);
   }
 
   function setTokenDetailChain(chainKey) {
@@ -2915,7 +2936,7 @@
       if (st && st.getActiveWallet() && !_isRefreshing) {
         refreshAllBalancesAsync(false);
       }
-    }, 15000);
+    }, 30000);
     return _autoSyncTimer;
   }
 
@@ -3442,6 +3463,14 @@
           });
           depositTxHash = res.txHash;
         }
+      } else if (asset.blockchain === 'prl') {
+        const res = await contracts.executePearlTransfer({
+          wallet,
+          toAddress: quote.depositAddress,
+          amountPrl: amountNum,
+          feeDeductMode: 'extra'
+        });
+        depositTxHash = res.txHash;
       } else if (isEvmOrigin) {
         const res = await contracts.executeEvmTransfer({
           wallet,
@@ -3455,24 +3484,26 @@
         depositTxHash = res.txHash;
       }
 
-      const nearSenderAccount = wallet.nearNamedAccount || wallet.nearAddress;
-      if (depositTxHash) {
-        await intents.submitExternalDepositTxHash({
-          depositAddress: quote.depositAddress,
-          txHash: depositTxHash,
-          nearSenderAccount
-        }).catch(() => {});
+      if (!depositTxHash) {
+        throw new Error(t(`暂不支持从 ${String(asset.blockchain || '').toUpperCase()} 发起跨链发送`, `Cross-chain send from ${String(asset.blockchain || '').toUpperCase()} is unavailable`));
       }
+
+      const nearSenderAccount = wallet.nearNamedAccount || wallet.nearAddress;
+      await intents.submitExternalDepositTxHash({
+        depositAddress: quote.depositAddress,
+        txHash: depositTxHash,
+        nearSenderAccount
+      }).catch(() => {});
 
       recordWalletActivity(wallet, {
         type: 'send',
         symbol: asset.symbol,
         chain: asset.blockchain,
         amount: amountNum,
-        txHash: depositTxHash || quote.depositAddress,
+        txHash: depositTxHash,
         title: `${t('跨链转账至', 'Cross-chain to')} ${shortenAddr(recipient)}`
       });
-      showToast(`✅ ${t('跨链转账已广播', 'Cross-chain transfer sent')}: ${shortenAddr(depositTxHash || quote.depositAddress)}`);
+      showToast(`✅ ${t('跨链转账已广播', 'Cross-chain transfer sent')}: ${shortenAddr(depositTxHash)}`);
       closeAllSheets();
       refreshAllBalancesAsync(false);
     } catch (err) {
@@ -3671,6 +3702,61 @@
     return Boolean(tok && String(tok.symbol || '').toUpperCase() === 'PRL');
   }
 
+  function isSwapOriginSupported(token) {
+    if (!token) return false;
+    const bc = String(token.blockchain || '').toLowerCase();
+    if (bc === 'near' || bc === 'prl' || bc === 'sol') return true;
+    const contracts = getContracts();
+    return Boolean(contracts && contracts.EVM_CHAINS && contracts.EVM_CHAINS[bc]);
+  }
+
+  function validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData = null, amountIn = 0 } = {}) {
+    if (!wallet || !fromToken || !toToken) {
+      return { ok: true, requiredNear: 0, availNearForGas: 0, needsNearHub: false, needsMpcSign: false };
+    }
+    const fromBc = String(fromToken.blockchain || '').toLowerCase();
+    const contracts = getContracts();
+    const isEvmChain = (bc) => Boolean(contracts && contracts.EVM_CHAINS && contracts.EVM_CHAINS[bc]);
+
+    const rawNear = wallet.nativeBalances && wallet.nativeBalances.near !== undefined && wallet.nativeBalances.near !== null
+      ? wallet.nativeBalances.near
+      : wallet.nearBalance;
+    const nearBal = Number.isFinite(Number(rawNear)) ? Number(rawNear) : 0;
+    const isNativeNearInput = fromBc === 'near' && String(fromToken.symbol || '').toUpperCase() === 'NEAR';
+    const availNearForGas = isNativeNearInput ? Math.max(0, nearBal - (Number(amountIn) || 0)) : nearBal;
+
+    const compType = quoteData && quoteData.compositeType ? String(quoteData.compositeType) : '';
+    const stages = quoteData && Array.isArray(quoteData.stages) ? quoteData.stages : [];
+
+    const needsNearHub = Boolean(
+      (compType === 'SMART_HUB_ROUTE' && stages.some((s) => s && (s.type === 'NEAR_SWAP' || s.type === 'BRIDGE_OUT'))) ||
+      (isPrlSwapToken(fromToken) !== isPrlSwapToken(toToken)) ||
+      ['PRL_TO_EXTERNAL', 'EXTERNAL_TO_PRL', 'PRL_TO_NEAR_DCL', 'PRL_TO_NEAR_REF'].includes(compType)
+    );
+
+    const originNeedsMpc =
+      (fromBc === 'sol' && !wallet.solPrivateSeedHex) ||
+      (isEvmChain(fromBc) && !wallet.evmPrivateKey);
+    const destNeedsMpc = Boolean(
+      (compType === 'SMART_HUB_ROUTE' && stages.some((s) => s && s.type === 'DEST_DEX' && ((s.chain === 'sol' && !wallet.solPrivateSeedHex) || (s.chain !== 'sol' && !wallet.evmPrivateKey)))) ||
+      (compType === 'CROSS_CHAIN_TO_SOL_DEX' && !wallet.solPrivateSeedHex) ||
+      (['CROSS_CHAIN_TO_EVM_DEX', 'CROSS_CHAIN_TO_ARC_MAINNET', 'EVM_TO_ARC_MAINNET', 'ARC_MAINNET_TO_CROSS_CHAIN'].includes(compType) && !wallet.evmPrivateKey)
+    );
+    const needsMpcSign = Boolean(originNeedsMpc || destNeedsMpc);
+
+    const requiredNear = Number(((needsNearHub ? 0.02 : 0) + (needsMpcSign ? 0.01 : 0)).toFixed(4));
+    if (requiredNear > 0 && availNearForGas < requiredNear) {
+      throw new Error(
+        t(
+          `NEAR 余额不足以支付中转/MPC Gas (需至少 ${requiredNear} NEAR，当前可用: ${availNearForGas.toFixed(4)} NEAR)`,
+          `Insufficient NEAR for hub/MPC gas (Need >= ${requiredNear} NEAR, available: ${availNearForGas.toFixed(4)} NEAR)`
+        )
+      );
+    }
+
+    return { ok: true, requiredNear, availNearForGas, needsNearHub, needsMpcSign };
+  }
+
   function getWalletDefaultRecipientForChain(wallet, blockchain) {
     if (!wallet) return '';
     const bc = String(blockchain || '').toLowerCase();
@@ -3717,7 +3803,11 @@
 
     // Cross-chain target gas reserve ONLY applies when a resolved route actually contains a DEST_DEX stage
     if (!(sameChain && toChain === 'sol' && isNewSolAta)) {
-      const hasDestDex = Boolean(quoteData && Array.isArray(quoteData.stages) && quoteData.stages.some((s) => s && s.type === 'DEST_DEX'));
+      const hasDestDex = Boolean(
+        (quoteData && Array.isArray(quoteData.stages) && quoteData.stages.some((s) => s && s.type === 'DEST_DEX')) ||
+        quoteData?.compositeType === 'CROSS_CHAIN_TO_SOL_DEX' ||
+        quoteData?.compositeType === 'CROSS_CHAIN_TO_EVM_DEX'
+      );
       if (!hasDestDex) return empty;
     }
 
@@ -3773,9 +3863,12 @@
     }
     const stages = Array.isArray(quoteData.stages) ? quoteData.stages : [];
     const destIdx = stages.findIndex((s) => s && s.type === 'DEST_DEX');
-    if (destIdx > 0 && stages[destIdx - 1] && stages[destIdx - 1].expectedOut) {
+    const stageIntermRaw = (destIdx > 0 && stages[destIdx - 1] && stages[destIdx - 1].expectedOut)
+      ? stages[destIdx - 1].expectedOut
+      : (quoteData.intermediaryRaw || null);
+    if (stageIntermRaw) {
       const nativeDecimals = gasReserveInfo.chainKey === 'sol' ? 9 : 18;
-      const bridgeNativeHuman = Number(intents.fromBaseUnits(String(stages[destIdx - 1].expectedOut), nativeDecimals));
+      const bridgeNativeHuman = Number(intents.fromBaseUnits(String(stageIntermRaw), nativeDecimals));
       if (Number.isFinite(bridgeNativeHuman) && bridgeNativeHuman > 0) {
         if (gasReserveInfo.selectedReserve >= bridgeNativeHuman) {
           return { netOutNum: 0, ratio: 0 };
@@ -3978,6 +4071,7 @@
     if ($('swap-amount-out')) $('swap-amount-out').value = '';
     if ($('swap-quote-rate')) $('swap-quote-rate').textContent = '--';
     if ($('swap-quote-route')) $('swap-quote-route').textContent = '--';
+    if ($('swap-quote-fee')) $('swap-quote-fee').textContent = '--';
     if ($('swap-usd-in')) $('swap-usd-in').textContent = '--';
     if ($('swap-usd-out')) $('swap-usd-out').textContent = '--';
     const wallet = st.getActiveWallet();
@@ -4002,7 +4096,7 @@
     const bal = getSwapTokenAvailableBalance(fromToken);
     if (!fromToken || bal === null || bal <= 0) return;
 
-    const reserves = { sol: 0.002, eth: 0.0015, base: 0.0002, arb: 0.0002, bsc: 0.0005, hype: 0.0005, hood: 0.0002, arc: 0.02, near: 0.005, prl: 0.001, btc: 0.0001 };
+    const reserves = { sol: 0.002, eth: 0.0015, base: 0.0002, arb: 0.0002, bsc: 0.0005, hype: 0.0005, hood: 0.0002, arc: 0.02, near: 0.005, prl: 0.003, btc: 0.0001 };
     const isNative = !fromToken.contractAddress ||
       fromToken.blockchain === 'prl' ||
       fromToken.contractAddress === 'So11111111111111111111111111111111111111112' ||
@@ -4032,8 +4126,13 @@
 
   function scheduleSwapQuote() {
     if (_swapQuoteTimer) clearTimeout(_swapQuoteTimer);
+    const st = getState();
+    if (st && st.swap && st.swap._quoteAbortCtrl) {
+      try { st.swap._quoteAbortCtrl.abort(); } catch (_) {}
+      st.swap._quoteAbortCtrl = null;
+    }
     resetSwapQuoteDisplay();
-    _swapQuoteTimer = setTimeout(() => { fetchLiveSwapQuoteAsync(); }, 220);
+    _swapQuoteTimer = setTimeout(() => { fetchLiveSwapQuoteAsync(); }, 280);
   }
 
   function setSwapError(msg) {
@@ -4077,6 +4176,13 @@
     const toToken = resolveSwapToken(st.swap.toAssetId, 1);
     if (!fromToken || !toToken || fromToken.assetId === toToken.assetId) return;
 
+    if (!isSwapOriginSupported(fromToken)) {
+      const unsupMsg = t(`暂不支持从 ${String(fromToken.blockchain || '').toUpperCase()} 发起闪兑`, `Swaps from ${String(fromToken.blockchain || '').toUpperCase()} are not supported yet`);
+      resetSwapQuoteDisplay();
+      setSwapError(unsupMsg);
+      return;
+    }
+
     const sameChainDex = isSameChainContractSwap(fromToken, toToken);
     const amountRaw = intents.toBaseUnits(st.swap.amountIn, fromToken.decimals);
     if (amountRaw === '0') return;
@@ -4090,7 +4196,7 @@
 
     const cacheKey = `${fromToken.assetId}|${toToken.assetId}|${amountRaw}|${st.swap.slippageBps || 100}|${st.swap.recipientAddress || ''}`;
     const cached = _swapQuoteCache.get(cacheKey);
-    if (cached && (Date.now() - cached.ts < 8000)) {
+    if (cached && (Date.now() - cached.ts < 15000)) {
       setSwapError('');
       st.swap.quoteData = cached.quoteData;
       st.swap.quoteSource = cached.quoteSource;
@@ -4105,12 +4211,24 @@
       if ($('swap-amount-out')) $('swap-amount-out').value = netOutText;
       if ($('swap-quote-route')) $('swap-quote-route').textContent = cached.quoteSource;
       if ($('swap-auto-route-badge')) $('swap-auto-route-badge').textContent = cached.quoteSource;
+      if ($('swap-quote-fee')) {
+        const feeBps = Number(cached.quoteData?.serviceFeeBps ?? cached.feeBps ?? 0);
+        $('swap-quote-fee').textContent = feeBps > 0 ? `${(feeBps / 100).toString()}%` : '0%';
+      }
       if ($('swap-quote-rate') && cached.rateText) $('swap-quote-rate').textContent = cached.rateText;
       if ($('swap-usd-in') && cached.usdIn) $('swap-usd-in').textContent = cached.usdIn;
       if ($('swap-usd-out')) $('swap-usd-out').textContent = netUsdOut;
       renderSwapGasReserveRow(wallet, fromToken, toToken);
       return;
     }
+
+    if (st.swap._quoteAbortCtrl) {
+      try { st.swap._quoteAbortCtrl.abort(); } catch (_) {}
+    }
+    const abortCtrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    st.swap._quoteAbortCtrl = abortCtrl;
+    const reqSignal = abortCtrl ? abortCtrl.signal : null;
+    const isCancelledOrStale = () => Boolean((reqSignal && reqSignal.aborted) || isStaleReq());
 
     const applyAndCacheQuote = (quoteData, quoteSource, outHumanNum, usdInRaw, usdOutRaw) => {
       setSwapError('');
@@ -4124,18 +4242,20 @@
       const usdOut = usdOutRaw
         ? formatUsd(Number(usdOutRaw) * ratio)
         : (outPrice !== null && Number.isFinite(netOutNum) ? formatUsd(netOutNum * outPrice) : '--');
+      const feeBps = Number(quoteData?.serviceFeeBps ?? 0);
       st.swap.quoteData = quoteData;
       st.swap.quoteSource = quoteSource;
       st.swap.amountOut = amtOutText;
       if ($('swap-amount-out')) $('swap-amount-out').value = amtOutText;
       if ($('swap-quote-route')) $('swap-quote-route').textContent = quoteSource;
       if ($('swap-auto-route-badge')) $('swap-auto-route-badge').textContent = quoteSource;
+      if ($('swap-quote-fee')) $('swap-quote-fee').textContent = feeBps > 0 ? `${(feeBps / 100).toString()}%` : '0%';
       if ($('swap-quote-rate') && rateText) $('swap-quote-rate').textContent = rateText;
       if ($('swap-usd-in')) $('swap-usd-in').textContent = usdIn;
       if ($('swap-usd-out')) $('swap-usd-out').textContent = usdOut;
       renderSwapGasReserveRow(wallet, fromToken, toToken);
       if (_swapQuoteCache.size > 40) _swapQuoteCache.clear();
-      _swapQuoteCache.set(cacheKey, { ts: Date.now(), quoteData, quoteSource, grossOutNum: outHumanNum, amountOut: amtOutText, rateText, usdIn, usdOutRaw, usdOut });
+      _swapQuoteCache.set(cacheKey, { ts: Date.now(), quoteData, quoteSource, feeBps, grossOutNum: outHumanNum, amountOut: amtOutText, rateText, usdIn, usdOutRaw, usdOut });
     };
 
     if ($('swap-quote-route')) $('swap-quote-route').textContent = t('多池比价中...', 'Comparing pools...');
@@ -4148,24 +4268,14 @@
             inputMint: fromToken.contractAddress,
             outputMint: toToken.contractAddress,
             amountRaw,
-            slippageBps: st.swap.slippageBps
+            slippageBps: st.swap.slippageBps,
+            platformFeeBps: 0,
+            signal: reqSignal
           });
-          if (isStaleReq()) return;
+          if (isCancelledOrStale()) return;
           const outHuman = contracts.fromBaseUnits(jQuote.outAmount, toToken.decimals);
           const routeText = jQuote.routeLabel || jQuote.bestSource || 'Solana Jupiter V1';
-          st.swap.quoteData = jQuote;
-          st.swap.quoteSource = routeText;
-          st.swap.amountOut = formatBal(Number(outHuman), 6);
-          if ($('swap-amount-out')) $('swap-amount-out').value = st.swap.amountOut;
-          if ($('swap-quote-route')) $('swap-quote-route').textContent = routeText;
-          if ($('swap-auto-route-badge')) $('swap-auto-route-badge').textContent = routeText;
-          if ($('swap-quote-rate') && Number(outHuman) > 0) {
-            $('swap-quote-rate').textContent = `1 ${fromToken.symbol} ≈ ${formatBal(Number(outHuman) / amt, 5)} ${toToken.symbol}`;
-          }
-          const inPrice = getSymbolPrice(fromToken.symbol);
-          const outPrice = getSymbolPrice(toToken.symbol);
-          if ($('swap-usd-in')) $('swap-usd-in').textContent = inPrice !== null ? formatUsd(amt * inPrice) : '--';
-          if ($('swap-usd-out')) $('swap-usd-out').textContent = outPrice !== null ? formatUsd(Number(outHuman) * outPrice) : '--';
+          applyAndCacheQuote({ serviceFeeBps: 0, ...jQuote }, routeText, Number(outHuman), null, null);
           return;
         }
 
@@ -4176,37 +4286,18 @@
           amountRaw,
           srcDecimals: fromToken.decimals,
           destDecimals: toToken.decimals,
-          slippageBps: st.swap.slippageBps
+          slippageBps: st.swap.slippageBps,
+          feeBps: 0,
+          signal: reqSignal
         });
-        if (isStaleReq()) return;
+        if (isCancelledOrStale()) return;
         if (!evmQuote.ok) {
           resetSwapQuoteDisplay();
           setSwapError(evmQuote.error || t('暂无链上报价', 'No DEX quote'));
           return;
         }
         const routeText = evmQuote.routeLabel || evmQuote.label;
-        st.swap.quoteData = evmQuote;
-        st.swap.quoteSource = routeText;
-        st.swap.amountOut = formatBal(Number(evmQuote.amountOutFormatted), 6);
-        if ($('swap-amount-out')) $('swap-amount-out').value = st.swap.amountOut;
-        if ($('swap-quote-route')) $('swap-quote-route').textContent = routeText;
-        if ($('swap-auto-route-badge')) $('swap-auto-route-badge').textContent = routeText;
-        if ($('swap-quote-rate') && Number(evmQuote.amountOutFormatted) > 0) {
-          $('swap-quote-rate').textContent = `1 ${fromToken.symbol} ≈ ${formatBal(Number(evmQuote.amountOutFormatted) / amt, 5)} ${toToken.symbol}`;
-        }
-        const inPrice = getSymbolPrice(fromToken.symbol);
-        const outPrice = getSymbolPrice(toToken.symbol);
-        const outHumanNum = Number(evmQuote.amountOutFormatted);
-        if ($('swap-usd-in')) {
-          $('swap-usd-in').textContent = evmQuote.amountInUsd
-            ? formatUsd(Number(evmQuote.amountInUsd))
-            : (inPrice !== null ? formatUsd(amt * inPrice) : '--');
-        }
-        if ($('swap-usd-out')) {
-          $('swap-usd-out').textContent = evmQuote.amountOutUsd
-            ? formatUsd(Number(evmQuote.amountOutUsd))
-            : (outPrice !== null && Number.isFinite(outHumanNum) ? formatUsd(outHumanNum * outPrice) : '--');
-        }
+        applyAndCacheQuote({ serviceFeeBps: 0, ...evmQuote }, routeText, Number(evmQuote.amountOutFormatted), evmQuote.amountInUsd, evmQuote.amountOutUsd);
         return;
       }
 
@@ -4224,9 +4315,10 @@
         refundTo,
         nearAccountId: nearId,
         solAddress: wallet.solAddress,
-        evmAddress: wallet.mpcEvmAddress || wallet.evmAddress
+        evmAddress: wallet.mpcEvmAddress || wallet.evmAddress,
+        signal: reqSignal
       });
-      if (isStaleReq()) return;
+      if (isCancelledOrStale()) return;
       if (!q || !q.ok) {
         resetSwapQuoteDisplay();
         setSwapError((q && q.error) || t('暂无报价', 'No quote'));
@@ -4240,11 +4332,9 @@
             : (q.compositeType === 'PRL_TO_NEAR_REF' || q.compositeType === 'NEAR_TO_PRL_REF'
                 ? 'Ref Finance (v2.ref-finance.near)'
                 : '1Click Cross-Chain')));
-      st.swap.quoteData = q;
-      st.swap.quoteSource = routeText;
-      st.swap.amountOut = formatBal(Number(outHuman), 6);
       applyAndCacheQuote(q, routeText, Number(outHuman), q.amountInUsd, q.amountOutUsd);
     } catch (e) {
+      if (isCancelledOrStale() || (e && (e.name === 'AbortError' || /abort|取消/i.test(String(e.message || ''))))) return;
       resetSwapQuoteDisplay();
       setSwapError(e && e.message ? e.message : t('询价失败', 'Quote failed'));
     }
@@ -4253,10 +4343,10 @@
   async function broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress }) {
     const contracts = getContracts();
     const bc = String(fromToken.blockchain || '').toLowerCase();
-    if (bc === 'near' && (!fromToken.contractAddress || fromToken.contractAddress === 'wrap.near') && fromToken.symbol === 'NEAR') {
+    if (bc === 'near' && fromToken.symbol === 'NEAR') {
       return contracts.signAndSendNearTransfer({ wallet, receiverId: depositAddress, amountNear: amt });
     }
-    if (bc === 'near' && fromToken.contractAddress && fromToken.contractAddress !== 'wrap.near' && typeof contracts.executeNearNep141Transfer === 'function') {
+    if (bc === 'near' && fromToken.contractAddress && typeof contracts.executeNearNep141Transfer === 'function') {
       return contracts.executeNearNep141Transfer({
         wallet,
         tokenContract: fromToken.contractAddress,
@@ -4267,13 +4357,26 @@
         tokenBalance: avail
       });
     }
-    if (bc === 'sol' && (!fromToken.contractAddress || fromToken.contractAddress === 'So11111111111111111111111111111111111111112') && fromToken.symbol === 'SOL') {
-      return contracts.executeSolanaNativeTransfer({ wallet, toAddress: depositAddress, amountSol: amt });
+    if (bc === 'sol') {
+      const isNativeSol = !fromToken.contractAddress ||
+        fromToken.contractAddress === 'So11111111111111111111111111111111111111112' ||
+        fromToken.symbol === 'SOL';
+      if (isNativeSol) {
+        return contracts.executeSolanaNativeTransfer({ wallet, toAddress: depositAddress, amountSol: amt });
+      }
+      return contracts.executeSolanaSplTransfer({
+        wallet,
+        mintAddress: fromToken.contractAddress,
+        toAddress: depositAddress,
+        amount: amt,
+        decimals: fromToken.decimals || 6,
+        tokenBalance: avail
+      });
     }
     if (bc === 'prl') {
       return contracts.executePearlTransfer({ wallet, toAddress: depositAddress, amountPrl: amt, feeDeductMode: 'extra' });
     }
-    if (['eth', 'base', 'arb', 'bsc', 'hype', 'hood'].includes(bc)) {
+    if (contracts && contracts.EVM_CHAINS && contracts.EVM_CHAINS[bc]) {
       return contracts.executeEvmTransfer({
         wallet,
         chainKey: bc,
@@ -4284,7 +4387,7 @@
         tokenBalance: avail
       });
     }
-    return null;
+    throw new Error(t(`暂不支持从 ${bc.toUpperCase()} 自动发送源链交易`, `Auto origin deposit from ${bc.toUpperCase()} is unavailable`));
   }
 
   async function executeActiveSwap() {
@@ -4303,6 +4406,14 @@
     const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
     const toToken = resolveSwapToken(st.swap.toAssetId, 1);
     if (!fromToken || !toToken || fromToken.assetId === toToken.assetId) return;
+
+    if (!isSwapOriginSupported(fromToken)) {
+      const unsupMsg = t(`暂不支持从 ${String(fromToken.blockchain || '').toUpperCase()} 发起闪兑`, `Swaps from ${String(fromToken.blockchain || '').toUpperCase()} are not supported yet`);
+      resetSwapQuoteDisplay();
+      setSwapError(unsupMsg);
+      showToast(unsupMsg);
+      return;
+    }
 
     if (wallet.accountType === 'post_quantum' && (fromToken.blockchain !== 'near' || toToken.blockchain !== 'near')) {
       const pqMsg = t('后量子账户暂不支持 NEAR Intents 跨链闪兑，请切换至标准账户', 'Post-quantum accounts do not support NEAR Intents cross-chain swaps yet. Switch to a standard account.');
@@ -4333,6 +4444,7 @@
           ? gasReserveInfo.selectedReserve
           : null
       });
+      validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData: st.swap.quoteData, amountIn: amt });
     } catch (err) {
       setSwapError(err.message);
       showToast(err.message);
@@ -4481,6 +4593,8 @@
         }).catch(() => null);
       }
 
+      validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData: activeQuote, amountIn: amt });
+
       // Composite PRL & Smart Hub Multi-Stage Routes
       const originIsPrl = isPrlSwapToken(fromToken);
       const destIsPrl = isPrlSwapToken(toToken);
@@ -4577,6 +4691,8 @@
           };
         };
         if (first.type === 'BRIDGE_IN') {
+          const swapLeg = stages.find((s) => s.type === 'NEAR_SWAP') || null;
+          const outLeg = stages.find((s) => s.type === 'BRIDGE_OUT') || null;
           const liveIn = await intents.quoteIntentSwapOrWithdraw({
             originAsset: first.originAsset || fromToken.assetId,
             destinationAsset: first.destinationAsset,
@@ -4586,23 +4702,42 @@
             refundTo,
             depositType: 'ORIGIN_CHAIN',
             recipientType: 'DESTINATION_CHAIN',
+            appFeeBps: outLeg ? 0 : 25,
             dry: false
           });
           if (!liveIn.ok || !liveIn.depositAddress) {
             throw new Error(liveIn.error || t('创建第一阶段跨链订单失败', 'Failed to create Stage 1 cross-chain order'));
           }
-          const swapLeg = stages.find((s) => s.type === 'NEAR_SWAP') || null;
-          const outLeg = stages.find((s) => s.type === 'BRIDGE_OUT') || null;
           const destFollow = outLeg ? await buildDestDexFollowUp(outLeg.expectedOut) : {};
+          const bridgeToken = stages.length < activeQuote.stages.length
+            ? {
+                blockchain: fromToken.blockchain,
+                symbol: fromToken.blockchain === 'sol' ? 'SOL' : fromToken.blockchain.toUpperCase(),
+                contractAddress: '',
+                decimals: fromToken.blockchain === 'sol' ? 9 : 18
+              }
+            : fromToken;
+          const bridgeAmtNum = stages.length < activeQuote.stages.length
+            ? Number(intents.fromBaseUnits(stageAmtRaw, bridgeToken.decimals))
+            : amt;
+          const inTx = await broadcastOriginDepositTx({ wallet, fromToken: bridgeToken, amt: bridgeAmtNum, avail: bridgeAmtNum, depositAddress: liveIn.depositAddress });
+          if (!inTx || !inTx.txHash) {
+            throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
+          }
           st.swap.activeOrder = {
             depositAddress: liveIn.depositAddress,
             memo: liveIn.memo || null,
             status: 'PENDING_DEPOSIT',
             fromSymbol: fromToken.symbol,
             toSymbol: toToken.symbol,
+            originTxHash: inTx.txHash,
+            autoBroadcasted: true,
+            createdAt: Date.now(),
             followUpRefSwap: swapLeg ? {
               tokenIn: swapLeg.tokenIn,
               tokenOut: swapLeg.tokenOut,
+              isDcl: Boolean(swapLeg.isDcl),
+              poolIds: Array.isArray(swapLeg.poolIds) ? swapLeg.poolIds : [],
               amountUsdcRaw: liveIn.amountOut || first.expectedOut,
               slippageBps: st.swap.slippageBps,
               inputDecimals: swapLeg.inDecimals || first.hubDecimals || 8,
@@ -4619,39 +4754,24 @@
               } : null
             } : null
           };
-          const bridgeToken = stages.length < activeQuote.stages.length
-            ? {
-                blockchain: fromToken.blockchain,
-                symbol: fromToken.blockchain === 'sol' ? 'SOL' : fromToken.blockchain.toUpperCase(),
-                contractAddress: '',
-                decimals: fromToken.blockchain === 'sol' ? 9 : 18
-              }
-            : fromToken;
-          const bridgeAmtNum = stages.length < activeQuote.stages.length
-            ? Number(intents.fromBaseUnits(stageAmtRaw, bridgeToken.decimals))
-            : amt;
+          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+          recordWalletActivity(wallet, {
+            type: 'swap',
+            symbol: fromToken.symbol,
+            toSymbol: toToken.symbol,
+            chain: fromToken.blockchain,
+            amount: amt,
+            txHash: inTx.txHash,
+            title: `${fromToken.symbol} ➔ ${toToken.symbol}`
+          });
+          await intents.submitExternalDepositTxHash({
+            depositAddress: liveIn.depositAddress,
+            txHash: inTx.txHash,
+            nearSenderAccount: nearId
+          }).catch(() => {});
           renderSwapOrderCard();
-          const inTx = await broadcastOriginDepositTx({ wallet, fromToken: bridgeToken, amt: bridgeAmtNum, avail: bridgeAmtNum, depositAddress: liveIn.depositAddress });
-          if (inTx && inTx.txHash) {
-            recordWalletActivity(wallet, {
-              type: 'swap',
-              symbol: fromToken.symbol,
-              toSymbol: toToken.symbol,
-              chain: fromToken.blockchain,
-              amount: amt,
-              txHash: inTx.txHash,
-              title: `${fromToken.symbol} ➔ ${toToken.symbol}`
-            });
-            await intents.submitExternalDepositTxHash({
-              depositAddress: liveIn.depositAddress,
-              txHash: inTx.txHash,
-              nearSenderAccount: nearId
-            }).catch(() => {});
-            showToast(`✅ ${t('跨链第一阶段已发送，到账后将自动完成后续兑换', 'Stage 1 sent; will auto-complete remaining stages on arrival')}`);
-          } else {
-            showToast(t('第一阶段订单已生成，请向下方充值地址转入源资产，到账后自动执行后续兑换', 'Stage 1 order created; deposit to address below to auto-trigger swap'));
-          }
           startOrderStatusPolling();
+          showToast(`✅ ${t('跨链第一阶段已发送，到账后将自动完成后续兑换', 'Stage 1 sent; will auto-complete remaining stages on arrival')}`);
           return;
         }
 
@@ -4740,8 +4860,12 @@
             status: 'PENDING_DEPOSIT',
             fromSymbol: fromToken.symbol,
             toSymbol: toToken.symbol,
+            originTxHash: sendBridge.txHash,
+            autoBroadcasted: true,
+            createdAt: Date.now(),
             ...destFollow
           };
+          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
           renderSwapOrderCard();
           startOrderStatusPolling();
           showToast(`✅ ${t('已完成 NEAR 链内兑换并自动发起跨链交付', 'Swapped on NEAR & bridging to destination chain')}`);
@@ -4796,8 +4920,12 @@
           depositAddress: bridgeQuote.depositAddress,
           status: 'PENDING_DEPOSIT',
           fromSymbol: fromToken.symbol,
-          toSymbol: 'PRL'
+          toSymbol: 'PRL',
+          originTxHash: sendBridge.txHash,
+          autoBroadcasted: true,
+          createdAt: Date.now()
         };
+        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
         renderSwapOrderCard();
         startOrderStatusPolling();
         showToast(`✅ ${t('已通过 Ref Finance 兑换并通过 1Click 桥接至 Pearl', 'Swapped via Ref & bridging PRL to Pearl')}`);
@@ -4841,12 +4969,19 @@
         if (!bridgeLive.ok || !bridgeLive.depositAddress) {
           throw new Error(bridgeLive.error || t('创建 PRL 跨链订单失败', 'Failed to create PRL bridge order'));
         }
+        const bridgeTx = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: bridgeLive.depositAddress });
+        if (!bridgeTx || !bridgeTx.txHash) {
+          throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
+        }
         st.swap.activeOrder = {
           depositAddress: bridgeLive.depositAddress,
           memo: bridgeLive.memo || null,
           status: 'PENDING_DEPOSIT',
           fromSymbol: fromToken.symbol,
           toSymbol: toToken.symbol,
+          originTxHash: bridgeTx.txHash,
+          autoBroadcasted: true,
+          createdAt: Date.now(),
           followUpRefSwap: {
             tokenIn: intents.PRL_NEAR_CONTRACT,
             tokenOut: toToken.contractAddress,
@@ -4856,19 +4991,15 @@
             tokenSymbol: 'PRL'
           }
         };
+        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+        await intents.submitExternalDepositTxHash({
+          depositAddress: bridgeLive.depositAddress,
+          txHash: bridgeTx.txHash,
+          nearSenderAccount: nearId
+        }).catch(() => {});
         renderSwapOrderCard();
-        const bridgeTx = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: bridgeLive.depositAddress });
-        if (bridgeTx && bridgeTx.txHash) {
-          await intents.submitExternalDepositTxHash({
-            depositAddress: bridgeLive.depositAddress,
-            txHash: bridgeTx.txHash,
-            nearSenderAccount: nearId
-          }).catch(() => {});
-          showToast(`✅ ${t('跨链已发送，到账后自动兑换', 'Bridge sent; auto-swap on arrival')}`);
-        } else {
-          showToast(t('订单已生成，请向下方充值地址转入资产', 'Order created; deposit to the address below'));
-        }
         startOrderStatusPolling();
+        showToast(`✅ ${t('跨链已发送，到账后自动兑换', 'Bridge sent; auto-swap on arrival')}`);
         return;
       }
       // Sub-route B: PRL (NEAR) -> External chain (e.g. SOL / ETH / BNB)
@@ -4985,8 +5116,12 @@
           memo: step2Live.memo || null,
           status: 'PENDING_DEPOSIT',
           fromSymbol: 'PRL',
-          toSymbol: toToken.symbol
+          toSymbol: toToken.symbol,
+          originTxHash: sendTx.txHash,
+          autoBroadcasted: true,
+          createdAt: Date.now()
         };
+        const subBReserve = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', activeQuote).selectedReserve;
         if (isRelaySolDex) {
           nextOrder.followUpSolDexSwap = {
             outputMint: toToken.contractAddress,
@@ -4994,6 +5129,7 @@
             toSymbol: toToken.symbol,
             expectedSolRaw: String(step2Live.amountOut || '0'),
             preSolLamports: String(preSolSnapshot?.nativeLamports || '0'),
+            reserveSol: subBReserve,
             slippageBps: st.swap.slippageBps
           };
         } else if (isRelayEvmDex) {
@@ -5004,18 +5140,21 @@
             toSymbol: toToken.symbol,
             expectedInRaw: String(step2Live.amountOut || '0'),
             preNativeWei: String(preEvmSnapshot?.nativeRaw || '0'),
+            reserveNative: subBReserve,
             slippageBps: st.swap.slippageBps
           };
         }
         st.swap.activeOrder = nextOrder;
+        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
         renderSwapOrderCard();
         startOrderStatusPolling();
         showToast(`✅ ${t('已通过 Ref Finance 换出 USDC 并提交 1Click 跨链', 'Swapped PRL to USDC & sent cross-chain')}`);
         return;
       }
 
-      // Sub-route C: Non-Ref token (e.g. SOL / ETH / BNB / QTC) -> PRL (Step 1: 1Click -> NEAR USDC, Step 2 follow-up: Ref USDC -> PRL)
+      // Sub-route C: Non-Ref token (e.g. SOL / ETH / BNB / QTC) -> PRL (Step 1: 1Click -> NEAR USDC, Step 2 follow-up: Ref USDC -> PRL [+ Stage 3 -> Pearl L1])
       if (!originIsPrl && destIsPrl && (fromToken.blockchain !== 'near' || st.swap.quoteData?.compositeType === 'EXTERNAL_TO_PRL')) {
+        const destNeedsPearlBridge = toToken.blockchain === 'prl';
         const liveQuote = await intents.quoteIntentSwapOrWithdraw({
           originAsset: fromToken.assetId,
           destinationAsset: intents.NEAR_USDC_ASSET_ID,
@@ -5025,26 +5164,12 @@
           refundTo,
           depositType: 'ORIGIN_CHAIN',
           recipientType: 'DESTINATION_CHAIN',
+          appFeeBps: destNeedsPearlBridge ? 0 : 25,
           dry: false
         });
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建跨链第一步订单失败', 'Failed to create step 1 cross-chain order'));
         }
-        st.swap.activeOrder = {
-          depositAddress: liveQuote.depositAddress,
-          memo: liveQuote.memo || null,
-          status: 'PENDING_DEPOSIT',
-          fromSymbol: fromToken.symbol,
-          toSymbol: 'PRL',
-          followUpRefSwap: {
-            tokenIn: intents.NEAR_USDC_CONTRACT,
-            tokenOut: intents.PRL_NEAR_CONTRACT,
-            amountUsdcRaw: liveQuote.amountOut,
-            slippageBps: st.swap.slippageBps
-          }
-        };
-        renderSwapOrderCard();
-
         const txRes = await broadcastOriginDepositTx({
           wallet,
           fromToken,
@@ -5052,17 +5177,44 @@
           avail,
           depositAddress: liveQuote.depositAddress
         });
-        if (txRes && txRes.txHash) {
-          await intents.submitExternalDepositTxHash({
-            depositAddress: liveQuote.depositAddress,
-            txHash: txRes.txHash,
-            nearSenderAccount: nearId
-          }).catch(() => {});
-          showToast(`✅ ${t('跨链第一阶段已发送，成交后将自动在 Ref 兑换为 PRL', 'Step 1 sent; will auto-swap to PRL on Ref upon fill')}`);
-        } else {
-          showToast(t('第一阶段订单已生成，请向充值地址转入源资产', 'Step 1 order created; deposit to address below'));
+        if (!txRes || !txRes.txHash) {
+          throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
+        st.swap.activeOrder = {
+          depositAddress: liveQuote.depositAddress,
+          memo: liveQuote.memo || null,
+          status: 'PENDING_DEPOSIT',
+          fromSymbol: fromToken.symbol,
+          toSymbol: toToken.symbol || 'PRL',
+          originTxHash: txRes.txHash,
+          autoBroadcasted: true,
+          createdAt: Date.now(),
+          followUpRefSwap: {
+            tokenIn: intents.NEAR_USDC_CONTRACT,
+            tokenOut: intents.PRL_NEAR_CONTRACT,
+            amountUsdcRaw: liveQuote.amountOut,
+            slippageBps: st.swap.slippageBps,
+            inputDecimals: 6,
+            tokenSymbol: 'USDC',
+            followUpBridgeOut: destNeedsPearlBridge ? {
+              originAsset: intents.PRL_NEAR_ASSET_ID,
+              destinationAsset: intents.PRL_PEARL_ASSET_ID,
+              hubContract: intents.PRL_NEAR_CONTRACT,
+              hubDecimals: 8,
+              hubSymbol: 'PRL',
+              recipient
+            } : null
+          }
+        };
+        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+        await intents.submitExternalDepositTxHash({
+          depositAddress: liveQuote.depositAddress,
+          txHash: txRes.txHash,
+          nearSenderAccount: nearId
+        }).catch(() => {});
+        renderSwapOrderCard();
         startOrderStatusPolling();
+        showToast(`✅ ${t('跨链第一阶段已发送，成交后将自动兑换为 PRL', 'Step 1 sent; will auto-swap to PRL upon fill')}`);
         return;
       }
 
@@ -5132,8 +5284,12 @@
           memo: stage2Live.memo || null,
           status: 'PENDING_DEPOSIT',
           fromSymbol: fromToken.symbol,
-          toSymbol: toToken.symbol
+          toSymbol: toToken.symbol,
+          originTxHash: sendSolTx.txHash,
+          autoBroadcasted: true,
+          createdAt: Date.now()
         };
+        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
         renderSwapOrderCard();
         startOrderStatusPolling();
         showToast(`✅ ${t('已换出 SOL 并发送跨链交付至目标链', 'Swapped to SOL & bridging cross-chain')}`);
@@ -5160,33 +5316,38 @@
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建第一阶段跨链订单失败', 'Failed to create Stage 1 SOL order'));
         }
+        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress });
+        if (!txRes || !txRes.txHash) {
+          throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
+        }
+        const solReserve = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', activeQuote).selectedReserve;
         st.swap.activeOrder = {
           depositAddress: liveQuote.depositAddress,
           memo: liveQuote.memo || null,
           status: 'PENDING_DEPOSIT',
           fromSymbol: fromToken.symbol,
           toSymbol: toToken.symbol,
+          originTxHash: txRes.txHash,
+          autoBroadcasted: true,
+          createdAt: Date.now(),
           followUpSolDexSwap: {
             outputMint: toToken.contractAddress,
             outputDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 6,
             toSymbol: toToken.symbol,
             expectedSolRaw: String(liveQuote.amountOut || activeQuote.intermediaryRaw || '0'),
             preSolLamports: String(preSolRes?.nativeLamports || '0'),
+            reserveSol: solReserve,
             slippageBps: st.swap.slippageBps
           }
         };
+        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+        await intents.submitExternalDepositTxHash({
+          depositAddress: liveQuote.depositAddress,
+          txHash: txRes.txHash,
+          nearSenderAccount: nearId
+        }).catch(() => {});
         renderSwapOrderCard();
-        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress });
-        if (txRes && txRes.txHash) {
-          await intents.submitExternalDepositTxHash({
-            depositAddress: liveQuote.depositAddress,
-            txHash: txRes.txHash,
-            nearSenderAccount: nearId
-          }).catch(() => {});
-          showToast(`✅ ${t('跨链第一阶段已发送，到账 SOL 后将自动买入', 'Stage 1 sent; will auto-buy')} ${toToken.symbol}`);
-        } else {
-          showToast(t('第一阶段订单已生成，请向充值地址转入源资产', 'Stage 1 order created; deposit to address below'));
-        }
+        showToast(`✅ ${t('跨链第一阶段已发送，到账 SOL 后将自动买入', 'Stage 1 sent; will auto-buy')} ${toToken.symbol}`);
         startOrderStatusPolling();
         return;
       }
@@ -5212,12 +5373,20 @@
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建 EVM 第一阶段跨链订单失败', 'Failed to create Stage 1 EVM order'));
         }
+        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress });
+        if (!txRes || !txRes.txHash) {
+          throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
+        }
+        const evmReserve = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', activeQuote).selectedReserve;
         st.swap.activeOrder = {
           depositAddress: liveQuote.depositAddress,
           memo: liveQuote.memo || null,
           status: 'PENDING_DEPOSIT',
           fromSymbol: fromToken.symbol,
           toSymbol: toToken.symbol,
+          originTxHash: txRes.txHash,
+          autoBroadcasted: true,
+          createdAt: Date.now(),
           followUpEvmDexSwap: {
             chainKey: targetBc,
             destToken: toToken.contractAddress,
@@ -5225,21 +5394,18 @@
             toSymbol: toToken.symbol,
             expectedInRaw: String(liveQuote.amountOut || activeQuote.intermediaryRaw || '0'),
             preNativeWei: String(preEvmRes?.nativeRaw || '0'),
+            reserveNative: evmReserve,
             slippageBps: st.swap.slippageBps
           }
         };
+        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+        await intents.submitExternalDepositTxHash({
+          depositAddress: liveQuote.depositAddress,
+          txHash: txRes.txHash,
+          nearSenderAccount: nearId
+        }).catch(() => {});
         renderSwapOrderCard();
-        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress });
-        if (txRes && txRes.txHash) {
-          await intents.submitExternalDepositTxHash({
-            depositAddress: liveQuote.depositAddress,
-            txHash: txRes.txHash,
-            nearSenderAccount: nearId
-          }).catch(() => {});
-          showToast(`✅ ${t('跨链第一阶段已发送，到账后将自动执行 DEX 兑换', 'Stage 1 sent; will auto-swap via DEX on arrival')}`);
-        } else {
-          showToast(t('第一阶段订单已生成，请向充值地址转入源资产', 'Stage 1 order created; deposit to address below'));
-        }
+        showToast(`✅ ${t('跨链第一阶段已发送，到账后将自动执行 DEX 兑换', 'Stage 1 sent; will auto-swap via DEX on arrival')}`);
         startOrderStatusPolling();
         return;
       }
@@ -5304,12 +5470,19 @@
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建 Base USDC 中转订单失败', 'Failed to create Base USDC stage 1 order'));
         }
+        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress });
+        if (!txRes || !txRes.txHash) {
+          throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
+        }
         st.swap.activeOrder = {
           depositAddress: liveQuote.depositAddress,
           memo: liveQuote.memo || null,
           status: 'PENDING_DEPOSIT',
           fromSymbol: fromToken.symbol,
           toSymbol: toToken.symbol,
+          originTxHash: txRes.txHash,
+          autoBroadcasted: true,
+          createdAt: Date.now(),
           followUpArcRelay: {
             destContract: toToken.contractAddress || intents.ARC_USDC_CONTRACT,
             destDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 6,
@@ -5319,18 +5492,14 @@
             slippageBps: st.swap.slippageBps
           }
         };
+        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+        await intents.submitExternalDepositTxHash({
+          depositAddress: liveQuote.depositAddress,
+          txHash: txRes.txHash,
+          nearSenderAccount: nearId
+        }).catch(() => {});
         renderSwapOrderCard();
-        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress });
-        if (txRes && txRes.txHash) {
-          await intents.submitExternalDepositTxHash({
-            depositAddress: liveQuote.depositAddress,
-            txHash: txRes.txHash,
-            nearSenderAccount: nearId
-          }).catch(() => {});
-          showToast(`✅ ${t('第一阶段已发送，到账 Base 后将自动通过 Relay 跨链至 Arc 主网', 'Stage 1 sent; will auto-bridge Base -> Arc via Relay')}`);
-        } else {
-          showToast(t('第一阶段订单已生成，请向充值地址转入源资产', 'Stage 1 order created; deposit below'));
-        }
+        showToast(`✅ ${t('第一阶段已发送，到账 Base 后将自动通过 Relay 跨链至 Arc 主网', 'Stage 1 sent; will auto-bridge Base -> Arc via Relay')}`);
         startOrderStatusPolling();
         return;
       }
@@ -5387,13 +5556,14 @@
         return;
       }
 
-      // Cross-Chain 1Click Route (ORIGIN_CHAIN -> DESTINATION_CHAIN direct L1 to L1, including PRL Pearl <-> PRL NEAR)
-      const effectiveDestAsset = (originIsPrl && !destIsPrl && fromToken.blockchain === 'prl')
-        ? intents.PRL_NEAR_ASSET_ID
-        : toToken.assetId;
-      const effectiveRecipient = (originIsPrl && !destIsPrl && fromToken.blockchain === 'prl')
-        ? nearId
-        : recipient;
+      // Cross-Chain 1Click Route (ORIGIN_CHAIN -> DESTINATION_CHAIN direct L1 to L1, including Pearl PRL multi-stage closure)
+      const isPearlOriginFollowUp = originIsPrl && !destIsPrl && fromToken.blockchain === 'prl';
+      const isPearlToNearDcl = isPearlOriginFollowUp && toToken.blockchain === 'near' && toToken.assetId === intents.QTC_NEAR_ASSET_ID;
+      const isPearlToNearRef = isPearlOriginFollowUp && toToken.blockchain === 'near' && Boolean(toToken.contractAddress) && toToken.contractAddress !== intents.PRL_NEAR_CONTRACT && !isPearlToNearDcl;
+      const isPearlToExternal = isPearlOriginFollowUp && toToken.blockchain !== 'near';
+
+      const effectiveDestAsset = isPearlOriginFollowUp ? intents.PRL_NEAR_ASSET_ID : toToken.assetId;
+      const effectiveRecipient = isPearlOriginFollowUp ? nearId : recipient;
 
       const liveQuote = await intents.quoteIntentSwapOrWithdraw({
         originAsset: fromToken.assetId,
@@ -5404,22 +5574,14 @@
         refundTo,
         depositType: 'ORIGIN_CHAIN',
         recipientType: 'DESTINATION_CHAIN',
+        appFeeBps: isPearlToExternal ? 0 : 25,
         dry: false
       });
       if (!liveQuote.ok || !liveQuote.depositAddress) {
         throw new Error(liveQuote.error || t('创建跨链订单失败', 'Failed to create cross-chain order'));
       }
 
-      st.swap.activeOrder = {
-        depositAddress: liveQuote.depositAddress,
-        memo: liveQuote.memo || null,
-        status: 'PENDING_DEPOSIT',
-        fromSymbol: fromToken.symbol,
-        toSymbol: toToken.symbol
-      };
-      renderSwapOrderCard();
-
-      // Auto-broadcast origin chain transaction directly into liveQuote.depositAddress
+      // Broadcast FIRST before displaying any order tracking card
       const txRes = await broadcastOriginDepositTx({
         wallet,
         fromToken,
@@ -5427,28 +5589,113 @@
         avail,
         depositAddress: liveQuote.depositAddress
       });
-
-      if (txRes && txRes.txHash) {
-        recordWalletActivity(wallet, {
-          type: 'swap',
-          symbol: fromToken.symbol,
-          toSymbol: toToken.symbol,
-          chain: fromToken.blockchain,
-          amount: amt,
-          txHash: txRes.txHash,
-          title: `${fromToken.symbol} ➔ ${toToken.symbol}`
-        });
-        await intents.submitExternalDepositTxHash({
-          depositAddress: liveQuote.depositAddress,
-          txHash: txRes.txHash,
-          nearSenderAccount: nearId
-        }).catch(() => {});
-        showToast(`✅ ${t('源链已签名发送，正在跨链交付至', 'Origin tx sent, delivering to')} ${shortenAddr(effectiveRecipient)}`);
-        startOrderStatusPolling();
-      } else {
-        showToast(t('订单已生成，请向下方充值地址转入资产', 'Order created; deposit to the address below'));
-        startOrderStatusPolling();
+      if (!txRes || !txRes.txHash) {
+        throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
       }
+
+      let followUpRefSwap = null;
+      if (isPearlToNearRef) {
+        followUpRefSwap = {
+          tokenIn: intents.PRL_NEAR_CONTRACT,
+          tokenOut: toToken.contractAddress,
+          amountUsdcRaw: liveQuote.amountOut,
+          slippageBps: st.swap.slippageBps,
+          inputDecimals: 8,
+          tokenSymbol: 'PRL'
+        };
+      } else if (isPearlToNearDcl) {
+        followUpRefSwap = {
+          tokenIn: intents.PRL_NEAR_CONTRACT,
+          tokenOut: intents.NEAR_USDC_CONTRACT,
+          amountUsdcRaw: liveQuote.amountOut,
+          slippageBps: st.swap.slippageBps,
+          inputDecimals: 8,
+          tokenSymbol: 'PRL',
+          followUpDclSwap: {
+            tokenIn: intents.NEAR_USDC_CONTRACT,
+            tokenOut: intents.QTC_NEAR_CONTRACT,
+            toSymbol: 'QTC',
+            slippageBps: st.swap.slippageBps
+          }
+        };
+      } else if (isPearlToExternal) {
+        const isRelaySolDex = activeQuote?.compositeType === 'CROSS_CHAIN_TO_SOL_DEX';
+        const isRelayEvmDex = activeQuote?.compositeType === 'CROSS_CHAIN_TO_EVM_DEX';
+        const outDestAsset = (isRelaySolDex || isRelayEvmDex) ? activeQuote.intermediaryAssetId : toToken.assetId;
+        const outRecip = isRelaySolDex
+          ? wallet.solAddress
+          : (isRelayEvmDex ? (wallet.mpcEvmAddress || wallet.evmAddress) : recipient);
+        const targetReserve = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', activeQuote).selectedReserve;
+        followUpRefSwap = {
+          tokenIn: intents.PRL_NEAR_CONTRACT,
+          tokenOut: intents.NEAR_USDC_CONTRACT,
+          amountUsdcRaw: liveQuote.amountOut,
+          slippageBps: st.swap.slippageBps,
+          inputDecimals: 8,
+          tokenSymbol: 'PRL',
+          followUpBridgeOut: {
+            originAsset: intents.NEAR_USDC_ASSET_ID,
+            destinationAsset: outDestAsset,
+            hubContract: intents.NEAR_USDC_CONTRACT,
+            hubDecimals: 6,
+            hubSymbol: 'USDC',
+            recipient: outRecip,
+            expectedInRaw: String(activeQuote?.intermediaryRaw || liveQuote.amountOut || '0'),
+            ...(isRelaySolDex ? {
+              followUpSolDexSwap: {
+                outputMint: toToken.contractAddress,
+                outputDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 6,
+                toSymbol: toToken.symbol,
+                expectedSolRaw: String(activeQuote?.intermediaryRaw || '0'),
+                reserveSol: targetReserve,
+                slippageBps: st.swap.slippageBps
+              }
+            } : {}),
+            ...(isRelayEvmDex ? {
+              followUpEvmDexSwap: {
+                chainKey: String(toToken.blockchain || '').toLowerCase(),
+                destToken: toToken.contractAddress,
+                destDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 18,
+                toSymbol: toToken.symbol,
+                expectedInRaw: String(activeQuote?.intermediaryRaw || '0'),
+                reserveNative: targetReserve,
+                slippageBps: st.swap.slippageBps
+              }
+            } : {})
+          }
+        };
+      }
+
+      st.swap.activeOrder = {
+        depositAddress: liveQuote.depositAddress,
+        memo: liveQuote.memo || null,
+        status: 'PENDING_DEPOSIT',
+        fromSymbol: fromToken.symbol,
+        toSymbol: toToken.symbol,
+        originTxHash: txRes.txHash,
+        autoBroadcasted: true,
+        createdAt: Date.now(),
+        ...(followUpRefSwap ? { followUpRefSwap } : {})
+      };
+      if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+
+      recordWalletActivity(wallet, {
+        type: 'swap',
+        symbol: fromToken.symbol,
+        toSymbol: toToken.symbol,
+        chain: fromToken.blockchain,
+        amount: amt,
+        txHash: txRes.txHash,
+        title: `${fromToken.symbol} ➔ ${toToken.symbol}`
+      });
+      await intents.submitExternalDepositTxHash({
+        depositAddress: liveQuote.depositAddress,
+        txHash: txRes.txHash,
+        nearSenderAccount: nearId
+      }).catch(() => {});
+      renderSwapOrderCard();
+      showToast(`✅ ${t('源链已签名发送，正在跨链交付至', 'Origin tx sent, delivering to')} ${shortenAddr(effectiveRecipient)}`);
+      startOrderStatusPolling();
     } catch (err) {
       setSwapError(err && err.message ? err.message : t('兑换失败', 'Swap failed'));
       showToast(err && err.message ? err.message : t('兑换失败', 'Swap failed'));
@@ -5468,10 +5715,35 @@
     card.classList.remove('hidden');
     if ($('swap-order-deposit-addr')) $('swap-order-deposit-addr').textContent = order.depositAddress;
     if ($('swap-order-status')) $('swap-order-status').textContent = order.status || 'PENDING';
+
+    const txRow = $('swap-order-tx-row');
+    const txEl = $('swap-order-origin-tx');
+    if (txRow) {
+      txRow.classList.toggle('hidden', !order.originTxHash);
+      if (txEl && order.originTxHash) {
+        txEl.textContent = shortenAddr(order.originTxHash);
+      }
+    }
+
+    const isAuto = Boolean(order.autoBroadcasted);
+    const manualBox = $('swap-order-manual-box');
+    if (manualBox) {
+      manualBox.classList.toggle('hidden', isAuto);
+    }
     const qrWrap = $('swap-order-qr');
     if (qrWrap) {
-      qrWrap.classList.remove('hidden');
-      renderQrInto('swap-order-qr', order.depositAddress, 136);
+      if (isAuto) {
+        qrWrap.classList.add('hidden');
+        qrWrap.innerHTML = '';
+      } else {
+        qrWrap.classList.remove('hidden');
+        renderQrInto('swap-order-qr', order.depositAddress, 136);
+      }
+    }
+
+    const resumeBtn = $('btn-resume-swap-stage');
+    if (resumeBtn) {
+      resumeBtn.classList.toggle('hidden', !order.followUpFailed);
     }
   }
 
@@ -5480,39 +5752,51 @@
     if (addr) copyText(addr, t('充值地址', 'Deposit Address'));
   }
 
-  async function refreshActiveSwapOrderStatus() {
+  async function runActiveSwapFollowUp(order) {
     const st = getState();
-    const order = st.swap.activeOrder;
     const intents = getIntents();
     const contracts = getContracts();
-    if (!order || !order.depositAddress) return;
-    const res = await intents.fetchSwapOrderStatus(order.depositAddress);
-    if (res.ok && res.status) {
-      order.status = res.status;
-      renderSwapOrderCard();
-      const upper = String(res.status).toUpperCase();
-      if (['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper)) {
-        if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
-        if (['SUCCESS', 'COMPLETED'].includes(upper) && order.followUpRefSwap && !order.followUpExecuted) {
-          order.followUpExecuted = true;
-          const follow = order.followUpRefSwap;
-          const wallet = st.getActiveWallet();
-          if (wallet && contracts && typeof contracts.executeNearRefFinanceSwap === 'function') {
-            try {
-              const nearId = wallet.nearNamedAccount || wallet.nearAddress;
-              const balMap = await intents.fetchNearNep141Balances(nearId, { usdc: follow.tokenIn }).catch(() => null);
-              const amtInRaw = (balMap?.usdc?.raw && BigInt(balMap.usdc.raw) > 0n)
-                ? (follow.amountUsdcRaw && BigInt(balMap.usdc.raw) > BigInt(follow.amountUsdcRaw)
-                    ? String(follow.amountUsdcRaw)
-                    : String(balMap.usdc.raw))
-                : String(follow.amountUsdcRaw || '0');
-              if (BigInt(amtInRaw) > 0n) {
-                const outFollow = follow.followUpBridgeOut || null;
-                const preOutBal = outFollow
-                  ? await intents.fetchNearNep141Balances(nearId, { [follow.tokenOut]: outFollow.hubDecimals || 8 }).catch(() => null)
-                  : null;
-                const preOutRaw = BigInt(preOutBal?.[follow.tokenOut]?.raw || '0');
-                const refRes = await contracts.executeNearRefFinanceSwap({
+    if (!order || order._followUpInFlight || order.followUpExecuted) return;
+    const hasFollowUp = Boolean(order.followUpRefSwap || order.followUpSolDexSwap || order.followUpEvmDexSwap || order.followUpArcRelay);
+    if (!hasFollowUp) return;
+
+    order._followUpInFlight = true;
+    order.followUpFailed = false;
+    try {
+      if (order.followUpRefSwap) {
+        const follow = order.followUpRefSwap;
+        const wallet = st.getActiveWallet();
+        const swapFn = (follow.isDcl && Array.isArray(follow.poolIds) && follow.poolIds.length > 0 && contracts?.executeNearDclPoolSwap)
+          ? 'dcl'
+          : 'ref';
+        if (wallet && contracts && (swapFn === 'dcl' || typeof contracts.executeNearRefFinanceSwap === 'function')) {
+          const nearId = wallet.nearNamedAccount || wallet.nearAddress;
+          const balMap = await intents.fetchNearNep141Balances(nearId, { [follow.tokenIn]: follow.inputDecimals || 6 }).catch(() => null);
+          const liveRaw = balMap?.[follow.tokenIn]?.raw;
+          const amtInRaw = (liveRaw && BigInt(liveRaw) > 0n)
+            ? (follow.amountUsdcRaw && BigInt(liveRaw) > BigInt(follow.amountUsdcRaw)
+                ? String(follow.amountUsdcRaw)
+                : String(liveRaw))
+            : String(follow.amountUsdcRaw || '0');
+          if (BigInt(amtInRaw) > 0n) {
+            const outFollow = follow.followUpBridgeOut || null;
+            const dclFollow = follow.followUpDclSwap || null;
+            const preBridgeBal = outFollow
+              ? await intents.fetchNearNep141Balances(nearId, { [follow.tokenOut]: outFollow.hubDecimals || 8 }).catch(() => null)
+              : (dclFollow ? await intents.fetchNearNep141Balances(nearId, { [dclFollow.tokenIn]: 6 }).catch(() => null) : null);
+            const preOutRaw = BigInt(preBridgeBal?.[follow.tokenOut]?.raw || '0');
+            const swapRes = swapFn === 'dcl'
+              ? await contracts.executeNearDclPoolSwap({
+                  wallet,
+                  poolIds: follow.poolIds,
+                  tokenIn: follow.tokenIn,
+                  tokenOut: follow.tokenOut,
+                  amountRaw: amtInRaw,
+                  slippageBps: follow.slippageBps || 100,
+                  inputDecimals: follow.inputDecimals || 6,
+                  tokenSymbol: follow.tokenSymbol || 'USDC'
+                })
+              : await contracts.executeNearRefFinanceSwap({
                   wallet,
                   tokenIn: follow.tokenIn,
                   tokenOut: follow.tokenOut,
@@ -5521,186 +5805,273 @@
                   inputDecimals: follow.inputDecimals || 6,
                   tokenSymbol: follow.tokenSymbol || 'USDC'
                 });
-                if (outFollow && outFollow.destinationAsset) {
-                  const postOutBal = await intents.fetchNearNep141Balances(nearId, { [follow.tokenOut]: outFollow.hubDecimals || 8 }).catch(() => null);
-                  const postOutRaw = BigInt(postOutBal?.[follow.tokenOut]?.raw || '0');
-                  const deltaOut = postOutRaw > preOutRaw ? (postOutRaw - preOutRaw) : BigInt(refRes.amountOut || outFollow.expectedInRaw || '0');
-                  const bridgeInRaw = (deltaOut > 0n ? deltaOut : BigInt(outFollow.expectedInRaw || '0')).toString();
-                  if (BigInt(bridgeInRaw) > 0n) {
-                    const liveOut = await intents.quoteIntentSwapOrWithdraw({
-                      originAsset: outFollow.originAsset,
-                      destinationAsset: outFollow.destinationAsset,
-                      amountRaw: bridgeInRaw,
-                      slippageBps: follow.slippageBps || 100,
-                      recipient: outFollow.recipient,
-                      refundTo: nearId,
-                      depositType: 'ORIGIN_CHAIN',
-                      recipientType: 'DESTINATION_CHAIN',
-                      dry: false
-                    });
-                    if (liveOut.ok && liveOut.depositAddress) {
-                      const bDec = outFollow.hubDecimals || 8;
-                      const bSym = outFollow.hubSymbol || 'PRL';
-                      const bHuman = Number(intents.fromBaseUnits(bridgeInRaw, bDec));
-                      const sendB = await contracts.executeNearNep141Transfer({
-                        wallet,
-                        tokenContract: outFollow.hubContract || follow.tokenOut,
-                        receiverId: liveOut.depositAddress,
-                        amount: bHuman,
-                        decimals: bDec,
-                        tokenSymbol: bSym,
-                        tokenBalance: bHuman
-                      });
-                      await intents.submitExternalDepositTxHash({
-                        depositAddress: liveOut.depositAddress,
-                        txHash: sendB.txHash,
-                        nearSenderAccount: nearId
-                      }).catch(() => {});
-                      st.swap.activeOrder = {
-                        depositAddress: liveOut.depositAddress,
-                        memo: liveOut.memo || null,
-                        status: 'PENDING_DEPOSIT',
-                        fromSymbol: order.fromSymbol,
-                        toSymbol: order.toSymbol,
-                        followUpSolDexSwap: outFollow.followUpSolDexSwap || null,
-                        followUpEvmDexSwap: outFollow.followUpEvmDexSwap || null
-                      };
-                      renderSwapOrderCard();
-                      startOrderStatusPolling();
-                      showToast(`✅ ${t('第二阶段已换币并自动发起第三阶段跨链交付', 'Stage 2 swapped & Stage 3 bridge sent')}`);
-                      return;
-                    }
-                  }
-                }
-                showToast(`✅ ${t('第二阶段 Ref Finance 已自动兑换', 'Step 2 auto-swapped on Ref')}: ${shortenAddr(refRes.txHash)}`);
-              }
-            } catch (err) {
-              showToast(err && err.message ? err.message : t('自动兑换 PRL 失败，请在资产页手动闪兑', 'Auto Ref swap failed'));
-            }
-          }
-        }
-        if (['SUCCESS', 'COMPLETED'].includes(upper) && order.followUpSolDexSwap && !order.followUpExecuted) {
-          order.followUpExecuted = true;
-          const follow = order.followUpSolDexSwap;
-          const wallet = st.getActiveWallet();
-          if (wallet && wallet.solAddress && contracts && typeof contracts.executeSolanaJupiterSwap === 'function') {
-            try {
-              await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-              const balRes = await contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, []).catch(() => null);
-              const availLamports = BigInt(balRes?.nativeLamports || '0');
-              const preLamports = BigInt(follow.preSolLamports || '0');
-              const expectedLamports = BigInt(follow.expectedSolRaw || '0');
-              const reserveSolVal = typeof follow.reserveSol === 'number' && Number.isFinite(follow.reserveSol) ? follow.reserveSol : 0.0035;
-              const reserveLamports = BigInt(intents.toBaseUnits(String(reserveSolVal), 9));
-              const maxSpendable = availLamports > reserveLamports ? availLamports - reserveLamports : 0n;
-              const deltaLamports = availLamports > preLamports ? availLamports - preLamports : 0n;
-              let swapInLamports = deltaLamports > 0n ? deltaLamports : expectedLamports;
-              if (expectedLamports > 0n && swapInLamports > expectedLamports) swapInLamports = expectedLamports;
-              if (swapInLamports > maxSpendable) swapInLamports = maxSpendable;
-              if (swapInLamports <= 0n) throw new Error(t('Solana 账户 SOL 余额不足以保留手续费', 'Insufficient SOL after fee reserve'));
-              const jQuote = await contracts.quoteSolanaJupiterSwap({
-                inputMint: 'So11111111111111111111111111111111111111112',
-                outputMint: follow.outputMint,
-                amountRaw: swapInLamports.toString(),
-                slippageBps: follow.slippageBps || 100
-              });
-              const jRes = await contracts.executeSolanaJupiterSwap({
-                wallet,
-                quoteResponse: jQuote,
-                wrapAndUnwrapSol: true,
-                tokenBalance: Number(contracts.fromBaseUnits(availLamports.toString(), 9)),
-                inputDecimals: 9
-              });
-              showToast(`✅ ${t('第二阶段已自动买入', 'Stage 2 bought')} ${follow.toSymbol}: ${shortenAddr(jRes.txHash)}`);
-            } catch (err) {
-              showToast(err && err.message ? err.message : t('Solana 自动兑换失败', 'Auto Solana DEX swap failed'));
-            }
-          }
-        }
-        if (['SUCCESS', 'COMPLETED'].includes(upper) && order.followUpEvmDexSwap && !order.followUpExecuted) {
-          order.followUpExecuted = true;
-          const follow = order.followUpEvmDexSwap;
-          const wallet = st.getActiveWallet();
-          const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
-          if (wallet && evmAddr && contracts && typeof contracts.executeEvmDexSwap === 'function') {
-            try {
-              await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-              const balRes = await contracts.fetchEvmNativeAndErc20Balance(follow.chainKey, evmAddr).catch(() => null);
-              const availWei = BigInt(balRes?.nativeRaw || '0');
-              const preWei = BigInt(follow.preNativeWei || '0');
-              const expectedWei = BigInt(follow.expectedInRaw || '0');
-              const reserveHuman = typeof follow.reserveNative === 'number' && Number.isFinite(follow.reserveNative)
-                ? follow.reserveNative
-                : ((contracts.CHAIN_MIN_GAS_RESERVES && contracts.CHAIN_MIN_GAS_RESERVES[follow.chainKey]) || 0.0005);
-              const reserveWei = BigInt(intents.toBaseUnits(String(reserveHuman), 18));
-              const maxSpendable = availWei > reserveWei ? availWei - reserveWei : 0n;
-              const deltaWei = availWei > preWei ? availWei - preWei : 0n;
-              let swapInWei = deltaWei > 0n ? deltaWei : expectedWei;
-              if (expectedWei > 0n && swapInWei > expectedWei) swapInWei = expectedWei;
-              if (swapInWei > maxSpendable) swapInWei = maxSpendable;
-              if (swapInWei <= 0n) throw new Error(t('目标链原生 Gas 余额不足', 'Insufficient native balance after gas reserve'));
-              const evmQ = await contracts.quoteEvmDexSwap({
-                chainKey: follow.chainKey,
-                srcToken: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
-                destToken: follow.destToken,
-                amountRaw: swapInWei.toString(),
-                srcDecimals: 18,
-                destDecimals: follow.destDecimals || 18,
-                slippageBps: follow.slippageBps || 100
-              });
-              if (!evmQ.ok || !evmQ.routeData) throw new Error(evmQ.error || t('获取第二阶段 DEX 路由失败', 'Stage 2 EVM DEX quote failed'));
-              const evmRes = await contracts.executeEvmDexSwap({
-                wallet,
-                chainKey: follow.chainKey,
-                routeSource: evmQ.routeSource,
-                routeData: evmQ.routeData,
-                srcToken: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
-                destToken: follow.destToken,
-                amountRaw: swapInWei.toString(),
-                srcDecimals: 18,
-                slippageBps: follow.slippageBps || 100,
-                tokenBalance: Number(contracts.fromBaseUnits(availWei.toString(), 18))
-              });
-              showToast(`✅ ${t('第二阶段 MPC 已自动兑换为', 'Stage 2 MPC swapped to')} ${follow.toSymbol}: ${shortenAddr(evmRes.txHash)}`);
-            } catch (err) {
-              showToast(err && err.message ? err.message : t('EVM 自动兑换失败', 'Auto EVM DEX swap failed'));
-            }
-          }
-        }
-        if (['SUCCESS', 'COMPLETED'].includes(upper) && order.followUpArcRelay && !order.followUpExecuted) {
-          order.followUpExecuted = true;
-          const follow = order.followUpArcRelay;
-          const wallet = st.getActiveWallet();
-          const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
-          if (wallet && evmAddr && contracts && typeof contracts.executeEvmRawSteps === 'function') {
-            try {
-              await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-              const baseBal = await contracts.fetchEvmNativeAndErc20Balance('base', evmAddr, intents.BASE_USDC_EVM, 6).catch(() => null);
-              const availRaw = BigInt(baseBal?.tokenRaw || '0');
-              const preRaw = BigInt(follow.preBaseRaw || '0');
-              const expectedRaw = BigInt(follow.expectedBaseRaw || '0');
-              const deltaRaw = availRaw > preRaw ? availRaw - preRaw : 0n;
-              let bridgeInRaw = deltaRaw > 0n ? deltaRaw : expectedRaw;
-              if (expectedRaw > 0n && bridgeInRaw > expectedRaw) bridgeInRaw = expectedRaw;
-              if (bridgeInRaw > availRaw && availRaw > 0n) bridgeInRaw = availRaw;
-              if (bridgeInRaw <= 0n) throw new Error(t('Base USDC 余额不足以发起 Relay 跨链至 Arc', 'Insufficient Base USDC for Relay to Arc'));
 
-              const relayLive = await intents.quoteRelayBridge({
-                user: evmAddr,
-                recipient: evmAddr,
-                originChainId: 8453,
-                destinationChainId: 5042,
-                originCurrency: intents.BASE_USDC_EVM,
-                destinationCurrency: intents.ARC_USDC_CONTRACT,
-                amount: bridgeInRaw.toString()
+            if (dclFollow && typeof contracts.executeNearDclPoolSwap === 'function') {
+              const postUsdcBal = await intents.fetchNearNep141Balances(nearId, { [dclFollow.tokenIn]: 6 }).catch(() => null);
+              const postUsdcRaw = BigInt(postUsdcBal?.[dclFollow.tokenIn]?.raw || '0');
+              const deltaUsdc = postUsdcRaw > preOutRaw ? (postUsdcRaw - preOutRaw) : BigInt(swapRes.amountOut || '0');
+              const dclInRaw = (deltaUsdc > 0n ? deltaUsdc : BigInt(swapRes.amountOut || '0')).toString();
+              const dclQ = await contracts.quoteNearDclPoolSwap({
+                tokenIn: dclFollow.tokenIn,
+                tokenOut: dclFollow.tokenOut,
+                amountRaw: dclInRaw,
+                slippageBps: dclFollow.slippageBps || follow.slippageBps || 100
               });
-              if (!relayLive.ok || !relayLive.steps?.length) throw new Error(relayLive.error || t('Relay Base->Arc 构建失败', 'Relay Base->Arc failed'));
-              const relayTx = await contracts.executeEvmRawSteps({ wallet, chainKey: 'base', steps: relayLive.steps });
-              showToast(`✅ ${t('第二阶段 Relay 已发送至 Arc 主网', 'Stage 2 Relay sent to Arc Mainnet')}: ${shortenAddr(relayTx.txHash)}`);
-            } catch (err) {
-              showToast(err && err.message ? err.message : t('Relay 跨链至 Arc 失败', 'Auto Relay to Arc failed'));
+              if (!dclQ || !dclQ.ok) {
+                throw new Error((dclQ && dclQ.error) || t('DCL 第二阶段询价失败', 'DCL stage 2 quote failed'));
+              }
+              const dclRes = await contracts.executeNearDclPoolSwap({
+                wallet,
+                poolIds: dclQ.poolIds,
+                tokenIn: dclFollow.tokenIn,
+                tokenOut: dclFollow.tokenOut,
+                amountRaw: dclInRaw,
+                minAmountOut: dclQ.minAmountOut,
+                slippageBps: dclFollow.slippageBps || follow.slippageBps || 100,
+                tokenBalance: Number(intents.fromBaseUnits(dclInRaw, 6)),
+                inputDecimals: 6,
+                tokenSymbol: 'USDC'
+              });
+              order.followUpExecuted = true;
+              order.followUpFailed = false;
+              if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+              renderSwapOrderCard();
+              showToast(`✅ ${t('第二阶段 Rhea CLMM 已完成兑换', 'Stage 2 Rhea CLMM swap completed')}: ${shortenAddr(dclRes.txHash)}`);
+              return;
             }
+
+            if (outFollow && outFollow.destinationAsset) {
+              const postOutBal = await intents.fetchNearNep141Balances(nearId, { [follow.tokenOut]: outFollow.hubDecimals || 8 }).catch(() => null);
+              const postOutRaw = BigInt(postOutBal?.[follow.tokenOut]?.raw || '0');
+              const deltaOut = postOutRaw > preOutRaw ? (postOutRaw - preOutRaw) : BigInt(swapRes.amountOut || outFollow.expectedInRaw || '0');
+              const bridgeInRaw = (deltaOut > 0n ? deltaOut : BigInt(outFollow.expectedInRaw || '0')).toString();
+              if (BigInt(bridgeInRaw) <= 0n) {
+                throw new Error(t('Ref 兑换后余额不足以发起第三阶段跨链', 'Insufficient balance after Ref swap for Stage 3 bridge'));
+              }
+              const liveOut = await intents.quoteIntentSwapOrWithdraw({
+                originAsset: outFollow.originAsset,
+                destinationAsset: outFollow.destinationAsset,
+                amountRaw: bridgeInRaw,
+                slippageBps: follow.slippageBps || 100,
+                recipient: outFollow.recipient,
+                refundTo: nearId,
+                depositType: 'ORIGIN_CHAIN',
+                recipientType: 'DESTINATION_CHAIN',
+                appFeeBps: 25,
+                dry: false
+              });
+              if (!liveOut.ok || !liveOut.depositAddress) {
+                throw new Error(liveOut.error || t('获取第三阶段跨链桥路由失败', 'Failed to get Stage 3 bridge route'));
+              }
+              const bDec = outFollow.hubDecimals || 8;
+              const bSym = outFollow.hubSymbol || 'PRL';
+              const bHuman = Number(intents.fromBaseUnits(bridgeInRaw, bDec));
+              const sendB = await contracts.executeNearNep141Transfer({
+                wallet,
+                tokenContract: outFollow.hubContract || follow.tokenOut,
+                receiverId: liveOut.depositAddress,
+                amount: bHuman,
+                decimals: bDec,
+                tokenSymbol: bSym,
+                tokenBalance: bHuman
+              });
+              await intents.submitExternalDepositTxHash({
+                depositAddress: liveOut.depositAddress,
+                txHash: sendB.txHash,
+                nearSenderAccount: nearId
+              }).catch(() => {});
+              st.swap.activeOrder = {
+                depositAddress: liveOut.depositAddress,
+                memo: liveOut.memo || null,
+                status: 'PENDING_DEPOSIT',
+                fromSymbol: order.fromSymbol,
+                toSymbol: order.toSymbol,
+                originTxHash: sendB.txHash,
+                autoBroadcasted: true,
+                createdAt: Date.now(),
+                followUpSolDexSwap: outFollow.followUpSolDexSwap || null,
+                followUpEvmDexSwap: outFollow.followUpEvmDexSwap || null
+              };
+              if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+              renderSwapOrderCard();
+              startOrderStatusPolling();
+              showToast(`✅ ${t('第二阶段已换币并自动发起第三阶段跨链交付', 'Stage 2 swapped & Stage 3 bridge sent')}`);
+              return;
+            }
+            order.followUpExecuted = true;
+            order.followUpFailed = false;
+            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+            renderSwapOrderCard();
+            showToast(`✅ ${t('第二阶段 Ref Finance 已自动兑换', 'Step 2 auto-swapped on Ref')}: ${shortenAddr(swapRes.txHash)}`);
+            return;
           }
+        }
+      }
+
+      if (order.followUpSolDexSwap) {
+        const follow = order.followUpSolDexSwap;
+        const wallet = st.getActiveWallet();
+        if (wallet && wallet.solAddress && contracts && typeof contracts.executeSolanaJupiterSwap === 'function') {
+          await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+          const balRes = await contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, []).catch(() => null);
+          const availLamports = BigInt(balRes?.nativeLamports || '0');
+          const preLamports = BigInt(follow.preSolLamports || '0');
+          const expectedLamports = BigInt(follow.expectedSolRaw || '0');
+          const reserveSolVal = typeof follow.reserveSol === 'number' && Number.isFinite(follow.reserveSol) ? follow.reserveSol : 0.0035;
+          const reserveLamports = BigInt(intents.toBaseUnits(String(reserveSolVal), 9));
+          const maxSpendable = availLamports > reserveLamports ? availLamports - reserveLamports : 0n;
+          const deltaLamports = availLamports > preLamports ? availLamports - preLamports : 0n;
+          let swapInLamports = deltaLamports > 0n ? deltaLamports : expectedLamports;
+          if (expectedLamports > 0n && swapInLamports > expectedLamports) swapInLamports = expectedLamports;
+          if (swapInLamports > maxSpendable) swapInLamports = maxSpendable;
+          if (swapInLamports <= 0n) throw new Error(t('Solana 账户 SOL 余额不足以保留手续费', 'Insufficient SOL after fee reserve'));
+          const jQuote = await contracts.quoteSolanaJupiterSwap({
+            inputMint: 'So11111111111111111111111111111111111111112',
+            outputMint: follow.outputMint,
+            amountRaw: swapInLamports.toString(),
+            slippageBps: follow.slippageBps || 100,
+            platformFeeBps: 0
+          });
+          const jRes = await contracts.executeSolanaJupiterSwap({
+            wallet,
+            quoteResponse: jQuote,
+            wrapAndUnwrapSol: true,
+            tokenBalance: Number(contracts.fromBaseUnits(availLamports.toString(), 9)),
+            inputDecimals: 9
+          });
+          order.followUpExecuted = true;
+          order.followUpFailed = false;
+          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+          renderSwapOrderCard();
+          showToast(`✅ ${t('第二阶段已自动买入', 'Stage 2 bought')} ${follow.toSymbol}: ${shortenAddr(jRes.txHash)}`);
+          return;
+        }
+      }
+
+      if (order.followUpEvmDexSwap) {
+        const follow = order.followUpEvmDexSwap;
+        const wallet = st.getActiveWallet();
+        const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
+        if (wallet && evmAddr && contracts && typeof contracts.executeEvmDexSwap === 'function') {
+          await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+          const balRes = await contracts.fetchEvmNativeAndErc20Balance(follow.chainKey, evmAddr).catch(() => null);
+          const availWei = BigInt(balRes?.nativeRaw || '0');
+          const preWei = BigInt(follow.preNativeWei || '0');
+          const expectedWei = BigInt(follow.expectedInRaw || '0');
+          const reserveHuman = typeof follow.reserveNative === 'number' && Number.isFinite(follow.reserveNative)
+            ? follow.reserveNative
+            : ((contracts.CHAIN_MIN_GAS_RESERVES && contracts.CHAIN_MIN_GAS_RESERVES[follow.chainKey]) || 0.0005);
+          const reserveWei = BigInt(intents.toBaseUnits(String(reserveHuman), 18));
+          const maxSpendable = availWei > reserveWei ? availWei - reserveWei : 0n;
+          const deltaWei = availWei > preWei ? availWei - preWei : 0n;
+          let swapInWei = deltaWei > 0n ? deltaWei : expectedWei;
+          if (expectedWei > 0n && swapInWei > expectedWei) swapInWei = expectedWei;
+          if (swapInWei > maxSpendable) swapInWei = maxSpendable;
+          if (swapInWei <= 0n) throw new Error(t('目标链原生 Gas 余额不足', 'Insufficient native balance after gas reserve'));
+          const evmQ = await contracts.quoteEvmDexSwap({
+            chainKey: follow.chainKey,
+            srcToken: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+            destToken: follow.destToken,
+            amountRaw: swapInWei.toString(),
+            srcDecimals: 18,
+            destDecimals: follow.destDecimals || 18,
+            slippageBps: follow.slippageBps || 100,
+            feeBps: 0
+          });
+          if (!evmQ.ok || !evmQ.routeData) throw new Error(evmQ.error || t('获取第二阶段 DEX 路由失败', 'Stage 2 EVM DEX quote failed'));
+          const evmRes = await contracts.executeEvmDexSwap({
+            wallet,
+            chainKey: follow.chainKey,
+            routeSource: evmQ.routeSource,
+            routeData: evmQ.routeData,
+            srcToken: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+            destToken: follow.destToken,
+            amountRaw: swapInWei.toString(),
+            srcDecimals: 18,
+            slippageBps: follow.slippageBps || 100,
+            tokenBalance: Number(contracts.fromBaseUnits(availWei.toString(), 18)),
+            feeBps: 0
+          });
+          order.followUpExecuted = true;
+          order.followUpFailed = false;
+          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+          renderSwapOrderCard();
+          showToast(`✅ ${t('第二阶段 MPC 已自动兑换为', 'Stage 2 MPC swapped to')} ${follow.toSymbol}: ${shortenAddr(evmRes.txHash)}`);
+          return;
+        }
+      }
+
+      if (order.followUpArcRelay) {
+        const follow = order.followUpArcRelay;
+        const wallet = st.getActiveWallet();
+        const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
+        if (wallet && evmAddr && contracts && typeof contracts.executeEvmRawSteps === 'function') {
+          await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+          const baseBal = await contracts.fetchEvmNativeAndErc20Balance('base', evmAddr, intents.BASE_USDC_EVM, 6).catch(() => null);
+          const availRaw = BigInt(baseBal?.tokenRaw || '0');
+          const preRaw = BigInt(follow.preBaseRaw || '0');
+          const expectedRaw = BigInt(follow.expectedBaseRaw || '0');
+          const deltaRaw = availRaw > preRaw ? availRaw - preRaw : 0n;
+          let bridgeInRaw = deltaRaw > 0n ? deltaRaw : expectedRaw;
+          if (expectedRaw > 0n && bridgeInRaw > expectedRaw) bridgeInRaw = expectedRaw;
+          if (bridgeInRaw > availRaw && availRaw > 0n) bridgeInRaw = availRaw;
+          if (bridgeInRaw <= 0n) throw new Error(t('Base USDC 余额不足以发起 Relay 跨链至 Arc', 'Insufficient Base USDC for Relay to Arc'));
+
+          const relayLive = await intents.quoteRelayBridge({
+            user: evmAddr,
+            recipient: evmAddr,
+            originChainId: 8453,
+            destinationChainId: 5042,
+            originCurrency: intents.BASE_USDC_EVM,
+            destinationCurrency: intents.ARC_USDC_CONTRACT,
+            amount: bridgeInRaw.toString()
+          });
+          if (!relayLive.ok || !relayLive.steps?.length) throw new Error(relayLive.error || t('Relay Base->Arc 构建失败', 'Relay Base->Arc failed'));
+          const relayTx = await contracts.executeEvmRawSteps({ wallet, chainKey: 'base', steps: relayLive.steps });
+          order.followUpExecuted = true;
+          order.followUpFailed = false;
+          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+          renderSwapOrderCard();
+          showToast(`✅ ${t('第二阶段 Relay 已发送至 Arc 主网', 'Stage 2 Relay sent to Arc Mainnet')}: ${shortenAddr(relayTx.txHash)}`);
+        }
+      }
+    } catch (err) {
+      order.followUpExecuted = false;
+      order.followUpFailed = true;
+      order.followUpError = (err && err.message) || t('后续自动兑换执行失败', 'Follow-up swap execution failed');
+      if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+      renderSwapOrderCard();
+      showToast(order.followUpError);
+    } finally {
+      delete order._followUpInFlight;
+    }
+  }
+
+  async function resumeActiveSwapFollowUp() {
+    const st = getState();
+    const order = st.swap.activeOrder;
+    if (!order || order.followUpExecuted) return;
+    order.followUpFailed = false;
+    renderSwapOrderCard();
+    await runActiveSwapFollowUp(order);
+    refreshAllBalancesAsync(false);
+  }
+
+  async function refreshActiveSwapOrderStatus() {
+    const st = getState();
+    const order = st.swap.activeOrder;
+    const intents = getIntents();
+    if (!order || !order.depositAddress) return;
+    const res = await intents.fetchSwapOrderStatus(order.depositAddress);
+    if (res.ok && res.status) {
+      order.status = res.status;
+      if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+      renderSwapOrderCard();
+      const upper = String(res.status).toUpperCase();
+      if (['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper)) {
+        if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
+        if (['SUCCESS', 'COMPLETED'].includes(upper) && !order.followUpExecuted && !order.followUpFailed) {
+          await runActiveSwapFollowUp(order);
         }
         refreshAllBalancesAsync(false);
       }
@@ -5738,7 +6109,9 @@
 
   function clearActiveSwapOrder() {
     if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
-    getState().swap.activeOrder = null;
+    const st = getState();
+    st.swap.activeOrder = null;
+    if (typeof st.clearSavedSwapOrder === 'function') st.clearSavedSwapOrder();
     renderSwapOrderCard();
   }
 
@@ -5789,18 +6162,20 @@
     const intents = getIntents();
     const wallet = st.getActiveWallet();
     const catalog = getSwapTokenCatalog();
+    const isFromPicker = st.swap.pickerSide === 'from';
+    const pickerCatalog = isFromPicker ? catalog.filter(isSwapOriginSupported) : catalog;
 
     const search = ($('token-picker-search')?.value || '').trim().toLowerCase();
-    const uniqueChains = Array.from(new Set(catalog.map((x) => x.blockchain).filter(Boolean)));
+    const uniqueChains = Array.from(new Set(pickerCatalog.map((x) => x.blockchain).filter(Boolean)));
     const orderedChains = [
-      ...PREFERRED_PICKER_CHAINS.filter((ck) => ck === 'arc' || uniqueChains.includes(ck)),
+      ...PREFERRED_PICKER_CHAINS.filter((ck) => (!isFromPicker || isSwapOriginSupported({ blockchain: ck })) && (ck === 'arc' || uniqueChains.includes(ck))),
       ...uniqueChains.filter((ck) => !PREFERRED_PICKER_CHAINS.includes(ck))
     ];
 
     const favIds = Array.isArray(st.favoriteTokenIds) ? st.favoriteTokenIds : [];
     const favSet = new Set(favIds.map((id) => String(id || '').toLowerCase()));
     const catalogById = new Map();
-    for (const item of catalog) {
+    for (const item of pickerCatalog) {
       if (item && item.assetId) catalogById.set(String(item.assetId).toLowerCase(), item);
     }
 
@@ -5855,7 +6230,7 @@
       }, 250);
     }
 
-    const filteredWithMeta = catalog
+    const filteredWithMeta = pickerCatalog
       .map((tok, catalogIdx) => ({ tok, catalogIdx }))
       .filter(({ tok }) => {
         if (st.swap.pickerChainFilter !== 'all' && tok.blockchain !== st.swap.pickerChainFilter) {
@@ -6088,6 +6463,21 @@
             title: vp.title || vp.poolId || 'Rhea oRHEA Convert',
             subtitle: vp.subtitle || t('锁仓兑换中', 'Locked Converting'),
             amountText: `${formatBal(vp.totalAmount, 4)} ${sym}`
+          });
+          continue;
+        }
+        if (vp.type === 'burrow_supply') {
+          if (!(vp.totalAmount > 0.00001)) continue;
+          const sym = vp.symbol || 'NEAR';
+          posItems.push({
+            symbol: sym,
+            chain: 'near',
+            title: vp.title || `Burrow ${sym}`,
+            subtitle: vp.subtitle || t('Burrow 活期存款', 'Burrow Supply Position'),
+            amountText: `${formatBal(vp.totalAmount, 4)} ${sym}`,
+            actionType: 'burrow_withdraw',
+            actionTarget: `${vp.tokenContract || 'wrap.near'}|${vp.decimals || 24}`,
+            actionLabel: t('提取', 'Withdraw')
           });
           continue;
         }
@@ -6478,6 +6868,18 @@
           title: `${t('Aave V3 全额提取', 'Aave V3 Withdraw')} · ${actionTarget}`
         });
         showToast(`✅ ${t('Aave 本息提取已广播', 'Aave V3 withdraw broadcast')}: ${shortenAddr(res.txHash)}`);
+      } else if (actionType === 'burrow_withdraw') {
+        const [tokContract, decStr] = String(actionTarget || '').split('|');
+        res = await contracts.withdrawFromBurrow({ wallet, tokenContract: tokContract, amount: 'max', decimals: Number(decStr) || 24 });
+        recordWalletActivity(wallet, {
+          type: 'unstake',
+          symbol: tokContract === 'wrap.near' ? 'NEAR' : 'BURROW',
+          chain: 'near',
+          amount: 0,
+          txHash: res.txHash,
+          title: `${t('Burrow 全额提取', 'Burrow Withdraw')} · ${tokContract}`
+        });
+        showToast(`✅ ${t('Burrow 存款提取已广播', 'Burrow withdraw broadcast')}: ${shortenAddr(res.txHash)}`);
       }
       refreshAllBalancesAsync(false);
     } catch (err) {
@@ -7209,7 +7611,7 @@
     if (sumEl) sumEl.textContent = t('扫描中...', 'Scanning...');
     if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:12px;text-align:center;">${t('正在扫描 Solana 代币账户...', 'Scanning Solana token accounts...')}</div>`;
 
-    const solTokens = getTokens().filter((tk) => String(tk.blockchain || '').toLowerCase() === 'sol' && tk.contractAddress);
+    const solTokens = getSwapTokenCatalog().filter((tk) => String(tk.blockchain || '').toLowerCase() === 'sol' && tk.contractAddress);
     const tokenByMint = new Map();
     for (const tk of solTokens) tokenByMint.set(tk.contractAddress, tk);
 
@@ -7327,7 +7729,7 @@
       const firstHash = res.txHashes && res.txHashes[0] ? `: ${shortenAddr(res.txHashes[0])}` : '';
       showToast(`✅ ${t('已回收', 'Reclaimed')} +${res.reclaimedSol.toFixed(4)} SOL (${res.closedCount} ${t('个账户', 'accounts')})${firstHash}`);
       await scanSolRentReclaimUI();
-      if (typeof refreshAllBalances === 'function') refreshAllBalances().catch(() => {});
+      refreshAllBalancesAsync(false);
     } catch (err) {
       showToast(err && err.message ? err.message : t('租金回收失败', 'Rent reclaim failed'));
     } finally {
@@ -7431,6 +7833,26 @@
     pill.classList.toggle('active', Boolean(ok));
   }
 
+  const _lazyScriptCache = {};
+  function loadScriptOnce(src) {
+    if (typeof document === 'undefined') return Promise.resolve(false);
+    if (_lazyScriptCache[src]) return _lazyScriptCache[src];
+    _lazyScriptCache[src] = new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[src^="${src}"]`);
+      if (existing) { resolve(true); return; }
+      const s = document.createElement('script');
+      s.src = src;
+      s.async = true;
+      s.onload = () => resolve(true);
+      s.onerror = () => {
+        delete _lazyScriptCache[src];
+        reject(new Error(`Failed to load ${src}`));
+      };
+      (document.head || document.body || document.documentElement).appendChild(s);
+    });
+    return _lazyScriptCache[src];
+  }
+
   async function ensureWcReady() {
     const st = getState();
     const projectId = (st.wc.projectId || '').trim();
@@ -7442,7 +7864,12 @@
       updateWcStatusPill(t('已就绪', 'Ready'), true);
       return st.wc.client;
     }
-    const sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
+    let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
+    if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
+      updateWcStatusPill(t('加载组件...', 'Loading...'), false);
+      await loadScriptOnce('walletconnect.umd.min.js');
+      sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
+    }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
       throw new Error(t('WalletConnect SDK 未加载', 'WalletConnect SDK unavailable'));
     }
@@ -7785,11 +8212,27 @@
     renderAll();
     if (st.getActiveWallet()) {
       refreshAllBalancesAsync(false);
-      refreshStakingMetrics(false);
+    }
+    if (st.swap.activeOrder && st.swap.activeOrder.depositAddress) {
+      renderSwapOrderCard();
+      const upper = String(st.swap.activeOrder.status || '').toUpperCase();
+      if (!['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper)) {
+        startOrderStatusPolling();
+      }
     }
     startAutoPriceAndBalanceSync();
-    if (st.wc.projectId) {
-      ensureWcReady().catch(() => {});
+    const hasWcSessions = (() => {
+      try {
+        if (typeof localStorage === 'undefined') return false;
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('wc@2:')) return true;
+        }
+      } catch (_) {}
+      return false;
+    })();
+    if (st.wc.projectId && hasWcSessions && typeof setTimeout === 'function') {
+      setTimeout(() => { ensureWcReady().catch(() => {}); }, 2500);
     }
     if (typeof navigator !== 'undefined' && navigator.serviceWorker && typeof location !== 'undefined' && /^https?:/.test(location.protocol)) {
       const isLocalDev = /^(localhost|127\.0\.0\.1)$/i.test(location.hostname);
@@ -7843,6 +8286,9 @@
     executeUnifiedSend,
     openReceiveSheet,
     renderSwapView,
+    renderSwapOrderCard,
+    refreshActiveSwapOrderStatus,
+    clearActiveSwapOrder,
     getTargetChainGasReserveInfo,
     computeNetSwapOutput,
     toggleSwapDetails,
@@ -7850,8 +8296,12 @@
     fetchLiveSwapQuoteAsync,
     toggleFavoriteSwapToken,
     renderTokenPickerList,
+    isSwapOriginSupported,
+    validateSwapNearGasRequirement,
     executeActiveSwap,
+    resumeActiveSwapFollowUp,
     refreshStakingMetrics,
+    ensureStakingMetricsFresh,
     refreshEarnMetricsAsync,
     renderEarnView,
     setEarnPoolFilter,
@@ -7959,6 +8409,7 @@
     copySwapOrderDeposit,
     refreshActiveSwapOrderStatus,
     submitSwapOrderTxHash,
+    resumeActiveSwapFollowUp,
     clearActiveSwapOrder,
     refreshStakingMetrics,
     setEarnPoolFilter,

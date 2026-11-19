@@ -1,20 +1,20 @@
-﻿const CACHE_NAME = 'near-ca-wallet-v5.3';
+﻿const CACHE_NAME = 'near-ca-wallet-v5.5';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './style.css?v=5.3',
+  './style.css?v=5.5',
   './bip39-wordlist.js',
   './qrcode.min.js',
   './ethers.umd.min.js',
   './walletconnect.umd.min.js',
   './ml-dsa-65.umd.min.js',
-  './src/crypto-engine.js?v=5.3',
-  './src/token-registry.js?v=5.3',
-  './src/near-intents.js?v=5.3',
-  './src/chain-contracts.js?v=5.3',
-  './src/mining-pro.js?v=5.3',
-  './src/state.js?v=5.3',
-  './src/ui-controller.js?v=5.3'
+  './src/crypto-engine.js?v=5.5',
+  './src/token-registry.js?v=5.5',
+  './src/near-intents.js?v=5.5',
+  './src/chain-contracts.js?v=5.5',
+  './src/mining-pro.js?v=5.5',
+  './src/state.js?v=5.5',
+  './src/ui-controller.js?v=5.5'
 ];
 
 self.addEventListener('install', (event) => {
@@ -34,7 +34,39 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+  const reqUrl = new URL(event.request.url);
+  if (reqUrl.origin !== self.location.origin) {
+    event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
+    return;
+  }
+  if (reqUrl.pathname.startsWith('/pearl-proxy') || reqUrl.pathname.startsWith('/kryptex-proxy')) {
+    return;
+  }
+  const isImmutableStatic = /[?&]v=|\.(?:js|css|svg|png|woff2?)$/i.test(reqUrl.pathname + reqUrl.search);
+  if (isImmutableStatic) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        if (cached) return cached;
+        return fetch(event.request).then((netRes) => {
+          if (netRes && netRes.ok) {
+            const copy = netRes.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
+          }
+          return netRes;
+        });
+      })
+    );
+    return;
+  }
   event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request))
+    fetch(event.request)
+      .then((netRes) => {
+        if (netRes && netRes.ok) {
+          const copy = netRes.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
+        }
+        return netRes;
+      })
+      .catch(() => caches.match(event.request))
   );
 });

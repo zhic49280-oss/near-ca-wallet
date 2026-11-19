@@ -3,11 +3,14 @@
 
   const NEAR_RPC_URL = 'https://rpc.mainnet.near.org';
   const FASTNEAR_RPC_URL = 'https://free.rpc.fastnear.com';
+  const NEAR_RPC_ENDPOINTS = [FASTNEAR_RPC_URL, NEAR_RPC_URL, 'https://1rpc.io/near'];
+  const FASTNEAR_API_URL = 'https://api.fastnear.com';
   const ONECLICK_API_URL = 'https://1click.chaindefuser.com/v0';
   const SOLVER_RELAY_URL = 'https://solver-relay-v2.chaindefuser.com/rpc';
   const INTENTS_CONTRACT_ID = 'intents.near';
   const DEFAULT_REFERRAL_ACCOUNT = 'zhic49280.near';
   const DEFAULT_TIMEOUT_MS = 8000;
+  const _rpc429Until = Object.create(null);
 
   const NETWORK_LABELS = {
     near: 'NEAR Protocol',
@@ -237,6 +240,50 @@
     return serialized.includes('UNKNOWN_ACCOUNT') || serialized.includes('does not exist while viewing');
   }
 
+  async function nearRpcQueryWithFallback(payloadObj, timeoutMs = 4500, signal = null) {
+    const body = typeof payloadObj === 'string' ? payloadObj : JSON.stringify(payloadObj);
+    const now = Date.now();
+    let ordered = NEAR_RPC_ENDPOINTS.filter((u) => !(_rpc429Until[u] > now));
+    if (ordered.length === 0) ordered = NEAR_RPC_ENDPOINTS.slice();
+    let lastResp = null;
+    for (const rpcUrl of ordered) {
+      if (signal && signal.aborted) {
+        const abortErr = new Error(t('请求已取消', 'Request aborted'));
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
+      try {
+        const resp = await fetchJsonWithTimeout(
+          rpcUrl,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+            signal
+          },
+          timeoutMs
+        );
+        if (resp && resp.status === 429) {
+          _rpc429Until[rpcUrl] = Date.now() + 60_000;
+          continue;
+        }
+        if (!resp || !resp.ok || !resp.data) {
+          lastResp = resp;
+          continue;
+        }
+        if (resp.data.error) {
+          if (isUnknownNearAccountError(resp.data.error)) return resp;
+          lastResp = resp;
+          continue;
+        }
+        return resp;
+      } catch (err) {
+        if (signal && signal.aborted) throw err;
+      }
+    }
+    return lastResp;
+  }
+
   /**
    * Queries NEAR Mainnet view_account for a named (.near) or 64-hex implicit account.
    * Returns NEAR balance as a number, 0 if UNKNOWN_ACCOUNT, or null if RPC fails.
@@ -245,42 +292,26 @@
     const accountId = String(nearAccountId || '').trim();
     if (!accountId) return 0;
 
-    const endpoints = [
-      NEAR_RPC_URL,
-      'https://free.rpc.fastnear.com',
-      'https://1rpc.io/near'
-    ];
-    const body = JSON.stringify({
-      jsonrpc: '2.0',
-      id: 'near-view-account',
-      method: 'query',
-      params: {
-        request_type: 'view_account',
-        finality: 'final',
-        account_id: accountId
-      }
-    });
+    const resp = await nearRpcQueryWithFallback(
+      {
+        jsonrpc: '2.0',
+        id: 'near-view-account',
+        method: 'query',
+        params: {
+          request_type: 'view_account',
+          finality: 'final',
+          account_id: accountId
+        }
+      },
+      5000
+    ).catch(() => null);
 
-    for (const rpcUrl of endpoints) {
-      try {
-        const resp = await fetchJsonWithTimeout(
-          rpcUrl,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body
-          },
-          DEFAULT_TIMEOUT_MS
-        );
-        if (!resp.ok || !resp.data) continue;
-        if (resp.data.error) {
-          if (isUnknownNearAccountError(resp.data.error)) return 0;
-          continue;
-        }
-        if (resp.data.result && resp.data.result.amount !== undefined) {
-          return Number(fromBaseUnits(String(resp.data.result.amount), 24));
-        }
-      } catch (_) {}
+    if (!resp || !resp.ok || !resp.data) return null;
+    if (resp.data.error) {
+      return isUnknownNearAccountError(resp.data.error) ? 0 : null;
+    }
+    if (resp.data.result && resp.data.result.amount !== undefined) {
+      return Number(fromBaseUnits(String(resp.data.result.amount), 24));
     }
     return null;
   }
@@ -336,7 +367,8 @@
   }
 
   /**
-   * Queries real NEP-141 token contracts on the NEAR blockchain via `ft_balance_of`.
+   * Queries real NEP-141 token contracts on the NEAR blockchain via FastNear aggregated `/ft` API
+   * (1 HTTP request for multi-token queries) with automatic fallback to `ft_balance_of` RPC calls.
    * Returns { [contractId]: { raw: string, formatted: number } } or null if RPC fails across all contracts.
    */
   async function fetchNearNep141Balances(nearAccountId, contractsMap = DEFAULT_NEAR_NEP141_CONTRACTS) {
@@ -345,35 +377,69 @@
     const entries = Object.entries(map);
     if (!accountId || entries.length === 0) return {};
 
-    const argsBase64 = utf8ToBase64(JSON.stringify({ account_id: accountId }));
     const results = {};
     let anySuccess = false;
 
+    const applyAliases = () => {
+      const aliasPairs = (contractsMap && typeof contractsMap === 'object' && !Array.isArray(contractsMap))
+        ? Object.entries(contractsMap).filter(([, v]) => typeof v === 'string' && v.trim())
+        : [];
+      for (const [alias, cid] of aliasPairs) {
+        if (results[cid.trim()] && !results[alias]) {
+          results[alias] = results[cid.trim()];
+        }
+      }
+    };
+
+    if (entries.length > 2) {
+      try {
+        const fnResp = await fetchJsonWithTimeout(
+          `${FASTNEAR_API_URL}/v1/account/${encodeURIComponent(accountId)}/ft`,
+          {},
+          4000
+        );
+        if (fnResp && fnResp.ok && fnResp.data && Array.isArray(fnResp.data.tokens)) {
+          const balByContract = Object.create(null);
+          for (const tok of fnResp.data.tokens) {
+            if (tok && tok.contract_id) {
+              balByContract[String(tok.contract_id).trim().toLowerCase()] = String(tok.balance || '0');
+            }
+          }
+          for (const [contractId, decimals] of entries) {
+            const raw = balByContract[String(contractId).trim().toLowerCase()] || '0';
+            const formatted = Number(fromBaseUnits(raw, decimals));
+            results[contractId] = {
+              raw,
+              formatted: Number.isFinite(formatted) ? formatted : 0
+            };
+          }
+          applyAliases();
+          return results;
+        }
+      } catch (_) {}
+    }
+
+    const argsBase64 = utf8ToBase64(JSON.stringify({ account_id: accountId }));
     await Promise.all(
       entries.map(async ([contractId, decimals]) => {
         try {
-          const resp = await fetchJsonWithTimeout(
-            NEAR_RPC_URL,
+          const resp = await nearRpcQueryWithFallback(
             {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                jsonrpc: '2.0',
-                id: `nep141-bal-${contractId}`,
-                method: 'query',
-                params: {
-                  request_type: 'call_function',
-                  finality: 'final',
-                  account_id: contractId,
-                  method_name: 'ft_balance_of',
-                  args_base64: argsBase64
-                }
-              })
+              jsonrpc: '2.0',
+              id: `nep141-bal-${contractId}`,
+              method: 'query',
+              params: {
+                request_type: 'call_function',
+                finality: 'final',
+                account_id: contractId,
+                method_name: 'ft_balance_of',
+                args_base64: argsBase64
+              }
             },
-            DEFAULT_TIMEOUT_MS
+            5000
           );
 
-          if (!resp.ok || !resp.data) return;
+          if (!resp || !resp.ok || !resp.data) return;
           if (resp.data.error) {
             if (isUnknownNearAccountError(resp.data.error)) {
               anySuccess = true;
@@ -397,14 +463,7 @@
       })
     );
 
-    const aliasPairs = (contractsMap && typeof contractsMap === 'object' && !Array.isArray(contractsMap))
-      ? Object.entries(contractsMap).filter(([, v]) => typeof v === 'string' && v.trim())
-      : [];
-    for (const [alias, cid] of aliasPairs) {
-      if (results[cid.trim()] && !results[alias]) {
-        results[alias] = results[cid.trim()];
-      }
-    }
+    applyAliases();
     return anySuccess ? results : null;
   }
 
@@ -426,28 +485,23 @@
     );
 
     try {
-      const resp = await fetchJsonWithTimeout(
-        NEAR_RPC_URL,
+      const resp = await nearRpcQueryWithFallback(
         {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 'intents-mt-batch-balance',
-            method: 'query',
-            params: {
-              request_type: 'call_function',
-              finality: 'final',
-              account_id: INTENTS_CONTRACT_ID,
-              method_name: 'mt_batch_balance_of',
-              args_base64: argsBase64
-            }
-          })
+          jsonrpc: '2.0',
+          id: 'intents-mt-batch-balance',
+          method: 'query',
+          params: {
+            request_type: 'call_function',
+            finality: 'final',
+            account_id: INTENTS_CONTRACT_ID,
+            method_name: 'mt_batch_balance_of',
+            args_base64: argsBase64
+          }
         },
-        DEFAULT_TIMEOUT_MS
+        5000
       );
 
-      if (!resp.ok || !resp.data || resp.data.error) {
+      if (!resp || !resp.ok || !resp.data || resp.data.error) {
         return null;
       }
       const rawByteArray = resp.data.result && resp.data.result.result;
@@ -665,7 +719,7 @@
    */
   async function fetchLiveDefuseTokenPrices(opts = {}) {
     try {
-      if (opts && opts.useCache === true && Array.isArray(_livePricesCache.list) && (Date.now() - _livePricesCache.ts < 60_000)) {
+      if (opts && opts.useCache === true && Array.isArray(_livePricesCache.list) && (Date.now() - _livePricesCache.ts < 90_000)) {
         return _livePricesCache.list;
       }
       const registryEarly = getTokenRegistry();
@@ -676,43 +730,43 @@
         ? `https://api.dexscreener.com/latest/dex/tokens/${arcAddrsForDex.join(',')}`
         : null;
 
-      const settleWithSoftCap = (promises, capMs = 1500) => Promise.all(
+      const settleWithSoftCap = (promises, capMs = 1000) => Promise.all(
         promises.map((p) => Promise.race([
           Promise.resolve(p).then((v) => ({ status: 'fulfilled', value: v })).catch((e) => ({ status: 'rejected', reason: e })),
           new Promise((resolve) => setTimeout(() => resolve({ status: 'fulfilled', value: null }), capMs))
         ]))
       );
 
-      const oneClickPromise = fetchJsonWithTimeout(`${ONECLICK_API_URL}/tokens`, {}, 5000);
+      const oneClickPromise = fetchJsonWithTimeout(`${ONECLICK_API_URL}/tokens`, {}, 4500);
       const auxPromises = [
         fetchJsonWithTimeout(
           `https://api.dexscreener.com/latest/dex/tokens/${SOL_DEXSCREENER_MINTS.join(',')}`,
           {},
-          4500
+          4000
         ).catch(() => null),
-        fetchJsonWithTimeout('https://api.prlscan.com/v1/market/prl', {}, 4500).catch(() => null),
+        fetchJsonWithTimeout('https://api.prlscan.com/v1/market/prl', {}, 3500).catch(() => null),
         fetchJsonWithTimeout(
           'https://api.hyperliquid.xyz/info',
           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'allMids' }) },
-          4500
+          3500
         ).catch(() => null),
-        fetchJsonWithTimeout('https://indexer.ref.finance/list-token', {}, 4500).catch(() => null),
-        fetchJsonWithTimeout('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=250&page=1', {}, 4500).catch(() => null),
-        fetchJsonWithTimeout('https://lite-api.jup.ag/tokens/v2/search?query=xStock', {}, 4500).catch(() => null),
+        fetchJsonWithTimeout('https://indexer.ref.finance/list-token', {}, 4000).catch(() => null),
+        fetchJsonWithTimeout('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=250&page=1', {}, 4000).catch(() => null),
+        fetchJsonWithTimeout('https://lite-api.jup.ag/tokens/v2/search?query=xStock', {}, 4000).catch(() => null),
         fetchJsonWithTimeout(
           'https://ks-setting.kyberswap.com/api/v1/tokens?chainIds=5042,1,8453,42161,56,999&page=1&pageSize=100&isWhitelisted=true',
           {},
-          4500
+          4000
         ).catch(() => null),
-        fetchJsonWithTimeout('https://li.quest/v1/tokens?chains=5042', {}, 4500).catch(() => null),
-        fetchJsonWithTimeout('https://indexer.ref.finance/list-token-price', {}, 4500).catch(() => null),
-        arcDexUrl ? fetchJsonWithTimeout(arcDexUrl, {}, 4500).catch(() => null) : Promise.resolve(null)
+        fetchJsonWithTimeout('https://li.quest/v1/tokens?chains=5042', {}, 4000).catch(() => null),
+        fetchJsonWithTimeout('https://indexer.ref.finance/list-token-price', {}, 4000).catch(() => null),
+        arcDexUrl ? fetchJsonWithTimeout(arcDexUrl, {}, 4000).catch(() => null) : Promise.resolve(null)
       ];
 
       const [resp, auxResults] = await Promise.all([
         oneClickPromise.catch(() => null),
         oneClickPromise.then(
-          () => settleWithSoftCap(auxPromises, 1500),
+          () => settleWithSoftCap(auxPromises, 1000),
           () => Promise.resolve(auxPromises.map(() => ({ status: 'fulfilled', value: null })))
         )
       ]);
@@ -1160,84 +1214,6 @@
           }
         }
 
-        // Batch DexScreener fallback (<= 25 addresses per call) for any remaining non-Arc tokens missing price
-        const remainingDexTokens = allTargetTokens.filter(
-          (t) => t && t.blockchain !== 'arc' && t.contractAddress
-            && t.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL_LOWER
-            && !(t.price > 0)
-        );
-        if (remainingDexTokens.length > 0) {
-          const uniqueAddrs = Array.from(new Set(remainingDexTokens.map((t) => String(t.contractAddress).trim())));
-          const extraPriceMap = Object.create(null);
-          const extraLiqMap = Object.create(null);
-          const chunks = [];
-          for (let i = 0; i < uniqueAddrs.length; i += 25) {
-            chunks.push(uniqueAddrs.slice(i, i + 25));
-          }
-          await Promise.allSettled(
-            chunks.map(async (chunk) => {
-              const dsResp = await fetchJsonWithTimeout(
-                `https://api.dexscreener.com/latest/dex/tokens/${chunk.join(',')}`,
-                {},
-                4500
-              ).catch(() => null);
-              const pairs = dsResp && dsResp.ok && dsResp.data && Array.isArray(dsResp.data.pairs) ? dsResp.data.pairs : [];
-              for (const pair of pairs) {
-                const bAddr = String(pair?.baseToken?.address || '').trim().toLowerCase();
-                const pUsd = Number(pair?.priceUsd);
-                const liqUsd = Number(pair?.liquidity?.usd || 0);
-                if (!bAddr || !Number.isFinite(pUsd) || pUsd <= 0) continue;
-                if (liqUsd >= (extraLiqMap[bAddr] ?? -1)) {
-                  extraLiqMap[bAddr] = liqUsd;
-                  extraPriceMap[bAddr] = pUsd;
-                }
-              }
-            })
-          );
-          for (const tok of remainingDexTokens) {
-            const addrLow = String(tok.contractAddress || '').trim().toLowerCase();
-            const foundP = extraPriceMap[addrLow];
-            if (foundP > 0 && !(tok.price > 0)) {
-              tok.price = foundP;
-              const symU = String(tok.symbol || '').trim().toUpperCase();
-              for (const other of allTargetTokens) {
-                if (other && !(other.price > 0) && String(other.symbol || '').trim().toUpperCase() === symU) {
-                  other.price = foundP;
-                }
-              }
-            }
-          }
-        }
-
-        // KyberSwap Arc Mainnet fallback for any remaining Arc tokens without LI.FI or DexScreener price
-        const arcTokensNeedingPrice = ((registry.DEX_CHAIN_TOKENS && registry.DEX_CHAIN_TOKENS.arc) || []).filter(
-          (t) => t && t.contractAddress && t.contractAddress.toLowerCase() !== ARC_USDC_CONTRACT && !(t.price > 0)
-        );
-        if (arcTokensNeedingPrice.length > 0) {
-          for (let i = 0; i < arcTokensNeedingPrice.length; i += 6) {
-            const batch = arcTokensNeedingPrice.slice(i, i + 6);
-            await Promise.allSettled(
-              batch.map(async (arcTok) => {
-                const qUrl = `https://aggregator-api.kyberswap.com/arc/api/v1/routes?tokenIn=${ARC_USDC_CONTRACT}&tokenOut=${encodeURIComponent(arcTok.contractAddress)}&amountIn=10000000`;
-                const qRes = await fetchJsonWithTimeout(qUrl, {}, 3500).catch(() => null);
-                const rs = qRes && qRes.ok && qRes.data && qRes.data.data && qRes.data.data.routeSummary;
-                if (!rs || !rs.amountOut || !/^\d+$/.test(String(rs.amountOut))) return;
-                const outQty = Number(fromBaseUnits(String(rs.amountOut), typeof arcTok.decimals === 'number' ? arcTok.decimals : 18));
-                if (!(outQty > 0)) return;
-                const usdIn = Number(rs.amountInUsd) > 0 ? Number(rs.amountInUsd) : 10;
-                const unitPrice = usdIn / outQty;
-                if (Number.isFinite(unitPrice) && unitPrice > 0) {
-                  arcTok.price = unitPrice;
-                  const extraHit = normalizedList.find(
-                    (x) => x.blockchain === 'arc' && String(x.contractAddress || '').toLowerCase() === arcTok.contractAddress.toLowerCase()
-                  );
-                  if (extraHit) extraHit.price = unitPrice;
-                }
-              })
-            );
-          }
-        }
-
         if (registry.PEARL_DEFUSE_TOKEN && registry.PEARL_DEFUSE_TOKEN.assetId) {
           const livePrl = byAssetId.get(String(registry.PEARL_DEFUSE_TOKEN.assetId).toLowerCase()) || bySymbol.get('PRL');
           if (livePrl && livePrl.price > 0) {
@@ -1252,6 +1228,88 @@
           registry.setLiveDefuseTokens(normalizedList);
         } else {
           registry.LIVE_DEFUSE_TOKENS = normalizedList;
+        }
+        if (opts && typeof opts.onFastUpdate === 'function') {
+          try { opts.onFastUpdate(normalizedList); } catch (_) {}
+        }
+
+        // Batch DexScreener + KyberSwap Arc Mainnet fallbacks concurrently with 1500ms soft cap
+        const remainingDexTokens = allTargetTokens.filter(
+          (t) => t && t.blockchain !== 'arc' && t.contractAddress
+            && t.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL_LOWER
+            && !(t.price > 0)
+        );
+        const arcTokensNeedingPrice = ((registry.DEX_CHAIN_TOKENS && registry.DEX_CHAIN_TOKENS.arc) || []).filter(
+          (t) => t && t.contractAddress && t.contractAddress.toLowerCase() !== ARC_USDC_CONTRACT && !(t.price > 0)
+        );
+        const fallbackTasks = [];
+        if (remainingDexTokens.length > 0) {
+          const uniqueAddrs = Array.from(new Set(remainingDexTokens.map((t) => String(t.contractAddress).trim())));
+          const extraPriceMap = Object.create(null);
+          const extraLiqMap = Object.create(null);
+          const chunks = [];
+          for (let i = 0; i < uniqueAddrs.length; i += 25) {
+            chunks.push(uniqueAddrs.slice(i, i + 25));
+          }
+          chunks.forEach((chunk) => {
+            fallbackTasks.push(
+              fetchJsonWithTimeout(`https://api.dexscreener.com/latest/dex/tokens/${chunk.join(',')}`, {}, 3500)
+                .then((dsResp) => {
+                  const pairs = dsResp && dsResp.ok && dsResp.data && Array.isArray(dsResp.data.pairs) ? dsResp.data.pairs : [];
+                  for (const pair of pairs) {
+                    const bAddr = String(pair?.baseToken?.address || '').trim().toLowerCase();
+                    const pUsd = Number(pair?.priceUsd);
+                    const liqUsd = Number(pair?.liquidity?.usd || 0);
+                    if (!bAddr || !Number.isFinite(pUsd) || pUsd <= 0) continue;
+                    if (liqUsd >= (extraLiqMap[bAddr] ?? -1)) {
+                      extraLiqMap[bAddr] = liqUsd;
+                      extraPriceMap[bAddr] = pUsd;
+                    }
+                  }
+                  for (const tok of remainingDexTokens) {
+                    const addrLow = String(tok.contractAddress || '').trim().toLowerCase();
+                    const foundP = extraPriceMap[addrLow];
+                    if (foundP > 0 && !(tok.price > 0)) {
+                      tok.price = foundP;
+                      const symU = String(tok.symbol || '').trim().toUpperCase();
+                      for (const other of allTargetTokens) {
+                        if (other && !(other.price > 0) && String(other.symbol || '').trim().toUpperCase() === symU) {
+                          other.price = foundP;
+                        }
+                      }
+                    }
+                  }
+                })
+                .catch(() => null)
+            );
+          });
+        }
+        if (arcTokensNeedingPrice.length > 0) {
+          arcTokensNeedingPrice.forEach((arcTok) => {
+            const qUrl = `https://aggregator-api.kyberswap.com/arc/api/v1/routes?tokenIn=${ARC_USDC_CONTRACT}&tokenOut=${encodeURIComponent(arcTok.contractAddress)}&amountIn=10000000`;
+            fallbackTasks.push(
+              fetchJsonWithTimeout(qUrl, {}, 3000)
+                .then((qRes) => {
+                  const rs = qRes && qRes.ok && qRes.data && qRes.data.data && qRes.data.data.routeSummary;
+                  if (!rs || !rs.amountOut || !/^\d+$/.test(String(rs.amountOut))) return;
+                  const outQty = Number(fromBaseUnits(String(rs.amountOut), typeof arcTok.decimals === 'number' ? arcTok.decimals : 18));
+                  if (!(outQty > 0)) return;
+                  const usdIn = Number(rs.amountInUsd) > 0 ? Number(rs.amountInUsd) : 10;
+                  const unitPrice = usdIn / outQty;
+                  if (Number.isFinite(unitPrice) && unitPrice > 0) {
+                    arcTok.price = unitPrice;
+                    const extraHit = normalizedList.find(
+                      (x) => x.blockchain === 'arc' && String(x.contractAddress || '').toLowerCase() === arcTok.contractAddress.toLowerCase()
+                    );
+                    if (extraHit) extraHit.price = unitPrice;
+                  }
+                })
+                .catch(() => null)
+            );
+          });
+        }
+        if (fallbackTasks.length > 0) {
+          await settleWithSoftCap(fallbackTasks, 1500);
         }
       }
 
@@ -1306,7 +1364,7 @@
     [QTC_NEAR_ASSET_ID]: 12
   };
 
-  async function quoteNearDclPoolSwap({ tokenIn, tokenOut, amountRaw, slippageBps = 100 } = {}) {
+  async function quoteNearDclPoolSwap({ tokenIn, tokenOut, amountRaw, slippageBps = 100, signal = null } = {}) {
     const inId = String(tokenIn || '').trim();
     const outId = String(tokenOut || '').trim();
     const amtStr = String(amountRaw || '0').trim();
@@ -1320,30 +1378,26 @@
     try {
       const results = await Promise.all(
         poolIdsList.map(async (poolId) => {
-          const resp = await fetchJsonWithTimeout(
-            NEAR_RPC_URL,
+          const resp = await nearRpcQueryWithFallback(
             {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                jsonrpc: '2.0',
-                id: `dcl-quote-${poolId}`,
-                method: 'query',
-                params: {
-                  request_type: 'call_function',
-                  finality: 'final',
-                  account_id: DCL_CONTRACT_ID,
-                  method_name: 'quote',
-                  args_base64: utf8ToBase64(JSON.stringify({
-                    pool_ids: [poolId],
-                    input_token: inId,
-                    output_token: outId,
-                    input_amount: amtStr
-                  }))
-                }
-              })
+              jsonrpc: '2.0',
+              id: `dcl-quote-${poolId}`,
+              method: 'query',
+              params: {
+                request_type: 'call_function',
+                finality: 'final',
+                account_id: DCL_CONTRACT_ID,
+                method_name: 'quote',
+                args_base64: utf8ToBase64(JSON.stringify({
+                  pool_ids: [poolId],
+                  input_token: inId,
+                  output_token: outId,
+                  input_amount: amtStr
+                }))
+              }
             },
-            DEFAULT_TIMEOUT_MS
+            5000,
+            signal
           ).catch(() => null);
           const bytes = resp && resp.ok && resp.data && resp.data.result && resp.data.result.result;
           if (!Array.isArray(bytes)) return null;
@@ -1368,6 +1422,7 @@
         poolIds: [best.poolId],
         amountOut: outAmt,
         minAmountOut,
+        serviceFeeBps: 0,
         actions: [],
         routeData: { isDcl: true, poolIds: [best.poolId], amount_out: outAmt, min_amount_out: minAmountOut },
         error: null
@@ -1467,16 +1522,16 @@
     return null;
   }
 
-  async function quoteRefSmartRouterPath({ tokenIn, tokenOut, amountRaw, slippageBps = 100 } = {}) {
+  async function quoteRefSmartRouterPath({ tokenIn, tokenOut, amountRaw, slippageBps = 100, signal = null } = {}) {
     const slippageDec = (Math.max(1, Number(slippageBps) || 100) / 10000).toFixed(4);
     const url = `${REF_SMART_ROUTER_URL}?amountIn=${encodeURIComponent(String(amountRaw))}&tokenIn=${encodeURIComponent(tokenIn)}&tokenOut=${encodeURIComponent(tokenOut)}&pathDeep=3&slippage=${slippageDec}`;
-    const resp = await fetchJsonWithTimeout(url, {}, DEFAULT_TIMEOUT_MS).catch(() => null);
+    const resp = await fetchJsonWithTimeout(url, signal ? { signal } : {}, 5500).catch(() => null);
     const data = resp && resp.ok ? resp.data : null;
     const rData = data && Number(data.result_code) === 0 ? data.result_data : null;
     const routes = rData && Array.isArray(rData.routes) ? rData.routes : [];
     const amountOut = rData && rData.amount_out ? String(rData.amount_out) : '0';
     if (!rData || routes.length === 0 || !/^\d+$/.test(amountOut) || BigInt(amountOut) <= 0n) {
-      const dclQ = await quoteNearDclPoolSwap({ tokenIn, tokenOut, amountRaw, slippageBps });
+      const dclQ = await quoteNearDclPoolSwap({ tokenIn, tokenOut, amountRaw, slippageBps, signal });
       if (dclQ.ok) return dclQ;
       return { ok: false, amountOut: null, actions: [], routeData: null, error: (data && data.result_message) || t('Ref 流动性路由不可用', 'Ref Finance route unavailable') };
     }
@@ -1495,13 +1550,14 @@
       }
     }
     if (actions.length === 0) {
-      const dclQ = await quoteNearDclPoolSwap({ tokenIn, tokenOut, amountRaw, slippageBps });
+      const dclQ = await quoteNearDclPoolSwap({ tokenIn, tokenOut, amountRaw, slippageBps, signal });
       if (dclQ.ok) return dclQ;
     }
     return {
       ok: actions.length > 0,
       amountOut,
       minAmountOut: String(routes[0]?.min_amount_out || '0'),
+      serviceFeeBps: 0,
       actions,
       routeData: rData,
       error: null
@@ -1569,8 +1625,13 @@
       dry = true,
       appFeeBps = 25,
       referral = DEFAULT_REFERRAL_ACCOUNT,
-      deadlineIso
+      deadlineIso,
+      signal = null
     } = params;
+
+    if (signal && signal.aborted) {
+      return { ok: false, quote: null, depositAddress: null, memo: null, amountOut: null, amountOutFormatted: null, amountInUsd: null, amountOutUsd: null, serviceFeeBps: 0, error: t('请求已取消', 'Request aborted') };
+    }
 
     const resolvedOriginAsset = resolveOneClickAssetId(originAsset, params.originBlockchain || '');
     const resolvedDestAsset = resolveOneClickAssetId(destinationAsset, params.destinationBlockchain || '');
@@ -1600,14 +1661,18 @@
     }
 
     const postQuote = async (reqBody) => {
+      if (signal && signal.aborted) {
+        return { ok: false, status: 0, aborted: true, error: t('请求已取消', 'Request aborted') };
+      }
       const resp = await fetchJsonWithTimeout(
         `${ONECLICK_API_URL}/quote`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(reqBody)
+          body: JSON.stringify(reqBody),
+          signal
         },
-        DEFAULT_TIMEOUT_MS
+        dry ? 6000 : DEFAULT_TIMEOUT_MS
       );
       const json = resp.data;
       if (resp.ok && json && json.quote) {
@@ -1621,6 +1686,7 @@
           amountOutFormatted: q.amountOutFormatted !== undefined ? String(q.amountOutFormatted) : null,
           amountInUsd: q.amountInUsd !== undefined ? String(q.amountInUsd) : null,
           amountOutUsd: q.amountOutUsd !== undefined ? String(q.amountOutUsd) : null,
+          serviceFeeBps: feeBps,
           error: null
         };
       }
@@ -1631,7 +1697,7 @@
     };
 
     const firstTry = await postQuote(body);
-    if (firstTry.ok) return firstTry;
+    if (firstTry.ok || firstTry.aborted || (signal && signal.aborted)) return firstTry;
 
     // On dry preview quotes, if an external destinationAsset fails validation with a NEAR recipient,
     // automatically retry via NEAR wrapped 1cs_v1:near:* or INTENTS recipient so preview quotes succeed.
@@ -1654,7 +1720,7 @@
           recipient: nearAcct,
           recipientType: 'DESTINATION_CHAIN'
         });
-        if (retryNear.ok) return retryNear;
+        if (retryNear.ok || (signal && signal.aborted)) return retryNear;
       }
 
       const retryIntents = await postQuote({
@@ -1662,14 +1728,14 @@
         recipient: nearAcct,
         recipientType: 'INTENTS'
       });
-      if (retryIntents.ok) return retryIntents;
+      if (retryIntents.ok || (signal && signal.aborted)) return retryIntents;
       if (/refundTo is not valid/i.test(firstTry.error || '')) {
         const retryRefund = await postQuote({
           ...body,
           refundTo: nearAcct,
           refundType: 'INTENTS'
         });
-        if (retryRefund.ok) return retryRefund;
+        if (retryRefund.ok || (signal && signal.aborted)) return retryRefund;
       }
     }
 
@@ -1694,6 +1760,7 @@
       amountOutFormatted: null,
       amountInUsd: null,
       amountOutUsd: null,
+      serviceFeeBps: feeBps,
       error: finalError
     };
   }
@@ -1708,7 +1775,8 @@
     slippageBps = 100,
     recipient,
     refundTo,
-    nearAccountId
+    nearAccountId,
+    signal = null
   } = {}) {
     try {
       const originIsPrl = isPrlAssetId(originAsset);
@@ -1728,7 +1796,8 @@
           nearAccountId: nearAccount,
           depositType: 'ORIGIN_CHAIN',
           recipientType: 'DESTINATION_CHAIN',
-          dry: true
+          dry: true,
+          signal
         });
       }
 
@@ -1736,7 +1805,9 @@
       if (originIsPrl) {
         let effectivePrlIn = amtStr;
         let bridgeQuote = null;
-        if (String(originAsset).toLowerCase() === PRL_PEARL_ASSET_ID) {
+        const originIsPearlL1 = String(originAsset).toLowerCase() === PRL_PEARL_ASSET_ID;
+        const directNearDest = extractNearTokenContract(destinationAsset);
+        if (originIsPearlL1) {
           bridgeQuote = await quoteRawOneClick({
             originAsset: PRL_PEARL_ASSET_ID,
             destinationAsset: PRL_NEAR_ASSET_ID,
@@ -1747,20 +1818,22 @@
             nearAccountId: nearAccount,
             depositType: 'ORIGIN_CHAIN',
             recipientType: 'DESTINATION_CHAIN',
-            dry: true
+            appFeeBps: directNearDest ? 25 : 0,
+            dry: true,
+            signal
           }).catch(() => null);
           if (bridgeQuote && bridgeQuote.ok && bridgeQuote.amountOut && BigInt(bridgeQuote.amountOut) > 0n) {
             effectivePrlIn = bridgeQuote.amountOut;
           }
         }
 
-        const directNearDest = extractNearTokenContract(destinationAsset);
         if (directNearDest) {
           let refQ = await quoteRefSmartRouterPath({
             tokenIn: PRL_NEAR_CONTRACT,
             tokenOut: directNearDest,
             amountRaw: effectivePrlIn,
-            slippageBps
+            slippageBps,
+            signal
           });
           if (!refQ.ok) {
             // Multi-hop fallback (e.g. PRL -> USDC -> RHEA -> oRHEA) via Ref v2 pools in a single atomic route
@@ -1770,7 +1843,8 @@
                 tokenIn: PRL_NEAR_CONTRACT,
                 tokenOut: directNearDest,
                 amountRaw: effectivePrlIn,
-                slippageBps
+                slippageBps,
+                signal
               }).catch(() => null);
               if (alt && alt.ok) refQ = alt;
             }
@@ -1787,8 +1861,9 @@
               memo: null,
               amountOut: refQ.amountOut,
               amountOutFormatted: fromBaseUnits(refQ.amountOut, dec),
-              amountInUsd: null,
+              amountInUsd: bridgeQuote ? bridgeQuote.amountInUsd : null,
               amountOutUsd: null,
+              serviceFeeBps: originIsPearlL1 ? 25 : 0,
               error: null
             };
           }
@@ -1799,7 +1874,8 @@
           tokenIn: PRL_NEAR_CONTRACT,
           tokenOut: NEAR_USDC_CONTRACT,
           amountRaw: effectivePrlIn,
-          slippageBps
+          slippageBps,
+          signal
         });
         if (!refToUsdc.ok) {
           return { ok: false, quote: null, depositAddress: null, memo: null, amountOut: null, amountOutFormatted: null, amountInUsd: null, amountOutUsd: null, error: refToUsdc.error };
@@ -1811,7 +1887,8 @@
               tokenIn: NEAR_USDC_CONTRACT,
               tokenOut: QTC_NEAR_CONTRACT,
               amountRaw: refToUsdc.amountOut,
-              slippageBps
+              slippageBps,
+              signal
             }).catch(() => null),
             quoteRawOneClick({
               originAsset: NEAR_USDC_ASSET_ID,
@@ -1823,7 +1900,8 @@
               nearAccountId: nearAccount,
               depositType: 'ORIGIN_CHAIN',
               recipientType: 'DESTINATION_CHAIN',
-              dry: true
+              dry: true,
+              signal
             }).catch(() => null)
           ]);
           const candidates = [];
@@ -1845,8 +1923,9 @@
                 memo: null,
                 amountOut: dclStep2.amountOut,
                 amountOutFormatted: fromBaseUnits(dclStep2.amountOut, 12),
-                amountInUsd: null,
+                amountInUsd: bridgeQuote ? bridgeQuote.amountInUsd : null,
                 amountOutUsd: null,
+                serviceFeeBps: originIsPearlL1 ? 25 : 0,
                 error: null
               }
             });
@@ -1864,7 +1943,8 @@
                 bridgeQuote,
                 intermediaryUsdcAssetId: NEAR_USDC_ASSET_ID,
                 intermediaryUsdcContract: NEAR_USDC_CONTRACT,
-                intermediaryUsdcRaw: refToUsdc.amountOut
+                intermediaryUsdcRaw: refToUsdc.amountOut,
+                serviceFeeBps: 25
               }
             });
           }
@@ -1891,7 +1971,8 @@
           nearAccountId: nearAccount,
           depositType: 'ORIGIN_CHAIN',
           recipientType: 'DESTINATION_CHAIN',
-          dry: true
+          dry: true,
+          signal
         });
         if (!oneClickStep2.ok) return oneClickStep2;
         return {
@@ -1902,25 +1983,28 @@
           bridgeQuote,
           intermediaryUsdcAssetId: NEAR_USDC_ASSET_ID,
           intermediaryUsdcContract: NEAR_USDC_CONTRACT,
-          intermediaryUsdcRaw: refToUsdc.amountOut
+          intermediaryUsdcRaw: refToUsdc.amountOut,
+          serviceFeeBps: 25
         };
       }
 
       // Case 3: Buying PRL <- NEAR token or External chain token
       if (destIsPrl) {
+        const destIsPearlL1 = String(destinationAsset).toLowerCase() === PRL_PEARL_ASSET_ID;
         const directNearSrc = extractNearTokenContract(originAsset);
         if (directNearSrc) {
           const refQ = await quoteRefSmartRouterPath({
             tokenIn: directNearSrc,
             tokenOut: PRL_NEAR_CONTRACT,
             amountRaw: amtStr,
-            slippageBps
+            slippageBps,
+            signal
           });
           // Only return immediately if Ref Finance has direct pool liquidity; otherwise fall through to 1Click->USDC->PRL
           if (refQ.ok) {
             let finalPrlOut = refQ.amountOut;
             let bridgeQuote = null;
-            if (String(destinationAsset).toLowerCase() === PRL_PEARL_ASSET_ID) {
+            if (destIsPearlL1) {
               bridgeQuote = await quoteRawOneClick({
                 originAsset: PRL_NEAR_ASSET_ID,
                 destinationAsset: PRL_PEARL_ASSET_ID,
@@ -1931,7 +2015,8 @@
                 nearAccountId: nearAccount,
                 depositType: 'ORIGIN_CHAIN',
                 recipientType: 'DESTINATION_CHAIN',
-                dry: true
+                dry: true,
+                signal
               }).catch(() => null);
               if (bridgeQuote && bridgeQuote.ok && bridgeQuote.amountOut && BigInt(bridgeQuote.amountOut) > 0n) {
                 finalPrlOut = bridgeQuote.amountOut;
@@ -1947,13 +2032,14 @@
               amountOut: finalPrlOut,
               amountOutFormatted: fromBaseUnits(finalPrlOut, 8),
               amountInUsd: null,
-              amountOutUsd: null,
+              amountOutUsd: bridgeQuote?.amountOutUsd || null,
+              serviceFeeBps: destIsPearlL1 ? 25 : 0,
               error: null
             };
           }
         }
 
-        // External / 1Click Token -> NEAR USDC (1Click) -> PRL (Ref Finance Pool #9010)
+        // External / 1Click Token -> NEAR USDC (1Click) -> PRL (Ref Finance Pool #9010) [-> Pearl L1 bridge]
         const oneClickStep1 = await quoteRawOneClick({
           originAsset,
           destinationAsset: NEAR_USDC_ASSET_ID,
@@ -1964,7 +2050,9 @@
           nearAccountId: nearAccount,
           depositType: 'ORIGIN_CHAIN',
           recipientType: 'DESTINATION_CHAIN',
-          dry: true
+          appFeeBps: 25,
+          dry: true,
+          signal
         });
         if (!oneClickStep1.ok || !oneClickStep1.amountOut) return oneClickStep1;
 
@@ -1972,24 +2060,48 @@
           tokenIn: NEAR_USDC_CONTRACT,
           tokenOut: PRL_NEAR_CONTRACT,
           amountRaw: oneClickStep1.amountOut,
-          slippageBps
+          slippageBps,
+          signal
         });
         if (!refFromUsdc.ok) {
           return { ok: false, quote: null, depositAddress: null, memo: null, amountOut: null, amountOutFormatted: null, amountInUsd: null, amountOutUsd: null, error: refFromUsdc.error };
+        }
+        let finalPrlOut = refFromUsdc.amountOut;
+        let bridgeOutQuote = null;
+        if (destIsPearlL1) {
+          bridgeOutQuote = await quoteRawOneClick({
+            originAsset: PRL_NEAR_ASSET_ID,
+            destinationAsset: PRL_PEARL_ASSET_ID,
+            amountRaw: refFromUsdc.amountOut,
+            slippageBps,
+            recipient,
+            refundTo: nearAccount,
+            nearAccountId: nearAccount,
+            depositType: 'ORIGIN_CHAIN',
+            recipientType: 'DESTINATION_CHAIN',
+            appFeeBps: 0,
+            dry: true,
+            signal
+          }).catch(() => null);
+          if (bridgeOutQuote && bridgeOutQuote.ok && bridgeOutQuote.amountOut && BigInt(bridgeOutQuote.amountOut) > 0n) {
+            finalPrlOut = bridgeOutQuote.amountOut;
+          }
         }
         return {
           ok: true,
           compositeType: 'EXTERNAL_TO_PRL',
           oneClickQuote: oneClickStep1,
           refQuote: refFromUsdc,
+          bridgeQuote: bridgeOutQuote,
           intermediaryUsdcAssetId: NEAR_USDC_ASSET_ID,
           intermediaryUsdcContract: NEAR_USDC_CONTRACT,
           depositAddress: null,
           memo: null,
-          amountOut: refFromUsdc.amountOut,
-          amountOutFormatted: fromBaseUnits(refFromUsdc.amountOut, 8),
-          amountInUsd: oneClickStep1.amountInUsd,
-          amountOutUsd: oneClickStep1.amountInUsd,
+          amountOut: finalPrlOut,
+          amountOutFormatted: fromBaseUnits(finalPrlOut, 8),
+          amountInUsd: oneClickStep1.amountInUsd || null,
+          amountOutUsd: bridgeOutQuote?.amountOutUsd || null,
+          serviceFeeBps: 25,
           error: null
         };
       }
@@ -2028,7 +2140,8 @@
       dry = true,
       appFeeBps = 25,
       referral = DEFAULT_REFERRAL_ACCOUNT,
-      deadlineIso
+      deadlineIso,
+      signal = null
     } = params;
 
     if (!originAsset || !destinationAsset) {
@@ -2084,7 +2197,8 @@
         slippageBps,
         recipient,
         refundTo,
-        nearAccountId: params.nearAccountId
+        nearAccountId: params.nearAccountId,
+        signal
       });
     }
 
@@ -2141,7 +2255,8 @@
     amountRaw,
     slippageBps = 100,
     recipient,
-    nearAccountId
+    nearAccountId,
+    signal = null
   } = {}) {
     const contracts = getContractsHelper();
     const nearAcct = nearAccountId || recipient;
@@ -2152,10 +2267,10 @@
 
     // Build parallel candidates across Ref V2 AMM, Rhea CLMM (dclv2), Composite PRL, and 1Click
     const refPromise = (contracts && typeof contracts.quoteNearRefFinanceSwap === 'function')
-      ? contracts.quoteNearRefFinanceSwap({ tokenIn: tokenInContract, tokenOut: tokenOutContract, amountRaw: amtStr, slippageBps }).catch(() => null)
-      : quoteRefSmartRouterPath({ tokenIn: tokenInContract, tokenOut: tokenOutContract, amountRaw: amtStr, slippageBps }).catch(() => null);
+      ? contracts.quoteNearRefFinanceSwap({ tokenIn: tokenInContract, tokenOut: tokenOutContract, amountRaw: amtStr, slippageBps, signal }).catch(() => null)
+      : quoteRefSmartRouterPath({ tokenIn: tokenInContract, tokenOut: tokenOutContract, amountRaw: amtStr, slippageBps, signal }).catch(() => null);
 
-    const dclPromise = quoteNearDclPoolSwap({ tokenIn: tokenInContract, tokenOut: tokenOutContract, amountRaw: amtStr, slippageBps }).catch(() => null);
+    const dclPromise = quoteNearDclPoolSwap({ tokenIn: tokenInContract, tokenOut: tokenOutContract, amountRaw: amtStr, slippageBps, signal }).catch(() => null);
 
     const compositePrlPromise = (isPrlAssetId(fromToken.assetId) !== isPrlAssetId(toToken.assetId))
       ? quoteCompositePrlSwap({
@@ -2165,7 +2280,8 @@
           slippageBps,
           recipient: nearAcct,
           refundTo: nearAcct,
-          nearAccountId: nearAcct
+          nearAccountId: nearAcct,
+          signal
         }).catch(() => null)
       : Promise.resolve(null);
 
@@ -2179,7 +2295,8 @@
       nearAccountId: nearAcct,
       depositType: 'ORIGIN_CHAIN',
       recipientType: 'DESTINATION_CHAIN',
-      dry: true
+      dry: true,
+      signal
     }).catch(() => null);
 
     const [rRes, dRes, cRes, oRes] = await Promise.allSettled([
@@ -2190,7 +2307,7 @@
     ]);
 
     const candidates = [];
-    const pushCand = (source, res, formatter = null) => {
+    const pushCand = (source, res, defaultFeeBps = 0, formatter = null) => {
       if (!res || !res.ok || !res.amountOut || !/^\d+$/.test(String(res.amountOut))) return;
       const outBig = BigInt(res.amountOut);
       if (outBig <= 0n) return;
@@ -2199,6 +2316,7 @@
         outBig,
         payload: {
           ...res,
+          serviceFeeBps: res.serviceFeeBps !== undefined ? res.serviceFeeBps : defaultFeeBps,
           amountOut: String(res.amountOut),
           amountOutFormatted: res.amountOutFormatted || (formatter ? formatter(res.amountOut) : fromBaseUnits(res.amountOut, outDec))
         }
@@ -2206,17 +2324,17 @@
     };
 
     const refVal = rRes.status === 'fulfilled' ? rRes.value : null;
-    if (refVal && refVal.ok && !refVal.isDcl) pushCand('Ref Finance V2', refVal);
+    if (refVal && refVal.ok && !refVal.isDcl) pushCand('Ref Finance V2', refVal, 0);
     const dclVal = dRes.status === 'fulfilled' ? dRes.value : null;
-    if (dclVal && dclVal.ok) pushCand('Rhea CLMM (dclv2)', dclVal);
-    else if (refVal && refVal.ok && refVal.isDcl) pushCand('Rhea CLMM (dclv2)', refVal);
+    if (dclVal && dclVal.ok) pushCand('Rhea CLMM (dclv2)', dclVal, 0);
+    else if (refVal && refVal.ok && refVal.isDcl) pushCand('Rhea CLMM (dclv2)', refVal, 0);
 
     const compVal = cRes.status === 'fulfilled' ? cRes.value : null;
     if (compVal && compVal.ok) {
-      pushCand(compVal.bestSource || 'Ref + Composite', compVal);
+      pushCand(compVal.bestSource || 'Ref + Composite', compVal, compVal.serviceFeeBps || 0);
     }
     const ocVal = oRes.status === 'fulfilled' ? oRes.value : null;
-    if (ocVal && ocVal.ok) pushCand('1Click Solver', ocVal);
+    if (ocVal && ocVal.ok) pushCand('1Click Solver', ocVal, 25);
 
     if (candidates.length === 0) {
       const errMsg = (compVal && compVal.error) || (ocVal && ocVal.error) || (refVal && refVal.error) || t('暂无 NEAR 流动性报价', 'No NEAR quote available');
@@ -2254,7 +2372,8 @@
     destinationChainId,
     originCurrency,
     destinationCurrency,
-    amount
+    amount,
+    signal = null
   } = {}) {
     try {
       const u = /^0x[0-9a-fA-F]{40}$/.test(String(user || '')) ? user : '0x1111111111111111111111111111111111111111';
@@ -2273,7 +2392,8 @@
             destinationCurrency,
             amount: String(amount),
             tradeType: 'EXACT_INPUT'
-          })
+          }),
+          signal
         },
         DEFAULT_TIMEOUT_MS
       );
@@ -2305,14 +2425,15 @@
     fromAmount,
     fromAddress,
     toAddress,
-    slippageBps = 100
+    slippageBps = 100,
+    signal = null
   } = {}) {
     try {
       const fAddr = /^0x[0-9a-fA-F]{40}$/.test(String(fromAddress || '')) ? fromAddress : '0x1111111111111111111111111111111111111111';
       const tAddr = /^0x[0-9a-fA-F]{40}$/.test(String(toAddress || '')) ? toAddress : fAddr;
       const slip = ((Number(slippageBps) || 100) / 10000).toFixed(4);
       const url = `${LIFI_API_URL}/quote?fromChain=${encodeURIComponent(fromChain)}&toChain=${encodeURIComponent(toChain)}&fromToken=${encodeURIComponent(fromToken)}&toToken=${encodeURIComponent(toToken)}&fromAmount=${encodeURIComponent(fromAmount)}&fromAddress=${encodeURIComponent(fAddr)}&toAddress=${encodeURIComponent(tAddr)}&slippage=${slip}`;
-      const resp = await fetchJsonWithTimeout(url, {}, DEFAULT_TIMEOUT_MS);
+      const resp = await fetchJsonWithTimeout(url, { signal }, DEFAULT_TIMEOUT_MS);
       const est = resp.data?.estimate;
       if (!resp.ok || !est || !est.toAmount || !/^\d+$/.test(String(est.toAmount)) || BigInt(est.toAmount) <= 0n) {
         return { ok: false, error: resp.data?.message || `LI.FI HTTP ${resp.status}` };
@@ -2359,7 +2480,8 @@
     slippageBps = 100,
     recipient,
     refundTo,
-    nearAccountId
+    nearAccountId,
+    signal = null
   } = {}) {
     try {
       const contracts = getContractsHelper();
@@ -2401,7 +2523,8 @@
           inputMint: fromToken.contractAddress,
           outputMint: SOL_NATIVE_WSOL,
           amountRaw: amtStr,
-          slippageBps
+          slippageBps,
+          signal
         }).catch(() => null);
         if (!jupS0 || !jupS0.outAmount || BigInt(jupS0.outAmount) <= 0n) {
           return { ok: false, error: t('Solana 源链 DEX 询价失败', 'Origin Solana DEX quote failed') };
@@ -2417,7 +2540,8 @@
           amountRaw: amtStr,
           srcDecimals: fromDec,
           destDecimals: 18,
-          slippageBps
+          slippageBps,
+          signal
         }).catch(() => null);
         if (!evmS0 || !evmS0.ok || !evmS0.amountOut || BigInt(evmS0.amountOut) <= 0n) {
           return { ok: false, error: t('EVM 源链 DEX 询价失败', 'Origin EVM DEX quote failed') };
@@ -2427,13 +2551,17 @@
         bridgeInAmountRaw = String(evmS0.amountOut);
       }
 
-      // ---- Entry options (asset sitting on NEAR before the swap leg)
+      // ---- Entry options (pruned: Pearl PRL only enters via PRL hub; non-NEAR charges fee once on exit when exit exists)
+      const hasBridgeOut = toBc !== 'near';
+      const entryFeeBps = hasBridgeOut ? 0 : 25;
       let entries = [];
       let bridgeInErr = '';
       if (fromBc === 'near') {
         entries.push({ contract: fromNearContract, decimals: fromDec, symbol: fromToken.symbol, out: amtStr, bridgeIn: null, hubAsset: fromAsset });
       } else {
-        const hubs = SMART_HUBS;
+        const hubs = fromBc === 'prl'
+          ? SMART_HUBS.filter((h) => h.key === 'prl')
+          : SMART_HUBS;
         const bridged = await Promise.all(hubs.map(async (h) => {
           if (String(bridgeInOriginAsset).toLowerCase() === h.asset.toLowerCase()) return null;
           const q = await quoteRawOneClick({
@@ -2446,7 +2574,9 @@
             nearAccountId: nearAcct,
             depositType: 'ORIGIN_CHAIN',
             recipientType: 'DESTINATION_CHAIN',
-            dry: true
+            appFeeBps: entryFeeBps,
+            dry: true,
+            signal
           }).catch((err) => ({ ok: false, error: err && err.message ? err.message : '' }));
           if (!okAmt(q) && q && q.error && !bridgeInErr) bridgeInErr = q.error;
           return okAmt(q) ? { contract: h.contract, decimals: h.decimals, symbol: h.symbol, out: String(q.amountOut), bridgeIn: q, hubAsset: h.asset } : null;
@@ -2457,13 +2587,15 @@
         return { ok: false, error: bridgeInErr || t('该来源资产暂无法跨入 NEAR 流动性', 'Origin asset cannot be bridged into NEAR liquidity') };
       }
 
-      // ---- Exit options
+      // ---- Exit options (pruned: Pearl PRL only exits via PRL hub)
       const bridgeOutDestAsset = targetIsSolDex
         ? SOL_1CLICK_ASSET_ID
         : (targetIsEvmDex && EVM_NATIVE_1CLICK_MAP[toBc] ? EVM_NATIVE_1CLICK_MAP[toBc] : toAsset);
       const exits = toBc === 'near'
         ? [{ contract: toNearContract, decimals: toDec, symbol: toToken.symbol, asset: toAsset, isFinal: true }]
-        : SMART_HUBS.map((h) => ({ contract: h.contract, decimals: h.decimals, symbol: h.symbol, asset: h.asset, isFinal: false }));
+        : (toBc === 'prl'
+            ? SMART_HUBS.filter((h) => h.key === 'prl').map((h) => ({ contract: h.contract, decimals: h.decimals, symbol: h.symbol, asset: h.asset, isFinal: false }))
+            : SMART_HUBS.map((h) => ({ contract: h.contract, decimals: h.decimals, symbol: h.symbol, asset: h.asset, isFinal: false })));
 
       const combos = [];
       entries.forEach((e) => exits.forEach((x) => combos.push({ e, x })));
@@ -2473,7 +2605,7 @@
           let midOut = e.out;
           let swapQ = null;
           if (e.contract !== x.contract) {
-            swapQ = await contracts.quoteNearRefFinanceSwap({ tokenIn: e.contract, tokenOut: x.contract, amountRaw: e.out, slippageBps }).catch(() => null);
+            swapQ = await contracts.quoteNearRefFinanceSwap({ tokenIn: e.contract, tokenOut: x.contract, amountRaw: e.out, slippageBps, signal }).catch(() => null);
             if (!okAmt(swapQ)) return null;
             midOut = String(swapQ.amountOut);
           }
@@ -2490,7 +2622,9 @@
               nearAccountId: nearAcct,
               depositType: 'ORIGIN_CHAIN',
               recipientType: 'DESTINATION_CHAIN',
-              dry: true
+              appFeeBps: 25,
+              dry: true,
+              signal
             }).catch(() => null);
             if (!okAmt(bridgeOut)) return null;
             finalOut = String(bridgeOut.amountOut);
@@ -2501,7 +2635,8 @@
               inputMint: SOL_NATIVE_WSOL,
               outputMint: toToken.contractAddress,
               amountRaw: finalOut,
-              slippageBps
+              slippageBps,
+              signal
             }).catch(() => null);
             if (!destDexQ || !destDexQ.outAmount || BigInt(destDexQ.outAmount) <= 0n) return null;
             finalOut = String(destDexQ.outAmount);
@@ -2513,7 +2648,8 @@
               amountRaw: finalOut,
               srcDecimals: 18,
               destDecimals: toDec,
-              slippageBps
+              slippageBps,
+              signal
             }).catch(() => null);
             if (!destDexQ || !destDexQ.ok || !destDexQ.amountOut || BigInt(destDexQ.amountOut) <= 0n) return null;
             finalOut = String(destDexQ.amountOut);
@@ -2605,6 +2741,7 @@
         labels.push(best.destDexQ.routeLabel || best.destDexQ.bestSource || best.destDexQ.label || `${toBc.toUpperCase()} DEX`);
       }
       const routeLabel = `${valid.length > 1 ? '⚡ ' : ''}${labels.join(' + ')}`;
+      const hasAny1Click = Boolean(best.e.bridgeIn || best.bridgeOut);
       return {
         ok: true,
         compositeType: 'SMART_HUB_ROUTE',
@@ -2615,6 +2752,7 @@
         amountOutFormatted: fromBaseUnits(best.finalOut, toDec),
         amountInUsd: (best.e.bridgeIn && best.e.bridgeIn.amountInUsd) || null,
         amountOutUsd: (best.bridgeOut && best.bridgeOut.amountOutUsd) || null,
+        serviceFeeBps: hasAny1Click ? 25 : 0,
         comparedPools: valid.length,
         bestSource: labels.join(' + '),
         routeLabel,
@@ -2626,16 +2764,34 @@
   }
 
   /**
-   * Public cross-chain quote entry: runs the generic Smart Hub Router together with the legacy special-case router
-   * (Arc / Solana DEX / EVM DEX / direct 1Click) and returns the best executable route.
+   * Public cross-chain quote entry: fast-paths direct 1Click-capable pairs in 1 request, falling back
+   * to Smart Hub Router only when needed (PRL pairs, DEX-only targets, or no direct liquidity).
    */
   async function quoteCrossChainWithDexRelay(params = {}) {
-    const { fromToken, toToken } = params;
+    const { fromToken, toToken, signal = null } = params;
     if (!fromToken || !toToken) return quoteCrossChainWithDexRelayLegacy(params);
     const fromBc = String(fromToken.blockchain || '').toLowerCase();
     const toBc = String(toToken.blockchain || '').toLowerCase();
     if (fromBc === 'near' && toBc === 'near') return quoteCrossChainWithDexRelayLegacy(params);
     if (fromBc === 'arc' || toBc === 'arc') return quoteCrossChainWithDexRelayLegacy(params);
+
+    const prlInvolved = isPrlAssetId(fromToken.assetId) || isPrlAssetId(toToken.assetId);
+    const isOneClickDirectAsset = (tok) => /^(nep141:|1cs_v1:)/i.test(String(resolveOneClickAssetId(tok, tok.blockchain) || ''));
+    const isDexOnlySol = toBc === 'sol' && Boolean(toToken.contractAddress) && toToken.contractAddress !== SOL_NATIVE_WSOL && !isOneClickDirectAsset(toToken);
+    const isDexOnlyEvm = ['eth', 'base', 'arb', 'bsc', 'hood'].includes(toBc) && Boolean(toToken.contractAddress) && toToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL && !isOneClickDirectAsset(toToken);
+    const isOriginDexOnly = (fromBc === 'sol' && Boolean(fromToken.contractAddress) && fromToken.contractAddress !== SOL_NATIVE_WSOL && !isOneClickDirectAsset(fromToken))
+      || (['eth', 'base', 'arb', 'bsc', 'hood'].includes(fromBc) && Boolean(fromToken.contractAddress) && fromToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL && !isOneClickDirectAsset(fromToken));
+
+    // Fast path: direct 1Click-to-1Click pair (e.g. NEAR -> SOL/ETH/USDC) runs in 1 single request (~1s);
+    // only falls back to multi-hub Smart Hub Router when direct quote fails.
+    if (!prlInvolved && !isDexOnlySol && !isDexOnlyEvm && !isOriginDexOnly && isOneClickDirectAsset(fromToken) && isOneClickDirectAsset(toToken)) {
+      const legacyDirect = await quoteCrossChainWithDexRelayLegacy(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'legacy failed' }));
+      if ((signal && signal.aborted) || (legacyDirect && legacyDirect.ok && /^\d+$/.test(String(legacyDirect.amountOut || '')) && BigInt(legacyDirect.amountOut) > 0n)) {
+        return legacyDirect;
+      }
+      const smartFallback = await quoteSmartHubRoute(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'smart route failed' }));
+      return (smartFallback && smartFallback.ok) ? smartFallback : legacyDirect;
+    }
 
     const smartPromise = quoteSmartHubRoute(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'smart route failed' }));
     const legacyPromise = quoteCrossChainWithDexRelayLegacy(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'legacy failed' }));
@@ -2663,7 +2819,6 @@
     const smartOk = smart && smart.ok;
     const legacyOk = legacy && legacy.ok && /^\d+$/.test(String(legacy.amountOut || '')) && BigInt(legacy.amountOut) > 0n;
     if (smartOk && legacyOk) {
-      const prlInvolved = isPrlAssetId(fromToken.assetId) || isPrlAssetId(toToken.assetId);
       if (prlInvolved) return smart;
       const sBig = BigInt(smart.amountOut);
       const lBig = BigInt(legacy.amountOut);
@@ -2687,7 +2842,8 @@
     refundTo,
     nearAccountId,
     solAddress,
-    evmAddress
+    evmAddress,
+    signal = null
   } = {}) {
     if (!fromToken || !toToken) {
       return { ok: false, error: t('缺少代币参数', 'Missing fromToken or toToken') };
@@ -2698,7 +2854,7 @@
     const contracts = getContractsHelper();
 
     if (fromBc === 'near' && toBc === 'near') {
-      return quoteBestNearPairSwap({ fromToken, toToken, amountRaw: amtStr, slippageBps, recipient, nearAccountId });
+      return quoteBestNearPairSwap({ fromToken, toToken, amountRaw: amtStr, slippageBps, recipient, nearAccountId, signal });
     }
 
     const originIsPrl = isPrlAssetId(fromToken.assetId);
@@ -2718,7 +2874,8 @@
         slippageBps,
         recipient,
         refundTo,
-        nearAccountId
+        nearAccountId,
+        signal
       });
       if (prlRes && prlRes.ok && !prlRes.routeLabel) {
         prlRes.routeLabel = prlRes.compositeType === 'PRL_TO_EXTERNAL' || prlRes.compositeType === 'EXTERNAL_TO_PRL'
@@ -2738,7 +2895,8 @@
           slippageBps,
           recipient: interRecipient,
           refundTo,
-          nearAccountId
+          nearAccountId,
+          signal
         });
       }
       if (isOriginSolDex && contracts && typeof contracts.quoteSolanaJupiterSwap === 'function') {
@@ -2746,7 +2904,8 @@
           inputMint: fromToken.contractAddress,
           outputMint: SOL_NATIVE_WSOL,
           amountRaw: amtStr,
-          slippageBps
+          slippageBps,
+          signal
         });
         return quoteIntentSwapOrWithdraw({
           originAsset: SOL_1CLICK_ASSET_ID,
@@ -2758,11 +2917,12 @@
           nearAccountId,
           depositType: 'ORIGIN_CHAIN',
           recipientType: 'DESTINATION_CHAIN',
-          dry: true
+          dry: true,
+          signal
         });
       }
       if (resolvedOriginAsset.toLowerCase() === interAssetId.toLowerCase()) {
-        return { ok: true, amountOut: amtStr, amountInUsd: null };
+        return { ok: true, amountOut: amtStr, amountInUsd: null, serviceFeeBps: 0 };
       }
       return quoteIntentSwapOrWithdraw({
         originAsset: resolvedOriginAsset,
@@ -2774,7 +2934,8 @@
         nearAccountId,
         depositType: 'ORIGIN_CHAIN',
         recipientType: 'DESTINATION_CHAIN',
-        dry: true
+        dry: true,
+        signal
       });
     };
 
@@ -2798,7 +2959,8 @@
             destinationChainId: 5042,
             originCurrency: origCurrency,
             destinationCurrency: ARC_USDC_CONTRACT,
-            amount: bridgeAmt
+            amount: bridgeAmt,
+            signal
           }),
           quoteLifiBridge({
             fromChain: origChainId,
@@ -2808,7 +2970,8 @@
             fromAmount: bridgeAmt,
             fromAddress: evmUser,
             toAddress: destIsArcUsdc ? arcRecip : evmUser,
-            slippageBps
+            slippageBps,
+            signal
           })
         ]);
         const cands = [rQ, lQ].filter((x) => x && x.ok && BigInt(x.amountOut) > 0n);
@@ -2846,7 +3009,9 @@
           amountRaw: arcUsdcOut,
           srcDecimals: 6,
           destDecimals: toDec,
-          slippageBps
+          slippageBps,
+          feeBps: 0,
+          signal
         });
         if (!dexQuote || !dexQuote.ok || !dexQuote.amountOut) {
           return dexQuote || { ok: false, error: t('Arc 链内 DEX 兑换询价失败', 'Arc DEX swap quote failed') };
@@ -2872,6 +3037,7 @@
         intermediaryRaw: arcUsdcOut,
         depositAddress: null,
         memo: null,
+        serviceFeeBps: stage1 ? (stage1.serviceFeeBps ?? 25) : 0,
         amountOut: String(finalAmountOut),
         amountOutFormatted: fromBaseUnits(String(finalAmountOut), toDec),
         amountInUsd: (stage1 && stage1.amountInUsd) || bridge.amountInUsd || null,
@@ -2904,7 +3070,9 @@
           amountRaw: amtStr,
           srcDecimals: typeof fromToken.decimals === 'number' ? fromToken.decimals : 18,
           destDecimals: 6,
-          slippageBps
+          slippageBps,
+          feeBps: 0,
+          signal
         });
         if (!stage1Dex || !stage1Dex.ok || !stage1Dex.amountOut) {
           return stage1Dex || { ok: false, error: t('Arc 链内换出 USDC 失败', 'Arc DEX stage 1 quote failed') };
@@ -2920,7 +3088,8 @@
           destinationChainId: 8453,
           originCurrency: ARC_USDC_CONTRACT,
           destinationCurrency: BASE_USDC_EVM,
-          amount: arcUsdcAmt
+          amount: arcUsdcAmt,
+          signal
         }),
         quoteLifiBridge({
           fromChain: 5042,
@@ -2930,7 +3099,8 @@
           fromAmount: arcUsdcAmt,
           fromAddress: evmUser,
           toAddress: toBc === 'base' && /^0x[0-9a-fA-F]{40}$/.test(String(recipient || '')) ? recipient : evmUser,
-          slippageBps
+          slippageBps,
+          signal
         })
       ]);
       const bridgeCands = [rOut, lOut].filter((x) => x && x.ok && BigInt(x.amountOut) > 0n);
@@ -2951,6 +3121,7 @@
           stage3Quote: null,
           intermediaryRaw: arcUsdcAmt,
           baseOutRaw: bestBridge.amountOut,
+          serviceFeeBps: 0,
           amountOut: bestBridge.amountOut,
           amountOutFormatted: fromBaseUnits(bestBridge.amountOut, 6),
           amountInUsd: bestBridge.amountInUsd || null,
@@ -2969,7 +3140,8 @@
             slippageBps,
             recipient,
             refundTo: evmUser,
-            nearAccountId
+            nearAccountId,
+            signal
           })
         : await quoteIntentSwapOrWithdraw({
             originAsset: BASE_USDC_1CLICK_ID,
@@ -2981,7 +3153,8 @@
             nearAccountId,
             depositType: 'ORIGIN_CHAIN',
             recipientType: 'DESTINATION_CHAIN',
-            dry: true
+            dry: true,
+            signal
           });
       if (!stage3 || !stage3.ok) {
         return stage3 || { ok: false, error: t('Base USDC 转目标链询价失败', 'Stage 3 cross-chain quote failed') };
@@ -2995,6 +3168,7 @@
         stage1DexQuote: stage1Dex,
         bridgeQuote: bestBridge,
         stage3Quote: stage3,
+        serviceFeeBps: stage3.serviceFeeBps !== undefined ? stage3.serviceFeeBps : (stage3.depositAddress ? 25 : 0),
         intermediaryRaw: arcUsdcAmt,
         baseOutRaw: bestBridge.amountOut,
         amountOutFormatted: stage3.amountOutFormatted || fromBaseUnits(stage3.amountOut || '0', toDec),
@@ -3019,7 +3193,8 @@
             nearAccountId,
             depositType: 'ORIGIN_CHAIN',
             recipientType: 'DESTINATION_CHAIN',
-            dry: true
+            dry: true,
+            signal
           }).catch(() => null)
         : Promise.resolve(null);
 
@@ -3031,7 +3206,8 @@
           inputMint: SOL_NATIVE_WSOL,
           outputMint: toToken.contractAddress,
           amountRaw: stage1.amountOut,
-          slippageBps
+          slippageBps,
+          signal
         });
         const toDec = typeof toToken.decimals === 'number' ? toToken.decimals : 6;
         return {
@@ -3047,6 +3223,7 @@
           amountOutFormatted: fromBaseUnits(String(stage2.outAmount), toDec),
           amountInUsd: stage1.amountInUsd || null,
           amountOutUsd: null,
+          serviceFeeBps: stage1.serviceFeeBps !== undefined ? stage1.serviceFeeBps : 25,
           comparedPools: stage2.comparedPools || 1,
           bestSource: stage2.bestSource || 'Jupiter V1',
           routeLabel: `1Click (➔SOL) + ${stage2.routeLabel || stage2.bestSource || 'Jupiter V1'}`,
@@ -3078,7 +3255,8 @@
           inputMint: fromToken.contractAddress,
           outputMint: SOL_NATIVE_WSOL,
           amountRaw: amtStr,
-          slippageBps
+          slippageBps,
+          signal
         });
         const solRefund = solAddress || refundTo;
         const stage2 = await quoteIntentSwapOrWithdraw({
@@ -3091,7 +3269,8 @@
           nearAccountId,
           depositType: 'ORIGIN_CHAIN',
           recipientType: 'DESTINATION_CHAIN',
-          dry: true
+          dry: true,
+          signal
         });
         if (!stage2 || !stage2.ok) return stage2 || { ok: false, error: t('第二阶段跨链询价失败', 'Stage 2 cross-chain quote failed') };
         return {
@@ -3102,6 +3281,7 @@
           stage2Quote: stage2,
           intermediaryAssetId: SOL_1CLICK_ASSET_ID,
           intermediaryRaw: stage1.outAmount,
+          serviceFeeBps: stage2.serviceFeeBps !== undefined ? stage2.serviceFeeBps : 25,
           comparedPools: stage1.comparedPools || 1,
           routeLabel: `${stage1.routeLabel || stage1.bestSource || 'Jupiter V1'} (➔SOL) + ${stage2.routeLabel || '1Click'}`
         };
@@ -3123,7 +3303,8 @@
           nearAccountId,
           depositType: 'ORIGIN_CHAIN',
           recipientType: 'DESTINATION_CHAIN',
-          dry: true
+          dry: true,
+          signal
         }).catch(() => null)
       : Promise.resolve(null);
 
@@ -3142,7 +3323,8 @@
             amountRaw: stage1.amountOut,
             srcDecimals: 18,
             destDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 18,
-            slippageBps
+            slippageBps,
+            signal
           });
           if (!stage2 || !stage2.ok || !stage2.amountOut) {
             return stage2 || { ok: false, error: 'Stage 2 EVM DEX quote failed' };
@@ -3160,6 +3342,7 @@
             amountOutFormatted: stage2.amountOutFormatted,
             amountInUsd: stage1.amountInUsd || stage2.amountInUsd || null,
             amountOutUsd: stage2.amountOutUsd || null,
+            serviceFeeBps: stage1.serviceFeeBps !== undefined ? stage1.serviceFeeBps : 25,
             comparedPools: stage2.comparedPools || 1,
             bestSource: stage2.bestSource || stage2.label,
             routeLabel: `1Click (➔${toBc.toUpperCase()}) + ${stage2.routeLabel || stage2.label}`,

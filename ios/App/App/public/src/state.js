@@ -16,6 +16,7 @@
   const LIVE_TOKENS_STORAGE_KEY = 'near_ca_live_tokens_v1';
   const STAKING_METRICS_STORAGE_KEY = 'near_ca_staking_metrics_v3';
   const SWAP_PAIR_STORAGE_KEY = 'near_ca_swap_pair_v1';
+  const ACTIVE_SWAP_ORDER_STORAGE_KEY = 'near_ca_active_swap_order_v1';
   const WC_PROJECT_ID_STORAGE_KEY = 'near_ca_wc_project_id';
   const LEGACY_WC_PROJECT_ID_KEY = 'pearl_wc_project_id';
 
@@ -180,9 +181,14 @@
     let tweakedPrivateKeyHex = String(raw.tweakedPrivateKeyHex || '').trim();
     let btcAddress = String(raw.btcAddress || raw.mpcBtcAddress || '').trim();
 
+    const accountType = String(raw.accountType || '').trim() === 'post_quantum' ? 'post_quantum' : 'standard';
+    const isPq = accountType === 'post_quantum';
+    let mpcDerivedForNearId = String(raw._mpcDerivedForNearId || '').trim().toLowerCase();
+
     const cryptoEngine = getCryptoEngine();
     const mnemonicClean = String(raw.mnemonic || '').trim();
-    if (mnemonicClean && cryptoEngine && typeof cryptoEngine.derivePearlFromSeed === 'function') {
+    const needsPearl = !isPq && Boolean(mnemonicClean) && (!pearlAddress || !privateKeyHex || !tweakedPrivateKeyHex);
+    if (needsPearl && cryptoEngine && typeof cryptoEngine.derivePearlFromSeed === 'function') {
       try {
         const pearlDerived = cryptoEngine.derivePearlFromSeed(mnemonicClean, "m/86'/808276'/0'/0/0", true);
         if (pearlDerived && pearlDerived.address) {
@@ -193,7 +199,15 @@
       } catch (_) {}
     }
 
-    if (activeNearId && cryptoEngine) {
+    const hasCachedMpc = Boolean(
+      mpcDerivedForNearId &&
+      mpcDerivedForNearId === activeNearId &&
+      mpcEvmAddress &&
+      evmAddress &&
+      solAddress &&
+      btcAddress
+    );
+    if (!isPq && activeNearId && !hasCachedMpc && cryptoEngine) {
       if (typeof cryptoEngine.deriveNearMpcAllAddresses === 'function') {
         try {
           const mpcAll = cryptoEngine.deriveNearMpcAllAddresses(activeNearId);
@@ -201,6 +215,7 @@
           evmAddress = mpcAll.evmAddress;
           solAddress = mpcAll.solAddress;
           btcAddress = mpcAll.btcAddress;
+          mpcDerivedForNearId = activeNearId;
         } catch (_) {}
       } else if (!mpcEvmAddress && typeof cryptoEngine.deriveNearMpcEvmAddress === 'function') {
         try {
@@ -208,13 +223,12 @@
           if (derived && derived.mpcEvmAddress) {
             mpcEvmAddress = derived.mpcEvmAddress;
             evmAddress = derived.mpcEvmAddress;
+            mpcDerivedForNearId = activeNearId;
           }
         } catch (_) {}
       }
     }
 
-    const accountType = String(raw.accountType || '').trim() === 'post_quantum' ? 'post_quantum' : 'standard';
-    const isPq = accountType === 'post_quantum';
     const nearUniversalAddress = String(raw.nearUniversalAddress || '').trim();
     const wallet = {
       id: String(raw.id || `w_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),
@@ -245,6 +259,7 @@
       privateKeyHex: isPq ? '' : privateKeyHex,
       tweakedPrivateKeyHex: isPq ? '' : tweakedPrivateKeyHex,
       btcAddress: isPq ? '' : btcAddress,
+      _mpcDerivedForNearId: isPq ? '' : mpcDerivedForNearId,
       qtcDepositAddress: isPq ? '' : String(raw.qtcDepositAddress || '').trim(),
       // Balances
       nearNep141Balances: (raw.nearNep141Balances && typeof raw.nearNep141Balances === 'object') ? { ...raw.nearNep141Balances } : {},
@@ -268,7 +283,8 @@
     if (!wallet || typeof wallet !== 'object') return wallet;
     if (isPostQuantumWallet(wallet)) return wallet;
     const cryptoEngine = getCryptoEngine();
-    if (wallet.mnemonic && cryptoEngine && typeof cryptoEngine.derivePearlFromSeed === 'function') {
+    const needsPearl = Boolean(wallet.mnemonic) && (!wallet.address || !wallet.privateKeyHex || !wallet.tweakedPrivateKeyHex);
+    if (needsPearl && cryptoEngine && typeof cryptoEngine.derivePearlFromSeed === 'function') {
       try {
         const pearlDerived = cryptoEngine.derivePearlFromSeed(wallet.mnemonic, "m/86'/808276'/0'/0/0", true);
         if (pearlDerived && pearlDerived.address) {
@@ -280,13 +296,22 @@
     }
     const activeNearId = String(wallet.nearNamedAccount || wallet.nearAddress || '').trim().toLowerCase();
     if (!activeNearId) return wallet;
-    if (cryptoEngine && typeof cryptoEngine.deriveNearMpcAllAddresses === 'function') {
+    const hasCachedMpc = Boolean(
+      wallet._mpcDerivedForNearId === activeNearId &&
+      wallet.mpcEvmAddress &&
+      wallet.evmAddress &&
+      wallet.solAddress &&
+      wallet.solPublicKey &&
+      wallet.btcAddress
+    );
+    if (!hasCachedMpc && cryptoEngine && typeof cryptoEngine.deriveNearMpcAllAddresses === 'function') {
       const mpcAll = cryptoEngine.deriveNearMpcAllAddresses(activeNearId);
       wallet.mpcEvmAddress = mpcAll.evmAddress;
       wallet.evmAddress = mpcAll.evmAddress;
       wallet.solAddress = mpcAll.solAddress;
       wallet.solPublicKey = mpcAll.solAddress;
       wallet.btcAddress = mpcAll.btcAddress;
+      wallet._mpcDerivedForNearId = activeNearId;
     }
     return wallet;
   }
@@ -364,13 +389,16 @@
       'swap.gasModeAuto': '默认',
       'swap.gasModeExtra': '多留',
       'swap.gasModeNone': '0',
+      'swap.feeLabel': '服务费',
       'swap.executeBtn': '确认闪兑',
       'swap.orderTitle': '跨链订单跟踪',
+      'swap.orderTxHash': '交易哈希',
       'swap.orderDepositAddr': '充值地址',
       'swap.orderStatus': '订单状态',
       'swap.orderRefresh': '刷新状态',
       'swap.orderSubmitHashPlaceholder': '粘贴外部转账 TxHash 加速确认',
       'swap.orderSubmitHashBtn': '提交凭证',
+      'swap.orderResumeBtn': '继续执行下一步',
       'swap.orderDoneBtn': '完成',
       // Earn / Staking
       'earn.title': '链上流动性质押',
@@ -563,13 +591,16 @@
       'swap.gasModeAuto': 'Default',
       'swap.gasModeExtra': 'Extra',
       'swap.gasModeNone': '0',
+      'swap.feeLabel': 'Service Fee',
       'swap.executeBtn': 'Execute Swap',
       'swap.orderTitle': 'Cross-Chain Order Status',
+      'swap.orderTxHash': 'Tx Hash',
       'swap.orderDepositAddr': 'Deposit Address',
       'swap.orderStatus': 'Status',
       'swap.orderRefresh': 'Refresh',
       'swap.orderSubmitHashPlaceholder': 'Paste deposit TxHash to speed up',
       'swap.orderSubmitHashBtn': 'Submit Hash',
+      'swap.orderResumeBtn': 'Resume Next Step',
       'swap.orderDoneBtn': 'Done',
       // Earn / Staking
       'earn.title': 'On-Chain Liquid Staking',
@@ -1086,6 +1117,35 @@
     } catch (_) {}
   }
 
+  function saveActiveSwapOrder(order) {
+    try {
+      if (!order || typeof order !== 'object') {
+        safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, '');
+        return;
+      }
+      safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, JSON.stringify(order));
+    } catch (_) {}
+  }
+
+  function loadActiveSwapOrder() {
+    try {
+      const raw = safeStorageGet(ACTIVE_SWAP_ORDER_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && parsed.createdAt) {
+        state.swap.activeOrder = parsed;
+        return parsed;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function clearSavedSwapOrder() {
+    try {
+      safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, '');
+    } catch (_) {}
+  }
+
   function initState() {
     loadWallets();
     loadContacts();
@@ -1093,6 +1153,7 @@
     loadCachedLiveTokens();
     loadCachedStakingMetrics();
     loadSwapPair();
+    loadActiveSwapOrder();
     applyLanguage(state.lang);
     return state;
   }
@@ -1115,6 +1176,9 @@
   state.loadWallets = loadWallets;
   state.saveSwapPair = saveSwapPair;
   state.loadSwapPair = loadSwapPair;
+  state.saveActiveSwapOrder = saveActiveSwapOrder;
+  state.loadActiveSwapOrder = loadActiveSwapOrder;
+  state.clearSavedSwapOrder = clearSavedSwapOrder;
   state.loadContacts = loadContacts;
   state.saveContacts = saveContacts;
   state.loadFavoriteTokens = loadFavoriteTokens;

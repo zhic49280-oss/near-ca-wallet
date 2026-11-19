@@ -3,10 +3,11 @@
 
   const NEAR_RPC_URL = 'https://rpc.mainnet.near.org';
   const NEAR_RPC_ENDPOINTS = [
-    NEAR_RPC_URL,
     'https://free.rpc.fastnear.com',
+    NEAR_RPC_URL,
     'https://1rpc.io/near'
   ];
+  const _nearRpc429Until = {};
   const NEAR_EXPLORER_TX = 'https://nearblocks.io/txns/';
   const SOLANA_RPC_ENDPOINTS = ['https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com'];
   const SOLSCAN_TX = 'https://solscan.io/tx/';
@@ -105,7 +106,7 @@
     hype: 0.0005,
     hood: 0.0002,
     arc: 0.02,
-    prl: 0.001
+    prl: 0.003
   };
 
   const POOL_ICON_NEAR =
@@ -1108,9 +1109,10 @@
     if (!acct) return [];
     const positions = [];
     try {
-      const [full, orheaConvs] = await Promise.all([
+      const [full, orheaConvs, burrowAcc] = await Promise.all([
         fetchJsonWithTimeout(`https://api.fastnear.com/v1/account/${encodeURIComponent(acct)}/full`, {}, 5000).catch(() => null),
-        viewNearContractCall('orhea-conv.rhealab.near', 'get_account_conversions', { account_id: acct }).catch(() => null)
+        viewNearContractCall('orhea-conv.rhealab.near', 'get_account_conversions', { account_id: acct }).catch(() => null),
+        viewNearContractCall('contract.main.burrow.near', 'get_account', { account_id: acct }).catch(() => null)
       ]);
       const pools = full && Array.isArray(full.pools) ? full.pools : [];
       const validatorResults = await Promise.all(
@@ -1168,6 +1170,57 @@
             subtitle: t(`锁仓兑换中 (${activeCount} 笔)`, `Locked Converting (${activeCount})`)
           });
         }
+      }
+
+      const burrowSupplied = burrowAcc && Array.isArray(burrowAcc.supplied) ? burrowAcc.supplied : [];
+      if (burrowSupplied.length > 0) {
+        const metaMap = {
+          'wrap.near': { poolId: 'burrow_near_wnear', symbol: 'NEAR', baseDec: 24, defaultInternalDec: 24 },
+          'usdt.tether-token.near': { poolId: 'burrow_near_usdt', symbol: 'USDT', baseDec: 6, defaultInternalDec: 18 },
+          '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1': { poolId: 'burrow_near_usdc', symbol: 'USDC', baseDec: 6, defaultInternalDec: 18 }
+        };
+        const assetInfos = await Promise.all(
+          burrowSupplied.map((item) => {
+            const tokId = item && item.token_id ? String(item.token_id) : '';
+            if (!tokId) return Promise.resolve(null);
+            return viewNearContractCall('contract.main.burrow.near', 'get_asset', { token_id: tokId }).catch(() => null);
+          })
+        );
+        burrowSupplied.forEach((item, idx) => {
+          const tokId = String((item && item.token_id) || '').trim();
+          const rawBal = String((item && item.balance) || '0');
+          if (!tokId || !/^\d+$/.test(rawBal) || BigInt(rawBal) <= 0n) return;
+          const poolCfg = STAKING_POOLS.find((p) => p && p.isBurrowSupply && p.tokenContract === tokId);
+          const m = metaMap[tokId] || {
+            poolId: poolCfg ? poolCfg.id : `burrow_${tokId}`,
+            symbol: poolCfg ? poolCfg.inSymbol : (tokId.split('.')[0] || 'TOKEN').toUpperCase(),
+            baseDec: poolCfg ? Number(poolCfg.decimals || 24) : 24,
+            defaultInternalDec: poolCfg && Number(poolCfg.decimals) === 24 ? 24 : 18
+          };
+          const aInfo = assetInfos[idx];
+          const extraDec = aInfo && aInfo.config && aInfo.config.extra_decimals !== undefined
+            ? Number(aInfo.config.extra_decimals)
+            : null;
+          const totalDec = extraDec !== null && Number.isFinite(extraDec)
+            ? (m.baseDec + extraDec)
+            : m.defaultInternalDec;
+          const totalAmount = Number(fromBaseUnits(rawBal, totalDec));
+          if (Number.isFinite(totalAmount) && totalAmount > 0.00001) {
+            positions.push({
+              type: 'burrow_supply',
+              poolId: m.poolId,
+              tokenContract: tokId,
+              symbol: m.symbol,
+              totalAmount,
+              decimals: poolCfg ? Number(poolCfg.decimals || m.baseDec) : m.baseDec,
+              internalDecimals: totalDec,
+              rawInternalBalance: rawBal,
+              chain: 'near',
+              title: `Burrow ${m.symbol}`,
+              subtitle: t('Burrow 活期存款', 'Burrow Supply Position')
+            });
+          }
+        });
       }
     } catch (_) {}
     return positions;
@@ -1310,7 +1363,8 @@
           wallet.nearPrivateKey = wallet.nearPrivateKey || near.nearPrivateKey;
         }
       }
-      if (cryptoEngine && typeof cryptoEngine.derivePearlFromSeedAsync === 'function') {
+      const needsPearl = !wallet.address || !wallet.privateKeyHex || !wallet.tweakedPrivateKeyHex;
+      if (needsPearl && cryptoEngine && typeof cryptoEngine.derivePearlFromSeedAsync === 'function') {
         const pearl = await cryptoEngine.derivePearlFromSeedAsync(wallet.mnemonic, "m/86'/808276'/0'/0/0", true);
         if (pearl && pearl.address) {
           wallet.address = pearl.address;
@@ -1322,17 +1376,29 @@
 
     const nearId = wallet.nearNamedAccount || wallet.nearAddress;
     if (nearId) {
-      if (cryptoEngine && typeof cryptoEngine.deriveNearMpcAllAddresses === 'function') {
-        const mpc = cryptoEngine.deriveNearMpcAllAddresses(nearId);
-        wallet.mpcEvmAddress = mpc.evmAddress;
-        wallet.evmAddress = mpc.evmAddress;
-        wallet.solAddress = mpc.solAddress;
-        wallet.solPublicKey = mpc.solAddress;
-        wallet.btcAddress = mpc.btcAddress;
-      } else if (!wallet.mpcEvmAddress) {
-        const mpcEvm = await deriveMpcEvmAddressAsync(nearId, 'ethereum-1');
-        wallet.mpcEvmAddress = mpcEvm;
-        wallet.evmAddress = wallet.evmAddress || mpcEvm;
+      const hasCachedMpc = Boolean(
+        wallet._mpcDerivedForNearId === nearId &&
+        wallet.mpcEvmAddress &&
+        wallet.evmAddress &&
+        wallet.solAddress &&
+        wallet.solPublicKey &&
+        wallet.btcAddress
+      );
+      if (!hasCachedMpc) {
+        if (cryptoEngine && typeof cryptoEngine.deriveNearMpcAllAddresses === 'function') {
+          const mpc = cryptoEngine.deriveNearMpcAllAddresses(nearId);
+          wallet.mpcEvmAddress = mpc.evmAddress;
+          wallet.evmAddress = mpc.evmAddress;
+          wallet.solAddress = mpc.solAddress;
+          wallet.solPublicKey = mpc.solAddress;
+          wallet.btcAddress = mpc.btcAddress;
+          wallet._mpcDerivedForNearId = nearId;
+        } else if (!wallet.mpcEvmAddress) {
+          const mpcEvm = await deriveMpcEvmAddressAsync(nearId, 'ethereum-1');
+          wallet.mpcEvmAddress = mpcEvm;
+          wallet.evmAddress = wallet.evmAddress || mpcEvm;
+          wallet._mpcDerivedForNearId = nearId;
+        }
       }
     }
 
@@ -1570,7 +1636,8 @@
     outputMint,
     amountRaw,
     slippageBps = 100,
-    platformFeeBps = 25
+    platformFeeBps = 0,
+    signal = null
   } = {}) {
     if (!inputMint || !outputMint) {
       throw new Error(t('缺少 Solana 代币 Mint 地址', 'Missing Solana inputMint or outputMint'));
@@ -1580,14 +1647,15 @@
       throw new Error(t('兑换数量必须大于 0', 'amountRaw must be a positive integer string'));
     }
     const slip = Number(slippageBps) || 100;
-    const feeParam = Number(platformFeeBps) > 0 ? `&platformFeeBps=${Math.round(Number(platformFeeBps))}` : '';
+    const solFeeBps = Number.isFinite(Number(platformFeeBps)) ? Math.max(0, Math.round(Number(platformFeeBps))) : 0;
+    const feeParam = solFeeBps > 0 ? `&platformFeeBps=${solFeeBps}` : '';
     const jupUrl = `${JUPITER_API_URL}/quote?inputMint=${encodeURIComponent(inputMint)}&outputMint=${encodeURIComponent(outputMint)}&amount=${encodeURIComponent(amtStr)}&slippageBps=${slip}${feeParam}`;
     const rayUrl = `${RAYDIUM_API_URL}/compute/swap-base-in?inputMint=${encodeURIComponent(inputMint)}&outputMint=${encodeURIComponent(outputMint)}&amount=${encodeURIComponent(amtStr)}&slippageBps=${slip}&txVersion=V0`;
 
     const [jRes, rRes] = await raceWithGraceWindow(
       [
-        fetchJsonWithTimeout(jupUrl, {}, 5000),
-        fetchJsonWithTimeout(rayUrl, {}, 5000).catch(() => null)
+        fetchJsonWithTimeout(jupUrl, { signal }, 5000),
+        fetchJsonWithTimeout(rayUrl, { signal }, 5000).catch(() => null)
       ],
       (v) => Boolean(v && (v.outAmount || (v.success && v.data && v.data.outputAmount))),
       600
@@ -1626,6 +1694,7 @@
         bestSource: 'Jupiter V1',
         comparedPools,
         routeLabel,
+        serviceFeeBps: solFeeBps,
         _jupiterQuote: jQuote,
         _raydiumRawResponse: rResp
       };
@@ -1641,6 +1710,7 @@
       bestSource: 'Raydium V1',
       comparedPools,
       routeLabel,
+      serviceFeeBps: 0,
       _jupiterQuote: jQuote,
       _raydiumRawResponse: rResp
     };
@@ -2348,7 +2418,15 @@
       (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
       Boolean(window.location.port);
     const url = isDevServer ? `/pearl-proxy?path=${encodeURIComponent(apiPath)}` : directUrl;
-    return fetchJsonWithTimeout(url, options, 10000);
+    try {
+      return await fetchJsonWithTimeout(url, options, 10000);
+    } catch (err) {
+      const msg = String((err && err.message) || '');
+      if (!isNativeCap && !isDevServer && ((err && err.name === 'TypeError') || /failed to fetch|networkerror|cors/i.test(msg))) {
+        throw new Error(t('浏览器跨域限制无法直连 Pearl 节点，请在原生 App 或本地服务中使用', 'Browser CORS blocked direct Pearl node access; use the native App or local server'));
+      }
+      throw err;
+    }
   }
 
   function encodeVarInt(n) {
@@ -2365,6 +2443,75 @@
       out[out.length - 1 - i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
     }
     return out;
+  }
+
+  const PEARL_BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+
+  function pearlBech32Polymod(values) {
+    const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+    let chk = 1;
+    for (const v of values) {
+      const b = chk >>> 25;
+      chk = ((chk & 0x1ffffff) << 5) ^ v;
+      for (let i = 0; i < 5; i++) {
+        if ((b >> i) & 1) chk ^= GEN[i];
+      }
+    }
+    return chk;
+  }
+
+  function pearlDecodeBech32V0(address) {
+    const lower = String(address || '').trim().toLowerCase();
+    const sep = lower.lastIndexOf('1');
+    if (sep <= 0 || sep + 7 > lower.length) return null;
+    const hrp = lower.slice(0, sep);
+    const data = [];
+    for (const ch of lower.slice(sep + 1)) {
+      const idx = PEARL_BECH32_CHARSET.indexOf(ch);
+      if (idx === -1) return null;
+      data.push(idx);
+    }
+    const exp = [];
+    for (let i = 0; i < hrp.length; i++) exp.push(hrp.charCodeAt(i) >> 5);
+    exp.push(0);
+    for (let i = 0; i < hrp.length; i++) exp.push(hrp.charCodeAt(i) & 31);
+    if (pearlBech32Polymod(exp.concat(data)) !== 1) return null;
+    const vals = data.slice(0, -6);
+    if (vals.length < 1 || vals[0] !== 0) return null;
+    let acc = 0;
+    let bits = 0;
+    const out = [];
+    for (const v of vals.slice(1)) {
+      acc = (acc << 5) | v;
+      bits += 5;
+      if (bits >= 8) {
+        bits -= 8;
+        out.push((acc >> bits) & 0xff);
+      }
+    }
+    if (bits >= 5 || ((acc << (8 - bits)) & 0xff)) return null;
+    return { valid: true, hrp, witnessVersion: 0, programBytes: out };
+  }
+
+  function pearlOutputScriptPubKey(cryptoEngine, prlAddress) {
+    const addr = String(prlAddress || '').trim();
+    const decoded = cryptoEngine.decodeBech32m(addr);
+    if (decoded && decoded.valid && decoded.hrp === 'prl' && decoded.witnessVersion === 1 && decoded.programBytes && decoded.programBytes.length === 32) {
+      const spk = new Uint8Array(34);
+      spk[0] = 0x51; // OP_1 (SegWit v1 P2TR)
+      spk[1] = 0x20;
+      spk.set(Uint8Array.from(decoded.programBytes), 2);
+      return spk;
+    }
+    const v0 = pearlDecodeBech32V0(addr);
+    if (v0 && v0.valid && v0.hrp === 'prl' && v0.witnessVersion === 0 && (v0.programBytes.length === 20 || v0.programBytes.length === 32)) {
+      const spk = new Uint8Array(2 + v0.programBytes.length);
+      spk[0] = 0x00; // OP_0 (SegWit v0 P2WPKH / P2WSH)
+      spk[1] = v0.programBytes.length;
+      spk.set(Uint8Array.from(v0.programBytes), 2);
+      return spk;
+    }
+    throw new Error(t('Pearl Taproot 地址无效', 'Invalid Pearl Taproot address'));
   }
 
   function pearlTaprootScriptPubKey(cryptoEngine, prlAddress) {
@@ -2414,7 +2561,7 @@
     }
 
     const fromSpk = pearlTaprootScriptPubKey(cryptoEngine, fromAddress);
-    const toSpk = pearlTaprootScriptPubKey(cryptoEngine, toAddress);
+    const toSpk = pearlOutputScriptPubKey(cryptoEngine, toAddress);
     const changeAmt = totalIn - sendAmt - feeAmt;
     const outputs = [{ value: sendAmt, spk: toSpk }];
     if (changeAmt >= 546n) {
@@ -2495,10 +2642,46 @@
       throw new Error(t('Pearl 钱包暂无可用 UTXO', 'No spendable PRL UTXOs found'));
     }
 
+    const spendableUtxos = utxos.filter((u) => {
+      if (!u || !u.txid || u.vout === undefined) return false;
+      try {
+        if (BigInt(String(u.value || '0')) <= 0n) return false;
+      } catch (_) {
+        return false;
+      }
+      const conf = Number(u.confirmations ?? 0);
+      if (u.coinbase && (!Number.isFinite(conf) || conf < 100)) return false;
+      return true;
+    });
+
+    if (spendableUtxos.length === 0) {
+      throw new Error(t('Pearl 钱包暂无可用 UTXO（可能仍在成熟确认中）', 'No spendable PRL UTXOs found (coinbase outputs may still be maturing)'));
+    }
+
+    const sortedUtxos = [...spendableUtxos]
+      .sort((a, b) => (BigInt(String(b.value)) > BigInt(String(a.value)) ? 1 : -1));
+
     const feePerKbPrl = feeEst && feeEst.result && Number(feeEst.result) > 0 ? Number(feeEst.result) : 0.0066;
-    const estVbytes = 12 + Math.min(utxos.length, 4) * 58 + 2 * 43;
-    const feeGrainsBig = BigInt(Math.max(10000, Math.ceil((feePerKbPrl * 1e8 * estVbytes) / 1000)));
     const reqGrainsBig = BigInt(toBaseUnits(String(reqAmt), 8));
+    let feeGrainsBig = BigInt(Math.max(10000, Math.ceil((feePerKbPrl * 1e8 * (12 + 58 + 2 * 43)) / 1000)));
+    for (let pass = 0; pass < 3; pass++) {
+      const targetSend = feeDeductMode === 'internal'
+        ? (reqGrainsBig > feeGrainsBig ? reqGrainsBig - feeGrainsBig : 0n)
+        : reqGrainsBig;
+      let acc = 0n;
+      let count = 0;
+      for (const u of sortedUtxos) {
+        acc += BigInt(String(u.value));
+        count += 1;
+        if (acc >= targetSend + feeGrainsBig) break;
+      }
+      const hasChange = acc > targetSend + feeGrainsBig && (acc - targetSend - feeGrainsBig) >= 546n;
+      const vbytes = 12 + Math.max(1, count) * 58 + (hasChange ? 2 : 1) * 43;
+      const nextFee = BigInt(Math.max(10000, Math.ceil((feePerKbPrl * 1e8 * vbytes) / 1000)));
+      if (nextFee === feeGrainsBig) break;
+      feeGrainsBig = nextFee;
+    }
+
     const sendGrainsBig = feeDeductMode === 'internal'
       ? (reqGrainsBig > feeGrainsBig ? reqGrainsBig - feeGrainsBig : 0n)
       : reqGrainsBig;
@@ -2512,7 +2695,7 @@
       toAddress: String(toAddress || '').trim(),
       amountGrains: sendGrainsBig.toString(),
       feeGrains: feeGrainsBig.toString(),
-      utxos,
+      utxos: spendableUtxos,
       tweakedPrivateKeyHex: wallet.tweakedPrivateKeyHex
     });
 
@@ -2728,8 +2911,9 @@
     srcDecimals = 18,
     destDecimals = 18,
     slippageBps = 100,
-    feeBps = 25,
-    feeReceiver = DEFAULT_EVM_FEE_RECEIVER
+    feeBps = 0,
+    feeReceiver = DEFAULT_EVM_FEE_RECEIVER,
+    signal = null
   } = {}) {
     const key = String(chainKey || '').toLowerCase();
     const cfg = EVM_CHAINS[key];
@@ -2769,7 +2953,7 @@
       };
     }
 
-    const bps = Number.isFinite(Number(feeBps)) ? Math.max(0, Math.round(Number(feeBps))) : 25;
+    const bps = feeBps !== undefined && feeBps !== null && Number.isFinite(Number(feeBps)) ? Math.max(0, Math.round(Number(feeBps))) : 0;
     const feeQueryKyber = bps > 0 && feeReceiver
       ? `&feeAmount=${bps}&isInBps=true&chargeFeeBy=currency_in&feeReceiver=${encodeURIComponent(feeReceiver)}`
       : '';
@@ -2795,12 +2979,12 @@
 
     const [kRes, pRes, oRes, lRes] = await raceWithGraceWindow(
       [
-        kyberUrl ? fetchJsonWithTimeout(kyberUrl, {}, 5000) : Promise.resolve(null),
+        kyberUrl ? fetchJsonWithTimeout(kyberUrl, { signal }, 5000) : Promise.resolve(null),
         cfg.chainId === 999 || cfg.chainId === 4663 || cfg.chainId === 5042
           ? Promise.resolve(null)
-          : fetchJsonWithTimeout(paraUrl, {}, 5000),
-        ooUrl ? fetchJsonWithTimeout(ooUrl, {}, 4500).catch(() => null) : Promise.resolve(null),
-        lifiUrl ? fetchJsonWithTimeout(lifiUrl, {}, 5000).catch(() => null) : Promise.resolve(null)
+          : fetchJsonWithTimeout(paraUrl, { signal }, 5000),
+        ooUrl ? fetchJsonWithTimeout(ooUrl, { signal }, 4500).catch(() => null) : Promise.resolve(null),
+        lifiUrl ? fetchJsonWithTimeout(lifiUrl, { signal }, 5000).catch(() => null) : Promise.resolve(null)
       ],
       (v) => Boolean(
         v && (
@@ -2920,6 +3104,7 @@
       amountOutUsd: best.amountOutUsd,
       routeData: best.routeData,
       slippageBps,
+      serviceFeeBps: bps,
       error: null
     };
   }
@@ -3056,7 +3241,7 @@
     srcDecimals = 18,
     slippageBps = 100,
     tokenBalance = null,
-    feeBps = 25,
+    feeBps = 0,
     feeReceiver = DEFAULT_EVM_FEE_RECEIVER
   } = {}) {
     if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
@@ -3145,23 +3330,26 @@
       spenderAddr = (lData.estimate && lData.estimate.approvalAddress) || toAddr;
       if (isArcMainnet && isNative) approvalAddr = ARC_USDC_PRECOMPILE;
     } else if (routeSource === 'paraswap') {
-      const bps = Number.isFinite(Number(feeBps)) ? Math.max(0, Math.round(Number(feeBps))) : 25;
+      const bps = feeBps !== undefined && feeBps !== null && Number.isFinite(Number(feeBps)) ? Math.max(0, Math.round(Number(feeBps))) : 0;
+      const paraPayload = {
+        srcToken,
+        destToken,
+        srcAmount: String(amountRaw),
+        priceRoute: routeData,
+        userAddress: wallet.evmAddress,
+        slippage: Number(slippageBps) || 100
+      };
+      if (bps > 0 && feeReceiver) {
+        paraPayload.partner = 'pearlwallet';
+        paraPayload.partnerAddress = feeReceiver;
+        paraPayload.partnerFeeBps = bps;
+      }
       const pBuild = await fetchJsonWithTimeout(
         `https://api.paraswap.io/transactions/${cfg.chainId}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            srcToken,
-            destToken,
-            srcAmount: String(amountRaw),
-            priceRoute: routeData,
-            userAddress: wallet.evmAddress,
-            slippage: Number(slippageBps) || 100,
-            partner: 'pearlwallet',
-            partnerAddress: feeReceiver,
-            partnerFeeBps: bps
-          })
+          body: JSON.stringify(paraPayload)
         },
         12000
       );
@@ -3427,16 +3615,21 @@
     };
   }
 
-  async function nearRpcPostAsync(payload, timeoutMs = 8000) {
+  async function nearRpcPostAsync(payload, timeoutMs = 8000, signal = null) {
+    const now = Date.now();
+    const activeUrls = NEAR_RPC_ENDPOINTS.filter((u) => !(_nearRpc429Until[u] > now));
+    const ordered = activeUrls.length > 0 ? activeUrls : NEAR_RPC_ENDPOINTS;
     let lastErr = null;
-    for (const url of NEAR_RPC_ENDPOINTS) {
+    for (const url of ordered) {
+      if (signal && signal.aborted) break;
       try {
         const res = await fetchJsonWithTimeout(
           url,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal
           },
           timeoutMs
         );
@@ -3444,6 +3637,11 @@
           return res;
         }
       } catch (err) {
+        if (signal && signal.aborted) throw err;
+        const msg = String((err && err.message) || '');
+        if ((err && err.status === 429) || /429|Too Many Requests/i.test(msg)) {
+          _nearRpc429Until[url] = Date.now() + 60_000;
+        }
         lastErr = err;
       }
     }
@@ -3550,16 +3748,44 @@
       signedTxBytes = concatUint8Arrays([txBytes, new Uint8Array([0]), sig]); // Signature::ED25519 = 0
     }
     const signedB64 = bytesToBase64(signedTxBytes);
+    const expectedTxHash = base58Encode(txHashBytes);
 
-    const txRes = await nearRpcPostAsync(
-      {
-        jsonrpc: '2.0',
-        id: 'tx',
-        method: 'broadcast_tx_commit',
-        params: [signedB64]
-      },
-      15000
-    );
+    let txRes = null;
+    try {
+      txRes = await nearRpcPostAsync(
+        {
+          jsonrpc: '2.0',
+          id: 'tx',
+          method: 'broadcast_tx_commit',
+          params: [signedB64]
+        },
+        18000
+      );
+    } catch (broadcastErr) {
+      const bMsg = String((broadcastErr && broadcastErr.message) || '');
+      const isTimeoutLike =
+        (broadcastErr && (broadcastErr.name === 'AbortError' || broadcastErr.status === 408 || broadcastErr.status === 504)) ||
+        /timeout|timed out|abort|504|408|network/i.test(bMsg);
+      if (isTimeoutLike && expectedTxHash) {
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const checkRes = await nearRpcPostAsync(
+            {
+              jsonrpc: '2.0',
+              id: `tx-status-${attempt}`,
+              method: 'EXPERIMENTAL_tx_status',
+              params: [expectedTxHash, accountId]
+            },
+            6000
+          ).catch(() => null);
+          if (checkRes && checkRes.result && checkRes.result.status) {
+            txRes = checkRes;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+      }
+      if (!txRes) throw broadcastErr;
+    }
 
     if (!txRes || txRes.error) {
       throw new Error(
@@ -3730,23 +3956,18 @@
     if (!skipStorageCheck) {
       try {
         const sbArgs = bytesToBase64(new TextEncoder().encode(JSON.stringify({ account_id: dest })));
-        const sbRes = await fetchJsonWithTimeout(
-          NEAR_RPC_URL,
+        const sbRes = await nearRpcPostAsync(
           {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              jsonrpc: '2.0',
-              id: 'storage-check',
-              method: 'query',
-              params: {
-                request_type: 'call_function',
-                finality: 'final',
-                account_id: contract,
-                method_name: 'storage_balance_of',
-                args_base64: sbArgs
-              }
-            })
+            jsonrpc: '2.0',
+            id: 'storage-check',
+            method: 'query',
+            params: {
+              request_type: 'call_function',
+              finality: 'final',
+              account_id: contract,
+              method_name: 'storage_balance_of',
+              args_base64: sbArgs
+            }
           },
           6000
         );
@@ -4051,17 +4272,12 @@
         gasBuffer: 0.005
       });
     } else {
-      const balRes = await fetchJsonWithTimeout(
-        NEAR_RPC_URL,
+      const balRes = await nearRpcPostAsync(
         {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 'reg-bal',
-            method: 'query',
-            params: { request_type: 'view_account', finality: 'final', account_id: sender }
-          })
+          jsonrpc: '2.0',
+          id: 'reg-bal',
+          method: 'query',
+          params: { request_type: 'view_account', finality: 'final', account_id: sender }
         },
         8000
       );
@@ -4287,7 +4503,7 @@
    * Never populates fake values: keeps apy/rate as null when an upstream feed is unreachable.
    */
   async function fetchLiveStakingMetrics(opts = {}) {
-    if (opts && opts.useCache === true && _stakingMetricsCache.pools && (Date.now() - _stakingMetricsCache.ts < 60_000)) {
+    if (opts && opts.useCache === true && _stakingMetricsCache.pools && (Date.now() - _stakingMetricsCache.ts < 300_000)) {
       return _stakingMetricsCache.pools;
     }
     const setPool = (id, patch) => {
@@ -4318,7 +4534,7 @@
       return cUsd ? `${cTok} ${sym} ($${cUsd})` : `${cTok} ${sym}`;
     };
 
-    const useCachedLlama = Boolean(opts && opts.useCache === true && Array.isArray(_llamaPoolsCache.data) && (Date.now() - _llamaPoolsCache.ts < 60_000));
+    const useCachedLlama = Boolean(opts && opts.useCache === true && Array.isArray(_llamaPoolsCache.data) && (Date.now() - _llamaPoolsCache.ts < 900_000));
 
     const [
       narRes,
@@ -5072,25 +5288,22 @@
     // Helper: check explicit NEAR storage_balance_of === null (only when RPC succeeded, never on offline failure)
     const ensureNearStorageIfExplicitlyNull = async (acctId, contractId, depositYoctoStr) => {
       try {
-        const body = JSON.stringify({
-          jsonrpc: '2.0',
-          id: `${contractId}-storage_balance_of`,
-          method: 'query',
-          params: {
-            request_type: 'call_function',
-            finality: 'final',
-            account_id: contractId,
-            method_name: 'storage_balance_of',
-            args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify({ account_id: acctId })))
-          }
-        });
-        const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body };
-        let res = await fetchJsonWithTimeout(NEAR_RPC_URL, opts, 4000).catch(() => null);
-        let bytes = res && res.result && res.result.result;
-        if (!Array.isArray(bytes)) {
-          res = await fetchJsonWithTimeout('https://free.rpc.fastnear.com', opts, 4000).catch(() => null);
-          bytes = res && res.result && res.result.result;
-        }
+        const res = await nearRpcPostAsync(
+          {
+            jsonrpc: '2.0',
+            id: `${contractId}-storage_balance_of`,
+            method: 'query',
+            params: {
+              request_type: 'call_function',
+              finality: 'final',
+              account_id: contractId,
+              method_name: 'storage_balance_of',
+              args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify({ account_id: acctId })))
+            }
+          },
+          4000
+        ).catch(() => null);
+        const bytes = res && res.result && res.result.result;
         if (Array.isArray(bytes)) {
           const parsed = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes)));
           if (parsed === null) {
@@ -5353,8 +5566,8 @@
 
     const sendEvmContractCall = async ({ chainKey, to, data, value = '0', approvalToken = null, spender = null, approvalAmount = null }) => {
       return wallet.evmPrivateKey
-        ? sendEvmSignedTransaction({ chainKey, privateKey: wallet.evmPrivateKey, to, data, value, approvalToken, spender, approvalAmount })
-        : sendEvmMpcSignedTransaction({ wallet, chainKey, to, data, value, approvalToken, spender, approvalAmount, path: 'ethereum-1' });
+        ? sendEvmSignedTransaction({ chainKey, privateKey: wallet.evmPrivateKey, to, data, value, approvalToken, spender, amountRaw: approvalAmount })
+        : sendEvmMpcSignedTransaction({ wallet, chainKey, to, data, value, approvalToken, spender, amountRaw: approvalAmount, path: 'ethereum-1' });
     };
 
     let res;
@@ -5362,12 +5575,13 @@
       const amountRaw = toBaseUnits(amount, pool.decimals || 18);
       const q = await quoteEvmDexSwap({
         chainKey: pool.chain,
-        srcToken: NATIVE_EVM_TOKEN,
+        srcToken: NATIVE_EVM_SENTINEL,
         destToken: pool.contract,
         amountRaw,
         srcDecimals: 18,
         destDecimals: 18,
-        slippageBps
+        slippageBps,
+        feeBps: 0
       });
       if (!q || !q.ok) throw new Error((q && q.error) || t('HyperEVM 质押报价失败', 'HyperEVM staking quote failed'));
       res = await executeEvmDexSwap({
@@ -5375,10 +5589,12 @@
         chainKey: pool.chain,
         routeSource: q.routeSource,
         routeData: q.routeData,
-        srcToken: NATIVE_EVM_TOKEN,
+        srcToken: NATIVE_EVM_SENTINEL,
+        destToken: pool.contract,
+        amountRaw,
         srcDecimals: 18,
-        amount,
-        slippageBps
+        slippageBps,
+        feeBps: 0
       });
     } else if (pool.isErc4626) {
       if (pool.isTokenStake) {
@@ -5510,26 +5726,24 @@
     return resolveNearDclPoolIds(inId, outId)[0] || null;
   }
 
-  async function viewNearContractCall(contractId, methodName, argsObj) {
-    const body = JSON.stringify({
-      jsonrpc: '2.0',
-      id: `${contractId}-${methodName}`,
-      method: 'query',
-      params: {
-        request_type: 'call_function',
-        finality: 'final',
-        account_id: contractId,
-        method_name: methodName,
-        args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify(argsObj)))
-      }
-    });
-    const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body };
-    let res = await fetchJsonWithTimeout(NEAR_RPC_URL, opts, 5000).catch(() => null);
-    let bytes = res && res.result && res.result.result;
-    if (!Array.isArray(bytes)) {
-      res = await fetchJsonWithTimeout('https://free.rpc.fastnear.com', opts, 5000).catch(() => null);
-      bytes = res && res.result && res.result.result;
-    }
+  async function viewNearContractCall(contractId, methodName, argsObj, signal = null) {
+    const res = await nearRpcPostAsync(
+      {
+        jsonrpc: '2.0',
+        id: `${contractId}-${methodName}`,
+        method: 'query',
+        params: {
+          request_type: 'call_function',
+          finality: 'final',
+          account_id: contractId,
+          method_name: methodName,
+          args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify(argsObj)))
+        }
+      },
+      5000,
+      signal
+    ).catch(() => null);
+    const bytes = res && res.result && res.result.result;
     return Array.isArray(bytes) ? JSON.parse(new TextDecoder().decode(new Uint8Array(bytes))) : null;
   }
 
@@ -5547,7 +5761,8 @@
     tokenIn,
     tokenOut,
     amountRaw,
-    slippageBps = 100
+    slippageBps = 100,
+    signal = null
   } = {}) {
     const inId = normalizeNearRefTokenContract(tokenIn);
     const outId = normalizeNearRefTokenContract(tokenOut);
@@ -5568,7 +5783,7 @@
             input_token: inId,
             output_token: outId,
             input_amount: amtStr
-          }).catch(() => null);
+          }, signal).catch(() => null);
           const outAmt = qRes && qRes.amount !== undefined ? String(qRes.amount) : '0';
           if (!/^\d+$/.test(outAmt) || BigInt(outAmt) <= 0n) return null;
           return { poolId, outAmt, outBig: BigInt(outAmt) };
@@ -5594,6 +5809,7 @@
         amountIn: amtStr,
         amountOut: outAmt,
         minAmountOut,
+        serviceFeeBps: 0,
         actions: [],
         routeData: { isDcl: true, poolIds: [best.poolId], amount_out: outAmt, min_amount_out: minAmountOut },
         error: null
@@ -5636,14 +5852,14 @@
     }
   }
 
-  async function quoteDirectRefV2SingleHop(poolId, inId, outId, amtStr, slippageBps) {
+  async function quoteDirectRefV2SingleHop(poolId, inId, outId, amtStr, slippageBps, signal = null) {
     if (poolId === null || poolId === undefined) return null;
     const retStr = await viewNearContractCall(REF_FINANCE_CONTRACT, 'get_return', {
       pool_id: Number(poolId),
       token_in: inId,
       amount_in: String(amtStr),
       token_out: outId
-    }).catch(() => null);
+    }, signal).catch(() => null);
     const outAmt = retStr !== null && retStr !== undefined ? String(retStr).trim() : '';
     if (!/^\d+$/.test(outAmt) || BigInt(outAmt) <= 0n) return null;
     const minOut = computeSlippageMinAmount(outAmt, slippageBps);
@@ -5664,6 +5880,7 @@
       amountIn: String(amtStr),
       amountOut: outAmt,
       minAmountOut: minOut,
+      serviceFeeBps: 0,
       actions,
       routeData: { directPoolId: Number(poolId), actions, amount_out: outAmt },
       error: null
@@ -5677,7 +5894,8 @@
     tokenIn,
     tokenOut,
     amountRaw,
-    slippageBps = 100
+    slippageBps = 100,
+    signal = null
   } = {}) {
     const inId = normalizeNearRefTokenContract(tokenIn);
     const outId = normalizeNearRefTokenContract(tokenOut);
@@ -5693,9 +5911,9 @@
     const url = `${REF_SMART_ROUTER_URL}?amountIn=${encodeURIComponent(amtStr)}&tokenIn=${encodeURIComponent(inId)}&tokenOut=${encodeURIComponent(outId)}&pathDeep=3&slippage=${slippageDec}`;
 
     const knownPoolId = await resolveKnownOrApiRefV2PoolId(inId, outId, false);
-    const smartRouterPromise = fetchJsonWithTimeout(url, {}, 7000).catch(() => null);
+    const smartRouterPromise = fetchJsonWithTimeout(url, { signal }, 7000).catch(() => null);
     const directKnownPromise = knownPoolId !== null
-      ? quoteDirectRefV2SingleHop(knownPoolId, inId, outId, amtStr, slippageBps).catch(() => null)
+      ? quoteDirectRefV2SingleHop(knownPoolId, inId, outId, amtStr, slippageBps, signal).catch(() => null)
       : Promise.resolve(null);
 
     const [srData, directKnownRes] = await Promise.all([smartRouterPromise, directKnownPromise]);
@@ -5733,6 +5951,7 @@
           amountIn: amtStr,
           amountOut,
           minAmountOut: String(routes[0]?.min_amount_out || '0'),
+          serviceFeeBps: 0,
           actions,
           routeData: rData,
           error: null
@@ -5840,10 +6059,10 @@
         const y = BigInt(b.amountOut);
         return y > x ? 1 : (y < x ? -1 : 0);
       });
-      return refCandidates[0];
+      return { serviceFeeBps: 0, ...refCandidates[0] };
     }
     // Fallback 3: Rhea / Ref DCL CLMM (dclv2.ref-labs.near)
-    const dclFallback = await quoteNearDclPoolSwap({ tokenIn: inId, tokenOut: outId, amountRaw: amtStr, slippageBps }).catch(() => null);
+    const dclFallback = await quoteNearDclPoolSwap({ tokenIn: inId, tokenOut: outId, amountRaw: amtStr, slippageBps, signal }).catch(() => null);
     if (dclFallback && dclFallback.ok) return dclFallback;
 
     return {
@@ -6261,11 +6480,22 @@
     if (nearGas < 0.05) {
       throw new Error(t(`NEAR 余额不足以支付 Gas (当前: ${nearGas.toFixed(4)} NEAR)`, `Insufficient NEAR for gas (Available: ${nearGas.toFixed(4)} NEAR)`));
     }
-    // Burrow 内部固定使用 18 位小数计数（对大于 18 位的代币如 wrap.near 24位或小于 18 位的如 usdt 6位统一按 extra_decimals 缩放至 18 位）
-    const extraDec = Number(decimals) === 24 ? 18 : 18;
-    const rawBurrowAmt = toBaseUnits(amount, extraDec);
-    if (!/^\d+$/.test(rawBurrowAmt) || BigInt(rawBurrowAmt) <= 0n) {
-      throw new Error(t('提取数量必须大于 0', 'Withdraw amount must be positive'));
+    const isMax = typeof amount === 'string' && amount.trim().toLowerCase() === 'max';
+    let withdrawAction = { token_id: tokenId };
+    if (!isMax) {
+      const baseDec = Number(decimals) || (tokenId === 'wrap.near' ? 24 : 6);
+      const assetInfo = await viewNearContractCall('contract.main.burrow.near', 'get_asset', { token_id: tokenId }).catch(() => null);
+      const extraDec = assetInfo && assetInfo.config && assetInfo.config.extra_decimals !== undefined
+        ? Number(assetInfo.config.extra_decimals)
+        : null;
+      const internalDec = extraDec !== null && Number.isFinite(extraDec)
+        ? (baseDec + extraDec)
+        : (tokenId === 'wrap.near' || baseDec === 24 ? 24 : 18);
+      const rawBurrowAmt = toBaseUnits(amount, internalDec);
+      if (!/^\d+$/.test(rawBurrowAmt) || BigInt(rawBurrowAmt) <= 0n) {
+        throw new Error(t('提取数量必须大于 0', 'Withdraw amount must be positive'));
+      }
+      withdrawAction = { token_id: tokenId, max_amount: rawBurrowAmt };
     }
     const txHash = await api.signAndSendNearFunctionCall({
       accountId,
@@ -6275,10 +6505,7 @@
       methodName: 'execute',
       argsJson: JSON.stringify({
         actions: [{
-          Withdraw: {
-            token_id: tokenId,
-            max_amount: rawBurrowAmt
-          }
+          Withdraw: withdrawAction
         }]
       }),
       gas: '120000000000000',
@@ -6315,6 +6542,7 @@
     scanSolanaReclaimableAccounts,
     executeSolanaRentReclaim,
     buildSignedPearlTaprootTx,
+    pearlOutputScriptPubKey,
     executePearlTransfer,
     fetchEvmNativeAndErc20Balance,
     fetchEvmChainBalancesBatch,
