@@ -1926,6 +1926,21 @@ html.nexus-locked #app-lock-overlay {
   transition: width 0.2s ease;
 }
 
+.perp-ob-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 0 2px;
+}
+
+.perp-ob-hcol {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .perp-ob-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1955,21 +1970,22 @@ html.nexus-locked #app-lock-overlay {
   text-align: left;
 }
 
-.perp-ob-row-depth {
+.perp-ob-row > .perp-ob-row-depth {
   position: absolute;
+  z-index: 0;
   top: 0;
   bottom: 0;
   pointer-events: none;
 }
 
-.perp-ob-row.bid .perp-ob-row-depth {
+.perp-ob-row.bid > .perp-ob-row-depth {
   right: 0;
-  background: rgba(16, 185, 129, 0.13);
+  background: rgba(16, 185, 129, 0.14);
 }
 
-.perp-ob-row.ask .perp-ob-row-depth {
+.perp-ob-row.ask > .perp-ob-row-depth {
   left: 0;
-  background: rgba(244, 63, 94, 0.13);
+  background: rgba(244, 63, 94, 0.14);
 }
 
 .perp-ob-row > span {

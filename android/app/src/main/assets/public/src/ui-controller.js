@@ -55,7 +55,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.10');
+      await loadScriptOnce('ethers.umd.min.js?v=6.11');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -65,7 +65,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.10').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.11').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -75,7 +75,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.10').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.11').catch(() => false);
       return getMining();
     }
     return null;
@@ -1179,21 +1179,22 @@
     if (nav) nav.classList.toggle('hidden', !hasWallet);
 
     if (!hasWallet) {
-      ['wallet', 'swap', 'earn', 'hub'].forEach((v) => {
+      ['wallet', 'swap', 'perp', 'earn', 'hub'].forEach((v) => {
         const el = $(`view-${v}`);
         if (el) el.classList.add('hidden');
       });
       cancelOnboardSubPanel();
     } else {
-      const active = ['wallet', 'swap', 'earn', 'hub'].includes(st.activeTab) ? st.activeTab : 'wallet';
+      const active = ['wallet', 'swap', 'perp', 'earn', 'hub'].includes(st.activeTab) ? st.activeTab : 'wallet';
       st.activeTab = active;
-      ['wallet', 'swap', 'earn', 'hub'].forEach((v) => {
+      ['wallet', 'swap', 'perp', 'earn', 'hub'].forEach((v) => {
         const el = $(`view-${v}`);
         if (el) el.classList.toggle('hidden', v !== active);
       });
       if (typeof document !== 'undefined') {
+        const navTarget = active === 'earn' ? 'wallet' : active;
         document.querySelectorAll('.nav-item').forEach((btn) => {
-          btn.classList.toggle('active', btn.getAttribute('data-tab') === active);
+          btn.classList.toggle('active', btn.getAttribute('data-tab') === navTarget);
         });
       }
     }
@@ -1399,7 +1400,7 @@
   function startAdditionalWalletCreate() {
     closeAllSheets();
     _isAddingAdditionalWallet = true;
-    ['wallet', 'swap', 'earn', 'hub'].forEach((v) => $(`view-${v}`)?.classList.add('hidden'));
+    ['wallet', 'swap', 'perp', 'earn', 'hub'].forEach((v) => $(`view-${v}`)?.classList.add('hidden'));
     $('bottom-nav')?.classList.add('hidden');
     $('view-onboarding')?.classList.remove('hidden');
     openCreateWalletFlow();
@@ -1408,7 +1409,7 @@
   function startAdditionalWalletImport() {
     closeAllSheets();
     _isAddingAdditionalWallet = true;
-    ['wallet', 'swap', 'earn', 'hub'].forEach((v) => $(`view-${v}`)?.classList.add('hidden'));
+    ['wallet', 'swap', 'perp', 'earn', 'hub'].forEach((v) => $(`view-${v}`)?.classList.add('hidden'));
     $('bottom-nav')?.classList.add('hidden');
     $('view-onboarding')?.classList.remove('hidden');
     openImportWalletFlow();
@@ -9114,13 +9115,18 @@
   }
 
   function renderPerpOrderbook() {
-    const ob = getState().perp.orderbook;
+    const st = getState();
+    const ob = st.perp.orderbook;
+    const coin = (st.perp && st.perp.selectedCoin) || 'BTC';
     const bidsEl = $('perp-ob-bids');
     const asksEl = $('perp-ob-asks');
     const bidSumEl = $('perp-ob-bid-summary');
     const askSumEl = $('perp-ob-ask-summary');
     const bidBarEl = $('perp-ob-bid-bar');
     const askBarEl = $('perp-ob-ask-bar');
+    const szLabel = `${t('数量', 'Size')} (${coin})`;
+    if ($('perp-ob-bid-sz-hdr')) $('perp-ob-bid-sz-hdr').textContent = szLabel;
+    if ($('perp-ob-ask-sz-hdr')) $('perp-ob-ask-sz-hdr').textContent = szLabel;
     if (!bidsEl || !asksEl) return;
 
     if (!ob || (!ob.bids.length && !ob.asks.length)) {
@@ -9137,26 +9143,28 @@
     const askTot = Number(ob.askTotalSz || 0);
     const ratio = Number.isFinite(ob.bidRatioPct) ? ob.bidRatioPct : 50;
     if (bidSumEl) {
-      bidSumEl.textContent = `${t('买盘', 'Bids')} ${bidTot.toFixed(2)} (${ob.bidOrderCount || 0}${t('笔', '')})`;
+      bidSumEl.textContent = `${t('20档买盘', '20-Lvl Bids')} ${formatBal(bidTot, 2)} ${coin} (${ob.bidOrderCount || 0}${t('单', '')})`;
     }
     if (askSumEl) {
-      askSumEl.textContent = `${askTot.toFixed(2)} (${ob.askOrderCount || 0}${t('笔', '')}) ${t('卖盘', 'Asks')}`;
+      askSumEl.textContent = `${formatBal(askTot, 2)} ${coin} (${ob.askOrderCount || 0}${t('单', '')}) ${t('20档卖盘', 'Asks')}`;
     }
     if (bidBarEl) bidBarEl.style.width = `${Math.max(5, Math.min(95, ratio)).toFixed(1)}%`;
     if (askBarEl) askBarEl.style.width = `${Math.max(5, Math.min(95, 100 - ratio)).toFixed(1)}%`;
 
+    const bidRows = ob.bids.slice(0, 10);
+    const askRows = ob.asks.slice(0, 10);
     let maxBidSz = 0;
     let maxAskSz = 0;
-    for (const r of ob.bids.slice(0, 5)) if (r.sz > maxBidSz) maxBidSz = r.sz;
-    for (const r of ob.asks.slice(0, 5)) if (r.sz > maxAskSz) maxAskSz = r.sz;
+    for (const r of bidRows) if (r.sz > maxBidSz) maxBidSz = r.sz;
+    for (const r of askRows) if (r.sz > maxAskSz) maxAskSz = r.sz;
 
-    bidsEl.innerHTML = ob.bids.slice(0, 5).map((r) => {
+    bidsEl.innerHTML = bidRows.map((r) => {
       const pct = maxBidSz > 0 ? Math.max(6, (r.sz / maxBidSz) * 100) : 0;
-      return `<button type="button" class="perp-ob-row bid" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><span class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></span><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span><span>${escapeHtml(r.sz.toFixed(3))}</span></button>`;
+      return `<button type="button" class="perp-ob-row bid" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></div><span>${escapeHtml(r.sz.toFixed(3))}</span><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span></button>`;
     }).join('');
-    asksEl.innerHTML = ob.asks.slice(0, 5).map((r) => {
+    asksEl.innerHTML = askRows.map((r) => {
       const pct = maxAskSz > 0 ? Math.max(6, (r.sz / maxAskSz) * 100) : 0;
-      return `<button type="button" class="perp-ob-row ask" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><span class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></span><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span><span>${escapeHtml(r.sz.toFixed(3))}</span></button>`;
+      return `<button type="button" class="perp-ob-row ask" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></div><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span><span>${escapeHtml(r.sz.toFixed(3))}</span></button>`;
     }).join('');
   }
 
@@ -12098,7 +12106,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.10');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.11');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -12679,6 +12687,7 @@
     claimLimitOrderUI,
     cancelLimitOrderUI,
     renderPerpView,
+    renderPerpOrderbook,
     renderPerpCandleSvg,
     renderPerpMarketsSheet,
     handlePerpMarginInput,
@@ -12844,6 +12853,7 @@
     claimLimitOrderUI,
     cancelLimitOrderUI,
     renderPerpView,
+    renderPerpOrderbook,
     renderPerpCandleSvg,
     renderPerpMarketsSheet,
     handlePerpMarginInput,

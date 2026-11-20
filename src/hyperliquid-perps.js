@@ -634,8 +634,8 @@
     const totalSz = bidTotalSz + askTotalSz;
     const bidRatioPct = totalSz > 0 ? (bidTotalSz / totalSz) * 100 : 50;
     return {
-      bids: allBids.slice(0, 5),
-      asks: allAsks.slice(0, 5),
+      bids: allBids.slice(0, 10),
+      asks: allAsks.slice(0, 10),
       bidTotalSz,
       askTotalSz,
       bidOrderCount,

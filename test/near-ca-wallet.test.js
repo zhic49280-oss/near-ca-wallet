@@ -7100,3 +7100,79 @@ test('v6.10 UI/UX Overhaul: 1Click PRL Guard & Lowercase Recipient, 20-Level Ord
   assert.ok(indexHtml.includes('id="perp-arb-error"'));
   assert.ok(indexHtml.includes('id="perp-wd-error"'));
 });
+
+test('v6.11 Orderbook 10-Level Alignment, Coin Units on Depth Bar & Zero Wallet/Perp Stacking', async () => {
+  const levels20Bids = Array.from({ length: 12 }, (_, i) => ({ px: String(61500 - i), sz: '1.5', n: 2 }));
+  const levels20Asks = Array.from({ length: 12 }, (_, i) => ({ px: String(61501 + i), sz: '2.0', n: 3 }));
+  await withMockedFetch(async () => jsonResponse({ levels: [levels20Bids, levels20Asks] }), async () => {
+    const ob = await hlPerps.fetchHlOrderbook('BTC');
+    assert.equal(ob.bids.length, 10, 'Orderbook must return 10 bid levels');
+    assert.equal(ob.asks.length, 10, 'Orderbook must return 10 ask levels');
+    assert.equal(ob.bidTotalSz, 18);
+    assert.equal(ob.askTotalSz, 24);
+  });
+
+  await withMockedStorage({}, async () => {
+    state.initState();
+    const w = state.normalizeWalletRecord({ id: 'w_v611_ob', mnemonic: TEST_MNEMONIC, nearNamedAccount: 'alice.near' });
+    state.wallets = [w];
+    state.activeWalletId = w.id;
+    state.activeTab = 'perp';
+    state.perp.selectedCoin = 'BTC';
+    state.perp.orderbook = {
+      bids: levels20Bids.slice(0, 10).map((r) => ({ px: Number(r.px), sz: Number(r.sz), n: r.n })),
+      asks: levels20Asks.slice(0, 10).map((r) => ({ px: Number(r.px), sz: Number(r.sz), n: r.n })),
+      bidTotalSz: 40.39,
+      askTotalSz: 159.07,
+      bidOrderCount: 79,
+      askOrderCount: 174,
+      bidRatioPct: 20.25
+    };
+
+    const prevDoc = globalThis.document;
+    const domMap = new Map([
+      ['view-onboarding', createMockDomElement('view-onboarding', { classes: ['hidden'] })],
+      ['bottom-nav', createMockDomElement('bottom-nav')],
+      ['view-wallet', createMockDomElement('view-wallet', { classes: ['hidden'] })],
+      ['view-swap', createMockDomElement('view-swap', { classes: ['hidden'] })],
+      ['view-perp', createMockDomElement('view-perp')],
+      ['view-earn', createMockDomElement('view-earn', { classes: ['hidden'] })],
+      ['view-hub', createMockDomElement('view-hub', { classes: ['hidden'] })],
+      ['perp-ob-bids', createMockDomElement('perp-ob-bids')],
+      ['perp-ob-asks', createMockDomElement('perp-ob-asks')],
+      ['perp-ob-bid-summary', createMockDomElement('perp-ob-bid-summary')],
+      ['perp-ob-ask-summary', createMockDomElement('perp-ob-ask-summary')],
+      ['perp-ob-bid-bar', createMockDomElement('perp-ob-bid-bar')],
+      ['perp-ob-ask-bar', createMockDomElement('perp-ob-ask-bar')],
+      ['perp-ob-bid-sz-hdr', createMockDomElement('perp-ob-bid-sz-hdr')],
+      ['perp-ob-ask-sz-hdr', createMockDomElement('perp-ob-ask-sz-hdr')]
+    ]);
+    const navBtns = ['wallet', 'swap', 'perp', 'hub'].map((tName) => {
+      const el = createMockDomElement(`nav-${tName}`, { classes: ['nav-item'] });
+      el.setAttribute('data-tab', tName);
+      return el;
+    });
+    globalThis.document = {
+      getElementById: (id) => domMap.get(id) || null,
+      querySelectorAll: (sel) => (sel === '.nav-item' ? navBtns : []),
+      querySelector: () => null
+    };
+    try {
+      uiController.renderAll();
+      assert.equal(state.activeTab, 'perp', 'renderAll must preserve activeTab=perp');
+      assert.equal(domMap.get('view-wallet').classList.contains('hidden'), true, 'Home view must remain hidden on perp tab');
+      assert.equal(domMap.get('view-perp').classList.contains('hidden'), false, 'Perp view must remain visible on perp tab');
+      assert.equal(navBtns.find((b) => b.getAttribute('data-tab') === 'perp').classList.contains('active'), true);
+
+      const bidHtml = domMap.get('perp-ob-bids').innerHTML;
+      const askHtml = domMap.get('perp-ob-asks').innerHTML;
+      assert.equal((bidHtml.match(/class="perp-ob-row bid"/g) || []).length, 10);
+      assert.equal((askHtml.match(/class="perp-ob-row ask"/g) || []).length, 10);
+      assert.ok(bidHtml.includes('<div class="perp-ob-row-depth"'), 'Depth overlay must use <div class="perp-ob-row-depth"> so CSS > span rule does not displace text');
+      assert.ok(domMap.get('perp-ob-bid-summary').textContent.includes('40.39 BTC'));
+      assert.ok(domMap.get('perp-ob-bid-sz-hdr').textContent.includes('BTC'));
+    } finally {
+      globalThis.document = prevDoc;
+    }
+  });
+});
