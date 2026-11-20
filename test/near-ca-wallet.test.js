@@ -7251,3 +7251,138 @@ test('v6.12 Core Fixes: prlscan.com URLs, Instant RHEA Icon, Dynamic Icon Cache,
   assert.ok(cssSrc.includes('#view-wallet.ptr-spring'));
   assert.equal(cssSrc.includes('transition: height 0.2s'), false, 'PTR indicator must not animate height layout reflow');
 });
+
+test('v6.13 Top-3 Compact History, Full History Sheet & In-App Tx Detail Sheet (Token Detail + Mining)', async () => {
+  const realPrlAddr = 'prl1p22hzufr46n6fa4yj38zckc9n8rsyhq2n39fjldg7pg78s8vz2zks785frn';
+  const realPrlTxId = '55216258e78a8b40704fdf8d27db1c8742da9e6af19660ffbb2f10ce7573211c';
+  const txsList = Array.from({ length: 5 }, (_, i) => ({
+    txid: i === 0 ? realPrlTxId : `prl_tx_00${i}`,
+    block_height: 146022 - i,
+    confirmations: i + 1,
+    time: 1795184090 - i * 3600,
+    delta_grains: i === 0 ? -100100646 : 103363925,
+    fee_grains: i === 0 ? 100646 : 43172,
+    status: 'confirmed',
+    is_coinbase: false
+  }));
+
+  await withMockedStorage({}, async () => {
+    state.initState();
+    const wallet = state.normalizeWalletRecord({
+      id: 'w_v613_tx',
+      mnemonic: TEST_MNEMONIC,
+      address: realPrlAddr,
+      nativeBalances: { prl: 12.67587198, near: 1, sol: 0, eth: 0, btc: 0 }
+    });
+    state.wallets = [wallet];
+    state.activeWalletId = wallet.id;
+
+    const prevDoc = globalThis.document;
+    const domMap = new Map([
+      ['sheet-backdrop', createMockDomElement('sheet-backdrop')],
+      ['sheet-token-detail', createMockDomElement('sheet-token-detail')],
+      ['sheet-tx-history', createMockDomElement('sheet-tx-history')],
+      ['sheet-tx-detail', createMockDomElement('sheet-tx-detail')],
+      ['sheet-mining-pro', createMockDomElement('sheet-mining-pro')],
+      ['token-detail-icon', createMockDomElement('token-detail-icon')],
+      ['token-detail-title', createMockDomElement('token-detail-title')],
+      ['token-detail-chains', createMockDomElement('token-detail-chains')],
+      ['token-detail-balance', createMockDomElement('token-detail-balance')],
+      ['token-detail-usd', createMockDomElement('token-detail-usd')],
+      ['token-detail-addr-row', createMockDomElement('token-detail-addr-row')],
+      ['token-detail-addr', createMockDomElement('token-detail-addr')],
+      ['token-detail-explorer-link', createMockDomElement('token-detail-explorer-link')],
+      ['token-detail-breakdown-card', createMockDomElement('token-detail-breakdown-card')],
+      ['token-detail-breakdown-list', createMockDomElement('token-detail-breakdown-list')],
+      ['token-detail-earn-card', createMockDomElement('token-detail-earn-card')],
+      ['token-detail-earn-list', createMockDomElement('token-detail-earn-list')],
+      ['token-detail-price-label', createMockDomElement('token-detail-price-label')],
+      ['token-detail-price-val', createMockDomElement('token-detail-price-val')],
+      ['token-detail-history-all-btn', createMockDomElement('token-detail-history-all-btn', { classes: ['hidden'] })],
+      ['token-detail-history-list', createMockDomElement('token-detail-history-list')],
+      ['tx-history-sheet-title', createMockDomElement('tx-history-sheet-title')],
+      ['tx-history-full-list', createMockDomElement('tx-history-full-list')],
+      ['tx-detail-body', createMockDomElement('tx-detail-body')],
+      ['mining-payouts-list', createMockDomElement('mining-payouts-list')],
+      ['mining-payouts-all-btn', createMockDomElement('mining-payouts-all-btn', { classes: ['hidden'] })]
+    ]);
+    globalThis.document = {
+      getElementById: (id) => domMap.get(id) || null,
+      querySelectorAll: () => Array.from(domMap.values()).filter((e) => e.classList.contains('bottom-sheet')),
+      querySelector: () => null
+    };
+
+    try {
+      const activePrlAddr = wallet.address;
+      await withMockedFetch(async (url) => {
+        if (url.includes(`/v1/addresses/${encodeURIComponent(activePrlAddr)}/txs`)) {
+          return jsonResponse({ items: txsList });
+        }
+        if (url.includes(`/v1/txs/${realPrlTxId}`)) {
+          return jsonResponse({
+            inputs: [{ prev_address: activePrlAddr, prev_value_grains: 108468921 }],
+            outputs: [
+              { address: 'prl1phgudud0sz6n8859t70c2r6h89gys040hrul49altjqyrt7tp26uq5j6gm0', value_grains: 100000000 },
+              { address: activePrlAddr, value_grains: 8368275 }
+            ],
+            transaction: {
+              txid: realPrlTxId,
+              block_height: 146022,
+              status: 'confirmed',
+              confirmed_at: '2026-11-20T14:14:50Z',
+              fee_grains: 100646,
+              input_grains: 108468921,
+              output_grains: 108368275,
+              confirmations: 5
+            }
+          });
+        }
+        return jsonResponse({}, 404);
+      }, async () => {
+        uiController.openTokenDetailSheet('PRL', 'prl');
+        await new Promise((r) => setTimeout(r, 40));
+
+        const compactHtml = domMap.get('token-detail-history-list').innerHTML;
+        assert.equal((compactHtml.match(/class="tx-compact-row"/g) || []).length, 3, 'Token detail preview must show top 3 items only');
+        assert.ok(compactHtml.includes('-1 PRL'), 'Send row must display transfer amount -1 PRL');
+        assert.equal(domMap.get('token-detail-history-all-btn').classList.contains('hidden'), false, 'All > button must be visible');
+
+        uiController.openAllTokenHistorySheet();
+        assert.equal(domMap.get('sheet-tx-history').classList.contains('open'), true);
+        const fullHtml = domMap.get('tx-history-full-list').innerHTML;
+        assert.equal((fullHtml.match(/class="tx-card-full"/g) || []).length, 5, 'Full history sheet must list all 5 items');
+
+        uiController.openTxDetailSheet(state.txModal.items[0], 'sheet-tx-history');
+        assert.equal(domMap.get('sheet-tx-detail').classList.contains('open'), true);
+        await new Promise((r) => setTimeout(r, 40));
+        const detailHtml = domMap.get('tx-detail-body').innerHTML;
+        assert.ok(detailHtml.includes(realPrlTxId));
+        assert.ok(detailHtml.includes(`https://prlscan.com/tx/${realPrlTxId}`));
+        assert.ok(detailHtml.includes('146022'));
+        assert.ok(detailHtml.includes('0.00100646 PRL'));
+        assert.ok(detailHtml.includes('-1.00100646 PRL'));
+        assert.ok(detailHtml.includes('1.08368275 PRL'));
+
+        // Verify Mining telemetry payouts also fold to top-3 + All > button
+        state.mining.minerAddress = activePrlAddr;
+        state.mining.telemetry = {
+          address: activePrlAddr,
+          workers: [],
+          payoutHistory: txsList.map((t, i) => ({
+            txid: t.txid,
+            amountPrl: 1.03363925,
+            timestamp: new Date((1795184090 - i * 3600) * 1000).toISOString(),
+            status: 'confirmed'
+          }))
+        };
+        domMap.get('sheet-mining-pro').classList.add('open');
+        uiController.renderAll();
+        const miningHtml = domMap.get('mining-payouts-list').innerHTML;
+        assert.equal((miningHtml.match(/class="tx-compact-row"/g) || []).length, 3, 'Mining payouts must show top 3 compact rows');
+        assert.equal(domMap.get('mining-payouts-all-btn').classList.contains('hidden'), false);
+      });
+    } finally {
+      globalThis.document = prevDoc;
+    }
+  });
+});
