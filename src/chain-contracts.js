@@ -2034,7 +2034,7 @@
     return Uint8Array.from(sigObj.signature, (b) => Number(b) & 0xff);
   }
 
-  async function signAndBroadcastSolanaBase64Tx(base64Tx, solSeedHex, mpcWallet = null, mpcPath = 'solana-1') {
+  async function signSolanaBase64Tx(base64Tx, solSeedHex, mpcWallet = null, mpcPath = 'solana-1') {
     const txBytes = base64ToBytes(base64Tx);
     const { value: numSigs, length: lenBytes } = decodeCompactU16(txBytes, 0);
     const msgOffset = lenBytes + numSigs * 64;
@@ -2060,7 +2060,14 @@
     }
 
     txBytes.set(sig, lenBytes);
-    const signedBase64 = bytesToBase64(txBytes);
+    return {
+      txBytes,
+      signedBase64: bytesToBase64(txBytes)
+    };
+  }
+
+  async function signAndBroadcastSolanaBase64Tx(base64Tx, solSeedHex, mpcWallet = null, mpcPath = 'solana-1') {
+    const { signedBase64 } = await signSolanaBase64Tx(base64Tx, solSeedHex, mpcWallet, mpcPath);
 
     const txHash = await callSolanaRpc(
       'sendTransaction',
@@ -4342,6 +4349,69 @@
     return {
       txHash: txResp.hash,
       explorerUrl: `${cfg.explorer}${txResp.hash}`
+    };
+  }
+
+  async function signEvmTypedDataUnified({ wallet, domain, types, value, path = 'ethereum-1' } = {}) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const ethersLib = getEthersLib();
+    if (!ethersLib) throw new Error(t('EVM 签名库 ethers 不可用', 'EVM signer library ethers unavailable'));
+    const resolvedWallet = await ensureWalletSigningKeysAsync(wallet);
+    const cleanTypes = {};
+    for (const [k, v] of Object.entries(types || {})) {
+      if (k !== 'EIP712Domain') cleanTypes[k] = v;
+    }
+    if (resolvedWallet.evmPrivateKey) {
+      const signer = new ethersLib.Wallet(resolvedWallet.evmPrivateKey);
+      const rawSig = await signer.signTypedData(domain, cleanTypes, value);
+      const sig = ethersLib.Signature.from(rawSig);
+      return {
+        signature: sig.serialized,
+        r: sig.r,
+        s: sig.s,
+        v: sig.v,
+        yParity: sig.yParity,
+        signerAddress: signer.address,
+        mode: 'local'
+      };
+    }
+    const fromAddr = resolvedWallet.mpcEvmAddress || resolvedWallet.evmAddress;
+    if (!fromAddr) throw new Error(t('MPC EVM 地址不可用', 'MPC EVM address unavailable'));
+    const digestHex = ethersLib.TypedDataEncoder.hash(domain, cleanTypes, value);
+    const digestBytes = hexToBytes(digestHex.replace(/^0x/i, ''));
+    const mpcRes = await api.requestNearMpcChainSignature({
+      wallet: resolvedWallet,
+      payloadHash32Bytes: digestBytes,
+      path,
+      domainId: 0
+    });
+    const sigObj = mpcRes && mpcRes.mpcSignature;
+    if (!sigObj || !sigObj.big_r || !sigObj.big_r.affine_point || !sigObj.s || !sigObj.s.scalar) {
+      throw new Error(t('NEAR MPC 未返回有效的 Secp256k1 签名', 'NEAR MPC did not return a valid Secp256k1 signature'));
+    }
+    const rHex = sigObj.big_r.affine_point.slice(2, 66);
+    const sHex = sigObj.s.scalar.padStart(64, '0');
+    const yParityRaw = Number(sigObj.recovery_id || 0) & 1;
+    let sig = ethersLib.Signature.from({ r: `0x${rHex}`, s: `0x${sHex}`, yParity: yParityRaw });
+    let recovered = ethersLib.verifyTypedData(domain, cleanTypes, value, sig.serialized);
+    if (recovered.toLowerCase() !== fromAddr.toLowerCase()) {
+      const altSig = ethersLib.Signature.from({ r: `0x${rHex}`, s: `0x${sHex}`, yParity: yParityRaw ^ 1 });
+      const altRecovered = ethersLib.verifyTypedData(domain, cleanTypes, value, altSig.serialized);
+      if (altRecovered.toLowerCase() === fromAddr.toLowerCase()) {
+        sig = altSig;
+        recovered = altRecovered;
+      } else {
+        throw new Error(t('MPC 签名恢复地址与发送地址不匹配', 'MPC signature recovered address mismatch'));
+      }
+    }
+    return {
+      signature: sig.serialized,
+      r: sig.r,
+      s: sig.s,
+      v: sig.v,
+      yParity: sig.yParity,
+      signerAddress: recovered,
+      mode: 'mpc'
     };
   }
 
@@ -8628,6 +8698,7 @@
     KNOWN_REF_V2_POOLS,
     DCL_CONTRACT_ID,
     NEAR_DCL_POOLS,
+    resolveWalletEvmSender,
     findSolanaPdaAsync,
     discoverNearAccountsByPublicKeyAsync,
     fetchNearAccountStakingPositionsAsync,
@@ -8635,8 +8706,12 @@
     fetchEvmAccountStakingPositionsAsync,
     ensureWalletSigningKeysAsync,
     deriveMpcEvmAddressAsync,
+    resolveWalletChainBalance,
     validateSufficientChainBalance,
     raceWithGraceWindow,
+    callSolanaRpc,
+    signSolanaBase64Tx,
+    signAndBroadcastSolanaBase64Tx,
     fetchSolanaNativeAndSplBalances,
     quoteSolanaJupiterSwap,
     executeSolanaJupiterSwap,
@@ -8664,6 +8739,8 @@
     executeEvmRawSteps,
     executeEvmTransfer,
     sendEvmMpcSignedTransaction,
+    signEvmTypedDataUnified,
+    viewNearContractCall,
     signAndSendNearFunctionCall,
     signAndSendNearTransfer,
     executeNearNep141Transfer,

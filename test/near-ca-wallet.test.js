@@ -13,6 +13,7 @@ const cryptoEngine = require('../src/crypto-engine.js');
 const tokenRegistry = require('../src/token-registry.js');
 const nearIntents = require('../src/near-intents.js');
 const chainContracts = require('../src/chain-contracts.js');
+const limitOrders = require('../src/limit-orders.js');
 const miningPro = require('../src/mining-pro.js');
 const state = require('../src/state.js');
 const uiController = require('../src/ui-controller.js');
@@ -1740,6 +1741,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
     'src/token-registry.js',
     'src/near-intents.js',
     'src/chain-contracts.js',
+    'src/limit-orders.js',
     'src/state.js',
     'src/ui-controller.js'
   ];
@@ -1755,7 +1757,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
   const versionedHtmlAssets = [
     ...indexHtml.matchAll(/(?:href|src)="((?:style\.css|src\/[^"]+\.js)\?v=[^"]+)"/g)
   ].map((m) => `./${m[1]}`);
-  assert.equal(versionedHtmlAssets.length, 7);
+  assert.equal(versionedHtmlAssets.length, 8);
   for (const asset of versionedHtmlAssets) {
     assert.ok(swJs.includes(`'${asset}'`), `sw.js CORE_ASSETS must include ${asset}`);
   }
@@ -1765,7 +1767,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
   const listMatch = syncScript.match(/const FILES_TO_SYNC = \[([\s\S]*?)\];/);
   assert.ok(listMatch, 'scripts/sync-assets.js must define FILES_TO_SYNC');
   const filesToSync = [...listMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  assert.equal(filesToSync.length, 18);
+  assert.equal(filesToSync.length, 19);
 
   const targets = [
     path.join(ROOT_DIR, 'dist'),
@@ -6259,4 +6261,432 @@ test('v6.7 Stage A: Zero-flash App Lock, 1-minute auto-lock, Native Privacy Blur
       else globalThis.window = prevWin;
     }
   });
+});
+
+test('v6.8 Stage B: Multi-Chain Limit Orders (NEAR DCL ticks/split/claim/cancel, Solana Jupiter Trigger, EVM CoW EIP-712 & UI)', async () => {
+  const ethers = require('../ethers.umd.min.js');
+  const keys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+
+  // 1. NEAR DCL Exact Tick Math for oRHEA/RHEA (pointDelta = 200)
+  const poolIdOrhea = 'otoken.rhealab.near|token.rhealab.near|10000';
+  const r5800 = limitOrders.dclPointToPrice({
+    point: -5800,
+    sellToken: 'token.rhealab.near',
+    poolId: poolIdOrhea,
+    sellDecimals: 18,
+    buyDecimals: 18
+  });
+  const r6000 = limitOrders.dclPointToPrice({
+    point: -6000,
+    sellToken: 'token.rhealab.near',
+    poolId: poolIdOrhea,
+    sellDecimals: 18,
+    buyDecimals: 18
+  });
+  assert.ok(Math.abs(r5800 - 1.7860) < 0.001, `Expected ~1.7860 at -5800, got ${r5800}`);
+  assert.ok(Math.abs(r6000 - 1.8221) < 0.001, `Expected ~1.8221 at -6000, got ${r6000}`);
+
+  const splitPts = limitOrders.resolveSplitTwoTickPoints({
+    rateOutPerIn: 1.80,
+    sellToken: 'token.rhealab.near',
+    buyToken: 'otoken.rhealab.near',
+    poolId: poolIdOrhea,
+    sellDecimals: 18,
+    buyDecimals: 18
+  });
+  assert.deepEqual(splitPts, [-5800, -6000]);
+
+  // Mixed decimals check (USDC 6 dec / wNEAR 24 dec)
+  const usdcNearPool = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1|wrap.near|2000';
+  const usdcPerNearPt = limitOrders.priceToDclPoint({
+    rateOutPerIn: 3.0,
+    sellToken: 'wrap.near',
+    buyToken: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+    poolId: usdcNearPool,
+    sellDecimals: 24,
+    buyDecimals: 6
+  });
+  const backNearPrice = limitOrders.dclPointToPrice({
+    point: usdcPerNearPt,
+    sellToken: 'wrap.near',
+    poolId: usdcNearPool,
+    sellDecimals: 24,
+    buyDecimals: 6
+  });
+  assert.ok(Math.abs(backNearPrice - 3.0) < 0.05, `Mixed-decimal round trip failed: got ${backNearPrice}`);
+
+  // 2. NEAR DCL Pre-check (0.5 NEAR deposit when unregistered) + 2-tick LimitOrderWithSwap + Claim + Cancel
+  const lowNearWallet = state.normalizeWalletRecord({
+    id: 'w_lo_near_low',
+    mnemonic: TEST_MNEMONIC,
+    nearNamedAccount: 'alice.near',
+    nearPublicKey: keys.nearPublicKey,
+    nearPrivateKey: keys.nearPrivateKey,
+    nativeBalances: { near: 0.1 },
+    nearNep141Balances: { 'token.rhealab.near': { formatted: 500, raw: (500n * 10n ** 18n).toString(), decimals: 18 } }
+  });
+  await withMockedFetch(async (url, opts) => {
+    const body = opts?.body ? JSON.parse(opts.body) : {};
+    if (body?.params?.method_name === 'storage_balance_of') {
+      return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { result: Array.from(Buffer.from('null')) } });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    await assert.rejects(
+      limitOrders.placeNearDclLimitOrder({
+        wallet: lowNearWallet,
+        poolId: poolIdOrhea,
+        sellToken: 'token.rhealab.near',
+        buyToken: 'otoken.rhealab.near',
+        amountRaw: (100n * 10n ** 18n).toString(),
+        point: -5800,
+        sellDecimals: 18,
+        buyDecimals: 18,
+        sellSymbol: 'RHEA',
+        tokenBalance: 500
+      }),
+      /0\.52|NEAR 余额不足|Insufficient NEAR/i
+    );
+  });
+
+  const fundedNearLoWallet = state.normalizeWalletRecord({
+    id: 'w_lo_near_ok',
+    mnemonic: TEST_MNEMONIC,
+    nearNamedAccount: 'alice.near',
+    nearPublicKey: keys.nearPublicKey,
+    nearPrivateKey: keys.nearPrivateKey,
+    nativeBalances: { near: 5.0 },
+    nearNep141Balances: { 'token.rhealab.near': { formatted: 500, raw: (500n * 10n ** 18n).toString(), decimals: 18 } }
+  });
+  const nearCalls = [];
+  let userInnerBalance = '123000000000000000000';
+  await withMockedFetch(async (url, opts) => {
+    const body = opts?.body ? JSON.parse(opts.body) : {};
+    if (body.method === 'query' && body.params?.request_type === 'call_function') {
+      const m = body.params.method_name;
+      if (m === 'storage_balance_of') {
+        const resVal = body.params.account_id === 'dclv2.ref-labs.near' ? { total: '500000000000000000000000' } : { total: '1250000000000000000000' };
+        return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { result: Array.from(Buffer.from(JSON.stringify(resVal))) } });
+      }
+      if (m === 'list_user_assets') {
+        const assets = { 'otoken.rhealab.near': userInnerBalance, 'token.rhealab.near': '50000000000000000000' };
+        return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { result: Array.from(Buffer.from(JSON.stringify(assets))) } });
+      }
+    }
+    if (body.method === 'query' && body.params?.request_type === 'view_access_key') {
+      return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { nonce: 10, block_hash: '11111111111111111111111111111111' } });
+    }
+    if (body.method === 'broadcast_tx_commit') {
+      nearCalls.push(body);
+      return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { transaction: { hash: `near_lo_tx_${nearCalls.length}` } } });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const resSplit = await limitOrders.placeNearDclLimitOrder({
+      wallet: fundedNearLoWallet,
+      poolId: poolIdOrhea,
+      sellToken: 'token.rhealab.near',
+      buyToken: 'otoken.rhealab.near',
+      amountRaw: (100n * 10n ** 18n).toString(),
+      point: -5800,
+      splitTwoTicks: true,
+      rateOutPerIn: 1.80,
+      sellDecimals: 18,
+      buyDecimals: 18,
+      sellSymbol: 'RHEA',
+      tokenBalance: 500
+    });
+    assert.equal(resSplit.ok, true);
+    assert.equal(resSplit.legs.length, 2);
+    assert.equal(resSplit.legs[0].point, -5800);
+    assert.equal(resSplit.legs[1].point, -6000);
+    assert.equal(nearCalls.length, 2);
+
+    const claimRes = await limitOrders.claimNearDclOrder({
+      wallet: fundedNearLoWallet,
+      orderId: `${poolIdOrhea}#1`,
+      buyToken: 'otoken.rhealab.near'
+    });
+    assert.equal(claimRes.ok, true);
+    assert.equal(claimRes.withdrawn.length, 1);
+
+    const cancelRes = await limitOrders.cancelNearDclOrder({
+      wallet: fundedNearLoWallet,
+      orderId: `${poolIdOrhea}#1`,
+      remainAmount: '50000000000000000000',
+      sellToken: 'token.rhealab.near',
+      buyToken: 'otoken.rhealab.near'
+    });
+    assert.equal(cancelRes.ok, true);
+    assert.equal(cancelRes.withdrawn.length, 2);
+  });
+
+  // 3. Solana Jupiter Trigger V1: $5 min gate, 0.005 SOL rent+gas gate & mocked create->sign->execute
+  const solWalletLow = state.normalizeWalletRecord({
+    id: 'w_lo_sol_low',
+    mnemonic: TEST_MNEMONIC,
+    solAddress: keys.solAddress,
+    solPrivateSeedHex: keys.solPrivateSeedHex,
+    nativeBalances: { sol: 0.002 },
+    splBalances: { EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: 100 }
+  });
+  let jupNetworkHit = false;
+  await withMockedFetch(async () => {
+    jupNetworkHit = true;
+    return jsonResponse({}, 500);
+  }, async () => {
+    await assert.rejects(
+      limitOrders.placeSolanaLimitOrder({
+        wallet: solWalletLow,
+        inputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        outputMint: limitOrders.SOL_NATIVE_MINT,
+        makingAmount: '2000000',
+        takingAmount: '100000000',
+        inputUsdValue: 2,
+        sellBalance: 100,
+        sellDecimals: 6,
+        sellSymbol: 'USDC'
+      }),
+      /\$5/
+    );
+    assert.equal(jupNetworkHit, false, 'Below $5 min must block BEFORE network call');
+
+    await assert.rejects(
+      limitOrders.placeSolanaLimitOrder({
+        wallet: solWalletLow,
+        inputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        outputMint: limitOrders.SOL_NATIVE_MINT,
+        makingAmount: '10000000',
+        takingAmount: '200000000',
+        inputUsdValue: 10,
+        sellBalance: 100,
+        sellDecimals: 6,
+        sellSymbol: 'USDC'
+      }),
+      /SOL|rent|租金/i
+    );
+    assert.equal(jupNetworkHit, false, 'Insufficient SOL rent+gas must block BEFORE network call');
+  });
+
+  const solWalletOk = state.normalizeWalletRecord({
+    id: 'w_lo_sol_ok',
+    mnemonic: TEST_MNEMONIC,
+    solAddress: keys.solAddress,
+    nativeBalances: { sol: 1.5 },
+    splBalances: { EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: 100 }
+  });
+  solWalletOk.solPrivateSeedHex = keys.nearPrivateSeedHex;
+  const testEvmWallet = ethers.Wallet.createRandom();
+  const evmWalletKey = testEvmWallet.privateKey;
+  const evmWalletAddr = testEvmWallet.address;
+  const dummySolTx = Buffer.concat([Buffer.from([1]), Buffer.alloc(64), Buffer.from([1, 0, 1, 1]), Buffer.alloc(32)]).toString('base64');
+  let signedExecTx = null;
+  await withMockedFetch(async (url, opts) => {
+    if (url.includes('/trigger/v1/createOrder')) {
+      return jsonResponse({ requestId: 'req_jup_1', transaction: dummySolTx, order: 'OrderPubkey111111111111111111111111111' });
+    }
+    if (url.includes('/trigger/v1/execute')) {
+      signedExecTx = JSON.parse(opts.body);
+      return jsonResponse({ status: 'Success', signature: 'sol_trig_sig_1' });
+    }
+    if (url.includes('/trigger/v1/cancelOrder')) {
+      return jsonResponse({ requestId: 'req_jup_cancel_1', transaction: dummySolTx });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const solOrderRes = await limitOrders.placeSolanaLimitOrder({
+      wallet: solWalletOk,
+      inputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+      outputMint: limitOrders.SOL_NATIVE_MINT,
+      makingAmount: '10000000',
+      takingAmount: '200000000',
+      inputUsdValue: 10,
+      sellBalance: 100,
+      sellDecimals: 6,
+      sellSymbol: 'USDC'
+    });
+    assert.equal(solOrderRes.ok, true);
+    assert.equal(solOrderRes.txHash, 'sol_trig_sig_1');
+    assert.ok(signedExecTx && signedExecTx.signedTransaction !== dummySolTx, 'Solana trigger tx must be signed with real Ed25519 signature');
+
+    const solCancelRes = await limitOrders.cancelSolanaLimitOrder({
+      wallet: solWalletOk,
+      orderPubkey: 'OrderPubkey111111111111111111111111111'
+    });
+    assert.equal(solCancelRes.ok, true);
+  });
+
+  // 4. EVM CoW Protocol: native sentinel block, unsupported chain block, EIP-712 Order & Cancel recovery
+  const evmWalletOk = state.normalizeWalletRecord({
+    id: 'w_lo_evm_ok',
+    mnemonic: TEST_MNEMONIC,
+    evmAddress: evmWalletAddr,
+    nativeBalances: { base: 0.5 },
+    erc20Balances: { base: { '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 100 } }
+  });
+  evmWalletOk.evmPrivateKey = evmWalletKey;
+  await assert.rejects(
+    limitOrders.placeEvmCowLimitOrder({
+      wallet: evmWalletOk,
+      chainKey: 'base',
+      sellToken: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+      buyToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      sellAmount: '1000000000000000000',
+      buyAmount: '2000000000',
+      sellUsdValue: 100
+    }),
+    /原生|Native/i
+  );
+  await assert.rejects(
+    limitOrders.placeEvmCowLimitOrder({
+      wallet: evmWalletOk,
+      chainKey: 'op',
+      sellToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      buyToken: '0x4200000000000000000000000000000000000006',
+      sellAmount: '10000000',
+      buyAmount: '5000000000000000',
+      sellUsdValue: 10
+    }),
+    /不支持|unavailable/i
+  );
+
+  let postedCowOrder = null;
+  let deletedCowCancel = null;
+  await withMockedFetch(async (url, opts) => {
+    if (opts?.method === 'POST' && opts.body && opts.body.includes('eth_call')) {
+      return jsonResponse({ jsonrpc: '2.0', id: 1, result: '0x' + (1000000000n).toString(16).padStart(64, '0') });
+    }
+    if (url.includes('api.cow.fi/base/api/v1/orders') && opts?.method === 'POST') {
+      postedCowOrder = JSON.parse(opts.body);
+      return jsonResponse('"0xdeadbeef01"');
+    }
+    if (url.includes('api.cow.fi/base/api/v1/orders') && opts?.method === 'DELETE') {
+      deletedCowCancel = JSON.parse(opts.body);
+      return jsonResponse({ cancelled: true });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const cowRes = await limitOrders.placeEvmCowLimitOrder({
+      wallet: evmWalletOk,
+      chainKey: 'base',
+      sellToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      buyToken: '0x4200000000000000000000000000000000000006',
+      sellAmount: '25000000',
+      buyAmount: '10000000000000000',
+      validTo: Math.floor(Date.now() / 1000) + 86400,
+      sellUsdValue: 25,
+      sellBalance: 100,
+      sellDecimals: 6,
+      sellSymbol: 'USDC'
+    });
+    assert.equal(cowRes.ok, true);
+    assert.ok(postedCowOrder && postedCowOrder.signature);
+    const recoveredOrderOwner = ethers.verifyTypedData(
+      limitOrders.buildCowDomain(8453),
+      limitOrders.COW_ORDER_EIP712_TYPES,
+      cowRes.order,
+      postedCowOrder.signature
+    );
+    assert.equal(recoveredOrderOwner.toLowerCase(), evmWalletAddr.toLowerCase());
+
+    await limitOrders.cancelEvmCowOrder({
+      wallet: evmWalletOk,
+      chainKey: 'base',
+      orderUid: '0x' + 'ab'.repeat(56)
+    });
+    assert.ok(deletedCowCancel && deletedCowCancel.signature);
+    const recoveredCancelOwner = ethers.verifyTypedData(
+      limitOrders.buildCowDomain(8453),
+      limitOrders.COW_CANCEL_EIP712_TYPES,
+      { orderUids: deletedCowCancel.orderUids },
+      deletedCowCancel.signature
+    );
+    assert.equal(recoveredCancelOwner.toLowerCase(), evmWalletAddr.toLowerCase());
+  });
+
+  // 4b. Unified EVM EIP-712 MPC v1.signer path test (non-local evmPrivateKey wallet)
+  const mpcTestWalletObj = ethers.Wallet.createRandom();
+  const mpcWalletOnly = state.normalizeWalletRecord({
+    id: 'w_lo_mpc_only',
+    mnemonic: TEST_MNEMONIC,
+    nearNamedAccount: 'alice.near',
+    nearPublicKey: keys.nearPublicKey,
+    nearPrivateKey: keys.nearPrivateKey,
+    _mpcDerivedForNearId: 'alice.near',
+    evmAddress: mpcTestWalletObj.address,
+    mpcEvmAddress: mpcTestWalletObj.address,
+    solAddress: keys.solAddress,
+    solPublicKey: keys.solAddress,
+    nativeBalances: { near: 1.0 }
+  });
+  delete mpcWalletOnly.evmPrivateKey;
+  const cowDomTest = limitOrders.buildCowDomain(8453);
+  const cowValTest = { orderUids: ['0x' + 'cd'.repeat(56)] };
+  await withMockedFetch(async (url, opts) => {
+    const rpcBody = opts?.body ? JSON.parse(opts.body) : {};
+    if (rpcBody.method === 'query' && rpcBody.params?.request_type === 'view_access_key') {
+      return jsonResponse({ jsonrpc: '2.0', id: rpcBody.id, result: { nonce: 55, block_hash: '11111111111111111111111111111111' } });
+    }
+    if (rpcBody.method === 'broadcast_tx_commit') {
+      const digest = ethers.TypedDataEncoder.hash(cowDomTest, limitOrders.COW_CANCEL_EIP712_TYPES, cowValTest);
+      const rawSig = new ethers.SigningKey(mpcTestWalletObj.privateKey).sign(digest);
+      const mpcJson = {
+        big_r: { affine_point: '02' + rawSig.r.slice(2) },
+        s: { scalar: rawSig.s.slice(2) },
+        recovery_id: rawSig.yParity
+      };
+      return jsonResponse({
+        jsonrpc: '2.0',
+        id: rpcBody.id,
+        result: {
+          transaction: { hash: 'mpc_eip712_tx_1' },
+          status: { SuccessValue: Buffer.from(JSON.stringify(mpcJson)).toString('base64') }
+        }
+      });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const mpcTypedRes = await chainContracts.signEvmTypedDataUnified({
+      wallet: mpcWalletOnly,
+      domain: cowDomTest,
+      types: limitOrders.COW_CANCEL_EIP712_TYPES,
+      value: cowValTest
+    });
+    assert.equal(mpcTypedRes.mode, 'mpc');
+    assert.equal(mpcTypedRes.signerAddress.toLowerCase(), mpcTestWalletObj.address.toLowerCase());
+    const recoveredMpc = ethers.verifyTypedData(cowDomTest, limitOrders.COW_CANCEL_EIP712_TYPES, cowValTest, mpcTypedRes.signature);
+    assert.equal(recoveredMpc.toLowerCase(), mpcTestWalletObj.address.toLowerCase());
+  });
+
+  // 5. UI Peer Toggle (闪兑 | 限价) & DOM state
+  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  assert.ok(indexHtml.includes('id="swap-mode-toggle"'));
+  assert.ok(indexHtml.includes('id="swap-limit-panel"'));
+  assert.ok(indexHtml.includes('id="limit-orders-card"'));
+  const prevDoc = globalThis.document;
+  const swapDom = new Map([
+    ['swap-market-panel', createMockDomElement('swap-market-panel')],
+    ['swap-limit-panel', createMockDomElement('swap-limit-panel', { classes: ['hidden'] })],
+    ['swap-mode-market-btn', createMockDomElement('swap-mode-market-btn', { classes: ['active'] })],
+    ['swap-mode-limit-btn', createMockDomElement('swap-mode-limit-btn')]
+  ]);
+  globalThis.document = {
+    getElementById: (id) => swapDom.get(id) || null,
+    querySelectorAll: () => [],
+    querySelector: () => null
+  };
+  try {
+    uiController.setSwapPanelMode('limit');
+    assert.equal(state.swap.panelMode, 'limit');
+    assert.equal(swapDom.get('swap-market-panel').classList.contains('hidden'), true);
+    assert.equal(swapDom.get('swap-limit-panel').classList.contains('hidden'), false);
+    assert.equal(swapDom.get('swap-mode-limit-btn').classList.contains('active'), true);
+    assert.equal(swapDom.get('swap-mode-market-btn').classList.contains('active'), false);
+    uiController.setSwapPanelMode('market');
+    assert.equal(state.swap.panelMode, 'market');
+    assert.equal(swapDom.get('swap-market-panel').classList.contains('hidden'), false);
+    assert.equal(swapDom.get('swap-limit-panel').classList.contains('hidden'), true);
+  } finally {
+    globalThis.document = prevDoc;
+  }
 });

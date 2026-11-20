@@ -492,6 +492,8 @@
       'detail.openExplorerBtn': '前往浏览器 ↗',
       // Swap
       'swap.title': '全链统一闪兑',
+      'swap.modeMarket': '闪兑',
+      'swap.modeLimit': '限价',
       'swap.autoRouteLabel': '智能路由',
       'swap.fromLabel': '支付',
       'swap.toLabel': '获得',
@@ -518,6 +520,26 @@
       'swap.orderSubmitHashBtn': '提交凭证',
       'swap.orderResumeBtn': '继续执行下一步',
       'swap.orderDoneBtn': '完成',
+      // Limit Orders
+      'limit.sellLabel': '卖出',
+      'limit.buyLabel': '买入',
+      'limit.wrapBtn': '封装',
+      'limit.priceLabel': '目标价格',
+      'limit.marketRefLabel': '当前参考',
+      'limit.rateOffsetNow': '现价',
+      'limit.splitTicksLabel': '拆成相邻两档 (更易吃单)',
+      'limit.expiryLabel': '有效期',
+      'limit.exp1d': '1天',
+      'limit.exp7d': '7天',
+      'limit.exp30d': '30天',
+      'limit.estReceive': '预计获得',
+      'limit.gasLabel': '网络费 (Gas)',
+      'limit.depositLabel': '押金 (可退)',
+      'limit.minOrderLabel': '最低限额',
+      'limit.submitBtn': '提交限价单',
+      'limit.ordersTitle': '限价挂单',
+      'limit.tabActive': '当前挂单',
+      'limit.tabHistory': '历史挂单',
       // Earn / Staking
       'earn.title': '链上流动性质押',
       'earn.refreshBtn': '刷新利率',
@@ -696,6 +718,8 @@
       'detail.openExplorerBtn': 'Explorer ↗',
       // Swap
       'swap.title': 'Cross-Chain & DEX Swap',
+      'swap.modeMarket': 'Swap',
+      'swap.modeLimit': 'Limit',
       'swap.autoRouteLabel': 'Auto Route',
       'swap.fromLabel': 'Pay',
       'swap.toLabel': 'Receive',
@@ -722,6 +746,26 @@
       'swap.orderSubmitHashBtn': 'Submit Hash',
       'swap.orderResumeBtn': 'Resume Next Step',
       'swap.orderDoneBtn': 'Done',
+      // Limit Orders
+      'limit.sellLabel': 'Sell',
+      'limit.buyLabel': 'Buy',
+      'limit.wrapBtn': 'Wrap',
+      'limit.priceLabel': 'Target Price',
+      'limit.marketRefLabel': 'Market',
+      'limit.rateOffsetNow': 'Market',
+      'limit.splitTicksLabel': 'Split Across 2 Ticks',
+      'limit.expiryLabel': 'Expiry',
+      'limit.exp1d': '1D',
+      'limit.exp7d': '7D',
+      'limit.exp30d': '30D',
+      'limit.estReceive': 'Est. Receive',
+      'limit.gasLabel': 'Network Fee',
+      'limit.depositLabel': 'Deposit (Refundable)',
+      'limit.minOrderLabel': 'Minimum Order',
+      'limit.submitBtn': 'Place Limit Order',
+      'limit.ordersTitle': 'Limit Orders',
+      'limit.tabActive': 'Active',
+      'limit.tabHistory': 'History',
       // Earn / Staking
       'earn.title': 'On-Chain Liquid Staking',
       'earn.refreshBtn': 'Refresh APY',
@@ -873,6 +917,7 @@
     pendingMnemonic: '',
 
     swap: {
+      panelMode: 'market', // 'market' | 'limit'
       routeType: 'auto', // 'same_chain_dex' | 'cross_chain' | 'auto'
       fromAssetId: 'nep141:wrap.near',
       toAssetId: 'nep141:sol.omft.near',
@@ -887,6 +932,29 @@
       pickerSide: 'from',
       pickerChainFilter: 'all',
       pickerSearch: ''
+    },
+
+    limit: {
+      chain: 'near',
+      sellContract: 'token.rhealab.near',
+      buyContract: 'otoken.rhealab.near',
+      amountIn: '',
+      targetRate: '',
+      snappedPoint: null,
+      splitTwoTicks: false,
+      expiryDays: 7,
+      ordersTab: 'active',
+      pickerSide: null,
+      liveMarketRate: null,
+      poolInfo: null,
+      dclStorageRegistered: null,
+      evmAllowanceRaw: null,
+      ordersActive: [],
+      ordersHistory: [],
+      ordersLoading: false,
+      rateLimited: false,
+      submitting: false,
+      errorMsg: ''
     },
 
     staking: {
