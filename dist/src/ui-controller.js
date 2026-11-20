@@ -55,7 +55,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.13');
+      await loadScriptOnce('ethers.umd.min.js?v=6.14');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -65,7 +65,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.13').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.14').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -75,7 +75,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.13').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.14').catch(() => false);
       return getMining();
     }
     return null;
@@ -1140,6 +1140,7 @@
     } else if (st.activeTab === 'perp') {
       renderPerpView();
       refreshPerpDataAsync(false).catch(() => {});
+      refreshPerpLongShortAsync(st.perp.selectedCoin || 'BTC', false).catch(() => {});
     } else if (st.activeTab === 'earn') {
       if (!st.staking.filter) st.staking.filter = 'featured';
       renderEarnView();
@@ -5507,6 +5508,50 @@
     return view;
   }
 
+  const STABLECOIN_SYMBOLS = new Set([
+    'USDC', 'USDT', 'DAI', 'USDG', 'USDE', 'EURC', 'FDUSD', 'TUSD', 'USDS', 'PYUSD', 'FRAX', 'USD1', 'USDC.E', 'USDT.E'
+  ]);
+
+  function isStablecoinSymbol(sym) {
+    return STABLECOIN_SYMBOLS.has(String(sym || '').trim().replace(/^\$/, '').toUpperCase());
+  }
+
+  function renderSwapRateDisplay(fromToken, toToken, rawOutPerIn = null) {
+    const st = getState();
+    const rateEl = $('swap-quote-rate');
+    if (!rateEl) return '';
+    if (!fromToken || !toToken) {
+      rateEl.textContent = '--';
+      return '--';
+    }
+    let rateOutPerIn = Number(rawOutPerIn);
+    if (!Number.isFinite(rateOutPerIn) || rateOutPerIn <= 0) {
+      rateOutPerIn = Number(st.swap._quoteRateOutPerIn);
+    }
+    if (!Number.isFinite(rateOutPerIn) || rateOutPerIn <= 0) {
+      const pIn = getTokenUnitPrice(fromToken);
+      const pOut = getTokenUnitPrice(toToken);
+      if (pIn > 0 && pOut > 0) rateOutPerIn = pIn / pOut;
+    }
+    if (!Number.isFinite(rateOutPerIn) || rateOutPerIn <= 0) {
+      rateEl.textContent = '--';
+      return '--';
+    }
+    const text = st.swap.rateInverted
+      ? `1 ${toToken.symbol} ≈ ${formatBal(1 / rateOutPerIn, 5)} ${fromToken.symbol} ⇄`
+      : `1 ${fromToken.symbol} ≈ ${formatBal(rateOutPerIn, 5)} ${toToken.symbol} ⇄`;
+    rateEl.textContent = text;
+    return text;
+  }
+
+  function toggleSwapRateOrientation() {
+    const st = getState();
+    st.swap.rateInverted = !st.swap.rateInverted;
+    const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
+    const toToken = resolveSwapToken(st.swap.toAssetId, 1);
+    renderSwapRateDisplay(fromToken, toToken);
+  }
+
   function renderSwapView() {
     const st = getState();
     const tokens = getTokens();
@@ -5543,8 +5588,16 @@
     const toBal = getSwapTokenAvailableBalance(toToken);
     if ($('swap-from-balance')) $('swap-from-balance').textContent = `${formatBal(fromBal, 6)} ${fromToken ? fromToken.symbol : ''}`;
     if ($('swap-to-balance')) $('swap-to-balance').textContent = `${formatBal(toBal, 6)} ${toToken ? toToken.symbol : ''}`;
-    if ($('swap-from-net-label')) $('swap-from-net-label').textContent = fromToken ? (fromToken.networkName || fromToken.blockchain) : '--';
-    if ($('swap-to-net-label')) $('swap-to-net-label').textContent = toToken ? (toToken.networkName || toToken.blockchain) : '--';
+    const formatNetAndPrice = (tok) => {
+      if (!tok) return '--';
+      const net = tok.networkName || tok.blockchain || '--';
+      const px = getTokenUnitPrice(tok);
+      const pxStr = formatTokenPrice(px);
+      return pxStr !== '--' ? `${net} · ${pxStr}` : net;
+    };
+    if ($('swap-from-net-label')) $('swap-from-net-label').textContent = formatNetAndPrice(fromToken);
+    if ($('swap-to-net-label')) $('swap-to-net-label').textContent = formatNetAndPrice(toToken);
+    renderSwapRateDisplay(fromToken, toToken);
 
     const sameChainDex = isSameChainContractSwap(fromToken, toToken);
     const routeBadge = $('swap-auto-route-badge');
@@ -5611,14 +5664,15 @@
     const st = getState();
     st.swap.amountOut = '';
     st.swap.quoteData = null;
+    st.swap._quoteRateOutPerIn = null;
     if ($('swap-amount-out')) $('swap-amount-out').value = '';
-    if ($('swap-quote-rate')) $('swap-quote-rate').textContent = '--';
     if ($('swap-quote-route')) $('swap-quote-route').textContent = '--';
     if ($('swap-quote-fee')) $('swap-quote-fee').textContent = '--';
     if ($('swap-usd-out')) $('swap-usd-out').textContent = '--';
     const wallet = st.getActiveWallet();
     const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
     const toToken = resolveSwapToken(st.swap.toAssetId, 1);
+    renderSwapRateDisplay(fromToken, toToken, null);
     if (wallet && fromToken && toToken) {
       syncSwapRecipientInputState(wallet, fromToken, toToken, null);
       renderSwapGasReserveRow(wallet, fromToken, toToken);
@@ -5656,6 +5710,8 @@
     st.swap.fromAssetId = st.swap.toAssetId;
     st.swap.toAssetId = tmp;
     st.swap.recipientAddress = '';
+    st.swap.rateInverted = false;
+    st.swap._quoteRateOutPerIn = null;
     st.swap._quoting = false;
     st.swap._lastError = '';
     if (typeof st.saveSwapPair === 'function') st.saveSwapPair();
@@ -5763,6 +5819,9 @@
       const usdInText = numUsdIn !== null ? formatUsd(numUsdIn) : '--';
       const netUsdOut = numUsdOut !== null ? formatUsd(numUsdOut) : (cached.usdOut || '--');
       st.swap.amountOut = netOutText;
+      st.swap._quoteRateOutPerIn = Number.isFinite(cached.rateOutPerIn) && cached.rateOutPerIn > 0
+        ? cached.rateOutPerIn
+        : (amt > 0 && cached.grossOutNum > 0 ? cached.grossOutNum / amt : null);
       if ($('swap-amount-out')) $('swap-amount-out').value = netOutText;
       if ($('swap-quote-route')) $('swap-quote-route').textContent = cached.quoteSource;
       if ($('swap-auto-route-badge')) {
@@ -5773,7 +5832,7 @@
         const feeBps = Number(cached.quoteData?.serviceFeeBps ?? cached.feeBps ?? 0);
         $('swap-quote-fee').textContent = feeBps > 0 ? `${(feeBps / 100).toString()}%` : '0%';
       }
-      if ($('swap-quote-rate') && cached.rateText) $('swap-quote-rate').textContent = cached.rateText;
+      renderSwapRateDisplay(fromToken, toToken, st.swap._quoteRateOutPerIn);
       if ($('swap-usd-in')) $('swap-usd-in').textContent = usdInText;
       if ($('swap-usd-out')) $('swap-usd-out').textContent = netUsdOut;
       syncSwapRecipientInputState(wallet, fromToken, toToken, cached.quoteData);
@@ -5797,7 +5856,8 @@
       const gInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', quoteData);
       const { netOutNum, ratio } = computeNetSwapOutput(quoteData, toToken, gInfo, outHumanNum);
       const amtOutText = formatBal(netOutNum, 6);
-      const rateText = outHumanNum > 0 ? `1 ${fromToken.symbol} ≈ ${formatBal(outHumanNum / amt, 5)} ${toToken.symbol}` : '';
+      const rateOutPerIn = (amt > 0 && outHumanNum > 0) ? (outHumanNum / amt) : null;
+      const rateText = rateOutPerIn ? `1 ${fromToken.symbol} ≈ ${formatBal(rateOutPerIn, 5)} ${toToken.symbol}` : '';
       const inPrice = getTokenUnitPrice(fromToken);
       const outPrice = getTokenUnitPrice(toToken);
       const numUsdIn = usdInRaw && Number(usdInRaw) > 0
@@ -5814,6 +5874,7 @@
       st.swap.quoteData = quoteData;
       st.swap.quoteSource = quoteSource;
       st.swap.amountOut = amtOutText;
+      st.swap._quoteRateOutPerIn = rateOutPerIn;
       if ($('swap-amount-out')) $('swap-amount-out').value = amtOutText;
       if ($('swap-quote-route')) $('swap-quote-route').textContent = quoteSource;
       if ($('swap-auto-route-badge')) {
@@ -5821,14 +5882,14 @@
         $('swap-auto-route-badge').title = quoteSource;
       }
       if ($('swap-quote-fee')) $('swap-quote-fee').textContent = feeBps > 0 ? `${(feeBps / 100).toString()}%` : '0%';
-      if ($('swap-quote-rate') && rateText) $('swap-quote-rate').textContent = rateText;
+      renderSwapRateDisplay(fromToken, toToken, rateOutPerIn);
       if ($('swap-usd-in')) $('swap-usd-in').textContent = usdIn;
       if ($('swap-usd-out')) $('swap-usd-out').textContent = usdOut;
       syncSwapRecipientInputState(wallet, fromToken, toToken, quoteData);
       renderSwapGasReserveRow(wallet, fromToken, toToken);
       updateSwapPrimaryButtonState();
       if (_swapQuoteCache.size > 40) _swapQuoteCache.clear();
-      _swapQuoteCache.set(cacheKey, { ts: Date.now(), quoteData, quoteSource, feeBps, grossOutNum: outHumanNum, amountOut: amtOutText, rateText, usdInRaw: usdInRaw || null, usdOutRaw, usdOut });
+      _swapQuoteCache.set(cacheKey, { ts: Date.now(), quoteData, quoteSource, feeBps, grossOutNum: outHumanNum, rateOutPerIn, amountOut: amtOutText, rateText, usdInRaw: usdInRaw || null, usdOutRaw, usdOut });
     };
 
     st.swap._quoting = true;
@@ -8461,6 +8522,7 @@
         st.limit.buyContract = assetId;
       }
       st.limit.targetRate = '';
+      st.limit.priceInverted = null;
       st.limit.snappedPoint = null;
       st.limit.liveMarketRate = null;
       st.limit.poolInfo = null;
@@ -8476,6 +8538,7 @@
       st.swap.toAssetId = assetId;
       st.swap.recipientAddress = '';
     }
+    st.swap.rateInverted = false;
     resetSwapQuoteDisplay();
     if (typeof st.saveSwapPair === 'function') st.saveSwapPair();
     setSwapError('');
@@ -8646,6 +8709,7 @@
     st.limit.buyContract = '';
     st.limit.amountIn = '';
     st.limit.targetRate = '';
+    st.limit.priceInverted = null;
     st.limit.snappedPoint = null;
     st.limit.liveMarketRate = null;
     st.limit.poolInfo = null;
@@ -8658,6 +8722,40 @@
     refreshLimitOrdersAsync(false).catch(() => {});
   }
 
+  function resolveLimitPriceOrientation(sellToken, buyToken) {
+    const st = getState();
+    if (!sellToken || !buyToken) {
+      return { inverted: false, baseSymbol: sellToken?.symbol || '--', quoteSymbol: buyToken?.symbol || '--' };
+    }
+    const manual = st.limit.priceInverted;
+    const auto = isStablecoinSymbol(sellToken.symbol) && !isStablecoinSymbol(buyToken.symbol);
+    const inverted = (manual === true || manual === false) ? manual : auto;
+    return {
+      inverted,
+      baseSymbol: inverted ? buyToken.symbol : sellToken.symbol,
+      quoteSymbol: inverted ? sellToken.symbol : buyToken.symbol
+    };
+  }
+
+  function toLimitDisplayPrice(canonicalRateOutPerIn, inverted) {
+    const r = Number(canonicalRateOutPerIn);
+    if (!Number.isFinite(r) || r <= 0) return '';
+    const disp = inverted ? (1 / r) : r;
+    return Number(disp.toPrecision(6)).toString();
+  }
+
+  function toggleLimitPriceOrientation() {
+    const st = getState();
+    const { sellToken, buyToken } = resolveLimitSelectedTokens();
+    const { inverted } = resolveLimitPriceOrientation(sellToken, buyToken);
+    const nextInverted = !inverted;
+    st.limit.priceInverted = nextInverted;
+    if ($('limit-target-rate')) {
+      $('limit-target-rate').value = toLimitDisplayPrice(st.limit.targetRate, nextInverted);
+    }
+    renderLimitOrderView();
+  }
+
   function handleLimitInput() {
     const st = getState();
     st.limit.amountIn = ($('limit-amount-in')?.value || '').trim();
@@ -8667,7 +8765,17 @@
 
   function handleLimitRateInput() {
     const st = getState();
-    st.limit.targetRate = ($('limit-target-rate')?.value || '').trim();
+    const raw = ($('limit-target-rate')?.value || '').trim();
+    const { sellToken, buyToken } = resolveLimitSelectedTokens();
+    const { inverted } = resolveLimitPriceOrientation(sellToken, buyToken);
+    const num = Number(raw);
+    if (!raw) {
+      st.limit.targetRate = '';
+    } else if (inverted) {
+      st.limit.targetRate = Number.isFinite(num) && num > 0 ? Number((1 / num).toPrecision(8)).toString() : '';
+    } else {
+      st.limit.targetRate = raw;
+    }
     st.limit.snappedPoint = null;
     st.limit.errorMsg = '';
     renderLimitOrderCalculations();
@@ -8700,6 +8808,7 @@
     const prevRate = Number(st.limit.targetRate);
     st.limit.sellContract = buyToken.contractAddress;
     st.limit.buyContract = sellToken.contractAddress;
+    st.limit.priceInverted = null;
     st.limit.snappedPoint = null;
     st.limit.evmAllowanceRaw = null;
     st.limit.liveMarketRate = st.limit.liveMarketRate && st.limit.liveMarketRate > 0 ? (1 / st.limit.liveMarketRate) : null;
@@ -8711,15 +8820,19 @@
   function applyLimitRateOffset(pct) {
     const st = getState();
     const lo = getLimitOrders();
-    const base = Number(st.limit.liveMarketRate || st.limit.targetRate);
-    if (!Number.isFinite(base) || base <= 0) {
+    const { sellToken, buyToken } = resolveLimitSelectedTokens();
+    const { inverted } = resolveLimitPriceOrientation(sellToken, buyToken);
+    const baseCanonical = Number(st.limit.liveMarketRate || st.limit.targetRate);
+    if (!Number.isFinite(baseCanonical) || baseCanonical <= 0) {
       showToast(t('暂无实时参考价', 'Live reference price unavailable'));
       return;
     }
-    let nextRate = base * (1 + Number(pct || 0));
+    const baseDisplay = inverted ? (1 / baseCanonical) : baseCanonical;
+    const nextDisplay = baseDisplay * (1 + Number(pct || 0));
+    if (!Number.isFinite(nextDisplay) || nextDisplay <= 0) return;
+    let nextRate = inverted ? (1 / nextDisplay) : nextDisplay;
     let nextPt = null;
     if (st.limit.chain === 'near' && lo) {
-      const { sellToken, buyToken } = resolveLimitSelectedTokens();
       const poolId = sellToken && buyToken
         ? ((st.limit.poolInfo && st.limit.poolInfo.poolId) || lo.resolveNearLimitPoolId(sellToken.contractAddress, buyToken.contractAddress))
         : null;
@@ -8747,8 +8860,18 @@
     }
     st.limit.snappedPoint = nextPt;
     st.limit.targetRate = Number(nextRate.toPrecision(6)).toString();
-    if ($('limit-target-rate')) $('limit-target-rate').value = st.limit.targetRate;
+    if ($('limit-target-rate')) {
+      $('limit-target-rate').value = toLimitDisplayPrice(nextRate, inverted);
+    }
     renderLimitOrderCalculations();
+  }
+
+  function applyLimitRateOffsetByIndex(idx) {
+    const mags = [0, 0.02, 0.05, 0.10];
+    const mag = mags[Number(idx)] ?? 0;
+    const { sellToken, buyToken } = resolveLimitSelectedTokens();
+    const { inverted } = resolveLimitPriceOrientation(sellToken, buyToken);
+    return applyLimitRateOffset(inverted && mag > 0 ? -mag : mag);
   }
 
   function stepLimitDclPoint(dir) {
@@ -8757,6 +8880,7 @@
     if (!lo || st.limit.chain !== 'near') return;
     const { sellToken, buyToken } = resolveLimitSelectedTokens();
     if (!sellToken || !buyToken) return;
+    const { inverted } = resolveLimitPriceOrientation(sellToken, buyToken);
     const poolId = (st.limit.poolInfo && st.limit.poolInfo.poolId) || lo.resolveNearLimitPoolId(sellToken.contractAddress, buyToken.contractAddress);
     if (!poolId) return;
     const delta = (st.limit.poolInfo && st.limit.poolInfo.pointDelta) || 40;
@@ -8776,7 +8900,8 @@
         buyDecimals: buyToken.decimals
       });
     }
-    const stepDelta = (Number(dir) >= 0 ? 1 : -1) * (sellIsX ? delta : -delta);
+    const visualDir = inverted ? -Number(dir) : Number(dir);
+    const stepDelta = (visualDir >= 0 ? 1 : -1) * (sellIsX ? delta : -delta);
     const nextPt = curPt + stepDelta;
     const nextRate = lo.dclPointToPrice({
       point: nextPt,
@@ -8788,7 +8913,9 @@
     });
     st.limit.snappedPoint = nextPt;
     st.limit.targetRate = Number(nextRate.toPrecision(6)).toString();
-    if ($('limit-target-rate')) $('limit-target-rate').value = st.limit.targetRate;
+    if ($('limit-target-rate')) {
+      $('limit-target-rate').value = toLimitDisplayPrice(nextRate, inverted);
+    }
     renderLimitOrderCalculations();
   }
 
@@ -8946,7 +9073,9 @@
             buyDecimals: buyToken.decimals
           });
           if ($('limit-snapped-tick-label')) {
-            $('limit-snapped-tick-label').textContent = `1 ${sellToken.symbol} = ${formatBal(exactRate, 4)} ${buyToken.symbol}`;
+            const { inverted, baseSymbol, quoteSymbol } = resolveLimitPriceOrientation(sellToken, buyToken);
+            const dispExact = (inverted && exactRate > 0) ? (1 / exactRate) : exactRate;
+            $('limit-snapped-tick-label').textContent = `1 ${baseSymbol} = ${formatBal(dispExact, 4)} ${quoteSymbol}`;
           }
           if (st.limit.splitTwoTicks && typeof lo.resolveSplitTwoTickPoints === 'function') {
             const pts = lo.resolveSplitTwoTickPoints({
@@ -9031,10 +9160,26 @@
       errBanner.textContent = st.limit.errorMsg || '';
     }
 
+    const { inverted, baseSymbol, quoteSymbol } = resolveLimitPriceOrientation(sellToken, buyToken);
     if ($('limit-market-rate')) {
-      $('limit-market-rate').textContent = st.limit.liveMarketRate && buyToken
-        ? `1 = ${formatBal(st.limit.liveMarketRate, 5)} ${buyToken.symbol}`
-        : '--';
+      const mktCanonical = Number(st.limit.liveMarketRate);
+      if (Number.isFinite(mktCanonical) && mktCanonical > 0 && sellToken && buyToken) {
+        const dispMkt = inverted ? (1 / mktCanonical) : mktCanonical;
+        $('limit-market-rate').textContent = `1 ${baseSymbol} = ${formatBal(dispMkt, 5)} ${quoteSymbol}`;
+      } else {
+        $('limit-market-rate').textContent = '--';
+      }
+    }
+    const usdHintEl = $('limit-target-usd-hint');
+    if (usdHintEl) {
+      const dispRate = (inverted && Number(st.limit.targetRate) > 0) ? (1 / Number(st.limit.targetRate)) : Number(st.limit.targetRate);
+      const quoteUnitUsd = inverted ? sellPrice : buyPrice;
+      if (sellToken && buyToken && Number.isFinite(dispRate) && dispRate > 0 && quoteUnitUsd && quoteUnitUsd > 0) {
+        const equivUsd = formatTokenPrice(dispRate * quoteUnitUsd);
+        usdHintEl.textContent = equivUsd !== '--' ? `1 ${baseSymbol} ≈ ${equivUsd}` : '';
+      } else {
+        usdHintEl.textContent = '';
+      }
     }
     if ($('btn-limit-wrap')) {
       let showWrap = false;
@@ -9078,16 +9223,34 @@
     const buyBal = buyToken ? getLimitTokenBalance(wallet, buyToken) : null;
     if ($('limit-sell-balance')) $('limit-sell-balance').textContent = sellToken ? `${formatBal(sellBal, 6)} ${sellToken.symbol}` : '--';
     if ($('limit-buy-balance')) $('limit-buy-balance').textContent = buyToken ? `${formatBal(buyBal, 6)} ${buyToken.symbol}` : '--';
-    if ($('limit-sell-net-label')) $('limit-sell-net-label').textContent = sellToken ? (sellToken.networkName || chain.toUpperCase()) : '--';
-    if ($('limit-buy-net-label')) $('limit-buy-net-label').textContent = buyToken ? (buyToken.networkName || chain.toUpperCase()) : '--';
-    if ($('limit-rate-prefix')) $('limit-rate-prefix').textContent = sellToken ? `1 ${sellToken.symbol} =` : '1 -- =';
-    if ($('limit-rate-suffix')) $('limit-rate-suffix').textContent = buyToken ? buyToken.symbol : '--';
+    const fmtLimitNet = (tok) => {
+      if (!tok) return '--';
+      const net = tok.networkName || chain.toUpperCase();
+      const px = getTokenUnitPrice(tok);
+      const pxStr = formatTokenPrice(px);
+      return pxStr !== '--' ? `${net} · ${pxStr}` : net;
+    };
+    if ($('limit-sell-net-label')) $('limit-sell-net-label').textContent = fmtLimitNet(sellToken);
+    if ($('limit-buy-net-label')) $('limit-buy-net-label').textContent = fmtLimitNet(buyToken);
+    const { inverted, baseSymbol, quoteSymbol } = resolveLimitPriceOrientation(sellToken, buyToken);
+    if ($('limit-rate-prefix')) $('limit-rate-prefix').textContent = sellToken && buyToken ? `1 ${baseSymbol} =` : '1 -- =';
+    if ($('limit-rate-suffix')) $('limit-rate-suffix').textContent = sellToken && buyToken ? quoteSymbol : '--';
+
+    if (typeof document !== 'undefined') {
+      const signLabels = inverted ? ['-2%', '-5%', '-10%'] : ['+2%', '+5%', '+10%'];
+      document.querySelectorAll('#limit-offset-pills [data-offset-idx]').forEach((b) => {
+        const idx = Number(b.getAttribute('data-offset-idx'));
+        if (idx >= 1 && idx <= 3) b.textContent = signLabels[idx - 1];
+      });
+    }
 
     if ($('limit-amount-in') && $('limit-amount-in').value !== String(st.limit.amountIn || '')) {
       $('limit-amount-in').value = st.limit.amountIn || '';
     }
-    if ($('limit-target-rate') && $('limit-target-rate').value !== String(st.limit.targetRate || '')) {
-      $('limit-target-rate').value = st.limit.targetRate || '';
+    const rateInputEl = $('limit-target-rate');
+    if (rateInputEl && (typeof document === 'undefined' || document.activeElement !== rateInputEl)) {
+      const dispTarget = toLimitDisplayPrice(st.limit.targetRate, inverted);
+      if (rateInputEl.value !== dispTarget) rateInputEl.value = dispTarget;
     }
 
     const isNear = chain === 'near';
@@ -9188,7 +9351,8 @@
       if (!st.limit.targetRate) {
         st.limit.targetRate = Number(liveRate.toPrecision(6)).toString();
         st.limit.snappedPoint = null;
-        if ($('limit-target-rate')) $('limit-target-rate').value = st.limit.targetRate;
+        const { inverted } = resolveLimitPriceOrientation(sellToken, buyToken);
+        if ($('limit-target-rate')) $('limit-target-rate').value = toLimitDisplayPrice(st.limit.targetRate, inverted);
       }
     }
     renderLimitOrderCalculations();
@@ -10006,6 +10170,7 @@
     }
 
     renderPerpOrderbook();
+    renderPerpLongShortBar();
 
     $('perp-side-long')?.classList.toggle('active', st.perp.side === 'long');
     $('perp-side-short')?.classList.toggle('active', st.perp.side === 'short');
@@ -10029,6 +10194,37 @@
 
     evaluatePerpOrderUI();
     renderPerpBottomList();
+  }
+
+  function renderPerpLongShortBar() {
+    const st = getState();
+    const wrap = $('perp-ls-ratio-wrap');
+    if (!wrap) return;
+    const coin = (st.perp && st.perp.selectedCoin) || 'BTC';
+    const ls = st.perp && st.perp.lsRatio && st.perp.lsRatio.coin === coin ? st.perp.lsRatio : null;
+    if (!ls || !Number.isFinite(ls.longPct) || !Number.isFinite(ls.shortPct)) {
+      wrap.classList.add('hidden');
+      return;
+    }
+    wrap.classList.remove('hidden');
+    const longPct = Math.max(1, Math.min(99, ls.longPct));
+    const shortPct = Math.max(1, Math.min(99, 100 - longPct));
+    if ($('perp-ls-long-label')) $('perp-ls-long-label').textContent = `${t('做多', 'Long')} ${ls.longPct.toFixed(1)}%`;
+    if ($('perp-ls-short-label')) $('perp-ls-short-label').textContent = `${ls.shortPct.toFixed(1)}% ${t('做空', 'Short')}`;
+    if ($('perp-ls-long-bar')) $('perp-ls-long-bar').style.width = `${longPct.toFixed(1)}%`;
+    if ($('perp-ls-short-bar')) $('perp-ls-short-bar').style.width = `${shortPct.toFixed(1)}%`;
+  }
+
+  async function refreshPerpLongShortAsync(coin, force = false) {
+    const st = getState();
+    const hl = getHyperliquid();
+    if (!hl || typeof hl.fetchGlobalLongShortAccountRatio !== 'function') return null;
+    const targetCoin = String(coin || (st.perp && st.perp.selectedCoin) || 'BTC');
+    const res = await hl.fetchGlobalLongShortAccountRatio(targetCoin, { timeoutMs: 2500, force }).catch(() => null);
+    if (st.perp.selectedCoin !== targetCoin) return null;
+    st.perp.lsRatio = res || null;
+    renderPerpLongShortBar();
+    return res || null;
   }
 
   async function refreshPerpOrderbookAndCandlesAsync() {
@@ -10077,7 +10273,10 @@
       st.perp.lastAccountSyncTs = Date.now();
     }
     await refreshPerpOrderbookAndCandlesAsync();
-    if (force) showToast(t('合约数据已刷新', 'Perps synced'));
+    if (force) {
+      refreshPerpLongShortAsync(st.perp.selectedCoin || 'BTC', true).catch(() => {});
+      showToast(t('合约数据已刷新', 'Perps synced'));
+    }
   }
 
   function setPerpSide(side) {
@@ -10245,9 +10444,11 @@
     st.perp.selectedCoin = String(coin || 'BTC');
     st.perp.limitPriceInput = '';
     st.perp.errorMsg = '';
+    st.perp.lsRatio = null;
     closeAllSheets();
     renderPerpView();
     refreshPerpOrderbookAndCandlesAsync().catch(() => {});
+    refreshPerpLongShortAsync(st.perp.selectedCoin, false).catch(() => {});
   }
 
   async function executePerpOrderUI() {
@@ -12725,7 +12926,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.13');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.14');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -13302,6 +13503,7 @@
     getTargetChainGasReserveInfo,
     computeNetSwapOutput,
     toggleSwapDetails,
+    toggleSwapRateOrientation,
     setSwapGasReserveMode,
     fetchLiveSwapQuoteAsync,
     toggleFavoriteSwapToken,
@@ -13318,9 +13520,12 @@
     setLimitChain,
     openLimitTokenPicker,
     renderLimitOrderView,
+    resolveLimitPriceOrientation,
+    toggleLimitPriceOrientation,
     evaluateLimitOrderState,
     stepLimitDclPoint,
     applyLimitRateOffset,
+    applyLimitRateOffsetByIndex,
     toggleLimitSplitTicks,
     setLimitExpiryDays,
     setLimitOrdersTab,
@@ -13332,6 +13537,8 @@
     cancelLimitOrderUI,
     renderPerpView,
     renderPerpOrderbook,
+    renderPerpLongShortBar,
+    refreshPerpLongShortAsync,
     renderPerpCandleSvg,
     renderPerpMarketsSheet,
     handlePerpMarginInput,
@@ -13474,6 +13681,7 @@
     copyReceiveAddress,
     setSwapSlippage,
     toggleSwapDetails,
+    toggleSwapRateOrientation,
     setSwapGasReserveMode,
     handleSwapRecipientInput,
     handleSwapAmountInput,
@@ -13497,7 +13705,9 @@
     handleLimitRateInput,
     setLimitMaxAmount,
     flipLimitTokens,
+    toggleLimitPriceOrientation,
     applyLimitRateOffset,
+    applyLimitRateOffsetByIndex,
     stepLimitDclPoint,
     toggleLimitSplitTicks,
     setLimitExpiryDays,

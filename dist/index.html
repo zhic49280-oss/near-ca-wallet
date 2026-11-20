@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#06080F" />
   <title>Nexus Wallet — NEAR Chain Abstraction</title>
-  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon.png?v=6.13" />
-  <link rel="apple-touch-icon" sizes="192x192" href="assets/nexus-logo-192.png?v=6.13" />
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon.png?v=6.14" />
+  <link rel="apple-touch-icon" sizes="192x192" href="assets/nexus-logo-192.png?v=6.14" />
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=6.13" />
+  <link rel="stylesheet" href="style.css?v=6.14" />
   <script>
     (function () {
       try {
@@ -32,13 +32,13 @@
 <body>
   <div id="app-privacy-shield" class="app-privacy-shield" aria-hidden="true">
     <div class="app-lock-card">
-      <img src="assets/nexus-logo-192.png?v=6.13" alt="Nexus Wallet" class="app-lock-logo" />
+      <img src="assets/nexus-logo-192.png?v=6.14" alt="Nexus Wallet" class="app-lock-logo" />
       <div class="app-lock-brand">Nexus Wallet</div>
     </div>
   </div>
   <div id="app-lock-overlay" class="app-lock-overlay" role="dialog" aria-modal="true" aria-hidden="true">
     <div class="app-lock-card">
-      <img src="assets/nexus-logo-192.png?v=6.13" alt="Nexus Wallet" class="app-lock-logo" />
+      <img src="assets/nexus-logo-192.png?v=6.14" alt="Nexus Wallet" class="app-lock-logo" />
       <div class="app-lock-brand">Nexus Wallet</div>
       <div id="app-lock-title" class="app-lock-title" data-i18n="lock.title">安全锁定</div>
       <div id="app-lock-status" class="app-lock-status" data-i18n="lock.hint">请通过生物识别或锁屏密码解锁</div>
@@ -76,7 +76,7 @@
       <!-- ==================== Onboarding View ==================== -->
       <section id="view-onboarding" class="view-section hidden">
         <div class="ios-glass-card hero-card" style="padding: 24px 18px; text-align: center;">
-          <img src="assets/nexus-logo-512.png?v=6.13" alt="Nexus Wallet" style="width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 18px; border: 1px solid rgba(0,236,151,0.35); display: block; object-fit: cover; box-shadow: 0 8px 24px rgba(0,236,151,0.16);" />
+          <img src="assets/nexus-logo-512.png?v=6.14" alt="Nexus Wallet" style="width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 18px; border: 1px solid rgba(0,236,151,0.35); display: block; object-fit: cover; box-shadow: 0 8px 24px rgba(0,236,151,0.16);" />
           <span class="ca-badge" data-i18n="onboard.badge">NEAR 链抽象自托管账户</span>
           <h1 style="margin: 12px 0 8px; font-size: 21px; font-weight: 800; color: #fff;" data-i18n="onboard.title">一个 NEAR 账户，畅通全链资产</h1>
           <p style="margin: 0 0 20px; font-size: 12.5px; color: var(--text-secondary);" data-i18n="onboard.subtitle">一站式多链自托管资产管理、跨链闪兑与链上理财</p>
@@ -236,7 +236,7 @@
           <div id="swap-quote-meta" class="meta-list">
             <div class="meta-row">
               <span class="meta-key" data-i18n="swap.rateLabel">参考汇率</span>
-              <span id="swap-quote-rate" class="meta-val">--</span>
+              <span id="swap-quote-rate" class="meta-val" role="button" tabindex="0" style="cursor: pointer;" onclick="toggleSwapRateOrientation()">--</span>
             </div>
             <button type="button" id="swap-details-toggle" class="meta-toggle-btn" onclick="toggleSwapDetails()" aria-expanded="false">
               <span class="meta-key" data-i18n="swap.detailsLabel">更多设置</span>
@@ -375,18 +375,22 @@
             <div class="swap-box">
               <div class="swap-box-top">
                 <span data-i18n="limit.priceLabel">目标价格</span>
-                <span><span data-i18n="limit.marketRefLabel">当前参考</span>: <span id="limit-market-rate" class="mono">--</span></span>
+                <span class="flex items-center gap-1">
+                  <span><span data-i18n="limit.marketRefLabel">当前参考</span>: <span id="limit-market-rate" class="mono">--</span></span>
+                  <button type="button" id="limit-rate-flip-btn" class="btn-ghost-sm" style="padding: 1px 6px; font-size: 11px;" onclick="toggleLimitPriceOrientation()" aria-label="Flip price orientation">⇄</button>
+                </span>
               </div>
               <div class="swap-box-main" style="gap: 8px;">
                 <span id="limit-rate-prefix" style="font-size: 12px; color: var(--text-secondary); white-space: nowrap;">1 -- =</span>
                 <input id="limit-target-rate" type="number" step="any" min="0" class="amount-input-lg" placeholder="0.00" oninput="handleLimitRateInput()" />
                 <span id="limit-rate-suffix" style="font-size: 12px; font-weight: 700; color: var(--near-emerald); white-space: nowrap;">--</span>
               </div>
-              <div class="flex gap-1">
-                <button type="button" class="filter-pill" onclick="applyLimitRateOffset(0)" data-i18n="limit.rateOffsetNow">现价</button>
-                <button type="button" class="filter-pill" onclick="applyLimitRateOffset(0.02)">+2%</button>
-                <button type="button" class="filter-pill" onclick="applyLimitRateOffset(0.05)">+5%</button>
-                <button type="button" class="filter-pill" onclick="applyLimitRateOffset(0.10)">+10%</button>
+              <div id="limit-target-usd-hint" class="mono" style="font-size: 11px; color: var(--text-muted); text-align: right; min-height: 14px;"></div>
+              <div id="limit-offset-pills" class="flex gap-1">
+                <button type="button" class="filter-pill" data-offset-idx="0" onclick="applyLimitRateOffsetByIndex(0)" data-i18n="limit.rateOffsetNow">现价</button>
+                <button type="button" class="filter-pill" data-offset-idx="1" onclick="applyLimitRateOffsetByIndex(1)">+2%</button>
+                <button type="button" class="filter-pill" data-offset-idx="2" onclick="applyLimitRateOffsetByIndex(2)">+5%</button>
+                <button type="button" class="filter-pill" data-offset-idx="3" onclick="applyLimitRateOffsetByIndex(3)">+10%</button>
               </div>
               <div id="limit-near-tick-controls" class="limit-dcl-tick-bar hidden">
                 <div class="flex items-center justify-between gap-2">
@@ -540,6 +544,18 @@
               <span id="perp-chart-hl" class="mono" style="font-size: 10.5px; color: var(--text-muted);">--</span>
             </div>
             <div id="perp-chart-svg"></div>
+          </div>
+
+          <div id="perp-ls-ratio-wrap" class="perp-ob-power-wrap hidden">
+            <div class="flex items-center justify-between" style="font-size: 10.5px;">
+              <span id="perp-ls-long-label" class="mono text-emerald">--</span>
+              <span style="font-size: 10px; color: var(--text-muted);" data-i18n="perp.lsRatioLabel">全网多空人数比</span>
+              <span id="perp-ls-short-label" class="mono text-rose">--</span>
+            </div>
+            <div class="perp-ob-power-track">
+              <div id="perp-ls-long-bar" class="perp-ob-power-bid" style="width: 50%;"></div>
+              <div id="perp-ls-short-bar" class="perp-ob-power-ask" style="width: 50%;"></div>
+            </div>
           </div>
 
           <div id="perp-ob-power-wrap" class="perp-ob-power-wrap">
@@ -1505,14 +1521,14 @@
   </div>
 
   <!-- Scripts in Exact Required Order (ethers, qrcode, mining-pro lazy-loaded on demand) -->
-  <script defer src="bip39-wordlist.js?v=6.13"></script>
-  <script defer src="src/crypto-engine.js?v=6.13"></script>
-  <script defer src="src/token-registry.js?v=6.13"></script>
-  <script defer src="src/near-intents.js?v=6.13"></script>
-  <script defer src="src/chain-contracts.js?v=6.13"></script>
-  <script defer src="src/limit-orders.js?v=6.13"></script>
-  <script defer src="src/hyperliquid-perps.js?v=6.13"></script>
-  <script defer src="src/state.js?v=6.13"></script>
-  <script defer src="src/ui-controller.js?v=6.13"></script>
+  <script defer src="bip39-wordlist.js?v=6.14"></script>
+  <script defer src="src/crypto-engine.js?v=6.14"></script>
+  <script defer src="src/token-registry.js?v=6.14"></script>
+  <script defer src="src/near-intents.js?v=6.14"></script>
+  <script defer src="src/chain-contracts.js?v=6.14"></script>
+  <script defer src="src/limit-orders.js?v=6.14"></script>
+  <script defer src="src/hyperliquid-perps.js?v=6.14"></script>
+  <script defer src="src/state.js?v=6.14"></script>
+  <script defer src="src/ui-controller.js?v=6.14"></script>
 </body>
 </html>

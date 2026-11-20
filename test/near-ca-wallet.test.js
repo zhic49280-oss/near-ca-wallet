@@ -7386,3 +7386,118 @@ test('v6.13 Top-3 Compact History, Full History Sheet & In-App Tx Detail Sheet (
     }
   });
 });
+
+test('v6.14 Swap/Limit Live USD Prices, Smart Price Orientation & Zero-Lag Perp L/S Ratio', async () => {
+  await withMockedStorage({}, async () => {
+    state.initState();
+    const w = state.normalizeWalletRecord({
+      id: 'w_v614',
+      mnemonic: TEST_MNEMONIC,
+      nativeBalances: { sol: 1.5, near: 2.0 },
+      solSplBalances: {
+        EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: { formatted: 500, decimals: 6 }
+      }
+    });
+    state.wallets = [w];
+    state.activeWalletId = w.id;
+    state.lang = 'zh';
+    state.liveTokens = [
+      { assetId: 'nep141:sol.omft.near', symbol: 'SOL', blockchain: 'sol', contractAddress: 'So11111111111111111111111111111111111111112', decimals: 9, price: 71.54 },
+      { assetId: 'nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near', symbol: 'USDC', blockchain: 'sol', contractAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6, price: 1.0 }
+    ];
+    state.pricesUpdatedAt = Date.now();
+
+    const prevDoc = globalThis.document;
+    const domMap = new Map();
+    const getOrMake = (id) => {
+      if (!domMap.has(id)) domMap.set(id, createMockDomElement(id));
+      return domMap.get(id);
+    };
+    const pill0 = createMockDomElement('pill0', { attributes: { 'data-offset-idx': '0' } });
+    const pill1 = createMockDomElement('pill1', { attributes: { 'data-offset-idx': '1' } });
+    const pill2 = createMockDomElement('pill2', { attributes: { 'data-offset-idx': '2' } });
+    const pill3 = createMockDomElement('pill3', { attributes: { 'data-offset-idx': '3' } });
+    globalThis.document = {
+      activeElement: null,
+      getElementById: (id) => getOrMake(id),
+      querySelector: () => null,
+      querySelectorAll: (sel) => (sel.includes('#limit-offset-pills') ? [pill0, pill1, pill2, pill3] : [])
+    };
+
+    try {
+      // 1. Swap unit price display + clickable rate orientation toggle
+      state.swap.fromAssetId = 'nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near';
+      state.swap.toAssetId = 'nep141:sol.omft.near';
+      state.swap.rateInverted = false;
+      uiController.renderSwapView();
+      assert.ok(getOrMake('swap-from-net-label').textContent.includes('$1.00'));
+      assert.ok(getOrMake('swap-to-net-label').textContent.includes('$71.54'));
+      assert.ok(getOrMake('swap-quote-rate').textContent.startsWith('1 USDC ≈'));
+      uiController.toggleSwapRateOrientation();
+      assert.ok(getOrMake('swap-quote-rate').textContent.startsWith('1 SOL ≈ 71.54 USDC'));
+
+      // 2. Limit Order smart orientation (selling USDC for SOL auto-inverts to 1 SOL = X USDC)
+      state.limit.chain = 'sol';
+      state.limit.sellContract = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+      state.limit.buyContract = 'So11111111111111111111111111111111111111112';
+      state.limit.priceInverted = null;
+      state.limit.liveMarketRate = 1 / 71.54;
+      state.limit.targetRate = (1 / 71.54).toPrecision(6);
+      uiController.renderLimitOrderView();
+
+      assert.equal(getOrMake('limit-rate-prefix').textContent, '1 SOL =');
+      assert.equal(getOrMake('limit-rate-suffix').textContent, 'USDC');
+      assert.ok(getOrMake('limit-market-rate').textContent.includes('1 SOL = 71.54 USDC'));
+      assert.equal(pill2.textContent, '-5%');
+      assert.ok(getOrMake('limit-target-usd-hint').textContent.includes('1 SOL ≈ $71.54'));
+
+      // Clicking -5% pill reduces display price by 5% while storing canonical rateOutPerIn
+      uiController.applyLimitRateOffsetByIndex(2);
+      const dispAfterDip = Number(getOrMake('limit-target-rate').value);
+      assert.ok(Math.abs(dispAfterDip - 71.54 * 0.95) < 0.05);
+      const canonicalAfterDip = Number(state.limit.targetRate);
+      assert.ok(canonicalAfterDip > 1 / 71.54, 'Lower SOL buy price yields more SOL per 1 USDC');
+
+      // Manual flip switches back to 1 USDC = SOL and flips offset pill labels to +5%
+      uiController.toggleLimitPriceOrientation();
+      assert.equal(getOrMake('limit-rate-prefix').textContent, '1 USDC =');
+      assert.equal(pill2.textContent, '+5%');
+
+      // 3. Binance Global Account L/S Ratio fetch, 90s cache, error backoff & Perp UI hide/show
+      let binanceCalls = 0;
+      await withMockedFetch(async (url) => {
+        binanceCalls++;
+        if (url.includes('symbol=BTCUSDT')) {
+          return jsonResponse([{ symbol: 'BTCUSDT', longAccount: '0.6120', shortAccount: '0.3880', longShortRatio: '1.5773', timestamp: 1795185000000 }]);
+        }
+        if (url.includes('symbol=1000PEPEUSDT')) {
+          return jsonResponse([{ symbol: '1000PEPEUSDT', longAccount: '0.4510', shortAccount: '0.5490', longShortRatio: '0.8215', timestamp: 1795185000000 }]);
+        }
+        return jsonResponse({ code: -1121, msg: 'Invalid symbol.' }, 400);
+      }, async () => {
+        const btcLs = await hlPerps.fetchGlobalLongShortAccountRatio('BTC');
+        assert.ok(btcLs && Math.abs(btcLs.longPct - 61.2) < 0.01);
+        const btcLsCached = await hlPerps.fetchGlobalLongShortAccountRatio('BTC');
+        assert.equal(btcLsCached.symbol, 'BTCUSDT');
+        assert.equal(binanceCalls, 1, 'Second BTC L/S lookup within 90s must hit cache');
+
+        const pepeLs = await hlPerps.fetchGlobalLongShortAccountRatio('kPEPE');
+        assert.equal(pepeLs.symbol, '1000PEPEUSDT');
+
+        state.perp.selectedCoin = 'BTC';
+        await uiController.refreshPerpLongShortAsync('BTC');
+        assert.equal(getOrMake('perp-ls-ratio-wrap').classList.contains('hidden'), false);
+        assert.ok(getOrMake('perp-ls-long-label').textContent.includes('61.2%'));
+        assert.ok(getOrMake('perp-ls-short-label').textContent.includes('38.8%'));
+
+        // Failure hides bar cleanly and caches failure backoff
+        state.perp.selectedCoin = 'UNKNOWNCOIN';
+        const missingLs = await uiController.refreshPerpLongShortAsync('UNKNOWNCOIN');
+        assert.equal(missingLs, null);
+        assert.equal(getOrMake('perp-ls-ratio-wrap').classList.contains('hidden'), true);
+      });
+    } finally {
+      globalThis.document = prevDoc;
+    }
+  });
+});
