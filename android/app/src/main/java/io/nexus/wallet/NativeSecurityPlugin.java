@@ -27,10 +27,12 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "NativeSecurity")
 public class NativeSecurityPlugin extends Plugin {
 
+    public static volatile boolean isAuthenticating = false;
     private CancellationSignal activeSignal = null;
 
     @Override
     protected void handleOnDestroy() {
+        isAuthenticating = false;
         if (activeSignal != null) {
             try {
                 activeSignal.cancel();
@@ -180,9 +182,11 @@ public class NativeSecurityPlugin extends Plugin {
                         }
                     }
                     activeSignal = mySignal;
+                    isAuthenticating = true;
                     prompt.authenticate(mySignal, activity.getMainExecutor(), new BiometricPrompt.AuthenticationCallback() {
                         @Override
                         public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
+                            isAuthenticating = false;
                             if (activeSignal == mySignal) activeSignal = null;
                             String authType = "biometric";
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && result != null
@@ -197,6 +201,7 @@ public class NativeSecurityPlugin extends Plugin {
 
                         @Override
                         public void onAuthenticationError(int errorCode, CharSequence errString) {
+                            isAuthenticating = false;
                             if (activeSignal == mySignal) activeSignal = null;
                             boolean isCancel = errorCode == BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED
                                     || errorCode == BiometricPrompt.BIOMETRIC_ERROR_CANCELED
@@ -213,6 +218,7 @@ public class NativeSecurityPlugin extends Plugin {
                         }
                     });
                 } catch (Exception ex) {
+                    isAuthenticating = false;
                     if (activeSignal == mySignal) activeSignal = null;
                     launchKeyguardFallback(activity, title, effectiveSubtitle, call);
                 }
@@ -240,14 +246,17 @@ public class NativeSecurityPlugin extends Plugin {
         }
         Intent intent = km.createConfirmDeviceCredentialIntent(title, reason);
         if (intent == null) {
+            isAuthenticating = false;
             call.reject("Device credential intent unavailable", "AUTH_UNAVAILABLE");
             return;
         }
+        isAuthenticating = true;
         startActivityForResult(call, intent, "onDeviceCredentialResult");
     }
 
     @ActivityCallback
     private void onDeviceCredentialResult(PluginCall call, ActivityResult result) {
+        isAuthenticating = false;
         if (call == null) return;
         if (result != null && result.getResultCode() == Activity.RESULT_OK) {
             JSObject out = new JSObject();

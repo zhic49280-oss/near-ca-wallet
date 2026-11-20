@@ -1253,7 +1253,7 @@ textarea.input-field {
   top: calc(18px + env(safe-area-inset-top, 0px));
   left: 50%;
   transform: translate(-50%, -24px);
-  z-index: 120;
+  z-index: 10020;
   max-width: calc(100vw - 32px);
   padding: 10px 16px;
   border-radius: 999px;
@@ -1692,4 +1692,94 @@ textarea.input-field {
   background: rgba(251, 113, 133, 0.14);
   border: 1px solid rgba(251, 113, 133, 0.4);
   color: #fda4af;
+}
+
+/* Zero-Flash App Lock & Background Privacy Blur */
+html.nexus-locked .app-shell,
+html.nexus-privacy-blur .app-shell {
+  filter: blur(28px);
+  transform: scale(1.01);
+  pointer-events: none;
+  user-select: none;
+}
+
+.app-privacy-shield,
+.app-lock-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+}
+
+.app-privacy-shield {
+  z-index: 9998;
+  background: rgba(6, 8, 15, 0.78);
+}
+
+.app-lock-overlay {
+  z-index: 9999;
+  background: rgba(6, 8, 15, 0.88);
+}
+
+html.nexus-privacy-blur #app-privacy-shield {
+  display: flex;
+}
+
+html.nexus-locked #app-lock-overlay {
+  display: flex;
+}
+
+.app-lock-card {
+  width: 100%;
+  max-width: 320px;
+  padding: 28px 22px;
+  border-radius: 24px;
+  background: rgba(16, 24, 42, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+
+.app-lock-logo {
+  width: 60px;
+  height: 60px;
+  border-radius: 16px;
+  border: 1px solid rgba(0, 236, 151, 0.35);
+  box-shadow: 0 8px 24px rgba(0, 236, 151, 0.16);
+}
+
+.app-lock-brand {
+  font-size: 16px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.02em;
+}
+
+.app-lock-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--near-emerald);
+}
+
+.app-lock-status {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  margin-bottom: 4px;
+}
+
+.sheet-backdrop.auth-top {
+  z-index: 10005;
+}
+
+#sheet-security-auth {
+  z-index: 10010;
 }

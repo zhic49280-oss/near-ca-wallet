@@ -5383,10 +5383,12 @@ test('v6.1 Audit & Performance Regression Suite: Hydration, SWR Cache, Precheck,
     assert.equal(heroStats.payoutThresholdPrl, 5);
   });
 
-  // 6. sw.js v6.6 cross-origin pass-through + server.js gzip + OPTIONS preflight
+  // 6. sw.js cross-origin pass-through + server.js gzip + OPTIONS preflight
   const swSrc = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
-  assert.match(swSrc, /nexus-wallet-v6\.6/);
-  assert.match(swSrc, /\.\/bip39-wordlist\.js\?v=6\.6/);
+  const swVerMatch = swSrc.match(/const CACHE_NAME = 'nexus-wallet-v(\d+\.\d+)';/);
+  assert.ok(swVerMatch, 'sw.js must define nexus-wallet-vX.Y cache name');
+  const curVer = swVerMatch[1];
+  assert.ok(swSrc.includes(`./bip39-wordlist.js?v=${curVer}`));
   assert.match(swSrc, /if\s*\(reqUrl\.origin\s*!==\s*self\.location\.origin\)\s*\{\s*return;\s*\}/);
 
   const srv = require('../server.js');
@@ -5397,7 +5399,7 @@ test('v6.1 Audit & Performance Regression Suite: Hydration, SWR Cache, Precheck,
       const req = http.request({
         host: '127.0.0.1',
         port,
-        path: '/style.css?v=6.6',
+        path: `/style.css?v=${curVer}`,
         method: 'GET',
         headers: { 'Accept-Encoding': 'gzip' }
       }, (res) => {
@@ -6016,15 +6018,18 @@ test('v6.4 Fixes: Official Icons + Fallback, Live Jupiter ASR APY, Swap USD & Bu
     }
   });
 
-  // 9. Static cache & lazy module versions updated to v6.6
+  // 9. Static cache & lazy module versions remain synchronized with sw.js CACHE_NAME
   const swSrc = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
   const htmlSrc = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
   const uiSrc = fs.readFileSync(path.join(ROOT_DIR, 'src', 'ui-controller.js'), 'utf8');
-  assert.ok(swSrc.includes("nexus-wallet-v6.6"));
+  const curVerMatch = swSrc.match(/const CACHE_NAME = 'nexus-wallet-v(\d+\.\d+)';/);
+  assert.ok(curVerMatch, 'sw.js must define nexus-wallet-vX.Y');
+  const curVer = curVerMatch[1];
+  assert.ok(Number(curVer) >= 6.7);
   assert.equal(swSrc.includes('?v=6.5'), false);
-  assert.ok(htmlSrc.includes('src/ui-controller.js?v=6.6'));
+  assert.ok(htmlSrc.includes(`src/ui-controller.js?v=${curVer}`));
   assert.equal(htmlSrc.includes('?v=6.5'), false);
-  assert.ok(uiSrc.includes('ethers.umd.min.js?v=6.6'));
+  assert.ok(uiSrc.includes(`ethers.umd.min.js?v=${curVer}`));
   assert.equal(uiSrc.includes('?v=6.5'), false);
 
   // 10. NEAR Pair Comparator Grace Window waits for slower 1Click Solver instead of letting shallow fast Rhea CLMM abort it
@@ -6131,4 +6136,127 @@ test('v6.4 Fixes: Official Icons + Fallback, Live Jupiter ASR APY, Swap USD & Bu
   assert.equal(btnCrit.disabled, false);
   assert.equal(btnCrit.isWarning, true);
   assert.ok(btnCrit.text.includes('-22.0%'));
+});
+
+test('v6.7 Stage A: Zero-flash App Lock, 1-minute auto-lock, Native Privacy Blur & AGENTS.md Git Rule', async () => {
+  const agentsMd = fs.readFileSync(path.join(ROOT_DIR, 'AGENTS.md'), 'utf8');
+  assert.match(agentsMd, /git commit/i);
+  assert.match(agentsMd, /严禁.*git push|git push/i);
+
+  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const styleCss = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
+  assert.ok(indexHtml.includes("document.documentElement.classList.add('nexus-locked')"), 'index.html must apply nexus-locked synchronously before body paints');
+  assert.ok(indexHtml.includes('id="app-lock-overlay"'));
+  assert.ok(indexHtml.includes('id="app-privacy-shield"'));
+  assert.ok(styleCss.includes('html.nexus-locked #app-lock-overlay'));
+  assert.ok(styleCss.includes('html.nexus-privacy-blur #app-privacy-shield'));
+
+  const swiftMain = fs.readFileSync(path.join(ROOT_DIR, 'ios', 'App', 'App', 'MainViewController.swift'), 'utf8');
+  const swiftSec = fs.readFileSync(path.join(ROOT_DIR, 'ios', 'App', 'App', 'NativeSecurityPlugin.swift'), 'utf8');
+  assert.match(swiftSec, /public static var isAuthenticating/);
+  assert.match(swiftMain, /UIVisualEffectView/);
+  assert.match(swiftMain, /willResignActiveNotification/);
+  assert.match(swiftMain, /NativeSecurityPlugin\.isAuthenticating/);
+
+  const javaMain = fs.readFileSync(path.join(ROOT_DIR, 'android', 'app', 'src', 'main', 'java', 'io', 'nexus', 'wallet', 'MainActivity.java'), 'utf8');
+  const javaSec = fs.readFileSync(path.join(ROOT_DIR, 'android', 'app', 'src', 'main', 'java', 'io', 'nexus', 'wallet', 'NativeSecurityPlugin.java'), 'utf8');
+  assert.match(javaSec, /public static volatile boolean isAuthenticating/);
+  assert.match(javaMain, /FLAG_SECURE/);
+  assert.match(javaMain, /NativeSecurityPlugin\.isAuthenticating/);
+
+  assert.equal(uiController.APP_LOCK_TIMEOUT_MS, 60_000, 'Auto-lock timeout must be fixed at 1 minute (60,000 ms)');
+
+  await withMockedStorage({}, async () => {
+    state.initState();
+    const w = state.normalizeWalletRecord({
+      id: 'w_applock_v67',
+      name: 'Lock Wallet',
+      mnemonic: TEST_MNEMONIC,
+      nearNamedAccount: 'lock.near'
+    });
+    state.wallets = [w];
+    state.activeWalletId = w.id;
+    state.saveWallets();
+
+    const prevDoc = globalThis.document;
+    const prevWin = globalThis.window;
+    const rootClassList = (() => {
+      const s = new Set();
+      return {
+        add: (c) => s.add(c),
+        remove: (c) => s.delete(c),
+        toggle: (c, force) => (force === undefined ? (s.has(c) ? s.delete(c) : s.add(c)) : (force ? s.add(c) : s.delete(c))),
+        contains: (c) => s.has(c)
+      };
+    })();
+    const domMap = new Map([
+      ['app-lock-overlay', createMockDomElement('app-lock-overlay')],
+      ['app-privacy-shield', createMockDomElement('app-privacy-shield')],
+      ['app-lock-status', createMockDomElement('app-lock-status')],
+      ['btn-app-lock-unlock', createMockDomElement('btn-app-lock-unlock')],
+      ['btn-app-lock-pin', createMockDomElement('btn-app-lock-pin', { classes: ['hidden'] })]
+    ]);
+    globalThis.document = {
+      documentElement: { classList: rootClassList },
+      getElementById: (id) => domMap.get(id) || null,
+      querySelectorAll: () => [],
+      querySelector: () => null
+    };
+    let authCalls = 0;
+    let authResult = { authenticated: true, type: 'faceID' };
+    globalThis.window = {
+      Capacitor: {
+        Plugins: {
+          NativeSecurity: {
+            async getSecurityCapabilities() {
+              return { platform: 'ios', deviceModel: 'iPhone', biometryType: 'faceID', supportsBiometrics: true, supportsPasscode: true };
+            },
+            async authenticateWithBiometrics() {
+              authCalls += 1;
+              return authResult;
+            }
+          }
+        }
+      }
+    };
+
+    try {
+      // Cold-start engage lock & auto-unlock with biometrics/passcode
+      assert.equal(uiController.shouldEnableAppLockForWallet(w), true);
+      uiController.engageAppLock(false);
+      assert.equal(rootClassList.contains('nexus-locked'), true);
+      assert.equal(domMap.get('btn-app-lock-pin').classList.contains('hidden'), true, 'PIN button stays hidden when no wallet PIN is set');
+
+      assert.equal(await uiController.unlockAppLockNow(), true);
+      assert.equal(authCalls, 1);
+      assert.equal(rootClassList.contains('nexus-locked'), false);
+
+      // Backgrounding shows privacy blur; returning within < 60s removes blur without re-locking
+      uiController.handleAppVisibilityChange(true, 1_000_000);
+      assert.equal(rootClassList.contains('nexus-privacy-blur'), true);
+      assert.equal(rootClassList.contains('nexus-locked'), false);
+      uiController.handleAppVisibilityChange(false, 1_045_000);
+      assert.equal(rootClassList.contains('nexus-privacy-blur'), false);
+      assert.equal(rootClassList.contains('nexus-locked'), false);
+
+      // Backgrounding >= 60s engages lock on resume
+      authResult = { authenticated: false, code: 'AUTH_CANCELLED', error: 'Cancelled' };
+      uiController.handleAppVisibilityChange(true, 2_000_000);
+      assert.equal(rootClassList.contains('nexus-privacy-blur'), true);
+      uiController.handleAppVisibilityChange(false, 2_060_000);
+      await new Promise((r) => setTimeout(r, 20));
+      assert.equal(rootClassList.contains('nexus-privacy-blur'), false);
+      assert.equal(rootClassList.contains('nexus-locked'), true, 'Must re-lock after >= 60s in background');
+      assert.equal(authCalls, 2);
+
+      // Retry after cancel succeeds
+      authResult = { authenticated: true, type: 'passcode' };
+      assert.equal(await uiController.unlockAppLockNow(), true);
+      assert.equal(rootClassList.contains('nexus-locked'), false);
+    } finally {
+      globalThis.document = prevDoc;
+      if (prevWin === undefined) delete globalThis.window;
+      else globalThis.window = prevWin;
+    }
+  });
 });

@@ -55,7 +55,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.6');
+      await loadScriptOnce('ethers.umd.min.js?v=6.7');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -65,7 +65,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.6').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.7').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -75,7 +75,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.6').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.7').catch(() => false);
       return getMining();
     }
     return null;
@@ -604,56 +604,248 @@
     }
   }
 
+  const APP_LOCK_TIMEOUT_MS = 60_000;
+  const _appLockState = {
+    locked: false,
+    authenticating: false,
+    backgroundedAt: 0,
+    lifecycleBound: false
+  };
+
+  function hasConfiguredWalletPin(wallet) {
+    const st = getState();
+    return Boolean(wallet && (typeof st.hasWalletPin === 'function' ? st.hasWalletPin(wallet) : Boolean(wallet.pin || wallet.pinHash)));
+  }
+
+  function shouldEnableAppLockForWallet(wallet, overrides = {}) {
+    if (!wallet) return false;
+    const nativePlugin = getNativeSecurityPlugin(overrides.nativePlugin);
+    return Boolean(nativePlugin || wallet.webauthnCredentialId || hasConfiguredWalletPin(wallet));
+  }
+
+  function setRootClass(cls, enabled) {
+    if (typeof document === 'undefined' || !document.documentElement || !document.documentElement.classList) return;
+    document.documentElement.classList.toggle(cls, Boolean(enabled));
+  }
+
+  function clearAppLock() {
+    _appLockState.locked = false;
+    _appLockState.backgroundedAt = 0;
+    setRootClass('nexus-locked', false);
+    const overlay = $('app-lock-overlay');
+    if (overlay) overlay.setAttribute('aria-hidden', 'true');
+  }
+
+  function setBackgroundPrivacyBlur(enabled) {
+    const st = getState();
+    if (enabled && (!st.getActiveWallet() || _appLockState.authenticating)) return;
+    setRootClass('nexus-privacy-blur', Boolean(enabled));
+    const shield = $('app-privacy-shield');
+    if (shield) shield.setAttribute('aria-hidden', enabled ? 'false' : 'true');
+  }
+
+  function engageAppLock(autoPrompt = false, overrides = {}) {
+    const st = getState();
+    const wallet = st.getActiveWallet();
+    if (!shouldEnableAppLockForWallet(wallet, overrides)) {
+      clearAppLock();
+      return false;
+    }
+    _appLockState.locked = true;
+    setRootClass('nexus-locked', true);
+    const overlay = $('app-lock-overlay');
+    if (overlay) overlay.setAttribute('aria-hidden', 'false');
+    const pinBtn = $('btn-app-lock-pin');
+    if (pinBtn) pinBtn.classList.toggle('hidden', !hasConfiguredWalletPin(wallet));
+    const statusEl = $('app-lock-status');
+    if (statusEl) {
+      statusEl.textContent = t('请通过生物识别或锁屏密码解锁', 'Unlock with Biometrics or Device Passcode');
+    }
+    if (autoPrompt && typeof unlockAppLockNow === 'function') {
+      unlockAppLockNow(overrides).catch(() => {});
+    }
+    return true;
+  }
+
+  async function unlockAppLockNow(overrides = {}) {
+    const st = getState();
+    const wallet = st.getActiveWallet();
+    if (!wallet) {
+      clearAppLock();
+      return true;
+    }
+    if (_appLockState.authenticating) return false;
+    const statusEl = $('app-lock-status');
+    const unlockBtn = $('btn-app-lock-unlock');
+    if (unlockBtn) unlockBtn.disabled = true;
+    if (statusEl) statusEl.textContent = t('正在验证身份...', 'Verifying identity...');
+
+    const nativePlugin = getNativeSecurityPlugin(overrides.nativePlugin);
+    const profile = nativePlugin ? { supported: true } : (_cachedBioProfile || await detectDeviceBiometricProfileAsync(overrides));
+    try {
+      if (profile && profile.supported) {
+        const res = await requestBiometricAuth(
+          t('验证身份以解锁 Nexus Wallet', 'Verify identity to unlock Nexus Wallet'),
+          wallet,
+          overrides
+        );
+        if (res && res.ok) {
+          clearAppLock();
+          return true;
+        }
+        const bioUnavailable = Boolean(
+          res && (res.unavailable || res.code === 'AUTH_UNAVAILABLE' || /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(String(res.error || '')))
+        );
+        if (bioUnavailable && hasConfiguredWalletPin(wallet)) {
+          return unlockAppLockWithPin();
+        }
+        if (statusEl) {
+          statusEl.textContent = (res && res.cancelled)
+            ? t('已取消验证，请点击下方按钮重试', 'Verification cancelled. Tap below to retry.')
+            : (res && res.error ? String(res.error) : t('验证未通过，请重试', 'Verification failed. Please retry.'));
+        }
+        return false;
+      }
+      if (hasConfiguredWalletPin(wallet)) {
+        return unlockAppLockWithPin();
+      }
+      clearAppLock();
+      return true;
+    } finally {
+      if (unlockBtn) unlockBtn.disabled = false;
+    }
+  }
+
+  async function unlockAppLockWithPin() {
+    const st = getState();
+    const wallet = st.getActiveWallet();
+    if (!wallet) {
+      clearAppLock();
+      return true;
+    }
+    if (!hasConfiguredWalletPin(wallet)) return false;
+    const ok = await openPinModalForWalletAsync(
+      wallet,
+      t('输入交易 PIN 解锁钱包', 'Enter PIN to unlock wallet'),
+      false
+    );
+    if (ok) clearAppLock();
+    return ok;
+  }
+
+  function handleAppVisibilityChange(isHidden, nowMs = Date.now(), overrides = {}) {
+    const st = getState();
+    const wallet = st.getActiveWallet();
+    if (!wallet) {
+      setBackgroundPrivacyBlur(false);
+      clearAppLock();
+      return;
+    }
+    if (isHidden) {
+      if (_appLockState.authenticating) return;
+      if (!_appLockState.backgroundedAt) {
+        _appLockState.backgroundedAt = Number(nowMs) || Date.now();
+      }
+      setBackgroundPrivacyBlur(true);
+      return;
+    }
+    setBackgroundPrivacyBlur(false);
+    if (_appLockState.authenticating) {
+      _appLockState.backgroundedAt = 0;
+      return;
+    }
+    const leftAt = _appLockState.backgroundedAt;
+    _appLockState.backgroundedAt = 0;
+    if (leftAt > 0 && (Number(nowMs) - leftAt) >= APP_LOCK_TIMEOUT_MS && shouldEnableAppLockForWallet(wallet, overrides)) {
+      engageAppLock(true, overrides);
+    }
+  }
+
+  function initAppSecurityLifecycle() {
+    if (_appLockState.lifecycleBound || typeof document === 'undefined') return;
+    _appLockState.lifecycleBound = true;
+
+    document.addEventListener('visibilitychange', () => {
+      handleAppVisibilityChange(Boolean(document.hidden), Date.now());
+    });
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('blur', () => {
+        if (!_appLockState.authenticating && getState().getActiveWallet()) {
+          if (!_appLockState.backgroundedAt) _appLockState.backgroundedAt = Date.now();
+          setBackgroundPrivacyBlur(true);
+        }
+      });
+      window.addEventListener('focus', () => {
+        handleAppVisibilityChange(false, Date.now());
+      });
+      const capApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+      if (capApp && typeof capApp.addListener === 'function') {
+        try {
+          capApp.addListener('appStateChange', (stateInfo) => {
+            handleAppVisibilityChange(!Boolean(stateInfo && stateInfo.isActive), Date.now());
+          });
+        } catch (_) {}
+      }
+    }
+  }
+
   async function requestBiometricAuth(reason, wallet, overrides = {}) {
     const promptReason = String(reason || t('请验证身份以继续', 'Authenticate to continue'));
     const nativePlugin = getNativeSecurityPlugin(overrides.nativePlugin);
-    if (nativePlugin && typeof nativePlugin.authenticateWithBiometrics === 'function') {
-      try {
-        const res = await nativePlugin.authenticateWithBiometrics({
-          reason: promptReason,
-          title: t('安全验证', 'Security Verification'),
-          subtitle: promptReason,
-          allowDeviceCredential: true
-        });
-        if (res && (res.verified === true || res.authenticated === true || res.success === true)) {
+    _appLockState.authenticating = true;
+    try {
+      if (nativePlugin && typeof nativePlugin.authenticateWithBiometrics === 'function') {
+        try {
+          const res = await nativePlugin.authenticateWithBiometrics({
+            reason: promptReason,
+            title: t('安全验证', 'Security Verification'),
+            subtitle: promptReason,
+            allowDeviceCredential: true
+          });
+          if (res && (res.verified === true || res.authenticated === true || res.success === true)) {
+            return {
+              ok: true,
+              method: 'native',
+              biometryType: res.type || res.biometryType || res.method || 'biometric'
+            };
+          }
+          const errCode = (res && res.code) ? String(res.code) : '';
+          const errMsg = (res && res.error) ? String(res.error) : t('生物识别未通过', 'Biometric authentication failed');
           return {
-            ok: true,
-            method: 'native',
-            biometryType: res.type || res.biometryType || res.method || 'biometric'
+            ok: false,
+            code: errCode,
+            unavailable: errCode === 'AUTH_UNAVAILABLE' || /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(errMsg),
+            cancelled: Boolean((res && res.cancelled) || errCode === 'AUTH_CANCELLED' || /AUTH_CANCELLED|取消|cancel|abort|dismiss/i.test(errMsg)),
+            error: errMsg
+          };
+        } catch (err) {
+          const errCode = (err && err.code) ? String(err.code) : '';
+          const msg = err && err.message ? String(err.message) : 'Native biometric error';
+          return {
+            ok: false,
+            code: errCode,
+            unavailable: errCode === 'AUTH_UNAVAILABLE' || /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(msg),
+            cancelled: errCode === 'AUTH_CANCELLED' || /AUTH_CANCELLED|取消|cancel|abort|dismiss/i.test(msg),
+            error: msg
           };
         }
-        const errCode = (res && res.code) ? String(res.code) : '';
-        const errMsg = (res && res.error) ? String(res.error) : t('生物识别未通过', 'Biometric authentication failed');
+      }
+
+      const webauthnRes = await registerOrVerifyWebAuthnPasskeyAsync(promptReason, wallet, overrides);
+      if (webauthnRes.ok) {
         return {
-          ok: false,
-          code: errCode,
-          unavailable: errCode === 'AUTH_UNAVAILABLE' || /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(errMsg),
-          cancelled: Boolean((res && res.cancelled) || errCode === 'AUTH_CANCELLED' || /AUTH_CANCELLED|取消|cancel|abort|dismiss/i.test(errMsg)),
-          error: errMsg
-        };
-      } catch (err) {
-        const errCode = (err && err.code) ? String(err.code) : '';
-        const msg = err && err.message ? String(err.message) : 'Native biometric error';
-        return {
-          ok: false,
-          code: errCode,
-          unavailable: errCode === 'AUTH_UNAVAILABLE' || /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(msg),
-          cancelled: errCode === 'AUTH_CANCELLED' || /AUTH_CANCELLED|取消|cancel|abort|dismiss/i.test(msg),
-          error: msg
+          ok: true,
+          method: 'webauthn',
+          biometryType: 'passkey',
+          credentialId: webauthnRes.credentialId
         };
       }
+      return webauthnRes;
+    } finally {
+      _appLockState.authenticating = false;
+      _appLockState.backgroundedAt = 0;
     }
-
-    const webauthnRes = await registerOrVerifyWebAuthnPasskeyAsync(promptReason, wallet, overrides);
-    if (webauthnRes.ok) {
-      return {
-        ok: true,
-        method: 'webauthn',
-        biometryType: 'passkey',
-        credentialId: webauthnRes.credentialId
-      };
-    }
-    return webauthnRes;
   }
 
   function renderSecurityPinDots() {
@@ -684,6 +876,7 @@
       sheet.setAttribute('aria-hidden', 'true');
     }
     if (backdrop) {
+      backdrop.classList.remove('auth-top');
       const stillOpen = typeof document !== 'undefined' && document.querySelector('.bottom-sheet.open');
       if (!stillOpen) backdrop.classList.remove('open');
     }
@@ -757,47 +950,9 @@
     renderSecurityPinDots();
   }
 
-  async function verifySecurityAuthAsync(wallet, reason = '') {
+  async function openPinModalForWalletAsync(w, reason = '', bioSupported = false) {
     const st = getState();
-    const w = wallet || st.getActiveWallet();
     if (!w) return false;
-    const hasPin = typeof st.hasWalletPin === 'function' ? st.hasWalletPin(w) : Boolean(w.pin);
-    const profile = _cachedBioProfile || await detectDeviceBiometricProfileAsync();
-    const bioSupported = Boolean(profile && profile.supported);
-    const nativeAuth = Boolean(getNativeSecurityPlugin());
-
-    // 1. Always try system biometrics first (Face ID / Touch ID / fingerprint / face)
-    if (bioSupported) {
-      const bioRes = await requestBiometricAuth(reason, w);
-      if (bioRes.ok) return true;
-      const bioUnavailable = Boolean(
-        bioRes.unavailable ||
-        bioRes.code === 'AUTH_UNAVAILABLE' ||
-        /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(String(bioRes.error || ''))
-      );
-      if (!bioUnavailable && (!hasPin || nativeAuth)) {
-        if (bioRes.cancelled) {
-          showToast(t('已取消验证', 'Verification cancelled'));
-        } else if (!hasPin && !nativeAuth) {
-          showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
-          if (typeof openSetWalletPinPrompt === 'function') openSetWalletPinPrompt();
-        } else {
-          showToast(bioRes.error || t('验证未通过', 'Verification failed'));
-        }
-        return false;
-      }
-      if (bioUnavailable && !hasPin) {
-        showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
-        if (typeof openSetWalletPinPrompt === 'function') openSetWalletPinPrompt();
-        return false;
-      }
-    } else if (!hasPin) {
-      showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
-      if (typeof openSetWalletPinPrompt === 'function') openSetWalletPinPrompt();
-      return false;
-    }
-
-    // 2. PIN fallback (PBKDF2 SHA-256 verified)
     const modalEl = $('sheet-security-auth');
     if (!modalEl || typeof document === 'undefined') {
       if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
@@ -839,10 +994,56 @@
     if (bioBtn) bioBtn.classList.toggle('hidden', !bioSupported);
 
     openSheet('sheet-security-auth');
+    const backdrop = $('sheet-backdrop');
+    if (backdrop && _appLockState.locked) backdrop.classList.add('auth-top');
 
     return new Promise((resolve) => {
       _secAuthState.resolve = resolve;
     });
+  }
+
+  async function verifySecurityAuthAsync(wallet, reason = '') {
+    const st = getState();
+    const w = wallet || st.getActiveWallet();
+    if (!w) return false;
+    const hasPin = typeof st.hasWalletPin === 'function' ? st.hasWalletPin(w) : Boolean(w.pin);
+    const profile = _cachedBioProfile || await detectDeviceBiometricProfileAsync();
+    const bioSupported = Boolean(profile && profile.supported);
+    const nativeAuth = Boolean(getNativeSecurityPlugin());
+
+    // 1. Always try system biometrics first (Face ID / Touch ID / fingerprint / face)
+    if (bioSupported) {
+      const bioRes = await requestBiometricAuth(reason, w);
+      if (bioRes.ok) return true;
+      const bioUnavailable = Boolean(
+        bioRes.unavailable ||
+        bioRes.code === 'AUTH_UNAVAILABLE' ||
+        /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(String(bioRes.error || ''))
+      );
+      if (!bioUnavailable && (!hasPin || nativeAuth)) {
+        if (bioRes.cancelled) {
+          showToast(t('已取消验证', 'Verification cancelled'));
+        } else if (!hasPin && !nativeAuth) {
+          showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
+          if (typeof openSetWalletPinPrompt === 'function') openSetWalletPinPrompt();
+        } else {
+          showToast(bioRes.error || t('验证未通过', 'Verification failed'));
+        }
+        return false;
+      }
+      if (bioUnavailable && !hasPin) {
+        showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
+        if (typeof openSetWalletPinPrompt === 'function') openSetWalletPinPrompt();
+        return false;
+      }
+    } else if (!hasPin) {
+      showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
+      if (typeof openSetWalletPinPrompt === 'function') openSetWalletPinPrompt();
+      return false;
+    }
+
+    // 2. PIN fallback (PBKDF2 SHA-256 verified)
+    return openPinModalForWalletAsync(w, reason, bioSupported);
   }
   function verifyPinIfNeeded(wallet, reason = '') {
     return verifySecurityAuthAsync(wallet, reason);
@@ -885,7 +1086,10 @@
     const backupContent = $('backup-keys-content');
     if (backupContent) backupContent.innerHTML = '';
     const backdrop = $('sheet-backdrop');
-    if (backdrop) backdrop.classList.remove('open');
+    if (backdrop) {
+      backdrop.classList.remove('open');
+      backdrop.classList.remove('auth-top');
+    }
     if (typeof document !== 'undefined') {
       document.querySelectorAll('.bottom-sheet.open').forEach((s) => {
         s.classList.remove('open');
@@ -9474,7 +9678,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.6');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.7');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -9905,10 +10109,19 @@
     st.initState();
     initDelegatedEventListeners();
     initHomePullToRefresh();
+    initAppSecurityLifecycle();
     st.onLanguageChange(() => renderAll());
     renderAll();
-    if (st.getActiveWallet()) {
+    const activeW = st.getActiveWallet();
+    if (activeW) {
       refreshAllBalancesAsync(false);
+      if (shouldEnableAppLockForWallet(activeW)) {
+        engageAppLock(true);
+      } else {
+        clearAppLock();
+      }
+    } else {
+      clearAppLock();
     }
     if (st.swap.activeOrder && st.swap.activeOrder.depositAddress) {
       renderSwapOrderCard();
@@ -9966,6 +10179,14 @@
     requestBiometricAuth,
     verifySecurityAuthAsync,
     verifyPinIfNeeded,
+    APP_LOCK_TIMEOUT_MS,
+    shouldEnableAppLockForWallet,
+    engageAppLock,
+    clearAppLock,
+    unlockAppLockNow,
+    unlockAppLockWithPin,
+    handleAppVisibilityChange,
+    setBackgroundPrivacyBlur,
     renderHubBiometricCardAsync,
     testBiometricAuthNow,
     openSetWalletPinPrompt,
@@ -10072,6 +10293,8 @@
     backspaceSecurityPin,
     triggerSecurityBiometricNow,
     cancelSecurityAuthModal,
+    unlockAppLockNow,
+    unlockAppLockWithPin,
     copyTextValue,
     copyActiveNearId,
     jumpToNearDomainManager,

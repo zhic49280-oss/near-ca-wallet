@@ -10,6 +10,7 @@ import UIKit
  */
 @objc(NativeSecurityPlugin)
 public class NativeSecurityPlugin: CAPPlugin, CAPBridgedPlugin {
+    public static var isAuthenticating: Bool = false
     public let identifier = "NativeSecurityPlugin"
     public let jsName = "NativeSecurity"
     public let pluginMethods: [CAPPluginMethod] = [
@@ -71,6 +72,7 @@ public class NativeSecurityPlugin: CAPPlugin, CAPBridgedPlugin {
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
             DispatchQueue.main.async {
+                NativeSecurityPlugin.isAuthenticating = false
                 call.reject(error?.localizedDescription ?? "Device authentication unavailable", "AUTH_UNAVAILABLE")
             }
             return
@@ -80,8 +82,10 @@ public class NativeSecurityPlugin: CAPPlugin, CAPBridgedPlugin {
         let rawType = resolveBiometryTypeString(context.biometryType)
         let detectedType = (bioCapable && rawType != "none") ? rawType : "passcode"
 
+        NativeSecurityPlugin.isAuthenticating = true
         context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, evalError in
             DispatchQueue.main.async {
+                NativeSecurityPlugin.isAuthenticating = false
                 if success {
                     call.resolve(["authenticated": true, "type": detectedType])
                 } else {
