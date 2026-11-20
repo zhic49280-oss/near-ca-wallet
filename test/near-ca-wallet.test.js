@@ -14,6 +14,7 @@ const tokenRegistry = require('../src/token-registry.js');
 const nearIntents = require('../src/near-intents.js');
 const chainContracts = require('../src/chain-contracts.js');
 const limitOrders = require('../src/limit-orders.js');
+const hlPerps = require('../src/hyperliquid-perps.js');
 const miningPro = require('../src/mining-pro.js');
 const state = require('../src/state.js');
 const uiController = require('../src/ui-controller.js');
@@ -1742,6 +1743,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
     'src/near-intents.js',
     'src/chain-contracts.js',
     'src/limit-orders.js',
+    'src/hyperliquid-perps.js',
     'src/state.js',
     'src/ui-controller.js'
   ];
@@ -1757,7 +1759,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
   const versionedHtmlAssets = [
     ...indexHtml.matchAll(/(?:href|src)="((?:style\.css|src\/[^"]+\.js)\?v=[^"]+)"/g)
   ].map((m) => `./${m[1]}`);
-  assert.equal(versionedHtmlAssets.length, 8);
+  assert.equal(versionedHtmlAssets.length, 9);
   for (const asset of versionedHtmlAssets) {
     assert.ok(swJs.includes(`'${asset}'`), `sw.js CORE_ASSETS must include ${asset}`);
   }
@@ -1767,7 +1769,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
   const listMatch = syncScript.match(/const FILES_TO_SYNC = \[([\s\S]*?)\];/);
   assert.ok(listMatch, 'scripts/sync-assets.js must define FILES_TO_SYNC');
   const filesToSync = [...listMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  assert.equal(filesToSync.length, 19);
+  assert.equal(filesToSync.length, 20);
 
   const targets = [
     path.join(ROOT_DIR, 'dist'),
@@ -6689,4 +6691,299 @@ test('v6.8 Stage B: Multi-Chain Limit Orders (NEAR DCL ticks/split/claim/cancel,
   } finally {
     globalThis.document = prevDoc;
   }
+});
+
+test('v6.9 Stage C: Bottom Nav Restructure & Hyperliquid Perpetual Futures + 1Click/Arbitrum Funding', async () => {
+  const ethers = require('../ethers.umd.min.js');
+  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+
+  // 1. Bottom Nav Restructure: 4 tabs [wallet, swap, perp, hub], Home Earn trigger kept, Earn Back button added
+  const navMatch = indexHtml.match(/<nav id="bottom-nav"[\s\S]*?<\/nav>/);
+  assert.ok(navMatch, 'bottom-nav must exist');
+  const navTabs = [...navMatch[0].matchAll(/data-tab="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(navTabs, ['wallet', 'swap', 'perp', 'hub']);
+  assert.ok(indexHtml.includes('id="view-perp"'));
+  assert.ok(indexHtml.includes('id="sheet-perp-markets"'));
+  assert.ok(indexHtml.includes('id="sheet-perp-funding"'));
+  const walletSection = indexHtml.match(/<section id="view-wallet"[\s\S]*?<\/section>/)[0];
+  assert.ok(walletSection.includes("switchTab('earn')"), 'Home view must still have quick action to open Staking');
+  const earnSection = indexHtml.match(/<section id="view-earn"[\s\S]*?<\/section>/)[0];
+  assert.ok(earnSection.includes("switchTab('wallet')") && earnSection.includes('data-i18n="common.back"'), '#view-earn must include a Back button');
+
+  // Verify switchTab('perp') & switchTab('earn') DOM state
+  await withMockedStorage({}, async () => {
+    state.initState();
+    const wNav = state.normalizeWalletRecord({ id: 'w_nav_c', mnemonic: TEST_MNEMONIC, nearNamedAccount: 'nav.near' });
+    state.wallets = [wNav];
+    state.activeWalletId = wNav.id;
+    const prevDoc = globalThis.document;
+    const viewsMap = new Map([
+      ['view-wallet', createMockDomElement('view-wallet')],
+      ['view-swap', createMockDomElement('view-swap', { classes: ['hidden'] })],
+      ['view-perp', createMockDomElement('view-perp', { classes: ['hidden'] })],
+      ['view-earn', createMockDomElement('view-earn', { classes: ['hidden'] })],
+      ['view-hub', createMockDomElement('view-hub', { classes: ['hidden'] })]
+    ]);
+    const navBtns = navTabs.map((tabName) => {
+      const el = createMockDomElement(`nav-${tabName}`, { classes: tabName === 'wallet' ? ['nav-item', 'active'] : ['nav-item'] });
+      el.setAttribute('data-tab', tabName);
+      return el;
+    });
+    globalThis.document = {
+      getElementById: (id) => viewsMap.get(id) || null,
+      querySelectorAll: (sel) => (sel === '.nav-item' ? navBtns : []),
+      querySelector: () => null
+    };
+    try {
+      uiController.switchTab('perp');
+      assert.equal(state.activeTab, 'perp');
+      assert.equal(viewsMap.get('view-perp').classList.contains('hidden'), false);
+      assert.equal(viewsMap.get('view-wallet').classList.contains('hidden'), true);
+      assert.equal(navBtns.find((b) => b.getAttribute('data-tab') === 'perp').classList.contains('active'), true);
+
+      uiController.switchTab('earn');
+      assert.equal(state.activeTab, 'earn');
+      assert.equal(viewsMap.get('view-earn').classList.contains('hidden'), false);
+      assert.equal(navBtns.find((b) => b.getAttribute('data-tab') === 'wallet').classList.contains('active'), true);
+    } finally {
+      globalThis.document = prevDoc;
+    }
+  });
+
+  // 2. Pure-JS Msgpack byte vectors (order preservation, int/uint64, bool, str, array)
+  const mpCancel = hlPerps.msgpackEncode({ type: 'cancel', cancels: [{ a: 0, o: 123456789012 }] });
+  assert.equal(
+    Buffer.from(mpCancel).toString('hex'),
+    '82a474797065a663616e63656ca763616e63656c739182a16100a16fcf0000001cbe991a14'
+  );
+  const mpNeg = hlPerps.msgpackEncode([-1, -33, true, false, null]);
+  assert.equal(Buffer.from(mpNeg).toString('hex'), '95ffd0dfc3c2c0');
+
+  // 3. Price & Size formatting (CRITICAL integer zero preservation!)
+  assert.equal(hlPerps.formatHlPrice(1200, 6), '1200', 'Must NEVER turn 1200 into 12');
+  assert.equal(hlPerps.formatHlPrice(1200, 0), '1200');
+  assert.equal(hlPerps.formatHlPrice(91234.56, 5), '91235');
+  assert.equal(hlPerps.formatHlPrice(1.23456789, 1), '1.2346');
+  assert.equal(hlPerps.formatHlPrice(0.000123456, 0), '0.000123');
+  assert.equal(hlPerps.formatHlSize(1.2399, 2), '1.23');
+  assert.equal(hlPerps.formatHlSize(1200, 0), '1200');
+
+  // 4. computeHlActionHash determinism & vault distinction
+  const sampleAction = { type: 'updateLeverage', asset: 0, isCross: false, leverage: 5 };
+  const hNoVault = hlPerps.computeHlActionHash(sampleAction, 1700000000000, null);
+  const hWithVault = hlPerps.computeHlActionHash(sampleAction, 1700000000000, '0x1111111111111111111111111111111111111111');
+  assert.match(hNoVault, /^0x[0-9a-f]{64}$/);
+  assert.equal(hNoVault, hlPerps.computeHlActionHash(sampleAction, 1700000000000, null));
+  assert.notEqual(hNoVault, hWithVault);
+
+  // 5. EIP-712 L1 Agent (Local & MPC) + UserSigned (usdClassTransfer & withdraw3) signature recovery
+  const testKeys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+  const hlLocalW = ethers.Wallet.createRandom();
+  const hlWalletLocal = state.normalizeWalletRecord({
+    id: 'w_hl_local',
+    mnemonic: TEST_MNEMONIC,
+    evmAddress: hlLocalW.address
+  });
+  hlWalletLocal.evmPrivateKey = hlLocalW.privateKey;
+
+  const l1SignedLocal = await hlPerps.signHlL1Action({
+    wallet: hlWalletLocal,
+    action: sampleAction,
+    nonce: 1700000001234
+  });
+  const recoveredL1Local = ethers.verifyTypedData(
+    hlPerps.HL_EIP712_L1_DOMAIN,
+    hlPerps.HL_AGENT_EIP712_TYPES,
+    { source: 'a', connectionId: l1SignedLocal.connectionId },
+    l1SignedLocal.signatureHex
+  );
+  assert.equal(recoveredL1Local.toLowerCase(), hlLocalW.address.toLowerCase());
+
+  const usdAction = { type: 'usdClassTransfer', amount: '25.5', toPerp: true, nonce: 1700000005678 };
+  const usdSigned = await hlPerps.signHlUserSignedAction({
+    wallet: hlWalletLocal,
+    action: usdAction,
+    payloadTypes: hlPerps.HL_USD_CLASS_TRANSFER_TYPES,
+    primaryType: 'HyperliquidTransaction:UsdClassTransfer'
+  });
+  const recoveredUsd = ethers.verifyTypedData(
+    hlPerps.HL_EIP712_USER_DOMAIN,
+    { 'HyperliquidTransaction:UsdClassTransfer': hlPerps.HL_USD_CLASS_TRANSFER_TYPES },
+    usdSigned.action,
+    usdSigned.signatureHex
+  );
+  assert.equal(recoveredUsd.toLowerCase(), hlLocalW.address.toLowerCase());
+
+  // MPC L1 Agent test
+  const hlMpcW = ethers.Wallet.createRandom();
+  const hlMpcOnly = state.normalizeWalletRecord({
+    id: 'w_hl_mpc',
+    mnemonic: TEST_MNEMONIC,
+    nearNamedAccount: 'alice.near',
+    nearPublicKey: testKeys.nearPublicKey,
+    nearPrivateKey: testKeys.nearPrivateKey,
+    _mpcDerivedForNearId: 'alice.near',
+    evmAddress: hlMpcW.address,
+    mpcEvmAddress: hlMpcW.address,
+    solAddress: testKeys.solAddress,
+    solPublicKey: testKeys.solAddress,
+    nativeBalances: { near: 2.0 }
+  });
+  delete hlMpcOnly.evmPrivateKey;
+
+  await withMockedFetch(async (url, opts) => {
+    const rpcBody = opts?.body ? JSON.parse(opts.body) : {};
+    if (rpcBody.method === 'query' && rpcBody.params?.request_type === 'view_access_key') {
+      return jsonResponse({ jsonrpc: '2.0', id: rpcBody.id, result: { nonce: 88, block_hash: '11111111111111111111111111111111' } });
+    }
+    if (rpcBody.method === 'broadcast_tx_commit') {
+      const digest = ethers.TypedDataEncoder.hash(
+        hlPerps.HL_EIP712_L1_DOMAIN,
+        hlPerps.HL_AGENT_EIP712_TYPES,
+        { source: 'a', connectionId: hlPerps.computeHlActionHash(sampleAction, 1700000009999) }
+      );
+      const sigRaw = new ethers.SigningKey(hlMpcW.privateKey).sign(digest);
+      const mpcJson = {
+        big_r: { affine_point: '02' + sigRaw.r.slice(2) },
+        s: { scalar: sigRaw.s.slice(2) },
+        recovery_id: sigRaw.yParity
+      };
+      return jsonResponse({
+        jsonrpc: '2.0',
+        id: rpcBody.id,
+        result: { transaction: { hash: 'hl_mpc_tx_1' }, status: { SuccessValue: Buffer.from(JSON.stringify(mpcJson)).toString('base64') } }
+      });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const l1Mpc = await hlPerps.signHlL1Action({
+      wallet: hlMpcOnly,
+      action: sampleAction,
+      nonce: 1700000009999
+    });
+    assert.equal(l1Mpc.signerAddress.toLowerCase(), hlMpcW.address.toLowerCase());
+  });
+
+  // 6. Hard Gates: < $10 order notional, insufficient margin, < 5 USDC Arb Bridge2, < 2 USDC withdraw + TP/SL normalTpsl order payload
+  const btcMarket = { index: 0, name: 'BTC', szDecimals: 5, maxLeverage: 40, onlyIsolated: false, markPx: 90000 };
+  let hlNetworkCalled = false;
+  await withMockedFetch(async (url, opts) => {
+    hlNetworkCalled = true;
+    const body = opts?.body ? JSON.parse(opts.body) : {};
+    return jsonResponse({ status: 'ok', response: { type: 'default', data: { statuses: [{ filled: { totalSz: '0.001' } }] } }, echo: body });
+  }, async () => {
+    // < $10 notional blocked before network
+    await assert.rejects(
+      hlPerps.placeHlPerpOrder({
+        wallet: hlWalletLocal,
+        market: btcMarket,
+        isBuy: true,
+        size: 0.00005, // ~$4.50
+        orderType: 'market',
+        leverage: 5,
+        availableMargin: 100
+      }),
+      /\$10/
+    );
+    assert.equal(hlNetworkCalled, false);
+
+    // Insufficient available margin blocked before network
+    await assert.rejects(
+      hlPerps.placeHlPerpOrder({
+        wallet: hlWalletLocal,
+        market: btcMarket,
+        isBuy: true,
+        size: 0.01, // $900 @ 5x = $180 margin
+        orderType: 'market',
+        leverage: 5,
+        availableMargin: 50
+      }),
+      /保证金|margin/i
+    );
+    assert.equal(hlNetworkCalled, false);
+
+    // Arbitrum Bridge2 < 5 USDC hard block before network/RPC
+    await assert.rejects(
+      hlPerps.depositArbUsdcToHlBridge({
+        wallet: hlWalletLocal,
+        amount: 4.99,
+        arbUsdcBalance: 100,
+        arbEthBalance: 0.1
+      }),
+      /5 USDC/
+    );
+    assert.equal(hlNetworkCalled, false);
+
+    // Withdraw < 2 USDC and > withdrawable hard blocks before network
+    await assert.rejects(
+      hlPerps.withdrawHlToArbitrum({ wallet: hlWalletLocal, amount: 1.5, withdrawable: 100 }),
+      /2 USDC/
+    );
+    await assert.rejects(
+      hlPerps.withdrawHlToArbitrum({ wallet: hlWalletLocal, amount: 50, withdrawable: 20 }),
+      /不足|Insufficient/i
+    );
+    assert.equal(hlNetworkCalled, false);
+  });
+
+  // Valid Order + normalTpsl child triggers + default Isolated leverage
+  const hlPosts = [];
+  await withMockedFetch(async (url, opts) => {
+    if (url.includes('/exchange')) {
+      const body = JSON.parse(opts.body);
+      hlPosts.push(body);
+      return jsonResponse({ status: 'ok', response: { type: 'default', data: { statuses: [{ resting: { oid: 999 } }] } } });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const ordRes = await hlPerps.placeHlPerpOrder({
+      wallet: hlWalletLocal,
+      market: btcMarket,
+      isBuy: true,
+      size: 0.002, // $180 @ 5x = $36 margin
+      orderType: 'limit',
+      limitPrice: 90000,
+      leverage: 5,
+      isCross: false,
+      tpPrice: 98000,
+      slPrice: 86000,
+      availableMargin: 100
+    });
+    assert.equal(ordRes.ok, true);
+    assert.equal(hlPosts.length, 2); // updateLeverage + order
+    assert.equal(hlPosts[0].action.type, 'updateLeverage');
+    assert.equal(hlPosts[0].action.isCross, false);
+    assert.equal(hlPosts[1].action.grouping, 'normalTpsl');
+    assert.equal(hlPosts[1].action.orders.length, 3);
+    assert.equal(hlPosts[1].action.orders[1].t.trigger.tpsl, 'tp');
+    assert.equal(hlPosts[1].action.orders[2].t.trigger.tpsl, 'sl');
+  });
+
+  // 7. 1Click quote for HyperCore Spot USDC targets Hyperliquid EVM address
+  let capturedOneClickReq = null;
+  await withMockedFetch(async (url, opts) => {
+    if (url.includes('1click.chaindefuser.com/v0/quote')) {
+      capturedOneClickReq = JSON.parse(opts.body);
+      return jsonResponse({
+        quote: { amountOut: '2495000000', amountOutFormatted: '24.95', amountInUsd: '25.00', amountOutUsd: '24.95' }
+      });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const solUsdc = {
+      assetId: 'nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near',
+      blockchain: 'sol',
+      symbol: 'USDC',
+      decimals: 6
+    };
+    const ocRes = await hlPerps.quoteOneClickDepositToHlSpot({
+      wallet: hlWalletLocal,
+      originToken: solUsdc,
+      amount: 25,
+      dry: true
+    });
+    assert.equal(ocRes.ok, true);
+    assert.equal(capturedOneClickReq.destinationAsset, hlPerps.HL_ONECLICK_SPOT_USDC_ASSET_ID);
+    assert.equal(capturedOneClickReq.recipient.toLowerCase(), hlLocalW.address.toLowerCase());
+  });
 });

@@ -1,18 +1,19 @@
-﻿const CACHE_NAME = 'nexus-wallet-v6.8';
+﻿const CACHE_NAME = 'nexus-wallet-v6.9';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './style.css?v=6.8',
-  './assets/favicon.png?v=6.8',
-  './assets/nexus-logo-192.png?v=6.8',
-  './bip39-wordlist.js?v=6.8',
-  './src/crypto-engine.js?v=6.8',
-  './src/token-registry.js?v=6.8',
-  './src/near-intents.js?v=6.8',
-  './src/chain-contracts.js?v=6.8',
-  './src/limit-orders.js?v=6.8',
-  './src/state.js?v=6.8',
-  './src/ui-controller.js?v=6.8'
+  './style.css?v=6.9',
+  './assets/favicon.png?v=6.9',
+  './assets/nexus-logo-192.png?v=6.9',
+  './bip39-wordlist.js?v=6.9',
+  './src/crypto-engine.js?v=6.9',
+  './src/token-registry.js?v=6.9',
+  './src/near-intents.js?v=6.9',
+  './src/chain-contracts.js?v=6.9',
+  './src/limit-orders.js?v=6.9',
+  './src/hyperliquid-perps.js?v=6.9',
+  './src/state.js?v=6.9',
+  './src/ui-controller.js?v=6.9'
 ];
 
 self.addEventListener('install', (event) => {

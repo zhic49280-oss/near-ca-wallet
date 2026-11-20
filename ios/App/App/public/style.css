@@ -1835,3 +1835,150 @@ html.nexus-locked #app-lock-overlay {
   border-radius: 999px;
   background: linear-gradient(90deg, #00ec97, #38bdf8);
 }
+
+/* Perpetual Futures (#view-perp) */
+.perp-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.perp-stat-box {
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.perp-spot-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(0, 236, 151, 0.09);
+  border: 1px solid rgba(0, 236, 151, 0.28);
+}
+
+.perp-chart-wrap {
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(6, 10, 20, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.perp-chart-svg {
+  width: 100%;
+  height: 112px;
+  display: block;
+}
+
+.perp-ob-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.perp-ob-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.perp-ob-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  background: rgba(255, 255, 255, 0.025);
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  overflow: hidden;
+  text-align: left;
+}
+
+.perp-ob-row.bid .perp-ob-px {
+  color: #34d399;
+  font-weight: 700;
+}
+
+.perp-ob-row.ask .perp-ob-px {
+  color: #fb7185;
+  font-weight: 700;
+}
+
+.perp-side-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.perp-side-btn {
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.perp-side-btn.long.active {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: rgba(16, 185, 129, 0.6);
+  color: #34d399;
+}
+
+.perp-side-btn.short.active {
+  background: rgba(244, 63, 94, 0.22);
+  border-color: rgba(244, 63, 94, 0.6);
+  color: #fb7185;
+}
+
+.perp-slider {
+  width: 100%;
+  accent-color: var(--near-emerald);
+  cursor: pointer;
+}
+
+.perp-pct-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.perp-pos-card {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.perp-market-item {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}

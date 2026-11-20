@@ -20,6 +20,7 @@ const FILES_TO_SYNC = [
   'src/near-intents.js',
   'src/chain-contracts.js',
   'src/limit-orders.js',
+  'src/hyperliquid-perps.js',
   'src/mining-pro.js',
   'src/state.js',
   'src/ui-controller.js'
