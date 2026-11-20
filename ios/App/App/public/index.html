@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#06080F" />
   <title>Nexus Wallet — NEAR Chain Abstraction</title>
-  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon.png?v=6.9" />
-  <link rel="apple-touch-icon" sizes="192x192" href="assets/nexus-logo-192.png?v=6.9" />
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon.png?v=6.10" />
+  <link rel="apple-touch-icon" sizes="192x192" href="assets/nexus-logo-192.png?v=6.10" />
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=6.9" />
+  <link rel="stylesheet" href="style.css?v=6.10" />
   <script>
     (function () {
       try {
@@ -32,13 +32,13 @@
 <body>
   <div id="app-privacy-shield" class="app-privacy-shield" aria-hidden="true">
     <div class="app-lock-card">
-      <img src="assets/nexus-logo-192.png?v=6.9" alt="Nexus Wallet" class="app-lock-logo" />
+      <img src="assets/nexus-logo-192.png?v=6.10" alt="Nexus Wallet" class="app-lock-logo" />
       <div class="app-lock-brand">Nexus Wallet</div>
     </div>
   </div>
   <div id="app-lock-overlay" class="app-lock-overlay" role="dialog" aria-modal="true" aria-hidden="true">
     <div class="app-lock-card">
-      <img src="assets/nexus-logo-192.png?v=6.9" alt="Nexus Wallet" class="app-lock-logo" />
+      <img src="assets/nexus-logo-192.png?v=6.10" alt="Nexus Wallet" class="app-lock-logo" />
       <div class="app-lock-brand">Nexus Wallet</div>
       <div id="app-lock-title" class="app-lock-title" data-i18n="lock.title">安全锁定</div>
       <div id="app-lock-status" class="app-lock-status" data-i18n="lock.hint">请通过生物识别或锁屏密码解锁</div>
@@ -76,7 +76,7 @@
       <!-- ==================== Onboarding View ==================== -->
       <section id="view-onboarding" class="view-section hidden">
         <div class="ios-glass-card hero-card" style="padding: 24px 18px; text-align: center;">
-          <img src="assets/nexus-logo-512.png?v=6.9" alt="Nexus Wallet" style="width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 18px; border: 1px solid rgba(0,236,151,0.35); display: block; object-fit: cover; box-shadow: 0 8px 24px rgba(0,236,151,0.16);" />
+          <img src="assets/nexus-logo-512.png?v=6.10" alt="Nexus Wallet" style="width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 18px; border: 1px solid rgba(0,236,151,0.35); display: block; object-fit: cover; box-shadow: 0 8px 24px rgba(0,236,151,0.16);" />
           <span class="ca-badge" data-i18n="onboard.badge">NEAR 链抽象自托管账户</span>
           <h1 style="margin: 12px 0 8px; font-size: 21px; font-weight: 800; color: #fff;" data-i18n="onboard.title">一个 NEAR 账户，畅通全链资产</h1>
           <p style="margin: 0 0 20px; font-size: 12.5px; color: var(--text-secondary);" data-i18n="onboard.subtitle">一站式多链自托管资产管理、跨链闪兑与链上理财</p>
@@ -382,25 +382,34 @@
                 <input id="limit-target-rate" type="number" step="any" min="0" class="amount-input-lg" placeholder="0.00" oninput="handleLimitRateInput()" />
                 <span id="limit-rate-suffix" style="font-size: 12px; font-weight: 700; color: var(--near-emerald); white-space: nowrap;">--</span>
               </div>
-              <div class="flex items-center justify-between gap-2" style="flex-wrap: wrap;">
-                <div class="flex gap-1">
-                  <button type="button" class="filter-pill" onclick="applyLimitRateOffset(0)" data-i18n="limit.rateOffsetNow">现价</button>
-                  <button type="button" class="filter-pill" onclick="applyLimitRateOffset(0.02)">+2%</button>
-                  <button type="button" class="filter-pill" onclick="applyLimitRateOffset(0.05)">+5%</button>
-                  <button type="button" class="filter-pill" onclick="applyLimitRateOffset(0.10)">+10%</button>
+              <div class="flex gap-1">
+                <button type="button" class="filter-pill" onclick="applyLimitRateOffset(0)" data-i18n="limit.rateOffsetNow">现价</button>
+                <button type="button" class="filter-pill" onclick="applyLimitRateOffset(0.02)">+2%</button>
+                <button type="button" class="filter-pill" onclick="applyLimitRateOffset(0.05)">+5%</button>
+                <button type="button" class="filter-pill" onclick="applyLimitRateOffset(0.10)">+10%</button>
+              </div>
+              <div id="limit-near-tick-controls" class="limit-dcl-tick-bar hidden">
+                <div class="flex items-center justify-between gap-2">
+                  <span style="font-size: 11px; color: var(--text-muted);" data-i18n="limit.activeTickLabel">链上生效档位</span>
+                  <span id="limit-snapped-tick-label" class="mono text-emerald" style="font-size: 12px; font-weight: 700;">--</span>
                 </div>
-                <div id="limit-near-tick-controls" class="flex items-center gap-1 hidden">
-                  <button type="button" class="mini-action-btn" onclick="stepLimitDclPoint(-1)">−</button>
-                  <span id="limit-snapped-tick-label" class="mono" style="font-size: 11px; color: var(--text-secondary);">--</span>
-                  <button type="button" class="mini-action-btn" onclick="stepLimitDclPoint(1)">+</button>
+                <div class="flex gap-2">
+                  <button type="button" class="mini-action-btn flex-1" onclick="stepLimitDclPoint(-1)" data-i18n="limit.stepDown">− 低一档</button>
+                  <button type="button" class="mini-action-btn flex-1" onclick="stepLimitDclPoint(1)" data-i18n="limit.stepUp">高一档 +</button>
                 </div>
               </div>
             </div>
 
             <!-- NEAR Split-2-Ticks Option -->
-            <div id="limit-split-row" class="meta-row hidden" style="padding: 2px 2px;">
-              <span class="meta-key" data-i18n="limit.splitTicksLabel">拆成相邻两档 (更易吃单)</span>
-              <input id="limit-split-toggle" type="checkbox" onchange="toggleLimitSplitTicks(this.checked)" style="width: 18px; height: 18px; accent-color: var(--near-emerald); cursor: pointer;" />
+            <div id="limit-split-row" class="flex flex-col gap-2 hidden">
+              <div class="meta-row" style="padding: 2px 2px;">
+                <span class="meta-key" data-i18n="limit.splitTicksLabel">拆成相邻两档 (更易吃单)</span>
+                <label class="nexus-switch">
+                  <input id="limit-split-toggle" type="checkbox" onchange="toggleLimitSplitTicks(this.checked)" />
+                  <span class="nexus-switch-slider"></span>
+                </label>
+              </div>
+              <div id="limit-split-preview" class="limit-split-preview hidden"></div>
             </div>
 
             <!-- Solana / EVM Expiry Row -->
@@ -474,25 +483,25 @@
           </div>
 
           <div class="flex items-center gap-2">
-            <button type="button" class="mini-action-btn primary flex-1" onclick="openPerpFundingSheet('oneclick')" data-i18n="perp.depositBtn">充值</button>
-            <button type="button" class="mini-action-btn flex-1" onclick="openPerpFundingSheet('transfer')" data-i18n="perp.transferBtn">划转</button>
+            <button type="button" class="mini-action-btn primary flex-1" onclick="openPerpFundingSheet('deposit')" data-i18n="perp.depositBtn">充值</button>
             <button type="button" class="mini-action-btn flex-1" onclick="openPerpFundingSheet('withdraw')" data-i18n="perp.withdrawBtn">提现</button>
             <button type="button" class="btn-ghost-sm" onclick="refreshPerpDataAsync(true)" data-i18n="common.refresh">刷新</button>
           </div>
 
           <div id="perp-spot-banner" class="perp-spot-banner hidden">
             <span style="font-size: 11.5px; color: var(--text-primary);">
-              <span data-i18n="perp.spotPendingPrefix">现货账户有</span>
+              <span data-i18n="perp.spotPendingPrefix">跨链资金已到账</span>
               <strong id="perp-spot-pending-amt" class="mono text-emerald">--</strong>
             </span>
-            <button type="button" class="mini-action-btn primary" onclick="quickTransferSpotToPerpUI()" data-i18n="perp.transferToPerpBtn">转入合约 (0 Gas)</button>
+            <button type="button" class="mini-action-btn primary" onclick="quickTransferSpotToPerpUI()" data-i18n="perp.transferToPerpBtn">一键转入合约 (免费)</button>
           </div>
         </div>
 
         <!-- 2. Market Header + Chart + Mini Orderbook -->
         <div class="ios-glass-card flex flex-col gap-2">
           <div class="flex items-center justify-between gap-2">
-            <button type="button" id="perp-coin-btn" class="token-selector-btn" onclick="openPerpMarketsSheet()">
+            <button type="button" id="perp-coin-btn" class="token-select-btn" onclick="openPerpMarketsSheet()">
+              <span id="perp-coin-icon" class="perp-coin-icon-slot"></span>
               <span id="perp-coin-name">BTC-PERP</span>
               <span>▾</span>
             </button>
@@ -505,13 +514,43 @@
             </div>
           </div>
 
-          <div class="flex items-center justify-between" style="font-size: 11.5px; color: var(--text-secondary);">
-            <span data-i18n="perp.fundingRateLabel">资金费率(1h)</span>
-            <span id="perp-funding-rate" class="mono">--</span>
+          <div id="perp-market-stats" class="perp-market-stats">
+            <div class="perp-mstat">
+              <span class="meta-key" data-i18n="perp.vol24hLabel">24h 成交额</span>
+              <span id="perp-vol-24h" class="mono" style="font-size: 11.5px; font-weight: 700;">--</span>
+            </div>
+            <div class="perp-mstat">
+              <span class="meta-key" data-i18n="perp.oiLabel">全网持仓 (OI)</span>
+              <span id="perp-oi-val" class="mono" style="font-size: 11.5px; font-weight: 700;">--</span>
+            </div>
+            <div class="perp-mstat" style="text-align: right;">
+              <span class="meta-key" data-i18n="perp.fundingRateLabel">资金费率(1h)</span>
+              <span id="perp-funding-rate" class="mono" style="font-size: 11.5px; font-weight: 700;">--</span>
+            </div>
           </div>
 
           <div id="perp-chart-wrap" class="perp-chart-wrap hidden">
+            <div class="flex items-center justify-between gap-2" style="margin-bottom: 6px;">
+              <div id="perp-interval-pills" class="flex gap-1">
+                <button type="button" class="filter-pill" data-iv="5m" onclick="setPerpChartInterval('5m')">5m</button>
+                <button type="button" class="filter-pill active" data-iv="15m" onclick="setPerpChartInterval('15m')">15m</button>
+                <button type="button" class="filter-pill" data-iv="1h" onclick="setPerpChartInterval('1h')">1h</button>
+                <button type="button" class="filter-pill" data-iv="4h" onclick="setPerpChartInterval('4h')">4h</button>
+              </div>
+              <span id="perp-chart-hl" class="mono" style="font-size: 10.5px; color: var(--text-muted);">--</span>
+            </div>
             <div id="perp-chart-svg"></div>
+          </div>
+
+          <div id="perp-ob-power-wrap" class="perp-ob-power-wrap">
+            <div class="flex items-center justify-between" style="font-size: 10.5px;">
+              <span id="perp-ob-bid-summary" class="mono text-emerald">--</span>
+              <span id="perp-ob-ask-summary" class="mono text-rose">--</span>
+            </div>
+            <div class="perp-ob-power-track">
+              <div id="perp-ob-bid-bar" class="perp-ob-power-bid" style="width: 50%;"></div>
+              <div id="perp-ob-ask-bar" class="perp-ob-power-ask" style="width: 50%;"></div>
+            </div>
           </div>
 
           <div class="perp-ob-grid" id="perp-orderbook-box">
@@ -1241,112 +1280,140 @@
   <div id="sheet-perp-markets" class="bottom-sheet" aria-hidden="true">
     <div class="sheet-handle"></div>
     <div class="sheet-header">
-      <h3 class="sheet-title" data-i18n="perp.marketsSheetTitle">选择合约市场 (Hyperliquid)</h3>
+      <h3 class="sheet-title" data-i18n="perp.marketsSheetTitle">选择合约市场</h3>
       <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
     </div>
     <div class="sheet-body">
       <input id="perp-market-search" type="text" class="input-field" data-i18n-placeholder="perp.marketSearchPlaceholder" placeholder="搜索币种，如 BTC, ETH, SOL, HYPE..." oninput="renderPerpMarketsSheet()" />
+      <div id="perp-market-filters" class="pill-scroll">
+        <button type="button" class="filter-pill active" data-mkt-filter="hot" onclick="setPerpMarketFilter('hot')" data-i18n="perp.mktFilterHot">热门</button>
+        <button type="button" class="filter-pill" data-mkt-filter="all" onclick="setPerpMarketFilter('all')" data-i18n="perp.mktFilterAll">全部</button>
+        <button type="button" class="filter-pill" data-mkt-filter="gainers" onclick="setPerpMarketFilter('gainers')" data-i18n="perp.mktFilterGainers">涨幅榜</button>
+        <button type="button" class="filter-pill" data-mkt-filter="vol" onclick="setPerpMarketFilter('vol')" data-i18n="perp.mktFilterVol">成交额</button>
+      </div>
       <div id="perp-market-list" class="flex flex-col gap-2" style="max-height: 55vh; overflow-y: auto;"></div>
     </div>
   </div>
 
-  <!-- ==================== Sheet: Perp Deposit / Transfer / Withdraw ==================== -->
+  <!-- ==================== Sheet: Perp Deposit / Withdraw ==================== -->
   <div id="sheet-perp-funding" class="bottom-sheet" aria-hidden="true">
     <div class="sheet-handle"></div>
     <div class="sheet-header">
-      <h3 class="sheet-title" data-i18n="perp.fundingSheetTitle">合约资金充值 / 划转 / 提现</h3>
+      <h3 id="perp-funding-sheet-title" class="sheet-title" data-i18n="perp.depositSheetTitle">合约充值</h3>
       <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
     </div>
     <div class="sheet-body">
-      <div class="flex gap-1">
-        <button type="button" id="perp-ftab-oneclick" class="filter-pill active flex-1" onclick="setPerpFundingTab('oneclick')" data-i18n="perp.fundingTabOneClick">跨链充值 (1Click)</button>
-        <button type="button" id="perp-ftab-arbitrum" class="filter-pill flex-1" onclick="setPerpFundingTab('arbitrum')" data-i18n="perp.fundingTabArb">Arbitrum 直充</button>
-        <button type="button" id="perp-ftab-transfer" class="filter-pill flex-1" onclick="setPerpFundingTab('withdraw')" data-i18n="perp.fundingTabTransfer">划转 / 提现</button>
+      <!-- Mode A: Deposit (1Click Cross-Chain | Arbitrum USDC) -->
+      <div id="perp-mode-deposit" class="flex flex-col gap-3">
+        <div class="flex gap-1">
+          <button type="button" id="perp-ftab-oneclick" class="filter-pill active flex-1" onclick="setPerpFundingTab('oneclick')" data-i18n="perp.fundingTabOneClick">跨链充值</button>
+          <button type="button" id="perp-ftab-arbitrum" class="filter-pill flex-1" onclick="setPerpFundingTab('arbitrum')" data-i18n="perp.fundingTabArb">Arbitrum 充值</button>
+        </div>
+
+        <!-- 1Click Deposit -->
+        <div id="perp-funding-panel-oneclick" class="flex flex-col gap-3">
+          <div id="perp-oc-empty-state" class="ios-glass-card hidden flex flex-col gap-2" style="padding: 14px; text-align: center;">
+            <span style="font-size: 13px; font-weight: 700;" data-i18n="perp.ocEmptyTitle">当前暂无可直充合约的资产</span>
+            <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="perp.ocEmptyDesc">支持从 NEAR、SOL、USDC、USDT、ETH、BTC 等跨链直充合约。若仅持有 PRL，请先在「闪兑」中兑换。</span>
+            <button type="button" class="btn-secondary" onclick="jumpFromPerpToSwap()" data-i18n="perp.goSwapBtn">去闪兑换成 USDC / NEAR</button>
+          </div>
+          <div id="perp-oc-form" class="flex flex-col gap-3">
+            <div class="flex flex-col gap-1">
+              <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="perp.ocOriginLabel">支付资产</span>
+              <select id="perp-oc-origin-select" class="input-field" onchange="schedulePerpOneClickQuote()"></select>
+            </div>
+            <div class="swap-box">
+              <div class="swap-box-top">
+                <span data-i18n="perp.ocAmountLabel">充值数量</span>
+                <div class="flex items-center gap-2">
+                  <span style="font-size: 11px;"><span data-i18n="swap.balanceLabel">可用</span>: <span id="perp-oc-origin-avail" class="mono">--</span></span>
+                  <button type="button" class="mini-action-btn primary" onclick="setPerpOneClickMax()" data-i18n="swap.maxBtn">全部</button>
+                </div>
+              </div>
+              <input id="perp-oc-amount" type="number" step="any" min="0" class="amount-input-lg" placeholder="0.00" oninput="schedulePerpOneClickQuote()" />
+            </div>
+            <div class="meta-list">
+              <div class="meta-row">
+                <span class="meta-key" data-i18n="perp.ocEstReceiveLabel">预计到账 (USDC)</span>
+                <span id="perp-oc-quote-out" class="meta-val">--</span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-key" data-i18n="perp.ocTargetAddrLabel">收款合约账户</span>
+                <span id="perp-oc-target-addr" class="meta-val mono">--</span>
+              </div>
+            </div>
+            <div id="perp-oc-error" class="swap-error-banner hidden"></div>
+            <button type="button" id="btn-perp-oc-deposit" class="btn-primary" onclick="executePerpOneClickDepositUI()" data-i18n="perp.ocDepositBtn">确认跨链充值</button>
+          </div>
+        </div>
+
+        <!-- Arbitrum Direct Deposit -->
+        <div id="perp-funding-panel-arbitrum" class="flex flex-col gap-3 hidden">
+          <div class="meta-list">
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="perp.arbUsdcBalLabel">Arbitrum USDC 可用</span>
+              <span id="perp-arb-usdc-avail" class="meta-val text-emerald">--</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="perp.arbEthBalLabel">Arbitrum ETH (Gas)</span>
+              <span id="perp-arb-eth-avail" class="meta-val">--</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="perp.arbMinLabel">最低充值</span>
+              <span class="meta-val" data-i18n="perp.arbMinVal">5 USDC</span>
+            </div>
+          </div>
+          <div class="swap-box">
+            <div class="swap-box-top">
+              <span data-i18n="perp.arbAmountLabel">充值数量 (USDC)</span>
+              <button type="button" class="mini-action-btn primary" onclick="setPerpArbMax()" data-i18n="swap.maxBtn">全部</button>
+            </div>
+            <input id="perp-arb-amount" type="number" step="any" min="5" class="amount-input-lg" placeholder="5.00" oninput="evaluatePerpArbDepositUI()" />
+          </div>
+          <div id="perp-arb-error" class="swap-error-banner hidden"></div>
+          <button type="button" id="btn-perp-arb-deposit" class="btn-primary" onclick="executePerpArbBridgeDepositUI()" data-i18n="perp.arbDepositBtn">确认 Arbitrum 充值</button>
+        </div>
       </div>
 
-      <!-- Tab A: 1Click Cross-Chain Deposit to HyperCore Spot USDC -->
-      <div id="perp-funding-panel-oneclick" class="flex flex-col gap-3">
-        <div class="flex flex-col gap-1">
-          <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="perp.ocOriginLabel">支付资产（全链余额）</span>
-          <select id="perp-oc-origin-select" class="input-field" onchange="schedulePerpOneClickQuote()"></select>
+      <!-- Mode B: Clean Single-Purpose Withdraw to Arbitrum -->
+      <div id="perp-mode-withdraw" class="flex flex-col gap-3 hidden">
+        <div id="perp-wd-spot-banner" class="perp-spot-banner hidden">
+          <span style="font-size: 11.5px;">
+            <span data-i18n="perp.spotPendingPrefix">跨链资金已到账</span>
+            <strong id="perp-wd-spot-amt" class="mono text-emerald">--</strong>
+          </span>
+          <button type="button" class="mini-action-btn primary" onclick="quickTransferSpotToPerpUI()" data-i18n="perp.transferToPerpBtn">一键转入合约 (免费)</button>
         </div>
+
+        <div class="meta-list">
+          <div class="meta-row">
+            <span class="meta-key" data-i18n="perp.perpWithdrawLabel">可提现余额</span>
+            <span id="perp-wd-avail" class="meta-val text-emerald">--</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-key" data-i18n="perp.withdrawDestLabel">收款地址 (Arbitrum)</span>
+            <span id="perp-wd-dest-addr" class="meta-val mono">--</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-key" data-i18n="perp.withdrawFeeLabel">协议手续费</span>
+            <span class="meta-val" data-i18n="perp.withdrawFeeVal">1 USDC (最低提现 2 USDC)</span>
+          </div>
+        </div>
+
         <div class="swap-box">
           <div class="swap-box-top">
-            <span data-i18n="perp.ocAmountLabel">充值数量</span>
-            <span style="font-size: 11px;"><span data-i18n="swap.balanceLabel">可用</span>: <span id="perp-oc-origin-avail" class="mono">--</span></span>
+            <span data-i18n="perp.withdrawAmountLabel">提现数量 (USDC)</span>
+            <button type="button" class="mini-action-btn primary" onclick="setPerpWithdrawMax()" data-i18n="swap.maxBtn">全部</button>
           </div>
-          <input id="perp-oc-amount" type="number" step="any" min="0" class="amount-input-lg" placeholder="0.00" oninput="schedulePerpOneClickQuote()" />
-        </div>
-        <div class="meta-list">
-          <div class="meta-row">
-            <span class="meta-key" data-i18n="perp.ocEstReceiveLabel">预计到账 Spot USDC</span>
-            <span id="perp-oc-quote-out" class="meta-val text-emerald">--</span>
-          </div>
-          <div class="meta-row">
-            <span class="meta-key" data-i18n="perp.ocTargetAddrLabel">Hyperliquid 账户</span>
-            <span id="perp-oc-target-addr" class="meta-val mono">--</span>
-          </div>
-        </div>
-        <button type="button" id="btn-perp-oc-deposit" class="btn-primary" onclick="executePerpOneClickDepositUI()" data-i18n="perp.ocDepositBtn">确认跨链充值至 Spot USDC</button>
-      </div>
-
-      <!-- Tab B: Arbitrum Bridge2 Direct USDC Deposit (>= 5 USDC) -->
-      <div id="perp-funding-panel-arbitrum" class="flex flex-col gap-3 hidden">
-        <div class="meta-list">
-          <div class="meta-row">
-            <span class="meta-key" data-i18n="perp.arbUsdcBalLabel">Arbitrum USDC 可用</span>
-            <span id="perp-arb-usdc-avail" class="meta-val text-emerald">--</span>
-          </div>
-          <div class="meta-row">
-            <span class="meta-key" data-i18n="perp.arbEthBalLabel">Arbitrum ETH (Gas)</span>
-            <span id="perp-arb-eth-avail" class="meta-val">--</span>
-          </div>
-          <div class="meta-row">
-            <span class="meta-key" data-i18n="perp.arbMinLabel">最低充值限额</span>
-            <span class="meta-val" data-i18n="perp.arbMinVal">5 USDC (低于 5 无法上账)</span>
-          </div>
-        </div>
-        <div class="swap-box">
-          <div class="swap-box-top">
-            <span data-i18n="perp.arbAmountLabel">充值 USDC 数量 (&gt;= 5)</span>
-          </div>
-          <input id="perp-arb-amount" type="number" step="any" min="5" class="amount-input-lg" placeholder="5.00" />
-        </div>
-        <button type="button" id="btn-perp-arb-deposit" class="btn-primary" onclick="executePerpArbBridgeDepositUI()" data-i18n="perp.arbDepositBtn">Arbitrum Bridge2 直充</button>
-      </div>
-
-      <!-- Tab C: 0-Gas Spot <-> Perp Transfer & Arbitrum Withdraw3 -->
-      <div id="perp-funding-panel-withdraw" class="flex flex-col gap-3 hidden">
-        <div class="meta-list">
-          <div class="meta-row">
-            <span class="meta-key" data-i18n="perp.spotAvailLabel">Spot USDC 可用</span>
-            <span id="perp-tr-spot-avail" class="meta-val">--</span>
-          </div>
-          <div class="meta-row">
-            <span class="meta-key" data-i18n="perp.perpWithdrawLabel">Perp 可提现 USDC</span>
-            <span id="perp-tr-perp-avail" class="meta-val text-emerald">--</span>
+          <input id="perp-withdraw-amount" type="number" step="any" min="2" class="amount-input-lg" placeholder="2.00" oninput="evaluatePerpWithdrawUI()" />
+          <div class="flex items-center justify-between" style="font-size: 11.5px; color: var(--text-secondary);">
+            <span data-i18n="perp.withdrawNetLabel">预计实际到账</span>
+            <span id="perp-wd-net-val" class="mono text-emerald">--</span>
           </div>
         </div>
 
-        <div class="ios-glass-card flex flex-col gap-2" style="padding: 12px;">
-          <span style="font-size: 13px; font-weight: 700;" data-i18n="perp.classTransferTitle">0 Gas 内部划转 (Spot ↔ 合约)</span>
-          <select id="perp-transfer-dir" class="input-field">
-            <option value="toPerp" data-i18n="perp.dirSpotToPerp">Spot USDC → 合约账户 (Perp)</option>
-            <option value="toSpot" data-i18n="perp.dirPerpToSpot">合约账户 (Perp) → Spot USDC</option>
-          </select>
-          <input id="perp-transfer-amount" type="number" step="any" min="0" class="input-field mono" placeholder="0.00" />
-          <button type="button" id="btn-perp-class-transfer" class="btn-secondary" onclick="executePerpClassTransferUI()" data-i18n="perp.classTransferBtn">立即 0 Gas 划转</button>
-        </div>
-
-        <div class="ios-glass-card flex flex-col gap-2" style="padding: 12px;">
-          <span style="font-size: 13px; font-weight: 700;" data-i18n="perp.withdrawTitle">提现至 Arbitrum 钱包</span>
-          <div class="meta-row" style="font-size: 12px;">
-            <span class="meta-key" data-i18n="perp.withdrawMinLabel">最低提现 / 手续费</span>
-            <span class="meta-val" data-i18n="perp.withdrawMinVal">最低 2 USDC · 固定费 1 USDC</span>
-          </div>
-          <input id="perp-withdraw-amount" type="number" step="any" min="2" class="input-field mono" placeholder="2.00" />
-          <button type="button" id="btn-perp-withdraw" class="btn-primary" onclick="executePerpWithdrawUI()" data-i18n="perp.withdrawBtn">安全验证并提现至 Arbitrum</button>
-        </div>
+        <div id="perp-wd-error" class="swap-error-banner hidden"></div>
+        <button type="button" id="btn-perp-withdraw" class="btn-primary" onclick="executePerpWithdrawUI()" data-i18n="perp.withdrawConfirmBtn">安全验证并提现</button>
       </div>
     </div>
   </div>
@@ -1393,14 +1460,14 @@
   </div>
 
   <!-- Scripts in Exact Required Order (ethers, qrcode, mining-pro lazy-loaded on demand) -->
-  <script defer src="bip39-wordlist.js?v=6.9"></script>
-  <script defer src="src/crypto-engine.js?v=6.9"></script>
-  <script defer src="src/token-registry.js?v=6.9"></script>
-  <script defer src="src/near-intents.js?v=6.9"></script>
-  <script defer src="src/chain-contracts.js?v=6.9"></script>
-  <script defer src="src/limit-orders.js?v=6.9"></script>
-  <script defer src="src/hyperliquid-perps.js?v=6.9"></script>
-  <script defer src="src/state.js?v=6.9"></script>
-  <script defer src="src/ui-controller.js?v=6.9"></script>
+  <script defer src="bip39-wordlist.js?v=6.10"></script>
+  <script defer src="src/crypto-engine.js?v=6.10"></script>
+  <script defer src="src/token-registry.js?v=6.10"></script>
+  <script defer src="src/near-intents.js?v=6.10"></script>
+  <script defer src="src/chain-contracts.js?v=6.10"></script>
+  <script defer src="src/limit-orders.js?v=6.10"></script>
+  <script defer src="src/hyperliquid-perps.js?v=6.10"></script>
+  <script defer src="src/state.js?v=6.10"></script>
+  <script defer src="src/ui-controller.js?v=6.10"></script>
 </body>
 </html>

@@ -6029,7 +6029,8 @@ test('v6.4 Fixes: Official Icons + Fallback, Live Jupiter ASR APY, Swap USD & Bu
   const curVerMatch = swSrc.match(/const CACHE_NAME = 'nexus-wallet-v(\d+\.\d+)';/);
   assert.ok(curVerMatch, 'sw.js must define nexus-wallet-vX.Y');
   const curVer = curVerMatch[1];
-  assert.ok(Number(curVer) >= 6.7);
+  const [majVer, minVer] = curVer.split('.').map(Number);
+  assert.ok(majVer > 6 || (majVer === 6 && minVer >= 7), `Expected v6.7+, got v${curVer}`);
   assert.equal(swSrc.includes('?v=6.5'), false);
   assert.ok(htmlSrc.includes(`src/ui-controller.js?v=${curVer}`));
   assert.equal(htmlSrc.includes('?v=6.5'), false);
@@ -6984,6 +6985,118 @@ test('v6.9 Stage C: Bottom Nav Restructure & Hyperliquid Perpetual Futures + 1Cl
     });
     assert.equal(ocRes.ok, true);
     assert.equal(capturedOneClickReq.destinationAsset, hlPerps.HL_ONECLICK_SPOT_USDC_ASSET_ID);
-    assert.equal(capturedOneClickReq.recipient.toLowerCase(), hlLocalW.address.toLowerCase());
+    assert.equal(capturedOneClickReq.recipient, hlLocalW.address.toLowerCase());
   });
+});
+
+test('v6.10 UI/UX Overhaul: 1Click PRL Guard & Lowercase Recipient, 20-Level Orderbook, Enhanced K-Line & Live Deposit/Withdraw Checks', async () => {
+  const ethers = require('../ethers.umd.min.js');
+  const keys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+  const wTest = ethers.Wallet.createRandom();
+  const hlWallet = state.normalizeWalletRecord({
+    id: 'w_v610_hl',
+    mnemonic: TEST_MNEMONIC,
+    nearNamedAccount: 'alice.near',
+    nearPublicKey: keys.nearPublicKey,
+    nearPrivateKey: keys.nearPrivateKey,
+    _mpcDerivedForNearId: 'alice.near',
+    evmAddress: wTest.address,
+    mpcEvmAddress: wTest.address,
+    solAddress: keys.solAddress,
+    solPublicKey: keys.solAddress
+  });
+
+  // 1. Direct 1Click filter blocks PRL / QTC / Arc & rejects PRL BEFORE network call
+  const prlTok = { assetId: 'nep141:prl.omft.near', blockchain: 'prl', symbol: 'PRL', decimals: 9 };
+  const nearTok = { assetId: 'nep141:wrap.near', blockchain: 'near', symbol: 'NEAR', decimals: 24 };
+  const solUsdcTok = { assetId: 'nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near', blockchain: 'sol', symbol: 'USDC', decimals: 6 };
+  assert.equal(hlPerps.isDirectOneClickOriginForHl(prlTok), false);
+  assert.equal(hlPerps.isDirectOneClickOriginForHl({ assetId: 'qtc', blockchain: 'qtc', symbol: 'QTC' }), false);
+  assert.equal(hlPerps.isDirectOneClickOriginForHl(nearTok), true);
+  assert.equal(hlPerps.isDirectOneClickOriginForHl(solUsdcTok), true);
+
+  let hit1Click = false;
+  let capturedBody = null;
+  await withMockedFetch(async (url, opts) => {
+    hit1Click = true;
+    capturedBody = JSON.parse(opts.body);
+    return jsonResponse({ quote: { amountOut: '2910000000', amountOutFormatted: '29.10' } });
+  }, async () => {
+    const prlRes = await hlPerps.quoteOneClickDepositToHlSpot({ wallet: hlWallet, originToken: prlTok, amount: 10 });
+    assert.equal(prlRes.ok, false);
+    assert.equal(prlRes.unsupportedDirect, true);
+    assert.equal(hit1Click, false, 'PRL must be blocked before calling 1Click');
+
+    const okRes = await hlPerps.quoteOneClickDepositToHlSpot({ wallet: hlWallet, originToken: nearTok, amount: 10 });
+    assert.equal(okRes.ok, true);
+    assert.equal(capturedBody.recipient, wTest.address.toLowerCase(), '1Click recipient must be lowercase EVM address');
+  });
+
+  // 2. 20-Level Orderbook Depth Aggregation
+  await withMockedFetch(async () => jsonResponse({
+    levels: [
+      [
+        { px: '61500', sz: '2.5', n: 4 },
+        { px: '61499', sz: '1.5', n: 2 }
+      ],
+      [
+        { px: '61501', sz: '1.0', n: 3 }
+      ]
+    ]
+  }), async () => {
+    const ob = await hlPerps.fetchHlOrderbook('BTC');
+    assert.equal(ob.bidTotalSz, 4);
+    assert.equal(ob.bidOrderCount, 6);
+    assert.equal(ob.askTotalSz, 1);
+    assert.equal(ob.askOrderCount, 3);
+    assert.equal(ob.bidRatioPct, 80);
+  });
+
+  // 3. Enhanced K-line SVG with price axis, current mark price dashed line & volume bars
+  const svgHtml = uiController.renderPerpCandleSvg([
+    { t: 1, o: 100, h: 108, l: 98, c: 105, v: 42 },
+    { t: 2, o: 105, h: 112, l: 103, c: 109, v: 85 }
+  ], { markPx: 109 });
+  assert.ok(svgHtml.includes('<text'), 'K-line SVG must render price axis labels');
+  assert.ok(svgHtml.includes('stroke="#00ec97"'), 'K-line SVG must render live Mark Price dashed line');
+  assert.ok(svgHtml.includes('fill-opacity="0.45"'), 'K-line SVG must render volume histogram bars');
+
+  // 4. Live Arbitrum Deposit & Withdraw UI Pre-Validation
+  const arbNoBal = uiController.evaluatePerpArbDepositState({ amount: 10, arbUsdc: 0, arbEth: 0 });
+  assert.equal(arbNoBal.disabled, true);
+  assert.match(arbNoBal.text, /USDC/);
+
+  const arbLowAmt = uiController.evaluatePerpArbDepositState({ amount: 3, arbUsdc: 20, arbEth: 0.01 });
+  assert.equal(arbLowAmt.disabled, true);
+  assert.match(arbLowAmt.error, /5 USDC/);
+
+  const arbNoGas = uiController.evaluatePerpArbDepositState({ amount: 10, arbUsdc: 20, arbEth: 0.00005 });
+  assert.equal(arbNoGas.disabled, true);
+  assert.match(arbNoGas.error, /ETH/);
+
+  const arbReady = uiController.evaluatePerpArbDepositState({ amount: 10, arbUsdc: 20, arbEth: 0.005 });
+  assert.equal(arbReady.disabled, false);
+
+  const wdTooLow = uiController.evaluatePerpWithdrawState({ amount: 1.5, withdrawable: 50 });
+  assert.equal(wdTooLow.disabled, true);
+  assert.equal(wdTooLow.netReceive, null);
+
+  const wdOver = uiController.evaluatePerpWithdrawState({ amount: 60, withdrawable: 50 });
+  assert.equal(wdOver.disabled, true);
+
+  const wdOk = uiController.evaluatePerpWithdrawState({ amount: 10, withdrawable: 50 });
+  assert.equal(wdOk.disabled, false);
+  assert.equal(wdOk.netReceive, 9);
+
+  // 5. UI Classes, No Duplicate withdrawBtn i18n Key & Clean DOM Structure
+  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  assert.equal(state.i18nDict.zh['perp.withdrawBtn'], '提现');
+  assert.equal(state.i18nDict.en['perp.withdrawBtn'], 'Withdraw');
+  assert.equal(state.i18nDict.zh['perp.withdrawConfirmBtn'], '安全验证并提现');
+  assert.ok(indexHtml.includes('id="perp-coin-btn" class="token-select-btn"'));
+  assert.ok(indexHtml.includes('class="nexus-switch"'));
+  assert.ok(indexHtml.includes('id="limit-split-preview"'));
+  assert.ok(indexHtml.includes('id="perp-oc-empty-state"'));
+  assert.ok(indexHtml.includes('id="perp-arb-error"'));
+  assert.ok(indexHtml.includes('id="perp-wd-error"'));
 });

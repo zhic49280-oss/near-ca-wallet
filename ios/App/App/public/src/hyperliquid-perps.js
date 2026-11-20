@@ -607,7 +607,9 @@
 
   async function fetchHlOrderbook(coin) {
     const clean = String(coin || '').trim();
-    if (!clean) return { bids: [], asks: [] };
+    if (!clean) {
+      return { bids: [], asks: [], bidTotalSz: 0, askTotalSz: 0, bidOrderCount: 0, askOrderCount: 0, bidRatioPct: 50 };
+    }
     const raw = await postHlInfo({ type: 'l2Book', coin: clean });
     const levels = raw && Array.isArray(raw.levels) ? raw.levels : [[], []];
     const mapRow = (row) => ({
@@ -615,20 +617,44 @@
       sz: Number(row && row.sz),
       n: Number(row && row.n) || 1
     });
-    const bids = Array.isArray(levels[0]) ? levels[0].slice(0, 5).map(mapRow).filter((r) => r.px > 0) : [];
-    const asks = Array.isArray(levels[1]) ? levels[1].slice(0, 5).map(mapRow).filter((r) => r.px > 0) : [];
-    return { bids, asks };
+    const allBids = Array.isArray(levels[0]) ? levels[0].slice(0, 20).map(mapRow).filter((r) => r.px > 0 && r.sz > 0) : [];
+    const allAsks = Array.isArray(levels[1]) ? levels[1].slice(0, 20).map(mapRow).filter((r) => r.px > 0 && r.sz > 0) : [];
+    let bidTotalSz = 0;
+    let bidOrderCount = 0;
+    for (const r of allBids) {
+      bidTotalSz += r.sz;
+      bidOrderCount += r.n;
+    }
+    let askTotalSz = 0;
+    let askOrderCount = 0;
+    for (const r of allAsks) {
+      askTotalSz += r.sz;
+      askOrderCount += r.n;
+    }
+    const totalSz = bidTotalSz + askTotalSz;
+    const bidRatioPct = totalSz > 0 ? (bidTotalSz / totalSz) * 100 : 50;
+    return {
+      bids: allBids.slice(0, 5),
+      asks: allAsks.slice(0, 5),
+      bidTotalSz,
+      askTotalSz,
+      bidOrderCount,
+      askOrderCount,
+      bidRatioPct
+    };
   }
 
   async function fetchHlCandles(coin, interval = '15m', count = 48) {
     const clean = String(coin || '').trim();
     if (!clean) return [];
+    const iv = ['5m', '15m', '1h', '4h'].includes(String(interval)) ? String(interval) : '15m';
+    const intervalMsMap = { '5m': 300_000, '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000 };
     const endTime = Date.now();
-    const intervalMs = interval === '1h' ? 3_600_000 : (interval === '5m' ? 300_000 : 900_000);
+    const intervalMs = intervalMsMap[iv] || 900_000;
     const startTime = endTime - intervalMs * Math.max(12, Number(count) || 48);
     const raw = await postHlInfo({
       type: 'candleSnapshot',
-      req: { coin: clean, interval, startTime, endTime }
+      req: { coin: clean, interval: iv, startTime, endTime }
     });
     if (!Array.isArray(raw)) return [];
     return raw
@@ -947,33 +973,66 @@
     return { ok: true, txHash: txRes.txHash, explorerUrl: txRes.explorerUrl, amount: num };
   }
 
+  function isDirectOneClickOriginForHl(token) {
+    if (!token) return false;
+    const bc = String(token.blockchain || '').toLowerCase();
+    const rawId = String(token.assetId || '').trim();
+    const lowId = rawId.toLowerCase();
+    if (['prl', 'qtc', 'arc', 'hood'].includes(bc)) return false;
+    if (lowId.includes('prl.omft.near') || lowId.includes('qtc.omft.near') || lowId.includes('1cs_v1:prl:')) return false;
+    if (/^(nep141:|nep245:|1cs_v1:)/i.test(rawId)) return true;
+    const intents = getIntents();
+    if (intents && typeof intents.resolveOneClickAssetId === 'function') {
+      const resolved = intents.resolveOneClickAssetId(token, bc);
+      return /^(nep141:|nep245:|1cs_v1:)/i.test(String(resolved || ''));
+    }
+    return false;
+  }
+
   async function quoteOneClickDepositToHlSpot({ wallet, originToken, amount, slippageBps = 100, dry = true, refundTo = null }) {
     const intents = getIntents();
     const contracts = getContracts();
     if (!intents || !contracts) throw new Error('Routing engine unavailable');
     if (!wallet || !originToken || !originToken.assetId) {
-      throw new Error(t('请选择跨链充值源代币', 'Select a valid origin token'));
+      return { ok: false, error: t('请选择跨链充值源代币', 'Select a valid origin token') };
+    }
+    if (!isDirectOneClickOriginForHl(originToken)) {
+      return {
+        ok: false,
+        unsupportedDirect: true,
+        error: t(
+          '该代币暂不支持直接跨链充值，请先在「闪兑」换为 USDC / NEAR / SOL',
+          'Swap to USDC / NEAR / SOL first to deposit'
+        )
+      };
     }
     const num = Number(amount);
     if (!Number.isFinite(num) || num <= 0) {
-      throw new Error(t('请输入有效的充值数量', 'Enter a positive deposit amount'));
+      return { ok: false, error: t('请输入有效的充值数量', 'Enter a positive deposit amount') };
     }
     const resolvedWallet = await contracts.ensureWalletSigningKeysAsync(wallet);
-    const hlRecipient = contracts.resolveWalletEvmSender(resolvedWallet);
-    if (!/^0x[0-9a-fA-F]{40}$/.test(String(hlRecipient || ''))) {
-      throw new Error(t('Hyperliquid EVM 账户地址不可用', 'Hyperliquid EVM address unavailable'));
+    const hlRecipientRaw = contracts.resolveWalletEvmSender(resolvedWallet);
+    if (!/^0x[0-9a-fA-F]{40}$/.test(String(hlRecipientRaw || ''))) {
+      return { ok: false, error: t('Hyperliquid EVM 账户地址不可用', 'Hyperliquid EVM address unavailable') };
     }
+    const hlRecipient = String(hlRecipientRaw).toLowerCase();
+    const nearAcct = resolvedWallet.nearNamedAccount || resolvedWallet.nearAddress;
     const bc = String(originToken.blockchain || '').toLowerCase();
-    const resolvedRefund = refundTo || (
-      bc === 'near' ? (resolvedWallet.nearNamedAccount || resolvedWallet.nearAddress) :
+    const resolvedRefundRaw = refundTo || (
+      bc === 'near' ? nearAcct :
       bc === 'sol' ? resolvedWallet.solAddress :
-      bc === 'prl' ? resolvedWallet.address :
       bc === 'btc' ? resolvedWallet.btcAddress :
       hlRecipient
     );
+    const resolvedRefund = /^0x[0-9a-fA-F]{40}$/.test(String(resolvedRefundRaw || ''))
+      ? String(resolvedRefundRaw).toLowerCase()
+      : resolvedRefundRaw;
+    const resolvedOriginId = typeof intents.resolveOneClickAssetId === 'function'
+      ? intents.resolveOneClickAssetId(originToken, bc)
+      : originToken.assetId;
     const amountRaw = intents.toBaseUnits(num, originToken.decimals || 6);
     const quote = await intents.quoteIntentSwapOrWithdraw({
-      originAsset: originToken.assetId,
+      originAsset: resolvedOriginId,
       originBlockchain: bc,
       destinationAsset: HL_ONECLICK_SPOT_USDC_ASSET_ID,
       destinationBlockchain: 'hypercore',
@@ -981,6 +1040,7 @@
       slippageBps,
       recipient: hlRecipient,
       refundTo: resolvedRefund,
+      nearAccountId: nearAcct,
       depositType: 'ORIGIN_CHAIN',
       recipientType: 'DESTINATION_CHAIN',
       dry
@@ -1025,6 +1085,7 @@
     transferHlUsdClass,
     withdrawHlToArbitrum,
     depositArbUsdcToHlBridge,
+    isDirectOneClickOriginForHl,
     quoteOneClickDepositToHlSpot
   };
 
