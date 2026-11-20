@@ -331,6 +331,7 @@
       intentsBalances: (raw.intentsBalances && typeof raw.intentsBalances === 'object') ? { ...raw.intentsBalances } : {},
       nativeBalances,
       splBalances: (raw.splBalances && typeof raw.splBalances === 'object') ? { ...raw.splBalances } : {},
+      solAtaMints: (raw.solAtaMints && typeof raw.solAtaMints === 'object') ? { ...raw.solAtaMints } : null,
       erc20Balances: normalizeErc20Map(raw.erc20Balances),
       nearStakingPositions: Array.isArray(raw.nearStakingPositions) ? raw.nearStakingPositions.slice() : [],
       solStakingPositions: Array.isArray(raw.solStakingPositions) ? raw.solStakingPositions.slice() : [],
@@ -1116,6 +1117,27 @@
     safeStorageSet(FAV_TOKENS_STORAGE_KEY, JSON.stringify(state.favoriteTokenIds || []));
   }
 
+  function _collectStaticCatalogTokens(reg) {
+    const out = [];
+    if (!reg) return out;
+    if (Array.isArray(reg.UNIFIED_CORE_TOKENS)) out.push(...reg.UNIFIED_CORE_TOKENS);
+    if (reg.DEX_CHAIN_TOKENS && typeof reg.DEX_CHAIN_TOKENS === 'object') {
+      for (const list of Object.values(reg.DEX_CHAIN_TOKENS)) {
+        if (Array.isArray(list)) out.push(...list);
+      }
+    }
+    return out;
+  }
+
+  function _isStaleLocalSvgLogo(tok, reg) {
+    if (!tok || typeof tok.logoURI !== 'string' || !tok.logoURI.startsWith('data:image/svg+xml')) return false;
+    const symU = String(tok.symbol || '').trim().replace(/^\$/, '').toUpperCase();
+    const mapped = reg && reg.TOKEN_ICON_MAP && (reg.TOKEN_ICON_MAP[symU] || '');
+    if (mapped && /^https?:\/\//i.test(mapped)) return true;
+    if (tok.logoURI.includes('dmlld0JveD0iMCAwIDMyIDMyIg') || tok.logoURI.includes('viewBox="0 0 32 32"')) return true;
+    return false;
+  }
+
   function loadCachedLiveTokens() {
     const raw = safeStorageGet(LIVE_TOKENS_STORAGE_KEY);
     if (!raw) return null;
@@ -1126,14 +1148,35 @@
         return null;
       }
       const list = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.tokens) ? parsed.tokens : null);
+      const dexPrices = (parsed && parsed.dexPrices && typeof parsed.dexPrices === 'object') ? parsed.dexPrices : null;
+      const dexSymPrices = (parsed && parsed.dexSymPrices && typeof parsed.dexSymPrices === 'object') ? parsed.dexSymPrices : null;
+      const reg = (typeof globalThis !== 'undefined' && globalThis.NearCATokens) || (typeof window !== 'undefined' && window.NearCATokens);
+      if (reg && (dexPrices || dexSymPrices)) {
+        for (const tok of _collectStaticCatalogTokens(reg)) {
+          if (!tok || (typeof tok.price === 'number' && Number.isFinite(tok.price) && tok.price > 0)) continue;
+          const bc = String(tok.blockchain || '').trim().toLowerCase();
+          const ca = String(tok.contractAddress || '').trim().toLowerCase();
+          const aid = String(tok.assetId || '').trim().toLowerCase();
+          const sym = String(tok.symbol || '').trim().toUpperCase().replace(/^\$/, '');
+          const p = (dexPrices && ca && dexPrices[`${bc}|${ca}`])
+            || (dexPrices && aid && dexPrices[`${bc}|${aid}`])
+            || (dexSymPrices && sym && dexSymPrices[sym])
+            || 0;
+          if (typeof p === 'number' && Number.isFinite(p) && p > 0) {
+            tok.price = p;
+          }
+        }
+      }
       if (Array.isArray(list) && list.length > 0) {
+        for (const item of list) {
+          if (_isStaleLocalSvgLogo(item, reg)) item.logoURI = '';
+        }
         if (!Array.isArray(state.liveTokens) || state.liveTokens.length === 0) {
           state.liveTokens = list;
         }
         if (updatedAt && !state.pricesUpdatedAt) {
           state.pricesUpdatedAt = updatedAt;
         }
-        const reg = (typeof globalThis !== 'undefined' && globalThis.NearCATokens) || (typeof window !== 'undefined' && window.NearCATokens);
         if (reg && typeof reg.setLiveDefuseTokens === 'function') {
           reg.setLiveDefuseTokens(list);
         }
@@ -1150,10 +1193,26 @@
   function saveCachedLiveTokens(tokensList) {
     if (!Array.isArray(tokensList) || tokensList.length === 0) return;
     try {
+      const reg = (typeof globalThis !== 'undefined' && globalThis.NearCATokens) || (typeof window !== 'undefined' && window.NearCATokens);
+      const dexPrices = {};
+      const dexSymPrices = {};
+      const recordDexPrice = (tok) => {
+        if (!tok || typeof tok.price !== 'number' || !Number.isFinite(tok.price) || tok.price <= 0) return;
+        const bc = String(tok.blockchain || '').trim().toLowerCase();
+        const ca = String(tok.contractAddress || '').trim().toLowerCase();
+        const aid = String(tok.assetId || '').trim().toLowerCase();
+        const sym = String(tok.symbol || '').trim().toUpperCase().replace(/^\$/, '');
+        if (bc && ca) dexPrices[`${bc}|${ca}`] = tok.price;
+        if (bc && aid) dexPrices[`${bc}|${aid}`] = tok.price;
+        if (sym && !dexSymPrices[sym]) dexSymPrices[sym] = tok.price;
+      };
+      for (const tok of _collectStaticCatalogTokens(reg)) recordDexPrice(tok);
+
       const deduped = [];
       const seen = new Set();
       for (const item of tokensList) {
         if (!item || !item.assetId) continue;
+        recordDexPrice(item);
         const key = String(item.assetId).toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
@@ -1178,12 +1237,14 @@
           coingeckoId: t.coingeckoId || undefined,
           price: typeof t.price === 'number' ? t.price : null,
           priceUpdatedAt: t.priceUpdatedAt || null,
-          logoURI: logo.length <= 2048 ? logo : ''
+          logoURI: _isStaleLocalSvgLogo(t, reg) ? '' : (logo.length <= 2048 ? logo : '')
         };
       });
       const payload = {
         updatedAt: Date.now(),
-        tokens: capped
+        tokens: capped,
+        dexPrices,
+        dexSymPrices
       };
       safeStorageSet(LIVE_TOKENS_STORAGE_KEY, JSON.stringify(payload));
     } catch (_) {}

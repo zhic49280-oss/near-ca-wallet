@@ -1374,9 +1374,9 @@ test('Module 2 & 3: PRL -> QTC composite fallthrough + 1Click DEPRECATED filteri
     assert.ok(resolved.primaryUrl, `Missing primary icon URL for ${sym}`);
   }
   assert.equal(tokenRegistry.sanitizeImageUrl('data:image/svg+xml;utf8,<svg onload=alert(1)>'), '');
-  assert.ok(
-    tokenRegistry.resolveTokenIcon({ symbol: 'QTC', blockchain: 'qtc' }).primaryUrl.startsWith('data:image/svg+xml;base64,')
-  );
+  const qtcResolved = tokenRegistry.resolveTokenIcon({ symbol: 'QTC', blockchain: 'qtc' });
+  assert.ok(qtcResolved.primaryUrl.startsWith('https://'));
+  assert.ok(qtcResolved.fallbackUrl.startsWith('data:image/svg+xml;base64,'));
 
   // 2. DEPRECATED / TESTNEBULA filtering + Ref & CoinGecko icon hydration + PRL -> QTC fallthrough
   await withMockedFetch(
@@ -2078,7 +2078,7 @@ test('Arc Network: EVM_CHAINS.arc config, balance pre-validation, and USDC-only 
 
 test('v1.8: Official QTC icon, zero ref-new-1 S3 URLs, sanitizeImageUrl SVG/base64, ft_metadata hydration & receipt token filtering', async () => {
   assert.ok(
-    tokenRegistry.TOKEN_ICON_MAP.QTC.startsWith('data:image/svg+xml;base64,')
+    tokenRegistry.TOKEN_ICON_MAP.QTC.startsWith('https://')
   );
   for (const [sym, url] of Object.entries(tokenRegistry.TOKEN_ICON_MAP)) {
     assert.equal(String(url).includes('ref-new-1.s3.amazonaws.com'), false, `TOKEN_ICON_MAP.${sym} must not use 403 S3 URL`);
@@ -2182,11 +2182,14 @@ test('v1.8: Favorite tokens bar, Arc receive/hub/picker support, no xStocks filt
       assert.ok(domNodes['token-picker-list'].innerHTML.includes('data-action="toggle-fav-token"'));
 
       uiController.openReceiveSheet('arc');
-      assert.ok(domNodes['receive-network-pills'].innerHTML.includes('data-action="select-receive-network" data-net="arc"'));
+      assert.ok(domNodes['receive-network-pills'].innerHTML.includes('data-action="select-receive-network" data-net="evm"'));
+      assert.ok(domNodes['receive-network-pills'].innerHTML.includes('EVM (ETH / Base / ARB / OP / POL / BSC / Arc)'));
+      assert.equal(domNodes['receive-network-pills'].innerHTML.includes('data-net="arc"'), false);
       assert.equal(domNodes['receive-addr-value'].textContent, w.mpcEvmAddress);
 
       uiController.switchTab('hub');
-      assert.ok(domNodes['hub-addresses-list'].innerHTML.includes('Arc Network (USDC'));
+      assert.ok(domNodes['hub-addresses-list'].innerHTML.includes('EVM (ETH / Base / ARB / OP / POL / BSC / Arc)'));
+      assert.equal(domNodes['hub-addresses-list'].innerHTML.includes('Arc Network (USDC'), false);
     } finally {
       if (prevDoc === undefined) delete globalThis.document;
       else globalThis.document = prevDoc;
@@ -2198,7 +2201,8 @@ test('v1.9: Whitish Circle Arc icon/badge, QTC orange badge, 18 Arc Mainnet toke
   const arcMeta = tokenRegistry.getChainMeta('arc');
   assert.equal(arcMeta.color, '#F8FAFC');
   assert.equal(arcMeta.textColor, '#0F172A');
-  assert.ok(arcMeta.logoUrl.startsWith('data:image/svg+xml;base64,'));
+  assert.ok(arcMeta.logoUrl.endsWith('/arc-dark.svg'));
+  assert.ok(arcMeta.fallbackLogoUrl.startsWith('data:image/svg+xml;base64,'));
   assert.ok(arcMeta.badgeSvg.includes('#F8FAFC') && arcMeta.badgeSvg.includes('#0F172A'));
 
   const qtcMeta = tokenRegistry.getChainMeta('qtc');
@@ -2595,7 +2599,8 @@ test('v1.9 Requirement #6: Rhea 3 pools + 16-pool Staking Hub live rates, tx sig
     assert.equal(byId.jupiter_jup.inSymbol, 'JUP');
     assert.equal(byId.jupiter_jup.outSymbol, 'Staked JUP');
     assert.equal(byId.jupiter_jup.rate, 1.0);
-    assert.equal(byId.jupiter_jup.apy, null);
+    assert.equal(byId.jupiter_jup.apy, 17.02);
+    assert.equal(byId.jupiter_jup.isAsrEstimated, true);
     assert.equal(byId.jupiter_jup.stakersCount, 836170);
     assert.ok(byId.jupiter_jup.tvlText && byId.jupiter_jup.tvlText.includes('JUP'));
     assert.equal(byId.jupiter_sol.apy, 5.15);
@@ -5210,7 +5215,8 @@ test('v6.1 Audit & Performance Regression Suite: Hydration, SWR Cache, Precheck,
       blockchain: 'eth',
       logoURI: 'https://assets.coingecko.com/coins/images/279/large/ethereum.png'
     });
-    assert.ok(ethIcon.primaryUrl.startsWith('data:image/'));
+    assert.equal(ethIcon.primaryUrl, 'https://assets.coingecko.com/coins/images/279/large/ethereum.png');
+    assert.ok(ethIcon.fallbackUrl.startsWith('data:image/'));
     const customSvgIcon = tokenRegistry.resolveTokenIcon({
       symbol: 'ETH',
       blockchain: 'eth',
@@ -5377,10 +5383,10 @@ test('v6.1 Audit & Performance Regression Suite: Hydration, SWR Cache, Precheck,
     assert.equal(heroStats.payoutThresholdPrl, 5);
   });
 
-  // 6. sw.js v6.3 cross-origin pass-through + server.js gzip + OPTIONS preflight
+  // 6. sw.js v6.6 cross-origin pass-through + server.js gzip + OPTIONS preflight
   const swSrc = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
-  assert.match(swSrc, /nexus-wallet-v6\.3/);
-  assert.match(swSrc, /\.\/bip39-wordlist\.js\?v=6\.3/);
+  assert.match(swSrc, /nexus-wallet-v6\.6/);
+  assert.match(swSrc, /\.\/bip39-wordlist\.js\?v=6\.6/);
   assert.match(swSrc, /if\s*\(reqUrl\.origin\s*!==\s*self\.location\.origin\)\s*\{\s*return;\s*\}/);
 
   const srv = require('../server.js');
@@ -5391,7 +5397,7 @@ test('v6.1 Audit & Performance Regression Suite: Hydration, SWR Cache, Precheck,
       const req = http.request({
         host: '127.0.0.1',
         port,
-        path: '/style.css?v=6.3',
+        path: '/style.css?v=6.6',
         method: 'GET',
         headers: { 'Accept-Encoding': 'gzip' }
       }, (res) => {
@@ -5651,4 +5657,478 @@ test('v6.3 Regression Suite: NEAR Storage Reclaim, Dynamic storage_minimum_balan
       state.activeWalletId = prevActiveId;
     }
   });
+});
+
+test('v6.4 Fixes: Official Icons + Fallback, Live Jupiter ASR APY, Swap USD & Button Error UX, Scheme A Recipient Lock, PRL Route Label, Merged EVM/Arc, Solana ATA Detection & Cache v6.4', async () => {
+  // 1. Official remote icons take primaryUrl while local makeLocalIcon SVG acts as offline fallbackUrl
+  for (const sym of ['PONS', 'QTC', 'SOL', 'BTC', 'EURC']) {
+    const icon = tokenRegistry.resolveTokenIcon({ symbol: sym, blockchain: sym === 'SOL' ? 'sol' : (sym === 'BTC' ? 'btc' : 'near') });
+    assert.ok(icon.primaryUrl.startsWith('https://'), `${sym} primaryUrl must use official remote HTTPS icon`);
+    assert.ok(icon.fallbackUrl.startsWith('data:image/svg+xml;base64,'), `${sym} fallbackUrl must use local SVG data URI`);
+  }
+  const arcusTok = (tokenRegistry.DEX_CHAIN_TOKENS.arc || []).find((t) => t.symbol === 'ARCUS');
+  assert.ok(arcusTok && String(arcusTok.logoURI).startsWith('https://'), 'ARCUS must retain official remote logoURI');
+  const arcChain = tokenRegistry.getChainMeta('arc');
+  assert.ok(arcChain.logoUrl.endsWith('/arc-dark.svg'), 'CHAIN_META.arc.logoUrl must use official arc-dark.svg');
+  assert.ok(arcChain.fallbackLogoUrl.startsWith('data:image/svg+xml;base64,'), 'CHAIN_META.arc.fallbackLogoUrl must use local SVG fallback');
+
+  // 2. Jupiter DAO ASR formatting in zh & en
+  const prevLang = state.lang;
+  try {
+    state.lang = 'zh';
+    assert.equal(
+      uiController.formatPoolApyText({ apy: 17.02, isJupiterDao: true, isAsrEstimated: true }),
+      'ASR 估算 ~17.02%'
+    );
+    state.lang = 'en';
+    assert.equal(
+      uiController.formatPoolApyText({ apy: 17.02, isJupiterDao: true, isAsrEstimated: true }),
+      'ASR Est. ~17.02%'
+    );
+  } finally {
+    state.lang = prevLang;
+  }
+
+  // 3 & 4. SWR persistence of NEAR DEX prices (oRHEA), live #swap-usd-in, & unified button-only error/balance UX
+  const orheaTok = (tokenRegistry.DEX_CHAIN_TOKENS.near || []).find((t) => String(t.symbol).toUpperCase() === 'ORHEA');
+  const usdtNearTok = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'USDT' && t.blockchain === 'near');
+  const prevOrheaPrice = orheaTok ? orheaTok.price : null;
+  await withMockedStorage({}, async () => {
+    assert.ok(orheaTok && usdtNearTok);
+    orheaTok.price = 0.0193;
+    state.saveCachedLiveTokens([
+      { assetId: 'nep141:wrap.near', symbol: 'NEAR', blockchain: 'near', decimals: 24, price: 3.1 }
+    ]);
+    orheaTok.price = null;
+    state.loadCachedLiveTokens();
+    assert.equal(orheaTok.price, 0.0193, 'loadCachedLiveTokens must re-hydrate static NEAR DEX token prices');
+
+    const prevDoc = globalThis.document;
+    const prevWallets = state.wallets.slice();
+    const prevActiveId = state.activeWalletId;
+    const prevSwap = { ...state.swap };
+    const domMap = new Map();
+    const mkEl = (id) => {
+      if (!domMap.has(id)) {
+        domMap.set(id, {
+          id,
+          value: '',
+          textContent: '',
+          innerHTML: '',
+          title: '',
+          disabled: false,
+          setAttribute() {},
+          classList: {
+            _set: new Set(),
+            add(c) { this._set.add(c); },
+            remove(c) { this._set.delete(c); },
+            toggle(c, f) { if (f === undefined) { if (this._set.has(c)) this._set.delete(c); else this._set.add(c); } else if (f) this._set.add(c); else this._set.delete(c); },
+            contains(c) { return this._set.has(c); }
+          },
+          querySelector() { return null; },
+          querySelectorAll() { return []; }
+        });
+      }
+      return domMap.get(id);
+    };
+    [
+      'swap-from-token-btn', 'swap-to-token-btn', 'swap-from-balance', 'swap-to-balance',
+      'swap-from-net-label', 'swap-to-net-label', 'swap-auto-route-badge', 'swap-recipient-input',
+      'swap-recipient-contacts-btn', 'swap-amount-in', 'swap-amount-out', 'swap-usd-in', 'swap-usd-out',
+      'swap-quote-rate', 'swap-quote-route', 'swap-quote-fee', 'swap-gas-reserve-row',
+      'swap-gas-reserve-label', 'swap-details-summary', 'swap-error-banner', 'btn-execute-swap'
+    ].forEach(mkEl);
+    domMap.get('swap-error-banner').classList.add('hidden');
+    globalThis.document = {
+      getElementById: (id) => domMap.get(id) || null,
+      querySelector: () => null,
+      querySelectorAll: () => []
+    };
+
+    try {
+      const keys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+      const w = state.normalizeWalletRecord({
+        id: 'w_v64_swap_ui',
+        mnemonic: TEST_MNEMONIC,
+        nearNamedAccount: 'alice.near',
+        nearPublicKey: keys.nearPublicKey,
+        nearPrivateKey: keys.nearPrivateKey,
+        nativeBalances: { near: 0.1, sol: 0.0025 },
+        nearNep141Balances: { [orheaTok.contractAddress]: { raw: '0', formatted: 0 } }
+      });
+      state.wallets = [w];
+      state.activeWalletId = w.id;
+      state.lang = 'zh';
+      state.swap.fromAssetId = orheaTok.assetId;
+      state.swap.toAssetId = usdtNearTok.assetId;
+      state.swap.amountIn = '1000';
+      state.swap.quoteData = null;
+      state.swap._lastError = '';
+      uiController.renderSwapView();
+
+      assert.equal(domMap.get('swap-usd-in').textContent, '$19.30');
+      const btn = domMap.get('btn-execute-swap');
+      assert.equal(btn.disabled, true);
+      assert.equal(btn.classList.contains('is-error'), true);
+      assert.ok(btn.textContent.includes('oRHEA') && btn.textContent.includes('余额不足'));
+      assert.equal(domMap.get('swap-recipient-input').disabled, true, 'Same-chain NEAR DEX swap must lock recipient');
+
+      // Quote errors also stay solely on the primary button while #swap-error-banner stays hidden
+      domMap.get('swap-amount-in').value = '1000';
+      w.nearNep141Balances[orheaTok.contractAddress] = { raw: '5000000000000000000000', formatted: 5000 };
+      const resQuoteErr = uiController.evaluateSwapButtonState({
+        wallet: w,
+        fromToken: orheaTok,
+        toToken: usdtNearTok,
+        amountIn: '1000',
+        quoteError: '暂无报价'
+      });
+      assert.equal(resQuoteErr.reason, 'quote_error');
+      assert.equal(resQuoteErr.disabled, true);
+      assert.equal(resQuoteErr.isError, true);
+
+      // Simulate error banner call -> banner stays hidden
+      if (typeof uiController.renderSwapView === 'function') {
+        state.swap._lastError = '报价超时';
+        uiController.renderSwapView();
+      }
+      assert.equal(domMap.get('swap-error-banner').classList.contains('hidden'), true);
+
+      // Native SOL gas buffer & NEAR hub gas validation inside evaluateSwapButtonState
+      const solTok = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'SOL' && t.blockchain === 'sol');
+      const jupTok = (tokenRegistry.DEX_CHAIN_TOKENS.sol || []).find((t) => t.symbol === 'JUP');
+      const gasShort = uiController.evaluateSwapButtonState({
+        wallet: w,
+        fromToken: solTok,
+        toToken: jupTok,
+        amountIn: '0.002'
+      });
+      assert.equal(gasShort.reason, 'insufficient_gas');
+      assert.equal(gasShort.disabled, true);
+
+      const prlTok = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'PRL' && t.blockchain === 'prl');
+      const qtcTok = { symbol: 'QTC', name: 'Quantus Network', blockchain: 'qtc', assetId: 'nep141:qtc.omft.near', decimals: 12 };
+      w.nativeBalances.near = 0;
+      w.nativeBalances.prl = 500;
+      const nearGasShort = uiController.evaluateSwapButtonState({
+        wallet: w,
+        fromToken: prlTok,
+        toToken: qtcTok,
+        amountIn: '10'
+      });
+      assert.equal(nearGasShort.reason, 'insufficient_near_gas');
+      assert.equal(nearGasShort.disabled, true);
+
+      // 5. Scheme A recipient lock matrix
+      const nearNativeTok = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'NEAR' && t.blockchain === 'near');
+      const solUsdcTok = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'USDC' && t.blockchain === 'sol');
+      const baseEthTok = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'ETH' && t.blockchain === 'base');
+      const arcUsdcTok = (tokenRegistry.DEX_CHAIN_TOKENS.arc || []).find((t) => t.symbol === 'USDC');
+      const arcEurcTok = (tokenRegistry.DEX_CHAIN_TOKENS.arc || []).find((t) => t.symbol === 'EURC');
+
+      assert.equal(uiController.doesSwapRouteRequireSelfRecipient(orheaTok, usdtNearTok), true, 'Same-chain DEX requires self');
+      assert.equal(uiController.doesSwapRouteRequireSelfRecipient(prlTok, nearNativeTok), true, 'PRL -> NEAR ends on Ref DEX -> self');
+      assert.equal(uiController.doesSwapRouteRequireSelfRecipient(prlTok, jupTok), true, 'PRL -> JUP ends on Jupiter DEX -> self');
+      assert.equal(uiController.doesSwapRouteRequireSelfRecipient(baseEthTok, arcEurcTok), true, 'Base ETH -> Arc EURC ends on Arc DEX -> self');
+      assert.equal(uiController.doesSwapRouteRequireSelfRecipient(prlTok, qtcTok), false, 'PRL -> QTC ends on 1Click bridge -> editable');
+      assert.equal(uiController.doesSwapRouteRequireSelfRecipient(prlTok, solUsdcTok), false, 'PRL -> SOL USDC ends on 1Click bridge -> editable');
+      assert.equal(uiController.doesSwapRouteRequireSelfRecipient(nearNativeTok, baseEthTok), false, 'NEAR -> Base ETH -> editable');
+      assert.equal(uiController.doesSwapRouteRequireSelfRecipient(baseEthTok, arcUsdcTok), false, 'Base ETH -> Arc USDC ends on Relay -> editable');
+
+      // SMART_HUB_ROUTE forces self SOL address on BRIDGE_OUT when DEST_DEX (JUP) follows
+      const ownSolAddr = w.solAddress;
+      const customSolAddr = 'B7n2uQk6gZ9cK4mW1rX8pS3vD5tN9yL2aE4hF6jC8mN1p';
+      await withMockedFetch(async (url, opts) => {
+        if (url.includes('1click.chaindefuser.com/v0/quote')) {
+          const req = JSON.parse(opts.body);
+          if (req.originAsset === prlTok.assetId) {
+            return jsonResponse({
+              quote: { amountOut: '10000000000', amountOutFormatted: '100', amountInUsd: '100', amountOutUsd: '100' }
+            });
+          }
+          if (req.destinationAsset === 'nep141:sol.omft.near' || req.destinationAsset === solUsdcTok.assetId) {
+            return jsonResponse({
+              quote: { amountOut: '500000000', amountOutFormatted: '0.5', amountInUsd: '100', amountOutUsd: '99.5' }
+            });
+          }
+          return jsonResponse({}, 400);
+        }
+        if (url.includes('smartrouter.ref.finance')) {
+          const u = new URL(url);
+          const tIn = u.searchParams.get('tokenIn') || 'prl.omft.near';
+          const tOut = u.searchParams.get('tokenOut') || 'wrap.near';
+          const amtIn = u.searchParams.get('amountIn') || '10000000000';
+          return jsonResponse({
+            result_code: 0,
+            result_data: {
+              amount_out: '5000000000000000000000000',
+              routes: [{
+                min_amount_out: '4900000000000000000000000',
+                pools: [{
+                  pool_id: 9010,
+                  token_in: tIn,
+                  token_out: tOut,
+                  amount_in: amtIn,
+                  min_amount_out: '4900000000000000000000000'
+                }]
+              }]
+            }
+          });
+        }
+        if (url.includes('api.jup.ag') || url.includes('lite-api.jup.ag')) {
+          return jsonResponse({ outAmount: '80000000' });
+        }
+        return jsonResponse({}, 404);
+      }, async () => {
+        const smartJup = await nearIntents.quoteSmartHubRoute({
+          fromToken: prlTok,
+          toToken: jupTok,
+          amountRaw: '10000000000',
+          slippageBps: 100,
+          recipient: customSolAddr,
+          refundTo: w.address,
+          nearAccountId: w.nearNamedAccount,
+          solAddress: ownSolAddr,
+          evmAddress: w.mpcEvmAddress
+        });
+        assert.equal(smartJup.ok, true);
+        const bridgeOutStage = smartJup.stages.find((s) => s.type === 'BRIDGE_OUT');
+        assert.ok(bridgeOutStage);
+        assert.equal(bridgeOutStage.recipient, ownSolAddr, 'Intermediate BRIDGE_OUT before DEST_DEX must use self wallet solAddress');
+
+        const smartUsdc = await nearIntents.quoteCrossChainWithDexRelay({
+          fromToken: prlTok,
+          toToken: solUsdcTok,
+          amountRaw: '10000000000',
+          slippageBps: 100,
+          recipient: customSolAddr,
+          refundTo: w.address,
+          nearAccountId: w.nearNamedAccount,
+          solAddress: ownSolAddr,
+          evmAddress: w.mpcEvmAddress
+        });
+        assert.equal(smartUsdc.ok, true);
+        if (Array.isArray(smartUsdc.stages)) {
+          const outUsdc = smartUsdc.stages.find((s) => s.type === 'BRIDGE_OUT');
+          if (outUsdc) assert.equal(outUsdc.recipient, customSolAddr);
+        }
+      });
+
+      // 6. PRL -> NEAR Ref route label explicitly shows 1Click (Pearl->NEAR)
+      await withMockedFetch(async (url) => {
+        if (url.includes('1click.chaindefuser.com/v0/quote')) {
+          return jsonResponse({
+            quote: { amountOut: '1000000000', amountOutFormatted: '10', amountInUsd: '20', amountOutUsd: '19.9' }
+          });
+        }
+        if (url.includes('smartrouter.ref.finance')) {
+          return jsonResponse({
+            result_code: 0,
+            result_data: {
+              amount_out: '5000000000000000000000000',
+              routes: [{
+                min_amount_out: '4900000000000000000000000',
+                pools: [{
+                  pool_id: 9010,
+                  token_in: 'prl.omft.near',
+                  token_out: 'wrap.near',
+                  amount_in: '1000000000',
+                  min_amount_out: '4900000000000000000000000'
+                }]
+              }]
+            }
+          });
+        }
+        return jsonResponse({}, 404);
+      }, async () => {
+        const prlNearQuote = await nearIntents.quoteCrossChainWithDexRelay({
+          fromToken: prlTok,
+          toToken: nearNativeTok,
+          amountRaw: '1000000000',
+          slippageBps: 100,
+          recipient: w.nearNamedAccount,
+          refundTo: w.address,
+          nearAccountId: w.nearNamedAccount,
+          solAddress: ownSolAddr,
+          evmAddress: w.mpcEvmAddress
+        });
+        assert.equal(prlNearQuote.ok, true);
+        assert.ok(
+          String(prlNearQuote.routeLabel || '').includes('1Click (Pearl➔NEAR'),
+          `Expected 1Click (Pearl➔NEAR...) in routeLabel, got ${prlNearQuote.routeLabel}`
+        );
+      });
+
+      // 8. Solana ATA detection distinguishes existing 0-bal ATA from uninitialized ATA
+      const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+      const JUP_MINT = 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN';
+      await withMockedFetch(async (_url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'getBalance') {
+          return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { value: 2000000 } });
+        }
+        if (body.method === 'getTokenAccountsByOwner') {
+          const progId = body.params?.[1]?.programId;
+          if (progId === 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') {
+            return jsonResponse({
+              jsonrpc: '2.0',
+              id: body.id,
+              result: {
+                value: [
+                  { account: { data: { parsed: { info: { mint: USDC_MINT, tokenAmount: { amount: '0', decimals: 6 } } } } } }
+                ]
+              }
+            });
+          }
+          return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { value: [] } });
+        }
+        return jsonResponse({}, 404);
+      }, async () => {
+        const solBal = await chainContracts.fetchSolanaNativeAndSplBalances(w.solAddress, [USDC_MINT, JUP_MINT]);
+        assert.equal(solBal.tokens[USDC_MINT].hasAta, true);
+        assert.equal(solBal.tokens[JUP_MINT].hasAta, false);
+        assert.equal(solBal.ataMints[USDC_MINT], true);
+        assert.equal(Boolean(solBal.ataMints[JUP_MINT]), false);
+
+        w.nativeBalances.sol = 0;
+        w.splBalances = { [USDC_MINT]: 0, [JUP_MINT]: 0 };
+        w.solAtaMints = solBal.ataMints;
+        const jupReserve = uiController.getTargetChainGasReserveInfo(w, prlTok, jupTok, 'auto', {
+          compositeType: 'SMART_HUB_ROUTE',
+          stages: [{ type: 'DEST_DEX', chain: 'sol' }]
+        });
+        assert.equal(jupReserve.isNewSolAta, true);
+        assert.equal(jupReserve.recommendedReserve, 0.0035);
+
+        const usdcReserve = uiController.getTargetChainGasReserveInfo(w, prlTok, solUsdcTok, 'auto', {
+          compositeType: 'SMART_HUB_ROUTE',
+          stages: [{ type: 'DEST_DEX', chain: 'sol' }]
+        });
+        assert.equal(usdcReserve.isNewSolAta, false);
+      });
+    } finally {
+      globalThis.document = prevDoc;
+      state.wallets = prevWallets;
+      state.activeWalletId = prevActiveId;
+      state.lang = prevLang;
+      Object.assign(state.swap, prevSwap);
+      if (orheaTok) orheaTok.price = prevOrheaPrice;
+    }
+  });
+
+  // 9. Static cache & lazy module versions updated to v6.6
+  const swSrc = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
+  const htmlSrc = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const uiSrc = fs.readFileSync(path.join(ROOT_DIR, 'src', 'ui-controller.js'), 'utf8');
+  assert.ok(swSrc.includes("nexus-wallet-v6.6"));
+  assert.equal(swSrc.includes('?v=6.5'), false);
+  assert.ok(htmlSrc.includes('src/ui-controller.js?v=6.6'));
+  assert.equal(htmlSrc.includes('?v=6.5'), false);
+  assert.ok(uiSrc.includes('ethers.umd.min.js?v=6.6'));
+  assert.equal(uiSrc.includes('?v=6.5'), false);
+
+  // 10. NEAR Pair Comparator Grace Window waits for slower 1Click Solver instead of letting shallow fast Rhea CLMM abort it
+  const nearWrapTok = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'NEAR' && t.blockchain === 'near');
+  const qtcNearCoreTok = (tokenRegistry.DEX_CHAIN_TOKENS.near || []).find((t) => t.symbol === 'QTC');
+  await withMockedFetch(async (url, opts) => {
+    if (url.includes('1click.chaindefuser.com/v0/quote')) {
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      if (opts?.signal?.aborted) {
+        const err = new Error('The operation was aborted');
+        err.name = 'AbortError';
+        throw err;
+      }
+      return jsonResponse({
+        quote: {
+          amountOut: '2357397651877',
+          amountOutFormatted: '2.357397651877',
+          amountInUsd: '91.50',
+          amountOutUsd: '90.54'
+        }
+      });
+    }
+    if (opts?.body) {
+      const rpcBody = JSON.parse(opts.body);
+      if (rpcBody?.params?.account_id === 'dclv2.ref-labs.near' && rpcBody?.params?.method_name === 'quote') {
+        const payloadBytes = Array.from(Buffer.from(JSON.stringify({ amount: '2113772000000' })));
+        return jsonResponse({ jsonrpc: '2.0', id: rpcBody.id, result: { result: payloadBytes } });
+      }
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const cmpRes = await nearIntents.quoteBestNearPairSwap({
+      fromToken: nearWrapTok,
+      toToken: qtcNearCoreTok,
+      amountRaw: '30000000000000000000000000',
+      slippageBps: 100,
+      recipient: 'alice.near',
+      nearAccountId: 'alice.near'
+    });
+    assert.equal(cmpRes.ok, true);
+    assert.equal(cmpRes.bestSource, '1Click Solver');
+    assert.equal(cmpRes.amountOut, '2357397651877');
+    assert.ok(cmpRes.comparedPools >= 2, `Expected >= 2 compared pools, got ${cmpRes.comparedPools}`);
+  });
+
+  // 11. Stale v6.3 localStorage SVG logoURI cleanup (PONS / QTC) & High Price Impact Warning
+  const ponsCore = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'PONS' && t.blockchain === 'hood');
+  const stalePonsSvg = tokenRegistry.resolveTokenIcon({ symbol: 'PONS', blockchain: 'hood' }).fallbackUrl;
+  assert.ok(stalePonsSvg.startsWith('data:image/svg+xml;base64,'));
+  await withMockedStorage({}, async () => {
+    state.saveCachedLiveTokens([
+      {
+        assetId: ponsCore.assetId,
+        symbol: 'PONS',
+        name: 'Pons',
+        blockchain: 'hood',
+        contractAddress: ponsCore.contractAddress,
+        decimals: 18,
+        price: 0.103,
+        logoURI: stalePonsSvg
+      }
+    ]);
+    const loaded = state.loadCachedLiveTokens();
+    const loadedPons = loaded.find((t) => t.symbol === 'PONS');
+    assert.equal(loadedPons.logoURI, '', 'Stale generated SVG logoURI must be stripped from cached liveTokens');
+    assert.equal(Boolean(ponsCore.logoURI && ponsCore.logoURI.startsWith('data:image/svg+xml')), false);
+    const resolvedPons = tokenRegistry.resolveTokenIcon({
+      symbol: 'PONS',
+      blockchain: 'hood',
+      logoURI: stalePonsSvg
+    });
+    assert.ok(resolvedPons.primaryUrl.startsWith('https://'), 'resolveTokenIcon must prioritize official remote URL over stale generated SVG');
+    assert.equal(resolvedPons.fallbackUrl, stalePonsSvg);
+  });
+
+  const lowImpact = uiController.computeSwapPriceImpact(91.50, 90.54);
+  assert.equal(lowImpact.level, 'none');
+  const highImpact = uiController.computeSwapPriceImpact(91.50, 81.08);
+  assert.equal(highImpact.level, 'high');
+  assert.equal(highImpact.pct, 11.39);
+  const critImpact = uiController.computeSwapPriceImpact(100, 78);
+  assert.equal(critImpact.level, 'critical');
+  assert.equal(critImpact.pct, 22);
+  const nullImpact = uiController.computeSwapPriceImpact(0, 10);
+  assert.equal(nullImpact.level, 'none');
+
+  const keysImpact = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+  const fundedNearWallet = state.normalizeWalletRecord({
+    id: 'w_v66_impact',
+    mnemonic: TEST_MNEMONIC,
+    nearNamedAccount: 'alice.near',
+    nearPublicKey: keysImpact.nearPublicKey,
+    nearPrivateKey: keysImpact.nearPrivateKey,
+    nativeBalances: { near: 100 }
+  });
+  const btnCrit = uiController.evaluateSwapButtonState({
+    wallet: fundedNearWallet,
+    fromToken: nearWrapTok,
+    toToken: qtcNearCoreTok,
+    amountIn: '30',
+    priceImpact: critImpact
+  });
+  assert.equal(btnCrit.reason, 'ready_high_impact');
+  assert.equal(btnCrit.disabled, false);
+  assert.equal(btnCrit.isWarning, true);
+  assert.ok(btnCrit.text.includes('-22.0%'));
 });

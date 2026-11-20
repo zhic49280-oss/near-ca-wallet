@@ -1855,6 +1855,7 @@
       const nativeSol = Number(fromBaseUnits(String(lamports), 9));
 
       const tokens = {};
+      const ataMints = {};
       const parseSplAccounts = (res) => {
         const list = res && Array.isArray(res.value) ? res.value : [];
         for (const item of list) {
@@ -1863,11 +1864,12 @@
           const mint = info.mint;
           const decimals = Number(info.tokenAmount.decimals) || 0;
           const rawAmt = BigInt(info.tokenAmount.amount || '0');
+          ataMints[mint] = true;
           if (!tokens[mint]) {
-            tokens[mint] = { raw: rawAmt.toString(), decimals, formatted: Number(fromBaseUnits(rawAmt.toString(), decimals)) };
+            tokens[mint] = { raw: rawAmt.toString(), decimals, formatted: Number(fromBaseUnits(rawAmt.toString(), decimals)), hasAta: true };
           } else {
             const sumRaw = BigInt(tokens[mint].raw) + rawAmt;
-            tokens[mint] = { raw: sumRaw.toString(), decimals, formatted: Number(fromBaseUnits(sumRaw.toString(), decimals)) };
+            tokens[mint] = { raw: sumRaw.toString(), decimals, formatted: Number(fromBaseUnits(sumRaw.toString(), decimals)), hasAta: true };
           }
         }
       };
@@ -1878,7 +1880,7 @@
       if (Array.isArray(mintAddresses)) {
         for (const m of mintAddresses) {
           if (m && !tokens[m]) {
-            tokens[m] = { raw: '0', decimals: 0, formatted: 0 };
+            tokens[m] = { raw: '0', decimals: 0, formatted: 0, hasAta: false };
           }
         }
       }
@@ -1887,7 +1889,8 @@
         solAddress: addr,
         nativeLamports: String(lamports),
         nativeSol,
-        tokens
+        tokens,
+        ataMints
       };
     } catch (_) {
       return null;
@@ -1957,7 +1960,7 @@
             fetchJsonWithTimeout(rayUrl, { signal: mergedSig }, 4500).catch(() => null)
           ],
           (v) => Boolean(v && (v.outAmount || (v.success && v.data && v.data.outputAmount))),
-          450,
+          1000,
           5000,
           localCtrl
         );
@@ -4076,7 +4079,7 @@
               (v.estimate && v.estimate.toAmount)
             )
           ),
-          350,
+          1200,
           5000,
           localCtrl
         );
@@ -6070,6 +6073,7 @@
     }
 
     // Jupiter DAO Staking (JUP -> Staked JUP) from Solana Locker CVMdMd... offset 73
+    // Active Staking Rewards (ASR) official pool: 50M JUP/quarter (200M JUP/yr) allocated by locked JUP share
     if (jupLockerRes.status === 'fulfilled' && jupLockerRes.value && jupLockerRes.value.value?.data?.[0]) {
       try {
         const buf = base64ToBytes(String(jupLockerRes.value.value.data[0]));
@@ -6078,12 +6082,16 @@
           const lockedJup = Number(lockedRaw) / 1e6;
           if (Number.isFinite(lockedJup) && lockedJup > 0) {
             const tvlText = formatTvlToken(lockedJup, 'JUP');
-            setPool('jupiter_jup', { rate: 1.0, apy: null, tvlText, tvlTokenAmount: lockedJup });
+            const rawAsrApy = (200_000_000 / lockedJup) * 100;
+            const asrApy = Number.isFinite(rawAsrApy) && rawAsrApy > 0
+              ? Number(rawAsrApy.toFixed(2))
+              : null;
+            setPool('jupiter_jup', { rate: 1.0, apy: asrApy, isAsrEstimated: true, tvlText, tvlTokenAmount: lockedJup });
           }
         }
       } catch (_) {}
     } else {
-      setPool('jupiter_jup', { rate: 1.0 });
+      setPool('jupiter_jup', { rate: 1.0, apy: null, isAsrEstimated: false });
     }
 
     // Solana LST holderCount & TVL (converted to staked SOL quantity via live exchange rate)
@@ -7148,7 +7156,7 @@
       }
 
       try {
-        const smartRouterPromise = fetchJsonWithTimeout(url, { signal: mergedSig }, 3000).catch(() => null);
+        const smartRouterPromise = fetchJsonWithTimeout(url, { signal: mergedSig }, 5000).catch(() => null);
         const directKnownPromise = knownPoolId !== null
           ? quoteDirectRefV2SingleHop(knownPoolId, inId, outId, amtStr, slipVal, mergedSig).catch(() => null)
           : Promise.resolve(null);
@@ -7201,8 +7209,8 @@
         const [srRace, dirRace, dclRace] = await raceWithGraceWindow(
           [smartRouterPromise, directKnownPromise, dclStage1Promise],
           (v) => Boolean(v && ((v.ok && v.amountOut) || parseSmartRouter(v))),
-          550,
-          3200,
+          1500,
+          5500,
           stage1Ctrl
         );
 

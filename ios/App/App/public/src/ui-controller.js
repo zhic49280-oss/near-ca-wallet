@@ -55,7 +55,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.3');
+      await loadScriptOnce('ethers.umd.min.js?v=6.6');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -65,7 +65,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.3').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.6').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -75,7 +75,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.3').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.6').catch(() => false);
       return getMining();
     }
     return null;
@@ -1381,6 +1381,7 @@
   let _priceIndexLiveRef = null;
   let _priceIndexLiveLen = -1;
   let _priceIndexSolLen = -1;
+  let _priceIndexUpdatedAt = -1;
 
   function rebuildPriceIndex() {
     const tokens = getTokens();
@@ -1407,6 +1408,7 @@
     _priceIndexLiveRef = st.liveTokens || null;
     _priceIndexLiveLen = Array.isArray(st.liveTokens) ? st.liveTokens.length : 0;
     _priceIndexSolLen = Array.isArray(st.dynamicSolTokens) ? st.dynamicSolTokens.length : 0;
+    _priceIndexUpdatedAt = Number(st.pricesUpdatedAt || 0);
     return map;
   }
 
@@ -1414,10 +1416,12 @@
     const st = getState();
     const curLiveLen = Array.isArray(st.liveTokens) ? st.liveTokens.length : 0;
     const curSolLen = Array.isArray(st.dynamicSolTokens) ? st.dynamicSolTokens.length : 0;
+    const curUpdatedAt = Number(st.pricesUpdatedAt || 0);
     if (
       st.liveTokens !== _priceIndexLiveRef ||
       curLiveLen !== _priceIndexLiveLen ||
-      curSolLen !== _priceIndexSolLen
+      curSolLen !== _priceIndexSolLen ||
+      curUpdatedAt !== _priceIndexUpdatedAt
     ) {
       rebuildPriceIndex();
     }
@@ -1427,6 +1431,21 @@
     if (symUpper === 'WNEAR') return _priceIndexMap.get('NEAR') ?? null;
     if (symUpper === 'WETH') return _priceIndexMap.get('ETH') ?? null;
     return null;
+  }
+
+  function getTokenUnitPrice(tok) {
+    if (!tok) return null;
+    if (typeof tok.price === 'number' && Number.isFinite(tok.price) && tok.price > 0) {
+      return tok.price;
+    }
+    const tokens = getTokens();
+    if (tokens && typeof tokens.findTokenByAssetId === 'function' && tok.assetId) {
+      const fresh = tokens.findTokenByAssetId(tok.assetId, tok.blockchain || '');
+      if (fresh && typeof fresh.price === 'number' && Number.isFinite(fresh.price) && fresh.price > 0) {
+        return fresh.price;
+      }
+    }
+    return getSymbolPrice(tok.symbol);
   }
 
   function getSymbolIcon(symbol) {
@@ -1622,6 +1641,14 @@
           if (st.activeTab === 'wallet') {
             renderHeaderAndHero();
             renderUnifiedAssetList();
+          } else if (st.activeTab === 'swap') {
+            const ft = resolveSwapToken(st.swap.fromAssetId, 0);
+            const tt = resolveSwapToken(st.swap.toAssetId, 1);
+            if ($('swap-from-balance')) $('swap-from-balance').textContent = `${formatBal(getSwapTokenAvailableBalance(ft), 6)} ${ft ? ft.symbol : ''}`;
+            if ($('swap-to-balance')) $('swap-to-balance').textContent = `${formatBal(getSwapTokenAvailableBalance(tt), 6)} ${tt ? tt.symbol : ''}`;
+            if (ft && tt) renderSwapGasReserveRow(wallet, ft, tt);
+            updateSwapUsdEstimates();
+            updateSwapPrimaryButtonState();
           }
           const ds = $('sheet-token-detail');
           if (ds && ds.classList && ds.classList.contains('open')) {
@@ -1726,13 +1753,23 @@
         wallet.solAddress ? contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, solMints).then((res) => {
           if (!isStaleRefresh() && res && typeof res === 'object') {
             if (typeof res.nativeSol === 'number') wallet.nativeBalances.sol = res.nativeSol;
+            const nextAtaMints = {};
+            if (res.ataMints && typeof res.ataMints === 'object') {
+              for (const [m, exists] of Object.entries(res.ataMints)) {
+                if (exists) nextAtaMints[m] = true;
+              }
+            }
             if (res.tokens && typeof res.tokens === 'object') {
               for (const [mint, info] of Object.entries(res.tokens)) {
                 if (info && typeof info.formatted === 'number' && Number.isFinite(info.formatted)) {
                   wallet.splBalances[mint] = info.formatted;
+                  if (info.hasAta === true || (info.hasAta !== false && info.formatted > 0)) {
+                    nextAtaMints[mint] = true;
+                  }
                 }
               }
             }
+            wallet.solAtaMints = nextAtaMints;
             scheduleProgressiveWalletRender();
           }
           return res;
@@ -1789,13 +1826,23 @@
         if (typeof solBalRes.nativeSol === 'number') {
           wallet.nativeBalances.sol = solBalRes.nativeSol;
         }
+        const nextAtaMints = {};
+        if (solBalRes.ataMints && typeof solBalRes.ataMints === 'object') {
+          for (const [m, exists] of Object.entries(solBalRes.ataMints)) {
+            if (exists) nextAtaMints[m] = true;
+          }
+        }
         if (solBalRes.tokens && typeof solBalRes.tokens === 'object') {
           for (const [mint, info] of Object.entries(solBalRes.tokens)) {
             if (info && typeof info.formatted === 'number' && Number.isFinite(info.formatted)) {
               wallet.splBalances[mint] = info.formatted;
+              if (info.hasAta === true || (info.hasAta !== false && info.formatted > 0)) {
+                nextAtaMints[mint] = true;
+              }
             }
           }
         }
+        wallet.solAtaMints = nextAtaMints;
       }
 
       evmAllChainKeys.forEach((ck, i) => {
@@ -3879,7 +3926,10 @@
 
   function openReceiveSheet(networkKey = 'near') {
     const st = getState();
-    st.receive.selectedNetwork = networkKey;
+    const rawKey = String(networkKey || 'near').toLowerCase();
+    st.receive.selectedNetwork = ['arc', 'eth', 'base', 'arb', 'op', 'pol', 'bsc', 'hype', 'hood', 'avax'].includes(rawKey)
+      ? 'evm'
+      : rawKey;
     renderReceiveSheet();
     openSheet('sheet-receive');
   }
@@ -3932,8 +3982,7 @@
 
     const options = [
       { key: 'near', label: 'NEAR (.near)', addr: wallet.nearNamedAccount || wallet.nearAddress },
-      { key: 'evm', label: 'EVM (ETH / Base / ARB / OP / POL / BSC)', addr: wallet.mpcEvmAddress || wallet.evmAddress },
-      { key: 'arc', label: 'Arc Network (USDC)', addr: wallet.mpcEvmAddress || wallet.evmAddress },
+      { key: 'evm', label: 'EVM (ETH / Base / ARB / OP / POL / BSC / Arc)', addr: wallet.mpcEvmAddress || wallet.evmAddress },
       { key: 'sol', label: 'Solana (SOL)', addr: wallet.solAddress },
       { key: 'btc', label: t('Bitcoin (BTC 主网)', 'Bitcoin (BTC Mainnet)'), addr: wallet.btcAddress },
       { key: 'prl', label: t('Pearl (PRL 主网)', 'Pearl (PRL Mainnet)'), addr: wallet.address },
@@ -4179,9 +4228,13 @@
       (toChain === 'arc' && toContractLower === '0x3600000000000000000000000000000000000000')
     );
     if (isSolNative || isEvmNative) return empty;
+    const hasTrackedSolAtas = Boolean(wallet.solAtaMints && typeof wallet.solAtaMints === 'object');
     const isNewSolAta = Boolean(
-      isBuyingSolToken &&
-        !(wallet.splBalances && Object.prototype.hasOwnProperty.call(wallet.splBalances, toToken.contractAddress))
+      isBuyingSolToken && (
+        hasTrackedSolAtas
+          ? !wallet.solAtaMints[toToken.contractAddress]
+          : !(wallet.splBalances && Object.prototype.hasOwnProperty.call(wallet.splBalances, toToken.contractAddress))
+      )
     );
 
     // Cross-chain target gas reserve ONLY applies when a resolved route actually contains a DEST_DEX stage
@@ -4317,12 +4370,312 @@
       const amtOutText = formatBal(netOutNum, 6);
       st.swap.amountOut = amtOutText;
       if ($('swap-amount-out')) $('swap-amount-out').value = amtOutText;
-      const outPrice = getSymbolPrice(toToken.symbol);
-      const usdOut = st.swap.quoteData.amountOutUsd
-        ? formatUsd(Number(st.swap.quoteData.amountOutUsd) * ratio)
-        : (outPrice !== null && Number.isFinite(netOutNum) ? formatUsd(netOutNum * outPrice) : '--');
+      const outPrice = getTokenUnitPrice(toToken);
+      const numUsdOut = st.swap.quoteData.amountOutUsd && Number(st.swap.quoteData.amountOutUsd) > 0
+        ? Number(st.swap.quoteData.amountOutUsd) * ratio
+        : (outPrice !== null && Number.isFinite(netOutNum) ? netOutNum * outPrice : null);
+      st.swap._usdOutVal = numUsdOut;
+      const usdOut = numUsdOut !== null ? formatUsd(numUsdOut) : '--';
       if ($('swap-usd-out')) $('swap-usd-out').textContent = usdOut;
     }
+    updateSwapPrimaryButtonState();
+  }
+
+  function isSwapTokenNative(tok) {
+    if (!tok) return false;
+    const c = String(tok.contractAddress || '').toLowerCase();
+    return !tok.contractAddress ||
+      tok.blockchain === 'prl' ||
+      tok.blockchain === 'btc' ||
+      tok.contractAddress === 'So11111111111111111111111111111111111111112' ||
+      c === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' ||
+      tok.contractAddress === 'wrap.near' ||
+      (tok.blockchain === 'arc' && c === '0x3600000000000000000000000000000000000000');
+  }
+
+  function doesSwapRouteRequireSelfRecipient(fromToken, toToken, quoteData = null) {
+    if (!fromToken || !toToken) return false;
+    if (isSameChainContractSwap(fromToken, toToken)) return true;
+
+    const toBc = String(toToken.blockchain || '').toLowerCase();
+    const arcUsdcLower = '0x3600000000000000000000000000000000000000';
+    const evmNativeSentinel = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+    const solNativeMint = 'So11111111111111111111111111111111111111112';
+
+    if (quoteData) {
+      const compType = String(quoteData.compositeType || '');
+      const stages = Array.isArray(quoteData.stages) ? quoteData.stages : [];
+      if (compType === 'SMART_HUB_ROUTE' && stages.length > 0) {
+        const lastType = stages[stages.length - 1]?.type;
+        return lastType === 'DEST_DEX' || lastType === 'NEAR_SWAP';
+      }
+      if (['CROSS_CHAIN_TO_SOL_DEX', 'CROSS_CHAIN_TO_EVM_DEX', 'PRL_TO_NEAR_REF', 'PRL_TO_NEAR_DCL'].includes(compType)) {
+        return true;
+      }
+      if (['EVM_TO_ARC_MAINNET', 'CROSS_CHAIN_TO_ARC_MAINNET'].includes(compType)) {
+        const arcDestLower = String(toToken.contractAddress || arcUsdcLower).toLowerCase();
+        return Boolean(toToken.contractAddress && arcDestLower !== arcUsdcLower && arcDestLower !== evmNativeSentinel);
+      }
+      return false;
+    }
+
+    if (isPrlSwapToken(fromToken) && toBc === 'near' && !isPrlSwapToken(toToken)) {
+      return true;
+    }
+    if (toBc === 'arc') {
+      const arcDestLower = String(toToken.contractAddress || arcUsdcLower).toLowerCase();
+      return Boolean(toToken.contractAddress && arcDestLower !== arcUsdcLower && arcDestLower !== evmNativeSentinel);
+    }
+
+    const intents = getIntents();
+    const resolvedDest = (intents && typeof intents.resolveOneClickAssetId === 'function')
+      ? intents.resolveOneClickAssetId(toToken, toBc)
+      : String(toToken.assetId || '');
+    const isOneClickDirect = /^(nep141:|nep245:|1cs_v1:)/i.test(String(resolvedDest || ''));
+
+    if (toBc === 'sol' && toToken.contractAddress && toToken.contractAddress !== solNativeMint && !isOneClickDirect) {
+      return true;
+    }
+    if (['eth', 'base', 'arb', 'op', 'pol', 'avax', 'bsc', 'hood'].includes(toBc)
+      && toToken.contractAddress
+      && toToken.contractAddress.toLowerCase() !== evmNativeSentinel
+      && !isOneClickDirect) {
+      return true;
+    }
+    return false;
+  }
+
+  function syncSwapRecipientInputState(wallet, fromToken, toToken, quoteData = null) {
+    const st = getState();
+    const recInput = $('swap-recipient-input');
+    const contactsBtn = $('swap-recipient-contacts-btn');
+    if (!recInput) return false;
+    const locked = doesSwapRouteRequireSelfRecipient(fromToken, toToken, quoteData);
+    if (locked) {
+      recInput.value = getWalletDefaultRecipientForChain(wallet, toToken?.blockchain);
+      recInput.disabled = true;
+      if (contactsBtn) contactsBtn.disabled = true;
+    } else {
+      recInput.disabled = false;
+      if (contactsBtn) contactsBtn.disabled = false;
+      if (!st.swap.recipientAddress && toToken) {
+        st.swap.recipientAddress = getWalletDefaultRecipientForChain(wallet, toToken.blockchain);
+      }
+      recInput.value = st.swap.recipientAddress || '';
+    }
+    return locked;
+  }
+
+  function computeSwapPriceImpact(usdIn, usdOut) {
+    const inVal = Number(usdIn);
+    const outVal = Number(usdOut);
+    if (!Number.isFinite(inVal) || inVal <= 0 || !Number.isFinite(outVal) || outVal < 0) {
+      return { pct: null, level: 'none', usdIn: null, usdOut: null };
+    }
+    const rawPct = ((inVal - outVal) / inVal) * 100;
+    const pct = Number(Math.max(0, rawPct).toFixed(2));
+    const level = pct >= 15 ? 'critical' : (pct >= 5 ? 'high' : 'none');
+    return { pct, level, usdIn: inVal, usdOut: outVal };
+  }
+
+  function updateSwapPriceImpactUI() {
+    const st = getState();
+    const banner = $('swap-price-impact-banner');
+    if (!banner) return null;
+    const hasQuote = Boolean(st.swap.quoteData && Number(st.swap.amountOut) > 0);
+    const impact = hasQuote
+      ? computeSwapPriceImpact(st.swap._usdInVal, st.swap._usdOutVal)
+      : { pct: null, level: 'none', usdIn: null, usdOut: null };
+    if (!hasQuote || impact.level === 'none') {
+      banner.classList.add('hidden');
+      banner.classList.remove('is-high', 'is-critical');
+      banner.textContent = '';
+      return impact;
+    }
+    banner.classList.remove('hidden');
+    if (impact.level === 'critical') {
+      banner.classList.remove('is-high');
+      banner.classList.add('is-critical');
+      banner.textContent = t(
+        `🚨 价格影响极大 (-${impact.pct.toFixed(1)}%)：支付 ${formatUsd(impact.usdIn)}，仅得约 ${formatUsd(impact.usdOut)}，请谨慎确认`,
+        `🚨 Severe price impact (-${impact.pct.toFixed(1)}%): Paying ${formatUsd(impact.usdIn)} for ~${formatUsd(impact.usdOut)}. Proceed with caution`
+      );
+    } else {
+      banner.classList.remove('is-critical');
+      banner.classList.add('is-high');
+      banner.textContent = t(
+        `⚠️ 价差偏大 (-${impact.pct.toFixed(1)}%)：支付 ${formatUsd(impact.usdIn)}，预计约得 ${formatUsd(impact.usdOut)}`,
+        `⚠️ High price impact (-${impact.pct.toFixed(1)}%): Paying ${formatUsd(impact.usdIn)} for ~${formatUsd(impact.usdOut)}`
+      );
+    }
+    return impact;
+  }
+
+  function updateSwapUsdEstimates() {
+    const st = getState();
+    const amt = Number(st.swap.amountIn);
+    const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
+    const toToken = resolveSwapToken(st.swap.toAssetId, 1);
+    const q = st.swap.quoteData || null;
+    const inEl = $('swap-usd-in');
+    const outEl = $('swap-usd-out');
+    let numIn = null;
+    if (Number.isFinite(amt) && amt > 0 && fromToken) {
+      const qUsdIn = q && Number(q.amountInUsd) > 0 ? Number(q.amountInUsd) : null;
+      const unitIn = getTokenUnitPrice(fromToken);
+      numIn = qUsdIn !== null ? qUsdIn : (unitIn !== null ? amt * unitIn : null);
+    }
+    st.swap._usdInVal = numIn;
+    if (inEl) {
+      inEl.textContent = numIn !== null ? formatUsd(numIn) : '--';
+    }
+    const outAmt = Number(st.swap.amountOut);
+    let numOut = null;
+    if (Number.isFinite(outAmt) && outAmt > 0 && toToken && q) {
+      const wallet = st.getActiveWallet();
+      const gInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', q);
+      const { ratio } = computeNetSwapOutput(q, toToken, gInfo);
+      const qUsdOut = Number(q.amountOutUsd) > 0 ? Number(q.amountOutUsd) * ratio : null;
+      const unitOut = getTokenUnitPrice(toToken);
+      numOut = qUsdOut !== null ? qUsdOut : (unitOut !== null ? outAmt * unitOut : null);
+    }
+    if (q && Number.isFinite(outAmt) && outAmt > 0) {
+      st.swap._usdOutVal = numOut;
+      if (outEl) outEl.textContent = numOut !== null ? formatUsd(numOut) : '--';
+    } else if (!Number.isFinite(outAmt) || outAmt <= 0) {
+      st.swap._usdOutVal = null;
+      if (outEl) outEl.textContent = '--';
+    }
+  }
+
+  function evaluateSwapButtonState({
+    wallet,
+    fromToken,
+    toToken,
+    amountIn,
+    quoteData = null,
+    quoteError = '',
+    isQuoting = false,
+    isExecuting = false,
+    gasReserveMode = 'auto',
+    priceImpact = null
+  } = {}) {
+    if (isExecuting) {
+      return { disabled: true, isError: false, isWarning: false, text: t('执行中...', 'Executing...'), reason: 'executing' };
+    }
+    if (fromToken && !isSwapOriginSupported(fromToken)) {
+      return {
+        disabled: true,
+        isError: true,
+        isWarning: false,
+        text: t(
+          `暂不支持从 ${String(fromToken.blockchain || '').toUpperCase()} 发起闪兑`,
+          `Swaps from ${String(fromToken.blockchain || '').toUpperCase()} are not supported yet`
+        ),
+        reason: 'unsupported_origin'
+      };
+    }
+    const amt = Number(amountIn);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return { disabled: false, isError: false, isWarning: false, text: t('确认闪兑', 'Execute Swap'), reason: 'empty' };
+    }
+    if (wallet && fromToken && toToken) {
+      const contracts = getContracts();
+      const avail = getWalletNativeBalanceForToken(wallet, fromToken.blockchain, fromToken.symbol, fromToken.contractAddress);
+      const isNative = isSwapTokenNative(fromToken);
+      const gasReserveInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, gasReserveMode || 'auto', quoteData);
+      if (contracts && typeof contracts.validateSufficientChainBalance === 'function') {
+        try {
+          contracts.validateSufficientChainBalance({
+            wallet,
+            chain: fromToken.blockchain,
+            tokenSymbol: fromToken.symbol,
+            amount: amt,
+            isNative,
+            tokenBalance: avail !== null ? avail : 0,
+            gasBuffer: isNative && fromToken.blockchain === 'sol' && gasReserveInfo.selectedReserve > 0
+              ? gasReserveInfo.selectedReserve
+              : null
+          });
+        } catch (_) {
+          const effectiveAvail = avail !== null ? avail : 0;
+          if (amt > effectiveAvail) {
+            return {
+              disabled: true,
+              isError: true,
+              isWarning: false,
+              text: t(`${fromToken.symbol} 余额不足`, `Insufficient ${fromToken.symbol}`),
+              reason: 'insufficient_balance'
+            };
+          }
+          const gasMap = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' };
+          const gasSym = gasMap[String(fromToken.blockchain || '').toLowerCase()] || 'ETH';
+          return {
+            disabled: true,
+            isError: true,
+            isWarning: false,
+            text: t(`${gasSym} Gas 余额不足`, `Insufficient ${gasSym} for gas`),
+            reason: 'insufficient_gas'
+          };
+        }
+      }
+      try {
+        validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData, amountIn: amt });
+      } catch (_) {
+        return {
+          disabled: true,
+          isError: true,
+          isWarning: false,
+          text: t('NEAR Gas 余额不足', 'Insufficient NEAR for gas'),
+          reason: 'insufficient_near_gas'
+        };
+      }
+    }
+    if (quoteError) {
+      return { disabled: true, isError: true, isWarning: false, text: String(quoteError), reason: 'quote_error' };
+    }
+    if (isQuoting) {
+      return { disabled: true, isError: false, isWarning: false, text: t('报价获取中...', 'Fetching quote...'), reason: 'quoting' };
+    }
+    if (priceImpact && priceImpact.level === 'critical' && Number.isFinite(priceImpact.pct)) {
+      return {
+        disabled: false,
+        isError: false,
+        isWarning: true,
+        text: t(`高价差 (-${priceImpact.pct.toFixed(1)}%) · 仍要闪兑`, `High Impact (-${priceImpact.pct.toFixed(1)}%) · Swap Anyway`),
+        reason: 'ready_high_impact'
+      };
+    }
+    return { disabled: false, isError: false, isWarning: false, text: t('确认闪兑', 'Execute Swap'), reason: 'ready' };
+  }
+
+  function updateSwapPrimaryButtonState() {
+    const st = getState();
+    const btn = $('btn-execute-swap');
+    const impact = updateSwapPriceImpactUI();
+    if (!btn) return null;
+    const wallet = st.getActiveWallet();
+    const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
+    const toToken = resolveSwapToken(st.swap.toAssetId, 1);
+    const view = evaluateSwapButtonState({
+      wallet,
+      fromToken,
+      toToken,
+      amountIn: st.swap.amountIn,
+      quoteData: st.swap.quoteData || null,
+      quoteError: st.swap._lastError || '',
+      isQuoting: Boolean(st.swap._quoting),
+      isExecuting: Boolean(st.swap._executing),
+      gasReserveMode: st.swap.gasReserveMode || 'auto',
+      priceImpact: impact
+    });
+    btn.disabled = Boolean(view.disabled);
+    if (btn.classList) {
+      btn.classList.toggle('is-error', Boolean(view.isError));
+      btn.classList.toggle('is-warning', Boolean(view.isWarning));
+    }
+    btn.textContent = view.text;
+    return view;
   }
 
   function renderSwapView() {
@@ -4331,14 +4684,18 @@
     const wallet = st.getActiveWallet();
     if (!wallet) return;
 
-    const execBtn = $('btn-execute-swap');
     const amtInputEl = $('swap-amount-in');
     const fromPickerBtn = $('swap-from-token-btn');
     const toPickerBtn = $('swap-to-token-btn');
-    if (execBtn) execBtn.disabled = false;
     if (amtInputEl) amtInputEl.disabled = false;
     if (fromPickerBtn) fromPickerBtn.disabled = false;
     if (toPickerBtn) toPickerBtn.disabled = false;
+
+    const errBanner = $('swap-error-banner');
+    if (errBanner) {
+      errBanner.classList.add('hidden');
+      errBanner.textContent = '';
+    }
 
     const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
     const toToken = resolveSwapToken(st.swap.toAssetId, 1);
@@ -4382,21 +4739,10 @@
       } else {
         routeBadge.textContent = `${fromMeta.shortName} ➔ ${toMeta.shortName} · ${t('超级多池聚合', 'Super-Aggregator')}`;
       }
+      routeBadge.title = routeBadge.textContent || '';
     }
 
-    const recInput = $('swap-recipient-input');
-    if (recInput) {
-      if (sameChainDex) {
-        recInput.value = getWalletDefaultRecipientForChain(wallet, toToken.blockchain);
-        recInput.disabled = true;
-      } else {
-        recInput.disabled = false;
-        if (!st.swap.recipientAddress && toToken) {
-          st.swap.recipientAddress = getWalletDefaultRecipientForChain(wallet, toToken.blockchain);
-        }
-        recInput.value = st.swap.recipientAddress;
-      }
-    }
+    syncSwapRecipientInputState(wallet, fromToken, toToken, st.swap.quoteData || null);
 
     const amtInp = $('swap-amount-in');
     if (amtInp && amtInp.value !== String(st.swap.amountIn || '')) {
@@ -4406,6 +4752,8 @@
       $('swap-amount-out').value = st.swap.amountOut || '';
     }
     renderSwapGasReserveRow(wallet, fromToken, toToken);
+    updateSwapUsdEstimates();
+    updateSwapPrimaryButtonState();
 
     if (typeof document !== 'undefined') {
       document.querySelectorAll('#swap-quote-meta [data-bps]').forEach((b) => {
@@ -4435,21 +4783,24 @@
     if ($('swap-quote-rate')) $('swap-quote-rate').textContent = '--';
     if ($('swap-quote-route')) $('swap-quote-route').textContent = '--';
     if ($('swap-quote-fee')) $('swap-quote-fee').textContent = '--';
-    if ($('swap-usd-in')) $('swap-usd-in').textContent = '--';
     if ($('swap-usd-out')) $('swap-usd-out').textContent = '--';
     const wallet = st.getActiveWallet();
     const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
     const toToken = resolveSwapToken(st.swap.toAssetId, 1);
     if (wallet && fromToken && toToken) {
+      syncSwapRecipientInputState(wallet, fromToken, toToken, null);
       renderSwapGasReserveRow(wallet, fromToken, toToken);
     }
+    updateSwapUsdEstimates();
   }
 
   function handleSwapAmountInput() {
     const st = getState();
     st.swap.amountIn = ($('swap-amount-in')?.value || '').trim();
+    st.swap._lastError = '';
+    st.swap._quoting = false;
     resetSwapQuoteDisplay();
-    if (!st.swap.amountIn || Number(st.swap.amountIn) <= 0) setSwapError('');
+    updateSwapPrimaryButtonState();
     scheduleSwapQuote();
   }
 
@@ -4460,13 +4811,7 @@
     if (!fromToken || bal === null || bal <= 0) return;
 
     const reserves = { sol: 0.002, eth: 0.0015, base: 0.0002, arb: 0.0002, bsc: 0.0005, op: 0.0002, pol: 0.01, avax: 0.005, hype: 0.0005, hood: 0.0002, arc: 0.02, near: 0.005, prl: 0.003, btc: 0.0001 };
-    const isNative = !fromToken.contractAddress ||
-      fromToken.blockchain === 'prl' ||
-      fromToken.blockchain === 'btc' ||
-      fromToken.contractAddress === 'So11111111111111111111111111111111111111112' ||
-      fromToken.contractAddress.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' ||
-      fromToken.contractAddress === 'wrap.near' ||
-      (fromToken.blockchain === 'arc' && fromToken.contractAddress.toLowerCase() === '0x3600000000000000000000000000000000000000');
+    const isNative = isSwapTokenNative(fromToken);
     const maxVal = isNative ? Math.max(0, bal - (reserves[fromToken.blockchain] || 0)) : bal;
     st.swap.amountIn = maxVal > 0 ? Number(maxVal.toFixed(6)).toString() : '0';
     if ($('swap-amount-in')) $('swap-amount-in').value = st.swap.amountIn;
@@ -4479,6 +4824,8 @@
     st.swap.fromAssetId = st.swap.toAssetId;
     st.swap.toAssetId = tmp;
     st.swap.recipientAddress = '';
+    st.swap._quoting = false;
+    st.swap._lastError = '';
     if (typeof st.saveSwapPair === 'function') st.saveSwapPair();
     setSwapError('');
     resetSwapQuoteDisplay();
@@ -4495,36 +4842,26 @@
       try { st.swap._quoteAbortCtrl.abort(); } catch (_) {}
       st.swap._quoteAbortCtrl = null;
     }
+    st.swap._quoting = false;
+    st.swap._lastError = '';
     resetSwapQuoteDisplay();
-    _swapQuoteTimer = setTimeout(() => { fetchLiveSwapQuoteAsync(); }, 180);
+    updateSwapPrimaryButtonState();
+    _swapQuoteTimer = setTimeout(() => { fetchLiveSwapQuoteAsync(); }, 350);
   }
 
   function setSwapError(msg) {
+    const st = getState();
     const el = $('swap-error-banner');
-    const btn = $('btn-execute-swap');
     const routeEl = $('swap-quote-route');
-    if (!msg) {
-      if (el) {
-        el.classList.add('hidden');
-        el.textContent = '';
-      }
-      if (btn) {
-        btn.classList.remove('is-error');
-        btn.textContent = t('确认闪兑', 'Execute Swap');
-      }
-    } else {
-      if (el) {
-        el.classList.remove('hidden');
-        el.textContent = msg;
-      }
-      if (routeEl && (!routeEl.textContent || routeEl.textContent === '--' || routeEl.textContent.includes('比价') || routeEl.textContent.includes('Comparing'))) {
-        routeEl.textContent = msg;
-      }
-      if (btn) {
-        btn.classList.add('is-error');
-        btn.textContent = msg;
-      }
+    if (el) {
+      el.classList.add('hidden');
+      el.textContent = '';
     }
+    st.swap._lastError = msg ? String(msg) : '';
+    if (msg && routeEl && (!routeEl.textContent || routeEl.textContent === '--' || routeEl.textContent.includes('比价') || routeEl.textContent.includes('Comparing'))) {
+      routeEl.textContent = msg;
+    }
+    updateSwapPrimaryButtonState();
   }
 
   async function fetchLiveSwapQuoteAsync() {
@@ -4536,6 +4873,7 @@
 
     const amt = Number(st.swap.amountIn);
     if (!Number.isFinite(amt) || amt <= 0) {
+      st.swap._quoting = false;
       setSwapError('');
       return;
     }
@@ -4544,8 +4882,11 @@
     const toToken = resolveSwapToken(st.swap.toAssetId, 1);
     if (!fromToken || !toToken || fromToken.assetId === toToken.assetId) return;
 
+    updateSwapUsdEstimates();
+
     if (!isSwapOriginSupported(fromToken)) {
       const unsupMsg = t(`暂不支持从 ${String(fromToken.blockchain || '').toUpperCase()} 发起闪兑`, `Swaps from ${String(fromToken.blockchain || '').toUpperCase()} are not supported yet`);
+      st.swap._quoting = false;
       resetSwapQuoteDisplay();
       setSwapError(unsupMsg);
       return;
@@ -4553,7 +4894,11 @@
 
     const sameChainDex = isSameChainContractSwap(fromToken, toToken);
     const amountRaw = intents.toBaseUnits(st.swap.amountIn, fromToken.decimals);
-    if (amountRaw === '0') return;
+    if (amountRaw === '0') {
+      st.swap._quoting = false;
+      updateSwapPrimaryButtonState();
+      return;
+    }
 
     const reqSnapshot = {
       amountIn: st.swap.amountIn,
@@ -4565,28 +4910,43 @@
     const cacheKey = `${fromToken.assetId}|${toToken.assetId}|${amountRaw}|${st.swap.slippageBps || 100}|${st.swap.recipientAddress || ''}`;
     const cached = _swapQuoteCache.get(cacheKey);
     if (cached && (Date.now() - cached.ts < 15000)) {
+      st.swap._quoting = false;
+      st.swap._lastError = '';
       setSwapError('');
       st.swap.quoteData = cached.quoteData;
       st.swap.quoteSource = cached.quoteSource;
       const gInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', cached.quoteData);
       const { netOutNum, ratio } = computeNetSwapOutput(cached.quoteData, toToken, gInfo, cached.grossOutNum);
       const netOutText = formatBal(netOutNum, 6);
-      const outPrice = getSymbolPrice(toToken.symbol);
-      const netUsdOut = cached.usdOutRaw
-        ? formatUsd(Number(cached.usdOutRaw) * ratio)
-        : (outPrice !== null && Number.isFinite(netOutNum) ? formatUsd(netOutNum * outPrice) : (cached.usdOut || '--'));
+      const unitIn = getTokenUnitPrice(fromToken);
+      const outPrice = getTokenUnitPrice(toToken);
+      const numUsdIn = cached.usdInRaw && Number(cached.usdInRaw) > 0
+        ? Number(cached.usdInRaw)
+        : (unitIn !== null ? amt * unitIn : null);
+      const numUsdOut = cached.usdOutRaw && Number(cached.usdOutRaw) > 0
+        ? Number(cached.usdOutRaw) * ratio
+        : (outPrice !== null && Number.isFinite(netOutNum) ? netOutNum * outPrice : null);
+      st.swap._usdInVal = numUsdIn;
+      st.swap._usdOutVal = numUsdOut;
+      const usdInText = numUsdIn !== null ? formatUsd(numUsdIn) : '--';
+      const netUsdOut = numUsdOut !== null ? formatUsd(numUsdOut) : (cached.usdOut || '--');
       st.swap.amountOut = netOutText;
       if ($('swap-amount-out')) $('swap-amount-out').value = netOutText;
       if ($('swap-quote-route')) $('swap-quote-route').textContent = cached.quoteSource;
-      if ($('swap-auto-route-badge')) $('swap-auto-route-badge').textContent = cached.quoteSource;
+      if ($('swap-auto-route-badge')) {
+        $('swap-auto-route-badge').textContent = cached.quoteSource;
+        $('swap-auto-route-badge').title = cached.quoteSource;
+      }
       if ($('swap-quote-fee')) {
         const feeBps = Number(cached.quoteData?.serviceFeeBps ?? cached.feeBps ?? 0);
         $('swap-quote-fee').textContent = feeBps > 0 ? `${(feeBps / 100).toString()}%` : '0%';
       }
       if ($('swap-quote-rate') && cached.rateText) $('swap-quote-rate').textContent = cached.rateText;
-      if ($('swap-usd-in') && cached.usdIn) $('swap-usd-in').textContent = cached.usdIn;
+      if ($('swap-usd-in')) $('swap-usd-in').textContent = usdInText;
       if ($('swap-usd-out')) $('swap-usd-out').textContent = netUsdOut;
+      syncSwapRecipientInputState(wallet, fromToken, toToken, cached.quoteData);
       renderSwapGasReserveRow(wallet, fromToken, toToken);
+      updateSwapPrimaryButtonState();
       return;
     }
 
@@ -4599,38 +4959,50 @@
     const isCancelledOrStale = () => Boolean((reqSignal && reqSignal.aborted) || isStaleReq());
 
     const applyAndCacheQuote = (quoteData, quoteSource, outHumanNum, usdInRaw, usdOutRaw) => {
+      st.swap._quoting = false;
+      st.swap._lastError = '';
       setSwapError('');
       const gInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', quoteData);
       const { netOutNum, ratio } = computeNetSwapOutput(quoteData, toToken, gInfo, outHumanNum);
       const amtOutText = formatBal(netOutNum, 6);
       const rateText = outHumanNum > 0 ? `1 ${fromToken.symbol} ≈ ${formatBal(outHumanNum / amt, 5)} ${toToken.symbol}` : '';
-      const inPrice = getSymbolPrice(fromToken.symbol);
-      const outPrice = getSymbolPrice(toToken.symbol);
-      const usdIn = usdInRaw ? formatUsd(Number(usdInRaw)) : (inPrice !== null ? formatUsd(amt * inPrice) : '--');
-      const usdOut = usdOutRaw
-        ? formatUsd(Number(usdOutRaw) * ratio)
-        : (outPrice !== null && Number.isFinite(netOutNum) ? formatUsd(netOutNum * outPrice) : '--');
+      const inPrice = getTokenUnitPrice(fromToken);
+      const outPrice = getTokenUnitPrice(toToken);
+      const numUsdIn = usdInRaw && Number(usdInRaw) > 0
+        ? Number(usdInRaw)
+        : (inPrice !== null ? amt * inPrice : null);
+      const numUsdOut = usdOutRaw && Number(usdOutRaw) > 0
+        ? Number(usdOutRaw) * ratio
+        : (outPrice !== null && Number.isFinite(netOutNum) ? netOutNum * outPrice : null);
+      st.swap._usdInVal = numUsdIn;
+      st.swap._usdOutVal = numUsdOut;
+      const usdIn = numUsdIn !== null ? formatUsd(numUsdIn) : '--';
+      const usdOut = numUsdOut !== null ? formatUsd(numUsdOut) : '--';
       const feeBps = Number(quoteData?.serviceFeeBps ?? 0);
       st.swap.quoteData = quoteData;
       st.swap.quoteSource = quoteSource;
       st.swap.amountOut = amtOutText;
       if ($('swap-amount-out')) $('swap-amount-out').value = amtOutText;
       if ($('swap-quote-route')) $('swap-quote-route').textContent = quoteSource;
-      if ($('swap-auto-route-badge')) $('swap-auto-route-badge').textContent = quoteSource;
+      if ($('swap-auto-route-badge')) {
+        $('swap-auto-route-badge').textContent = quoteSource;
+        $('swap-auto-route-badge').title = quoteSource;
+      }
       if ($('swap-quote-fee')) $('swap-quote-fee').textContent = feeBps > 0 ? `${(feeBps / 100).toString()}%` : '0%';
       if ($('swap-quote-rate') && rateText) $('swap-quote-rate').textContent = rateText;
       if ($('swap-usd-in')) $('swap-usd-in').textContent = usdIn;
       if ($('swap-usd-out')) $('swap-usd-out').textContent = usdOut;
+      syncSwapRecipientInputState(wallet, fromToken, toToken, quoteData);
       renderSwapGasReserveRow(wallet, fromToken, toToken);
+      updateSwapPrimaryButtonState();
       if (_swapQuoteCache.size > 40) _swapQuoteCache.clear();
-      _swapQuoteCache.set(cacheKey, { ts: Date.now(), quoteData, quoteSource, feeBps, grossOutNum: outHumanNum, amountOut: amtOutText, rateText, usdIn, usdOutRaw, usdOut });
+      _swapQuoteCache.set(cacheKey, { ts: Date.now(), quoteData, quoteSource, feeBps, grossOutNum: outHumanNum, amountOut: amtOutText, rateText, usdInRaw: usdInRaw || null, usdOutRaw, usdOut });
     };
 
+    st.swap._quoting = true;
+    st.swap._lastError = '';
     if ($('swap-quote-route')) $('swap-quote-route').textContent = t('多池比价中...', 'Comparing pools...');
-    const execSwapBtn = $('btn-execute-swap');
-    if (execSwapBtn && !execSwapBtn.classList?.contains('is-error')) {
-      execSwapBtn.textContent = t('报价获取中...', 'Fetching quote...');
-    }
+    updateSwapPrimaryButtonState();
 
     try {
 
@@ -4665,6 +5037,7 @@
         });
         if (isCancelledOrStale()) return;
         if (!evmQuote.ok) {
+          st.swap._quoting = false;
           resetSwapQuoteDisplay();
           setSwapError(evmQuote.error || t('暂无链上报价', 'No DEX quote'));
           return;
@@ -4676,7 +5049,9 @@
 
       // Super-Aggregator: NEAR multi-pool (Ref V2 + Rhea CLMM + 1Click), PRL composite, Direct 1Click & 2-Stage Cross-Chain + DEX Relay
       const nearId = wallet.nearNamedAccount || wallet.nearAddress;
-      const recipient = st.swap.recipientAddress || getWalletDefaultRecipientForChain(wallet, toToken.blockchain) || nearId;
+      const recipient = doesSwapRouteRequireSelfRecipient(fromToken, toToken, null)
+        ? (getWalletDefaultRecipientForChain(wallet, toToken.blockchain) || nearId)
+        : (st.swap.recipientAddress || getWalletDefaultRecipientForChain(wallet, toToken.blockchain) || nearId);
       const refundTo = getWalletDefaultRecipientForChain(wallet, fromToken.blockchain) || nearId;
 
       const q = await intents.quoteCrossChainWithDexRelay({
@@ -4693,23 +5068,27 @@
       });
       if (isCancelledOrStale()) return;
       if (!q || !q.ok) {
+        st.swap._quoting = false;
         resetSwapQuoteDisplay();
         setSwapError((q && q.error) || t('暂无报价', 'No quote'));
         return;
       }
       const outHuman = q.amountOutFormatted || intents.fromBaseUnits(q.amountOut || '0', toToken.decimals);
       const routeText = q.routeLabel || (q.compositeType === 'PRL_TO_NEAR_DCL'
-        ? 'Ref + Rhea'
+        ? (q.bridgeQuote ? '1Click (Pearl➔NEAR) + Rhea DCL' : 'Ref + Rhea')
         : (q.compositeType === 'PRL_TO_EXTERNAL' || q.compositeType === 'EXTERNAL_TO_PRL'
             ? 'Ref + 1Click'
             : (q.compositeType === 'PRL_TO_NEAR_REF' || q.compositeType === 'NEAR_TO_PRL_REF'
-                ? 'Ref Finance'
+                ? (q.bridgeQuote ? '1Click (Pearl➔NEAR) + Ref Finance' : 'Ref Finance')
                 : '1Click Cross-Chain')));
       applyAndCacheQuote(q, routeText, Number(outHuman), q.amountInUsd, q.amountOutUsd);
     } catch (e) {
       if (isCancelledOrStale() || (e && (e.name === 'AbortError' || /abort|取消/i.test(String(e.message || ''))))) return;
+      st.swap._quoting = false;
       resetSwapQuoteDisplay();
       setSwapError(e && e.message ? e.message : t('询价失败', 'Quote failed'));
+    } finally {
+      if (st.swap._quoteAbortCtrl === abortCtrl) st.swap._quoteAbortCtrl = null;
     }
   }
 
@@ -4793,13 +5172,7 @@
     }
 
     const avail = getSwapTokenAvailableBalance(fromToken);
-    const isNative = !fromToken.contractAddress ||
-      fromToken.blockchain === 'prl' ||
-      fromToken.blockchain === 'btc' ||
-      fromToken.contractAddress === 'So11111111111111111111111111111111111111112' ||
-      fromToken.contractAddress.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' ||
-      fromToken.contractAddress === 'wrap.near' ||
-      (fromToken.blockchain === 'arc' && fromToken.contractAddress.toLowerCase() === '0x3600000000000000000000000000000000000000');
+    const isNative = isSwapTokenNative(fromToken);
 
     // Strict Local Balance Pre-Validation BEFORE firing RPC / quotes
     try {
@@ -4822,10 +5195,13 @@
       return;
     }
 
-    if (!(await verifySecurityAuthAsync(wallet, `${t('确认兑换', 'Confirm swap')} ${st.swap.amountIn} ${fromToken.symbol} → ${toToken.symbol}`))) return;
+    const authImpact = st.swap.quoteData ? computeSwapPriceImpact(st.swap._usdInVal, st.swap._usdOutVal) : null;
+    const impactPromptSuffix = authImpact && (authImpact.level === 'high' || authImpact.level === 'critical')
+      ? ` (⚠️ ${t('价差', 'Impact')} -${authImpact.pct.toFixed(1)}%)`
+      : '';
+    if (!(await verifySecurityAuthAsync(wallet, `${t('确认兑换', 'Confirm swap')} ${st.swap.amountIn} ${fromToken.symbol} → ${toToken.symbol}${impactPromptSuffix}`))) return;
 
-    const btn = $('btn-execute-swap');
-    if (btn) btn.disabled = true;
+    st.swap._executing = true;
     setSwapError('');
 
     try {
@@ -4953,11 +5329,13 @@
       }
 
       const nearId = wallet.nearNamedAccount || wallet.nearAddress;
-      const recipient = st.swap.recipientAddress || getWalletDefaultRecipientForChain(wallet, toToken.blockchain);
-      if (!recipient) throw new Error(t('请填写目标链收款地址', 'Destination address required'));
+      const rawRecipient = st.swap.recipientAddress || getWalletDefaultRecipientForChain(wallet, toToken.blockchain);
+      if (!rawRecipient) throw new Error(t('请填写目标链收款地址', 'Destination address required'));
       const refundTo = getWalletDefaultRecipientForChain(wallet, fromToken.blockchain) || nearId;
 
       let activeQuote = st.swap.quoteData;
+      const forceSelfPre = doesSwapRouteRequireSelfRecipient(fromToken, toToken, activeQuote);
+      let recipient = forceSelfPre ? (getWalletDefaultRecipientForChain(wallet, toToken.blockchain) || rawRecipient) : rawRecipient;
       if (!activeQuote && typeof intents.quoteCrossChainWithDexRelay === 'function') {
         activeQuote = await intents.quoteCrossChainWithDexRelay({
           fromToken,
@@ -4970,6 +5348,9 @@
           solAddress: wallet.solAddress,
           evmAddress: wallet.mpcEvmAddress || wallet.evmAddress
         }).catch(() => null);
+      }
+      if (doesSwapRouteRequireSelfRecipient(fromToken, toToken, activeQuote)) {
+        recipient = getWalletDefaultRecipientForChain(wallet, toToken.blockchain) || recipient;
       }
 
       validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData: activeQuote, amountIn: amt });
@@ -5040,6 +5421,14 @@
         const first = stages[0];
         if (!first) return;
         const destDexLeg = stages.find((s) => s.type === 'DEST_DEX') || null;
+        const resolveBridgeOutRecipient = (leg) => {
+          if (destDexLeg) {
+            return destDexLeg.chain === 'sol'
+              ? (wallet.solAddress || recipient)
+              : (wallet.mpcEvmAddress || wallet.evmAddress || recipient);
+          }
+          return (leg && leg.recipient) || recipient;
+        };
         const buildDestDexFollowUp = async (expectedInRaw) => {
           if (!destDexLeg) return {};
           if (destDexLeg.chain === 'sol') {
@@ -5079,7 +5468,7 @@
             destinationAsset: first.destinationAsset,
             amountRaw: stageAmtRaw,
             slippageBps: st.swap.slippageBps,
-            recipient: nearId,
+            recipient: (!swapLeg && !outLeg) ? recipient : nearId,
             refundTo,
             depositType: 'ORIGIN_CHAIN',
             recipientType: 'DESTINATION_CHAIN',
@@ -5090,6 +5479,7 @@
             throw new Error(liveIn.error || t('创建第一阶段跨链订单失败', 'Failed to create Stage 1 cross-chain order'));
           }
           const destFollow = outLeg ? await buildDestDexFollowUp(outLeg.expectedOut) : {};
+          const bridgeOutRecip = outLeg ? resolveBridgeOutRecipient(outLeg) : recipient;
           const bridgeToken = stages.length < activeQuote.stages.length
             ? {
                 blockchain: fromToken.blockchain,
@@ -5132,7 +5522,7 @@
                 hubContract: outLeg.hubContract,
                 hubDecimals: outLeg.hubDecimals || swapLeg.outDecimals || 8,
                 hubSymbol: outLeg.hubSymbol || swapLeg.outSymbol || 'PRL',
-                recipient: outLeg.recipient || recipient,
+                recipient: bridgeOutRecip,
                 expectedInRaw: outLeg.expectedIn || swapLeg.expectedOut,
                 ...destFollow
               } : null
@@ -5144,7 +5534,7 @@
               hubContract: outLeg.hubContract,
               hubDecimals: outLeg.hubDecimals || first.hubDecimals || 8,
               hubSymbol: outLeg.hubSymbol || first.hubSymbol || 'PRL',
-              recipient: outLeg.recipient || recipient,
+              recipient: bridgeOutRecip,
               expectedInRaw: outLeg.expectedIn || first.expectedOut,
               ...destFollow
             };
@@ -5211,7 +5601,7 @@
             destinationAsset: outLeg.destinationAsset,
             amountRaw: bridgeInRaw,
             slippageBps: st.swap.slippageBps,
-            recipient: outLeg.recipient || recipient,
+            recipient: resolveBridgeOutRecipient(outLeg),
             refundTo: nearId,
             depositType: 'ORIGIN_CHAIN',
             recipientType: 'DESTINATION_CHAIN',
@@ -6009,6 +6399,15 @@
         if (!txRes || !txRes.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
+        const arcDestLower = String(toToken.contractAddress || intents.ARC_USDC_CONTRACT).toLowerCase();
+        const needsArcDexSwap = Boolean(
+          toToken.contractAddress &&
+          arcDestLower !== intents.ARC_USDC_CONTRACT.toLowerCase() &&
+          arcDestLower !== '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+        );
+        const arcRelayRecipient = (!needsArcDexSwap && recipient && /^0x[0-9a-fA-F]{40}$/.test(recipient))
+          ? recipient
+          : evmRecip;
         st.swap.activeOrder = {
           walletId: wallet.id,
           depositAddress: liveQuote.depositAddress,
@@ -6023,6 +6422,7 @@
             destContract: toToken.contractAddress || intents.ARC_USDC_CONTRACT,
             destDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 6,
             toSymbol: toToken.symbol,
+            recipient: arcRelayRecipient,
             expectedBaseRaw: String(liveQuote.amountOut || activeQuote.baseBridgeRaw || '0'),
             preBaseRaw: String(preBaseRes?.tokenRaw || '0'),
             slippageBps: st.swap.slippageBps
@@ -6319,10 +6719,12 @@
       showToast(`✅ ${t('源链已签名发送，正在跨链交付至', 'Origin tx sent, delivering to')} ${shortenAddr(effectiveRecipient)}`);
       startOrderStatusPolling();
     } catch (err) {
+      st.swap._executing = false;
       setSwapError(err && err.message ? err.message : t('兑换失败', 'Swap failed'));
       showToast(err && err.message ? err.message : t('兑换失败', 'Swap failed'));
     } finally {
-      if (btn) btn.disabled = false;
+      st.swap._executing = false;
+      updateSwapPrimaryButtonState();
     }
   }
 
@@ -6679,10 +7081,15 @@
           if (bridgeInRaw > availRaw && availRaw > 0n) bridgeInRaw = availRaw;
           if (bridgeInRaw <= 0n) throw new Error(t('Base USDC 余额不足以发起 Relay 跨链至 Arc', 'Insufficient Base USDC for Relay to Arc'));
 
+          const destLower = String(follow.destContract || intents.ARC_USDC_CONTRACT).toLowerCase();
+          const needsArcSwap = Boolean(follow.destContract && destLower !== intents.ARC_USDC_CONTRACT.toLowerCase() && destLower !== '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+          const relayRecipient = (!needsArcSwap && follow.recipient && /^0x[0-9a-fA-F]{40}$/.test(follow.recipient))
+            ? follow.recipient
+            : evmAddr;
           const preArcRes = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
           const relayLive = await intents.quoteRelayBridge({
             user: evmAddr,
-            recipient: evmAddr,
+            recipient: relayRecipient,
             originChainId: 8453,
             destinationChainId: 5042,
             originCurrency: intents.BASE_USDC_EVM,
@@ -6691,8 +7098,6 @@
           });
           if (!relayLive.ok || !relayLive.steps?.length) throw new Error(relayLive.error || t('Relay Base->Arc 构建失败', 'Relay Base->Arc failed'));
           const relayTx = await contracts.executeEvmRawSteps({ wallet, chainKey: 'base', steps: relayLive.steps });
-          const destLower = String(follow.destContract || intents.ARC_USDC_CONTRACT).toLowerCase();
-          const needsArcSwap = Boolean(follow.destContract && destLower !== intents.ARC_USDC_CONTRACT.toLowerCase() && destLower !== '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
           if (needsArcSwap) {
             delete order.followUpArcRelay;
             order.status = 'PENDING_ARC_BRIDGE';
@@ -7284,7 +7689,13 @@
       }
       return '--';
     }
-    return typeof p.apy === 'number' && Number.isFinite(p.apy) ? `${p.apy.toFixed(2)}%` : '--';
+    if (typeof p.apy === 'number' && Number.isFinite(p.apy)) {
+      if (p.isJupiterDao || p.isAsrEstimated) {
+        return t(`ASR 估算 ~${p.apy.toFixed(2)}%`, `ASR Est. ~${p.apy.toFixed(2)}%`);
+      }
+      return `${p.apy.toFixed(2)}%`;
+    }
+    return '--';
   }
 
   function renderEarnView() {
@@ -8201,8 +8612,7 @@
       $('hub-near-domain-card')?.classList.remove('hidden');
       const items = [
         { k: t('NEAR 主账户', 'NEAR Master Account'), v: wallet.nearNamedAccount || wallet.nearAddress },
-        { k: 'EVM (ETH / Base / ARB / OP / POL / BSC)', v: wallet.mpcEvmAddress || wallet.evmAddress },
-        { k: 'Arc Network (USDC)', v: wallet.mpcEvmAddress || wallet.evmAddress },
+        { k: 'EVM (ETH / Base / ARB / OP / POL / BSC / Arc)', v: wallet.mpcEvmAddress || wallet.evmAddress },
         { k: 'Solana (SOL)', v: wallet.solAddress },
         { k: t('Bitcoin (BTC 主网)', 'Bitcoin (BTC Mainnet)'), v: wallet.btcAddress },
         { k: t('Pearl (PRL 主网)', 'Pearl (PRL Mainnet)'), v: wallet.address }
@@ -8942,6 +9352,15 @@
   }
 
   function openContactsPicker(target) {
+    if (target === 'swap') {
+      const st = getState();
+      const ft = resolveSwapToken(st.swap.fromAssetId, 0);
+      const tt = resolveSwapToken(st.swap.toAssetId, 1);
+      if (doesSwapRouteRequireSelfRecipient(ft, tt, st.swap.quoteData || null)) {
+        showToast(t('当前路由仅支持当前钱包自收', 'Self-recipient required for this route'));
+        return;
+      }
+    }
     _contactsPickerTarget = target;
     renderContactsList();
     openSheet('sheet-contacts');
@@ -9021,8 +9440,12 @@
       handleSendRecipientInput();
     } else if (target === 'swap') {
       closeAllSheets();
-      st.swap.recipientAddress = address;
-      if ($('swap-recipient-input')) $('swap-recipient-input').value = address;
+      const ft = resolveSwapToken(st.swap.fromAssetId, 0);
+      const tt = resolveSwapToken(st.swap.toAssetId, 1);
+      if (!doesSwapRouteRequireSelfRecipient(ft, tt, st.swap.quoteData || null)) {
+        st.swap.recipientAddress = address;
+        if ($('swap-recipient-input')) $('swap-recipient-input').value = address;
+      }
     } else {
       closeAllSheets();
     }
@@ -9051,7 +9474,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.3');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.6');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -9580,6 +10003,10 @@
     renderTokenPickerList,
     isSwapOriginSupported,
     validateSwapNearGasRequirement,
+    evaluateSwapButtonState,
+    doesSwapRouteRequireSelfRecipient,
+    computeSwapPriceImpact,
+    formatPoolApyText,
     executeActiveSwap,
     resumeActiveSwapFollowUp,
     refreshStakingMetrics,

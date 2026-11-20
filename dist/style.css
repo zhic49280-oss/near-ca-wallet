@@ -165,6 +165,15 @@ body {
   flex-shrink: 0;
 }
 
+#swap-auto-route-badge {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 72%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
@@ -826,6 +835,17 @@ textarea.input-field {
   font-weight: 700;
 }
 
+.btn-primary.is-error:disabled {
+  opacity: 0.92;
+  cursor: not-allowed;
+}
+
+.btn-primary.is-warning {
+  background: linear-gradient(135deg, #f59e0b 0%, #fb7185 100%);
+  color: #140a04;
+  box-shadow: 0 8px 24px rgba(245, 158, 11, 0.24);
+}
+
 .btn-secondary {
   padding: 10px 14px;
   border-radius: 12px;
@@ -887,10 +907,12 @@ textarea.input-field {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .meta-key {
   color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
 .meta-val {
@@ -1650,4 +1672,24 @@ textarea.input-field {
   color: #fda4af;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.swap-impact-banner {
+  padding: 9px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.swap-impact-banner.is-high {
+  background: rgba(245, 158, 11, 0.13);
+  border: 1px solid rgba(245, 158, 11, 0.36);
+  color: #fcd34d;
+}
+
+.swap-impact-banner.is-critical {
+  background: rgba(251, 113, 133, 0.14);
+  border: 1px solid rgba(251, 113, 133, 0.4);
+  color: #fda4af;
 }

@@ -976,7 +976,7 @@
         _auxSourceCooldown[name] = { until: Date.now() + ms, fetchRef: curFetch };
       };
 
-      const settleWithSoftCap = (factories, capMs = 2400) => {
+      const settleWithSoftCap = (factories, capMs = 4500) => {
         const capCtrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
         const capSig = capCtrl ? capCtrl.signal : undefined;
         let timer = null;
@@ -1005,51 +1005,51 @@
         });
       };
 
-      const fetchAux = (name, url, reqOpts = {}, timeoutMs = 2400) => (sig) => {
+      const fetchAux = (name, url, reqOpts = {}, timeoutMs = 4200, coolFailMs = 45_000, coolErrMs = 60_000) => (sig) => {
         if (!url || isSourceCooling(name)) return Promise.resolve(null);
         return fetchJsonWithTimeout(url, { ...reqOpts, signal: sig }, timeoutMs)
           .then((res) => {
-            if (!res || !res.ok) markSourceCool(name, 90_000);
+            if ((!res || !res.ok) && !(sig && sig.aborted)) markSourceCool(name, coolFailMs);
             return res;
           })
           .catch(() => {
-            markSourceCool(name, 180_000);
+            if (!(sig && sig.aborted)) markSourceCool(name, coolErrMs);
             return null;
           });
       };
 
-      const oneClickPromise = fetchJsonWithTimeout(`${ONECLICK_API_URL}/tokens`, {}, 4500).catch(() => null);
+      const oneClickPromise = fetchJsonWithTimeout(`${ONECLICK_API_URL}/tokens`, {}, 5000).catch(() => null);
       const auxFactories = [
-        fetchAux('dex_sol', `https://api.dexscreener.com/latest/dex/tokens/${SOL_DEXSCREENER_MINTS.join(',')}`, {}, 2400),
-        fetchAux('prlscan', 'https://api.prlscan.com/v1/market/prl', {}, 2400),
-        fetchAux('hyperliquid', 'https://api.hyperliquid.xyz/info', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'allMids' }) }, 2400),
-        fetchAux('ref_list', 'https://indexer.ref.finance/list-token', {}, 2400),
-        fetchAux('coingecko', 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=250&page=1', {}, 2400),
-        fetchAux('jup_xstock', 'https://lite-api.jup.ag/tokens/v2/search?query=xStock', {}, 2400),
-        fetchAux('kyber_tokens', 'https://ks-setting.kyberswap.com/api/v1/tokens?chainIds=5042,1,8453,42161,56,999&page=1&pageSize=100&isWhitelisted=true', {}, 2400),
-        fetchAux('lifi_arc', 'https://li.quest/v1/tokens?chains=5042', {}, 2400),
+        fetchAux('dex_sol', `https://api.dexscreener.com/latest/dex/tokens/${SOL_DEXSCREENER_MINTS.join(',')}`, {}, 4200),
+        fetchAux('prlscan', 'https://api.prlscan.com/v1/market/prl', {}, 4200),
+        fetchAux('hyperliquid', 'https://api.hyperliquid.xyz/info', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'allMids' }) }, 4200),
+        fetchAux('ref_list', 'https://indexer.ref.finance/list-token', {}, 4200),
+        fetchAux('coingecko', 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=250&page=1', {}, 4200),
+        fetchAux('jup_xstock', 'https://lite-api.jup.ag/tokens/v2/search?query=xStock', {}, 4200),
+        fetchAux('kyber_tokens', 'https://ks-setting.kyberswap.com/api/v1/tokens?chainIds=5042,1,8453,42161,56,999&page=1&pageSize=100&isWhitelisted=true', {}, 4200),
+        fetchAux('lifi_arc', 'https://li.quest/v1/tokens?chains=5042', {}, 4200),
         (sig) => {
           const idxCall = isSourceCooling('ref_price_idx')
             ? Promise.resolve(null)
-            : fetchJsonWithTimeout('https://indexer.ref.finance/list-token-price', { signal: sig }, 2400)
-                .then((r) => { if (!r || !r.ok) markSourceCool('ref_price_idx', 180_000); return r; })
-                .catch(() => { markSourceCool('ref_price_idx', 180_000); return null; });
+            : fetchJsonWithTimeout('https://indexer.ref.finance/list-token-price', { signal: sig }, 4200)
+                .then((r) => { if ((!r || !r.ok) && !(sig && sig.aborted)) markSourceCool('ref_price_idx', 20_000); return r; })
+                .catch(() => { if (!(sig && sig.aborted)) markSourceCool('ref_price_idx', 20_000); return null; });
           const apiCall = isSourceCooling('ref_price_api')
             ? Promise.resolve(null)
-            : fetchJsonWithTimeout('https://api.ref.finance/list-token-price', { signal: sig }, 2400)
-                .then((r) => { if (!r || !r.ok) markSourceCool('ref_price_api', 180_000); return r; })
-                .catch(() => { markSourceCool('ref_price_api', 180_000); return null; });
+            : fetchJsonWithTimeout('https://api.ref.finance/list-token-price', { signal: sig }, 4200)
+                .then((r) => { if ((!r || !r.ok) && !(sig && sig.aborted)) markSourceCool('ref_price_api', 20_000); return r; })
+                .catch(() => { if (!(sig && sig.aborted)) markSourceCool('ref_price_api', 20_000); return null; });
           return Promise.all([idxCall, apiCall]).then(([a, b]) => {
             if (a && a.ok && a.data && b && b.ok && b.data) return { ok: true, status: 200, data: { ...b.data, ...a.data } };
             return (a && a.ok && a.data) ? a : (b && b.ok && b.data ? b : null);
           });
         },
-        arcDexUrl ? fetchAux('dex_arc', arcDexUrl, {}, 2400) : () => Promise.resolve(null)
+        arcDexUrl ? fetchAux('dex_arc', arcDexUrl, {}, 4200) : () => Promise.resolve(null)
       ];
 
       const [resp, auxResults] = await Promise.all([
         oneClickPromise,
-        settleWithSoftCap(auxFactories, 2400)
+        settleWithSoftCap(auxFactories, 4500)
       ]);
       const [dexRes, prlRes, hlRes, refListRes, cgRes, xStockRes, kyberTokRes, arcscanTokRes, refPriceRes, arcDexRes] = auxResults;
 
@@ -1179,8 +1179,8 @@
         _ftIconBgStarted = true;
         const ftPromise = fetchNearFtMetadataIcons(
           [
-            ...normalizedList.filter((item) => item && item.blockchain === 'near' && item.contractAddress),
-            ...nearCuratedList.filter((item) => item && item.blockchain === 'near' && item.contractAddress)
+            ...nearCuratedList.filter((item) => item && item.blockchain === 'near' && item.contractAddress),
+            ...normalizedList.filter((item) => item && item.blockchain === 'near' && item.contractAddress)
           ],
           sanitizeImg
         ).then((icons) => {
@@ -1572,7 +1572,7 @@
           }
           for (const chunk of chunks) {
             fallbackFactories.push((sig) =>
-              fetchJsonWithTimeout(`https://api.dexscreener.com/latest/dex/tokens/${chunk.join(',')}`, { signal: sig }, 2200)
+              fetchJsonWithTimeout(`https://api.dexscreener.com/latest/dex/tokens/${chunk.join(',')}`, { signal: sig }, 3200)
                 .then((dsResp) => {
                   const pairs = dsResp && dsResp.ok && dsResp.data && Array.isArray(dsResp.data.pairs) ? dsResp.data.pairs : [];
                   for (const pair of pairs) {
@@ -1654,7 +1654,7 @@
           }
         }
         if (fallbackFactories.length > 0) {
-          await settleWithSoftCap(fallbackFactories, 1500);
+          await settleWithSoftCap(fallbackFactories, 3500);
         }
       }
 
@@ -2054,7 +2054,7 @@
           body: JSON.stringify(reqBody),
           signal: isDry && _oneClickQuoteInFlight.has(ocKey) ? undefined : signal
         },
-        dry ? 5500 : DEFAULT_TIMEOUT_MS
+        dry ? 7000 : DEFAULT_TIMEOUT_MS
       );
       const json = resp.data;
       if (resp.ok && json && json.quote) {
@@ -2786,8 +2786,8 @@
 
       const [rRes, dRes, cRes, oRes] = await safeRaceWithGraceWindow(
         [refPromise, dclPromise, compositePrlPromise, oneClickPromise],
-        350,
-        4500
+        2400,
+        7500
       );
       if (ctrl && !ctrl.signal.aborted) ctrl.abort();
 
@@ -2985,6 +2985,7 @@
     refundTo,
     nearAccountId,
     evmAddress = '',
+    solAddress = '',
     signal = null
   } = {}) {
     try {
@@ -3030,6 +3031,11 @@
         && toToken.contractAddress.toLowerCase() !== SOL_NATIVE_WSOL.toLowerCase();
       const targetIsEvmDex = ['eth', 'base', 'arb', 'op', 'pol', 'avax', 'bsc', 'hood'].includes(toBc) && !isOneClickId(toAsset) && Boolean(toToken.contractAddress)
         && toToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL;
+      const bridgeOutRecipient = targetIsSolDex
+        ? (String(solAddress || '').trim() || recipient)
+        : (targetIsEvmDex
+            ? (/^0x[0-9a-fA-F]{40}$/.test(String(evmAddress || '').trim()) ? evmAddress : recipient)
+            : recipient);
 
       // Optional Stage 0: Origin Chain DEX -> Origin Chain Native (when origin token is DEX-only)
       let stage0Dex = null;
@@ -3145,7 +3151,7 @@
               destinationAsset: bridgeOutDestAsset,
               amountRaw: midOut,
               slippageBps,
-              recipient,
+              recipient: bridgeOutRecipient,
               refundTo: nearAcct,
               nearAccountId: nearAcct,
               depositType: 'ORIGIN_CHAIN',
@@ -3192,7 +3198,7 @@
         } catch (_) {
           return null;
         }
-      }), 1200, 6000);
+      }), 1200, 11000);
       if (hubCtrl && !hubCtrl.signal.aborted) hubCtrl.abort();
 
       const valid = evaluated
@@ -3264,7 +3270,7 @@
           hubContract: best.x.contract,
           hubDecimals: best.x.decimals,
           hubSymbol: best.x.symbol,
-          recipient,
+          recipient: bridgeOutRecipient,
           expectedIn: best.midOut,
           expectedOut: best.bridgeOut.amountOut
         });
@@ -3372,7 +3378,7 @@
     const smartPromise = quoteSmartHubRoute(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'smart route failed' }));
     const legacyPromise = quoteCrossChainWithDexRelayLegacy(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'legacy failed' }));
 
-    // Never let multi-stage Smart Hub route block swap quote > 600ms after a direct/legacy route has succeeded
+    // Never let multi-stage Smart Hub route block swap quote > 2000ms after a direct/legacy route has succeeded
     const cappedSmartPromise = new Promise((resolve) => {
       let settled = false;
       let timer = null;
@@ -3386,7 +3392,7 @@
       legacyPromise.then((leg) => {
         const legOk = leg && leg.ok && /^\d+$/.test(String(leg.amountOut || '')) && BigInt(leg.amountOut) > 0n;
         if (legOk && !settled) {
-          timer = setTimeout(() => finish({ ok: false, error: 'smart route timeout' }), 600);
+          timer = setTimeout(() => finish({ ok: false, error: 'smart route timeout' }), 2000);
         }
       });
     });
@@ -3456,9 +3462,15 @@
         signal
       });
       if (prlRes && prlRes.ok && !prlRes.routeLabel) {
-        prlRes.routeLabel = prlRes.compositeType === 'PRL_TO_EXTERNAL' || prlRes.compositeType === 'EXTERNAL_TO_PRL'
-          ? 'Ref Finance (#9010) + 1Click'
-          : 'Ref Finance (v2.ref-finance.near)';
+        if (prlRes.bridgeQuote && prlRes.compositeType === 'PRL_TO_NEAR_REF') {
+          prlRes.routeLabel = prlRes.refQuote && prlRes.refQuote.isDcl
+            ? '1Click (Pearl➔NEAR) + Rhea DCL'
+            : '1Click (Pearl➔NEAR) + Ref Finance';
+        } else {
+          prlRes.routeLabel = prlRes.compositeType === 'PRL_TO_EXTERNAL' || prlRes.compositeType === 'EXTERNAL_TO_PRL'
+            ? 'Ref Finance (#9010) + 1Click'
+            : 'Ref Finance (v2.ref-finance.near)';
+        }
       }
       return prlRes;
     }
