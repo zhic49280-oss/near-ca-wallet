@@ -55,7 +55,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.11');
+      await loadScriptOnce('ethers.umd.min.js?v=6.12');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -65,7 +65,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.11').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.12').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -75,7 +75,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.11').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.12').catch(() => false);
       return getMining();
     }
     return null;
@@ -1914,7 +1914,7 @@
       if (wallet.address && typeof contracts.fetchPearlNativeBalance === 'function') {
         contracts.fetchPearlNativeBalance(wallet.address).then((res) => {
           if (!isStaleRefresh() && res && typeof res.formatted === 'number' && Number.isFinite(res.formatted)) {
-            wallet.nativeBalances.prl = res.formatted;
+            wallet.nativeBalances.prl = reconcileFetchedChainBalance(wallet, 'prl', res.formatted);
             scheduleProgressiveWalletRender();
           }
         }).catch(() => {});
@@ -1923,7 +1923,7 @@
         contracts.fetchBitcoinNativeBalance(wallet.btcAddress).then((res) => {
           const bal = res && typeof res.formatted === 'number' ? res.formatted : (typeof res === 'number' ? res : null);
           if (!isStaleRefresh() && typeof bal === 'number' && Number.isFinite(bal)) {
-            wallet.nativeBalances.btc = bal;
+            wallet.nativeBalances.btc = reconcileFetchedChainBalance(wallet, 'btc', bal);
             scheduleProgressiveWalletRender();
           }
         }).catch(() => {});
@@ -2097,13 +2097,118 @@
     } finally {
       if (gen === _refreshGen) {
         _isRefreshing = false;
+        const viewWallet = $('view-wallet');
         if (ptrInd) {
           ptrInd.classList.remove('pulling', 'refreshing');
-          ptrInd.style.height = '';
         }
+        if (viewWallet) {
+          viewWallet.classList.add('ptr-spring');
+          viewWallet.style.transform = 'translate3d(0, 0, 0)';
+          setTimeout(() => {
+            if (viewWallet.style.transform === 'translate3d(0, 0, 0)') {
+              viewWallet.style.transform = '';
+              viewWallet.classList.remove('ptr-spring');
+            }
+          }, 300).unref?.();
+        }
+        const spinnerEl = ptrInd && ptrInd.querySelector ? ptrInd.querySelector('.ptr-spinner') : null;
+        if (spinnerEl) spinnerEl.style.transform = '';
         if (ptrTxt) ptrTxt.textContent = t('下拉刷新链上余额', 'Pull down to refresh');
       }
     }
+  }
+
+  const _pendingChainSpends = new Map();
+
+  function applyOptimisticChainSpend(wallet, chainKey, transferAmount, feeAmount = 0, txHash = '') {
+    if (!wallet || !wallet.id || !chainKey) return null;
+    const st = getState();
+    const contracts = getContracts();
+    const ck = String(chainKey).toLowerCase();
+    const amtNum = Number(transferAmount);
+    const feeNum = Number(feeAmount);
+    const spentTotal = (Number.isFinite(amtNum) && amtNum > 0 ? amtNum : 0) + (Number.isFinite(feeNum) && feeNum > 0 ? feeNum : 0);
+    if (spentTotal <= 0) return null;
+
+    if (!wallet.nativeBalances || typeof wallet.nativeBalances !== 'object') wallet.nativeBalances = {};
+    const prevBal = Number(wallet.nativeBalances[ck] ?? 0);
+    const nextBal = Math.max(0, Number((prevBal - spentTotal).toFixed(8)));
+    wallet.nativeBalances[ck] = nextBal;
+    if (st && typeof st.syncWalletCompatBalances === 'function') {
+      st.syncWalletCompatBalances(wallet);
+    }
+
+    _pendingChainSpends.set(`${wallet.id}:${ck}`, {
+      txHash: String(txHash || ''),
+      prevBal,
+      spentTotal,
+      expiresAt: Date.now() + 90_000
+    });
+
+    if (st && typeof st.saveWalletsDebounced === 'function') st.saveWalletsDebounced();
+    else if (st && typeof st.saveWallets === 'function') st.saveWallets();
+
+    renderWalletView();
+    if (st && st.activeTab === 'swap') renderSwapView();
+    const detailSheet = $('sheet-token-detail');
+    if (detailSheet && detailSheet.classList && detailSheet.classList.contains('open')) {
+      renderTokenDetailSheet();
+    }
+
+    const fetcher = typeof window !== 'undefined' && typeof document !== 'undefined'
+      ? (ck === 'prl'
+          ? (wallet.address && contracts?.fetchPearlNativeBalance ? () => contracts.fetchPearlNativeBalance(wallet.address) : null)
+          : (ck === 'btc' && wallet.btcAddress && contracts?.fetchBitcoinNativeBalance ? () => contracts.fetchBitcoinNativeBalance(wallet.btcAddress) : null))
+      : null;
+    if (fetcher) {
+      for (const delayMs of [4000, 16000]) {
+        const tm = setTimeout(async () => {
+          if (typeof window === 'undefined' || typeof document === 'undefined' || st.activeWalletId !== wallet.id) return;
+          const res = await fetcher().catch(() => null);
+          const liveBal = res && typeof res.formatted === 'number' ? res.formatted : null;
+          if (liveBal !== null && Number.isFinite(liveBal)) {
+            wallet.nativeBalances[ck] = reconcileFetchedChainBalance(wallet, ck, liveBal);
+            if (st && typeof st.syncWalletCompatBalances === 'function') st.syncWalletCompatBalances(wallet);
+            renderWalletView();
+            if (st.activeTab === 'swap') renderSwapView();
+            const curDetailSheet = $('sheet-token-detail');
+            if (curDetailSheet && curDetailSheet.classList && curDetailSheet.classList.contains('open')) {
+              renderTokenDetailSheet();
+            }
+          }
+        }, delayMs);
+        tm?.unref?.();
+      }
+    }
+    return { prevBal, spentTotal, nextBal };
+  }
+
+  function reconcileFetchedChainBalance(wallet, chainKey, liveBal) {
+    const cleanLive = Number(liveBal);
+    if (!Number.isFinite(cleanLive) || !wallet || !wallet.id) return liveBal;
+    const key = `${wallet.id}:${String(chainKey || '').toLowerCase()}`;
+    const pending = _pendingChainSpends.get(key);
+    if (!pending) return cleanLive;
+    if (Date.now() > pending.expiresAt) {
+      _pendingChainSpends.delete(key);
+      return cleanLive;
+    }
+    const optimisticBal = Math.max(0, Number((pending.prevBal - pending.spentTotal).toFixed(8)));
+    if (cleanLive <= pending.prevBal - pending.spentTotal * 0.5 + 1e-6) {
+      _pendingChainSpends.delete(key);
+      return cleanLive;
+    }
+    if (Math.abs(cleanLive - pending.prevBal) <= 1e-6) {
+      return optimisticBal;
+    }
+    _pendingChainSpends.delete(key);
+    return cleanLive;
+  }
+
+  function computePtrPullDistance(dy, maxPull = 68) {
+    const cleanDy = Number(dy);
+    if (!Number.isFinite(cleanDy) || cleanDy <= 0) return 0;
+    return maxPull * (1 - Math.exp(-cleanDy / 135));
   }
 
   let _ptrInitialized = false;
@@ -2115,9 +2220,13 @@
     if (!viewWallet || !ind || typeof viewWallet.addEventListener !== 'function') return;
     _ptrInitialized = true;
 
+    const spinner = ind.querySelector ? ind.querySelector('.ptr-spinner') : null;
+    let startX = null;
     let startY = null;
     let pulling = false;
-    const THRESHOLD = 58;
+    let latestDy = 0;
+    const MAX_PULL = 68;
+    const THRESHOLD = 46;
 
     const getScrollTop = () => {
       if (typeof window !== 'undefined' && typeof window.scrollY === 'number' && window.scrollY > 0) {
@@ -2126,58 +2235,89 @@
       return (document.documentElement && document.documentElement.scrollTop) || viewWallet.scrollTop || 0;
     };
 
+    const setPullVisual = (pullPx, spring = false) => {
+      if (spring) viewWallet.classList.add('ptr-spring');
+      else viewWallet.classList.remove('ptr-spring');
+      viewWallet.style.transform = pullPx > 0 ? `translate3d(0, ${pullPx.toFixed(1)}px, 0)` : (spring ? 'translate3d(0, 0, 0)' : '');
+      if (spinner) {
+        spinner.style.transform = pullPx > 0 ? `rotate(${Math.round((pullPx / THRESHOLD) * 260)}deg)` : '';
+      }
+    };
+
     viewWallet.addEventListener('touchstart', (e) => {
       if (_isRefreshing || !e.touches || e.touches.length !== 1) return;
       if (getScrollTop() > 2) return;
+      startX = e.touches[0].clientX;
       startY = e.touches[0].clientY;
+      latestDy = 0;
       pulling = false;
+      viewWallet.classList.remove('ptr-spring');
     }, { passive: true });
 
     viewWallet.addEventListener('touchmove', (e) => {
       if (startY === null || _isRefreshing || !e.touches || e.touches.length !== 1) return;
+      const dx = e.touches[0].clientX - (startX ?? e.touches[0].clientX);
       const dy = e.touches[0].clientY - startY;
+      if (!pulling && Math.abs(dy) <= Math.abs(dx) * 1.35) {
+        startY = null;
+        startX = null;
+        return;
+      }
       if (dy <= 6 || getScrollTop() > 2) {
         if (pulling) {
           ind.classList.remove('pulling');
-          ind.style.height = '';
+          setPullVisual(0, true);
           pulling = false;
         }
         return;
       }
       pulling = true;
-      const clamped = Math.min(80, dy * 0.55);
+      latestDy = dy;
+      if (e.cancelable && typeof e.preventDefault === 'function') {
+        e.preventDefault();
+      }
+      const pullPx = computePtrPullDistance(dy, MAX_PULL);
       ind.classList.add('pulling');
-      ind.style.height = `${Math.max(24, Math.round(clamped))}px`;
+      setPullVisual(pullPx, false);
       if (txt) {
-        txt.textContent = dy >= THRESHOLD
+        txt.textContent = pullPx >= THRESHOLD
           ? t('释放立即刷新', 'Release to refresh')
           : t('下拉刷新链上余额', 'Pull down to refresh');
       }
-    }, { passive: true });
+    }, { passive: false });
 
-    const endPull = (dy) => {
+    const endPull = () => {
       if (startY === null) return;
-      const triggered = pulling && dy >= THRESHOLD && !_isRefreshing;
+      const pullPx = computePtrPullDistance(latestDy, MAX_PULL);
+      const triggered = pulling && pullPx >= THRESHOLD && !_isRefreshing;
+      startX = null;
       startY = null;
       pulling = false;
-      ind.style.height = '';
+      latestDy = 0;
       if (triggered) {
+        setPullVisual(42, true);
         refreshAllBalancesAsync(true);
       } else {
         ind.classList.remove('pulling');
+        setPullVisual(0, true);
+        setTimeout(() => {
+          if (!pulling && !_isRefreshing) {
+            viewWallet.style.transform = '';
+            viewWallet.classList.remove('ptr-spring');
+          }
+        }, 300).unref?.();
       }
     };
 
-    viewWallet.addEventListener('touchend', (e) => {
-      const endY = e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : startY;
-      endPull(startY !== null ? (endY - startY) : 0);
-    }, { passive: true });
+    viewWallet.addEventListener('touchend', endPull, { passive: true });
 
     viewWallet.addEventListener('touchcancel', () => {
+      startX = null;
       startY = null;
       pulling = false;
+      latestDy = 0;
       ind.classList.remove('pulling');
-      ind.style.height = '';
+      setPullVisual(0, true);
     }, { passive: true });
   }
 
@@ -2688,6 +2828,12 @@
       amount: activity.amount !== undefined && activity.amount !== null && Number.isFinite(Number(activity.amount))
         ? Number(activity.amount)
         : null,
+      fee: activity.fee !== undefined && activity.fee !== null && Number.isFinite(Number(activity.fee))
+        ? Number(activity.fee)
+        : null,
+      netAmount: activity.netAmount !== undefined && activity.netAmount !== null && Number.isFinite(Number(activity.netAmount))
+        ? Number(activity.netAmount)
+        : null,
       txHash: String(activity.txHash || '').trim(),
       title: String(activity.title || '').trim(),
       timestamp: Number.isFinite(Number(activity.timestamp)) ? Number(activity.timestamp) : Math.floor(Date.now() / 1000)
@@ -2711,7 +2857,7 @@
     const enc = encodeURIComponent(a);
     const bc = String(chainKey || '').toLowerCase();
     if (bc === 'near') return `https://nearblocks.io/address/${enc}`;
-    if (bc === 'prl') return `https://explorer.prlscan.com/address/${enc}`;
+    if (bc === 'prl') return `https://prlscan.com/address/${enc}`;
     if (bc === 'sol') return `https://solscan.io/account/${enc}`;
     if (bc === 'eth') return `https://etherscan.io/address/${enc}`;
     if (bc === 'base') return `https://basescan.org/address/${enc}`;
@@ -2730,7 +2876,7 @@
     const enc = encodeURIComponent(h);
     const bc = String(chainKey || '').toLowerCase();
     if (bc === 'near') return `https://nearblocks.io/txns/${enc}`;
-    if (bc === 'prl') return `https://explorer.prlscan.com/tx/${enc}`;
+    if (bc === 'prl') return `https://prlscan.com/tx/${enc}`;
     if (bc === 'sol') return `https://solscan.io/tx/${enc}`;
     if (bc === 'eth') return `https://etherscan.io/tx/${enc}`;
     if (bc === 'base') return `https://basescan.org/tx/${enc}`;
@@ -2808,7 +2954,7 @@
     }
   }
 
-  function getMergedTokenHistoryItems(wallet, symKey, chainFilter) {
+  function getMergedTokenHistoryItems(wallet, symKey, chainFilter, remoteOverride = null) {
     const localList = Array.isArray(wallet && wallet.activityHistory) ? wallet.activityHistory : [];
     const matchedLocal = localList
       .filter((item) => {
@@ -2820,12 +2966,28 @@
       })
       .map((item) => ({ ...item, source: 'local' }));
 
-    const remoteList = Array.isArray(_tokenDetailState.historyItems) ? _tokenDetailState.historyItems : [];
+    const remoteList = Array.isArray(remoteOverride)
+      ? remoteOverride
+      : (Array.isArray(_tokenDetailState.historyItems) ? _tokenDetailState.historyItems : []);
     const byKey = new Map();
-    for (const item of [...matchedLocal, ...remoteList]) {
+    for (const item of matchedLocal) {
       const key = item.txHash ? `${item.txHash.toLowerCase()}_${item.chain || ''}` : item.id;
-      if (!byKey.has(key)) {
-        byKey.set(key, item);
+      if (!byKey.has(key)) byKey.set(key, item);
+    }
+    for (const remoteItem of remoteList) {
+      const key = remoteItem.txHash ? `${remoteItem.txHash.toLowerCase()}_${remoteItem.chain || ''}` : remoteItem.id;
+      const existing = byKey.get(key);
+      if (existing) {
+        // Remote on-chain fields override unconfirmed local drafts while keeping Swap metadata
+        byKey.set(key, {
+          ...existing,
+          ...remoteItem,
+          toSymbol: existing.toSymbol || remoteItem.toSymbol || '',
+          toAmount: existing.toAmount ?? remoteItem.toAmount ?? null,
+          source: remoteItem.source || 'onchain'
+        });
+      } else {
+        byKey.set(key, remoteItem);
       }
     }
     return Array.from(byKey.values()).sort((a, b) => (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0));
@@ -3988,7 +4150,19 @@
             amountPrl: amountNum,
             feeDeductMode: 'extra'
           });
-          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
+          const feePrl = Number(res.feePrl) || 0;
+          applyOptimisticChainSpend(wallet, 'prl', amountNum, feePrl, res.txHash);
+          recordWalletActivity(wallet, {
+            type: 'send',
+            symbol: asset.symbol,
+            chain: asset.blockchain,
+            amount: amountNum,
+            fee: feePrl > 0 ? feePrl : null,
+            netAmount: -(amountNum + feePrl),
+            counterparty: recipient,
+            txHash: res.txHash,
+            title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}`
+          });
           showToast(`✅ PRL ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
           closeAllSheets();
           refreshAllBalancesAsync(false);
@@ -4001,7 +4175,19 @@
             amountBtc: amountNum,
             feeDeductMode: 'extra'
           });
-          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: 'btc', amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
+          const feeBtc = Number(res.feeBtc) || 0;
+          applyOptimisticChainSpend(wallet, 'btc', amountNum, feeBtc, res.txHash);
+          recordWalletActivity(wallet, {
+            type: 'send',
+            symbol: asset.symbol,
+            chain: 'btc',
+            amount: amountNum,
+            fee: feeBtc > 0 ? feeBtc : null,
+            netAmount: -(amountNum + feeBtc),
+            counterparty: recipient,
+            txHash: res.txHash,
+            title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}`
+          });
           showToast(`✅ BTC ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
           closeAllSheets();
           refreshAllBalancesAsync(false);
@@ -4043,6 +4229,7 @@
       }
 
       let depositTxHash = '';
+      let depositFeeNum = null;
       if (asset.blockchain === 'near' && asset.kind !== 'nep141' && asset.symbol === 'NEAR') {
         const res = await contracts.signAndSendNearTransfer({ wallet, receiverId: quote.depositAddress, amountNear: amountNum });
         depositTxHash = res.txHash;
@@ -4080,6 +4267,8 @@
           feeDeductMode: 'extra'
         });
         depositTxHash = res.txHash;
+        depositFeeNum = Number(res.feePrl) || 0;
+        applyOptimisticChainSpend(wallet, 'prl', amountNum, depositFeeNum, depositTxHash);
       } else if (asset.blockchain === 'btc') {
         const res = await contracts.executeBitcoinTransfer({
           wallet,
@@ -4088,6 +4277,8 @@
           feeDeductMode: 'extra'
         });
         depositTxHash = res.txHash;
+        depositFeeNum = Number(res.feeBtc) || 0;
+        applyOptimisticChainSpend(wallet, 'btc', amountNum, depositFeeNum, depositTxHash);
       } else if (isEvmOrigin) {
         const res = await contracts.executeEvmTransfer({
           wallet,
@@ -4132,6 +4323,9 @@
         symbol: asset.symbol,
         chain: asset.blockchain,
         amount: amountNum,
+        fee: depositFeeNum,
+        netAmount: depositFeeNum !== null ? -(amountNum + depositFeeNum) : null,
+        counterparty: recipient,
         txHash: depositTxHash,
         title: `${t('跨链转账至', 'Cross-chain to')} ${shortenAddr(recipient)}`
       });
@@ -5352,10 +5546,14 @@
       });
     }
     if (bc === 'prl') {
-      return contracts.executePearlTransfer({ wallet, toAddress: depositAddress, amountPrl: amt, feeDeductMode: 'extra' });
+      const res = await contracts.executePearlTransfer({ wallet, toAddress: depositAddress, amountPrl: amt, feeDeductMode: 'extra' });
+      applyOptimisticChainSpend(wallet, 'prl', amt, Number(res && res.feePrl) || 0, res && res.txHash);
+      return res;
     }
     if (bc === 'btc') {
-      return contracts.executeBitcoinTransfer({ wallet, toAddress: depositAddress, amountBtc: amt, feeDeductMode: 'extra' });
+      const res = await contracts.executeBitcoinTransfer({ wallet, toAddress: depositAddress, amountBtc: amt, feeDeductMode: 'extra' });
+      applyOptimisticChainSpend(wallet, 'btc', amt, Number(res && res.feeBtc) || 0, res && res.txHash);
+      return res;
     }
     if (contracts && contracts.EVM_CHAINS && contracts.EVM_CHAINS[bc]) {
       await ensureEthersLoaded();
@@ -10119,7 +10317,9 @@
           ? (await contracts.executeSolanaNativeTransfer({ wallet, toAddress: q.depositAddress, amountSol: amt })).txHash
           : (await contracts.executeSolanaSplTransfer({ wallet, mintAddress: entry.contractAddress, toAddress: q.depositAddress, amount: amt, decimals: entry.decimals || 6, tokenBalance: avail })).txHash;
       } else if (entry.blockchain === 'btc') {
-        txHash = (await contracts.executeBitcoinTransfer({ wallet, toAddress: q.depositAddress, amountBtc: amt, feeDeductMode: 'extra' })).txHash;
+        const res = await contracts.executeBitcoinTransfer({ wallet, toAddress: q.depositAddress, amountBtc: amt, feeDeductMode: 'extra' });
+        txHash = res.txHash;
+        applyOptimisticChainSpend(wallet, 'btc', amt, Number(res.feeBtc) || 0, txHash);
       } else {
         txHash = (await contracts.executeEvmTransfer({ wallet, chainKey: entry.blockchain, toAddress: q.depositAddress, amount: amt, tokenContract: entry.contractAddress, decimals: entry.decimals || 18, tokenBalance: avail })).txHash;
       }
@@ -12106,7 +12306,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.11');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.12');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -12636,6 +12836,12 @@
     triggerSecurityBiometricNow,
     cancelSecurityAuthModal,
     refreshAllBalancesAsync,
+    applyOptimisticChainSpend,
+    reconcileFetchedChainBalance,
+    getMergedTokenHistoryItems,
+    computePtrPullDistance,
+    getExplorerAddressUrl,
+    getExplorerTxUrl,
     startAutoPriceAndBalanceSync,
     buildAllOnChainAssetGroups,
     buildAggregatedAssetGroups,
@@ -12796,6 +13002,12 @@
     jumpToNearDomainManager,
     focusMpcInspector,
     refreshAllBalancesAsync,
+    applyOptimisticChainSpend,
+    reconcileFetchedChainBalance,
+    getMergedTokenHistoryItems,
+    computePtrPullDistance,
+    getExplorerAddressUrl,
+    getExplorerTxUrl,
     startAutoPriceAndBalanceSync,
     toggleAssetExpand,
     openTokenDetailSheet,

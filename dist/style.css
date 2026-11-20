@@ -48,6 +48,7 @@ body {
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
+  overscroll-behavior-y: contain;
 }
 
 body {
@@ -1622,27 +1623,39 @@ textarea.input-field {
   color: #34d399;
 }
 
-/* Home Pull-to-Refresh Indicator */
+/* Home Pull-to-Refresh Indicator (GPU-Composited Zero-Reflow) */
+#view-wallet {
+  position: relative;
+  overscroll-behavior-y: contain;
+  will-change: transform;
+}
+
+#view-wallet.ptr-spring {
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 .home-ptr-indicator {
+  position: absolute;
+  top: -38px;
+  left: 0;
+  right: 0;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  height: 0;
   opacity: 0;
-  overflow: hidden;
+  pointer-events: none;
   font-size: 12px;
   font-weight: 600;
   color: var(--near-emerald);
-  transition: height 0.2s ease, opacity 0.2s ease, margin-bottom 0.2s ease;
-  margin-bottom: 0;
+  will-change: transform, opacity;
+  transition: opacity 0.18s ease;
 }
 
 .home-ptr-indicator.pulling,
 .home-ptr-indicator.refreshing {
-  height: 34px;
   opacity: 1;
-  margin-bottom: 2px;
 }
 
 .ptr-spinner {
@@ -1651,7 +1664,7 @@ textarea.input-field {
   border-radius: 50%;
   border: 2px solid rgba(0, 236, 151, 0.25);
   border-top-color: var(--near-emerald);
-  transition: transform 0.15s linear;
+  will-change: transform;
 }
 
 .home-ptr-indicator.refreshing .ptr-spinner {

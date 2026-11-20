@@ -22,7 +22,7 @@
   const HEROMINERS_API_BASE = 'https://pearl.herominers.com/api';
   const KRYPTEX_API_BASE = 'https://pool.kryptex.com';
   const ONECLICK_QUOTE_URL = 'https://1click.chaindefuser.com/v0/quote';
-  const PRLSCAN_TX_EXPLORER_BASE = 'https://explorer.prlscan.com/tx/';
+  const PRLSCAN_TX_EXPLORER_BASE = 'https://prlscan.com/tx/';
   const SAVED_MINERS_STORAGE_KEY = 'near_ca_saved_miners_v1';
 
   const PRL_ORIGIN_ASSET_ID = 'nep141:prl.omft.near';

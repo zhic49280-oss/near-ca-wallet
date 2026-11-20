@@ -2482,8 +2482,8 @@ test('v1.9 Requirement #5: Rhea Ecosystem tokens (RHEA/rNEAR/xRHEA/oRHEA) regist
     }, async () => {
       await nearIntents.fetchLiveDefuseTokenPrices();
       assert.equal(rheaRef.price, 0.0322, 'RHEA price must hydrate from indexer.ref.finance/list-token-price');
-      assert.ok(rheaRef.logoURI && rheaRef.logoURI.startsWith('data:image/svg+xml;base64,'));
-      assert.ok(tokenRegistry.resolveTokenIcon(rheaRef).primaryUrl.startsWith('data:image/svg+xml;base64,'));
+      assert.ok(rheaRef.logoURI && /^data:image\/(?:png|svg\+xml);base64,/.test(rheaRef.logoURI));
+      assert.ok(/^data:image\/(?:png|svg\+xml);base64,/.test(tokenRegistry.resolveTokenIcon(rheaRef).primaryUrl));
 
       const swapQ = await nearIntents.quoteBestNearPairSwap({
         fromToken: rheaRef,
@@ -3752,7 +3752,7 @@ test('v2.9: OKX-style Token Detail Sheet (openTokenDetailSheet, setTokenDetailCh
         uiController.setTokenDetailChain('prl');
         assert.equal(domMap.get('token-detail-balance').textContent, '100');
         assert.equal(domMap.get('token-detail-addr').textContent, wallet.address);
-        assert.ok(domMap.get('token-detail-explorer-link').href.includes('explorer.prlscan.com/address/'));
+        assert.ok(domMap.get('token-detail-explorer-link').href.includes('prlscan.com/address/'));
         assert.equal(domMap.get('token-detail-breakdown-card').classList.contains('hidden'), true);
         await new Promise((r) => setTimeout(r, 30));
 
@@ -5142,7 +5142,7 @@ test('v6.0 Regression Suite: Bitcoin BIP-86/Taproot, PBKDF2 PIN, Checksums, Mult
   assert.equal(intentsSrc.includes('0x1111111111111111111111111111111111111111'), false);
 
   // 6. Mining Pro: realHashrate NOT scaled by 2^32 & canonical PRLSCAN_TX_EXPLORER_BASE
-  assert.equal(miningPro.PRLSCAN_TX_EXPLORER_BASE, 'https://explorer.prlscan.com/tx/');
+  assert.equal(miningPro.PRLSCAN_TX_EXPLORER_BASE, 'https://prlscan.com/tx/');
   await withMockedFetch(async (url) => {
     if (url.includes('pearl.herominers.com/api/stats_address')) {
       const nowSec = Math.floor(Date.now() / 1000);
@@ -7175,4 +7175,79 @@ test('v6.11 Orderbook 10-Level Alignment, Coin Units on Depth Bar & Zero Wallet/
       globalThis.document = prevDoc;
     }
   });
+});
+
+test('v6.12 Core Fixes: prlscan.com URLs, Instant RHEA Icon, Dynamic Icon Cache, PRL Optimistic Spend & Silky PTR', async () => {
+  // 1. Canonical prlscan.com URLs (no dead explorer.prlscan.com)
+  const uiSrc = fs.readFileSync(path.join(ROOT_DIR, 'src', 'ui-controller.js'), 'utf8');
+  const miningSrc = fs.readFileSync(path.join(ROOT_DIR, 'src', 'mining-pro.js'), 'utf8');
+  assert.equal(uiSrc.includes('explorer.prlscan.com'), false, 'ui-controller.js must not reference dead explorer.prlscan.com');
+  assert.equal(miningSrc.includes('explorer.prlscan.com'), false, 'mining-pro.js must not reference dead explorer.prlscan.com');
+  assert.equal(uiController.getExplorerTxUrl('prl', 'abc123'), 'https://prlscan.com/tx/abc123');
+  assert.equal(uiController.getExplorerAddressUrl('prl', 'prl1test'), 'https://prlscan.com/address/prl1test');
+
+  // 2. Instant RHEA inline PNG icon & dynamic icon localStorage persistence
+  assert.ok(tokenRegistry.TOKEN_ICON_MAP.RHEA && tokenRegistry.TOKEN_ICON_MAP.RHEA.startsWith('data:image/png;base64,'));
+  const resolvedRhea = tokenRegistry.resolveTokenIcon({ symbol: 'RHEA', blockchain: 'near', contractAddress: 'token.rhealab.near' });
+  assert.ok(resolvedRhea.primaryUrl.startsWith('data:image/png;base64,'), 'RHEA must resolve immediately to inline PNG without text fallback flash');
+
+  await withMockedStorage({}, async () => {
+    tokenRegistry.registerDynamicTokenIcons({ TESTDYN: 'https://example.com/dyn.png' }, { 'dyn.near': 'https://example.com/dyn.png' });
+    const rawSaved = globalThis.localStorage.getItem('near_ca_dynamic_icons_v1');
+    assert.ok(rawSaved && rawSaved.includes('https://example.com/dyn.png'), 'registerDynamicTokenIcons must persist to localStorage');
+  });
+
+  // 3. PRL optimistic spend protection & remote on-chain precedence in history merge
+  await withMockedStorage({}, async () => {
+    state.initState();
+    const w = state.normalizeWalletRecord({
+      id: 'w_v612_prl',
+      mnemonic: TEST_MNEMONIC,
+      nativeBalances: { prl: 13.67687844, near: 1, sol: 0, eth: 0, btc: 0 }
+    });
+    state.wallets = [w];
+    state.activeWalletId = w.id;
+
+    const prevDoc = globalThis.document;
+    globalThis.document = {
+      getElementById: () => null,
+      querySelectorAll: () => [],
+      querySelector: () => null
+    };
+    try {
+      const spendRes = uiController.applyOptimisticChainSpend(w, 'prl', 1, 0.00100646, '55216258test');
+      assert.ok(spendRes);
+      assert.equal(Number(w.nativeBalances.prl.toFixed(8)), 12.67587198, 'PRL balance must deduct amount + fee immediately on send');
+      // Stale node response still returns old 13.67687844 before indexing mempool
+      const guarded = uiController.reconcileFetchedChainBalance(w, 'prl', 13.67687844);
+      assert.equal(Number(guarded.toFixed(8)), 12.67587198, 'Stale pre-mempool fetch must not revert optimistic deduction');
+      // Once node indexes new balance 12.67587198, accept live balance cleanly
+      const settled = uiController.reconcileFetchedChainBalance(w, 'prl', 12.67587198);
+      assert.equal(Number(settled.toFixed(8)), 12.67587198);
+
+      // Remote on-chain tx overrides local unconfirmed draft in merged history
+      uiController.recordWalletActivity(w, { type: 'send', symbol: 'PRL', chain: 'prl', amount: 1, txHash: '55216258test', title: 'Local' });
+      const merged = uiController.getMergedTokenHistoryItems(w, 'PRL', 'all', [
+        { id: 'prl_55216258test', type: 'send', symbol: 'PRL', chain: 'prl', amount: 1, fee: 0.00100646, netAmount: -1.00100646, confirmations: 5, blockHeight: 146022, txHash: '55216258test', timestamp: 1795184090, source: 'onchain' }
+      ]);
+      assert.equal(merged.length, 1);
+      assert.equal(merged[0].fee, 0.00100646);
+      assert.equal(merged[0].netAmount, -1.00100646);
+      assert.equal(merged[0].confirmations, 5);
+      assert.equal(merged[0].source, 'onchain');
+    } finally {
+      globalThis.document = prevDoc;
+    }
+  });
+
+  // 4. Silky GPU PTR exponential damping & CSS rules
+  assert.equal(uiController.computePtrPullDistance(0), 0);
+  const d50 = uiController.computePtrPullDistance(50);
+  const d100 = uiController.computePtrPullDistance(100);
+  const d300 = uiController.computePtrPullDistance(300);
+  assert.ok(d50 > 0 && d50 < d100 && d100 < d300 && d300 < 68, 'PTR damping must be smooth, monotonic, and capped');
+  const cssSrc = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
+  assert.ok(cssSrc.includes('overscroll-behavior-y: contain'));
+  assert.ok(cssSrc.includes('#view-wallet.ptr-spring'));
+  assert.equal(cssSrc.includes('transition: height 0.2s'), false, 'PTR indicator must not animate height layout reflow');
 });
