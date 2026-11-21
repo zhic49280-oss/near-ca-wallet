@@ -1,0 +1,443 @@
+// GENERATED FILE: assembled by scripts/build-parts.js from src/parts/state/*.part.js. Edit the parts, then run npm run build.
+/**
+ * NEAR Chain Abstraction Wallet - Unified State Store & Bilingual i18n
+ * Persists multi-chain wallets under 'near_ca_wallets_v1' (auto-migrating 'pearl_user_wallets_v4'),
+ * contacts under 'near_ca_contacts_v1', and language under 'near_ca_lang_v1'.
+ * Attaches to globalThis.NearCAState, window.NearCAState, globalThis.state, window.state, and module.exports.
+ */
+(function (root) {
+  'use strict';
+
+  const WALLETS_STORAGE_KEY = 'near_ca_wallets_v1';
+  const LEGACY_WALLETS_STORAGE_KEY = 'pearl_user_wallets_v4';
+  const CONTACTS_STORAGE_KEY = 'near_ca_contacts_v1';
+  const LEGACY_CONTACTS_STORAGE_KEY = 'pearl_contacts_v1';
+  const LANG_STORAGE_KEY = 'near_ca_lang_v1';
+  const FAV_TOKENS_STORAGE_KEY = 'near_ca_fav_tokens_v1';
+  const LIVE_TOKENS_STORAGE_KEY = 'near_ca_live_tokens_v1';
+  const STAKING_METRICS_STORAGE_KEY = 'near_ca_staking_metrics_v3';
+  const SWAP_PAIR_STORAGE_KEY = 'near_ca_swap_pair_v1';
+  const ACTIVE_SWAP_ORDER_STORAGE_KEY = 'near_ca_active_swap_order_v1';
+  const WC_PROJECT_ID_STORAGE_KEY = 'near_ca_wc_project_id';
+  const LEGACY_WC_PROJECT_ID_KEY = 'pearl_wc_project_id';
+
+  const DEFAULT_FAVORITE_TOKEN_IDS = [
+    'nep141:wrap.near',
+    '1cs_v1:near:nep141:prl.omft.near',
+    '1cs_v1:near:nep141:qtc.omft.near',
+    'nep141:sol.omft.near',
+    'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+    'nep141:hood-0x39dbed3a2bd333467115de45665cc57f813c4571.omft.near'
+  ];
+
+  const NATIVE_BALANCE_KEYS = ['near', 'sol', 'eth', 'base', 'arb', 'bsc', 'op', 'pol', 'avax', 'hype', 'hood', 'arc', 'prl', 'btc'];
+
+  function getCryptoEngine() {
+    return (
+      (typeof globalThis !== 'undefined' && globalThis.NearCACrypto) ||
+      (typeof window !== 'undefined' && window.NearCACrypto) ||
+      (typeof require === 'function' ? (function () { try { return require('./crypto-engine.js'); } catch (_) { return null; } })() : null)
+    );
+  }
+
+  function safeStorageGet(key) {
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function') {
+        return localStorage.getItem(key);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function safeStorageRemove(key) {
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.removeItem === 'function') {
+        localStorage.removeItem(key);
+      }
+    } catch (_) {}
+  }
+
+  function safeStorageSet(key, val) {
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.setItem === 'function') {
+        localStorage.setItem(key, val);
+        return true;
+      }
+    } catch (err) {
+      const isQuota = err && (err.name === 'QuotaExceededError' || err.code === 22 || /quota/i.test(String(err.message || '')));
+      if (isQuota && key !== LIVE_TOKENS_STORAGE_KEY) {
+        try {
+          safeStorageRemove(LIVE_TOKENS_STORAGE_KEY);
+          safeStorageRemove(STAKING_METRICS_STORAGE_KEY);
+          safeStorageRemove('near_ca_near_ft_icons_v1');
+          localStorage.setItem(key, val);
+          return true;
+        } catch (_) {}
+      }
+    }
+    return false;
+  }
+
+  function createEmptyNativeBalances() {
+    return {
+      near: null,
+      sol: null,
+      eth: null,
+      base: null,
+      arb: null,
+      bsc: null,
+      op: null,
+      pol: null,
+      avax: null,
+      hype: null,
+      hood: null,
+      arc: null,
+      prl: null,
+      btc: null
+    };
+  }
+
+  function syncWalletCompatBalances(wallet) {
+    if (!wallet || typeof wallet !== 'object') return wallet;
+    const nb = wallet.nativeBalances || createEmptyNativeBalances();
+    wallet.nativeBalances = nb;
+    wallet.nearBalance = typeof nb.near === 'number' && Number.isFinite(nb.near) ? nb.near : null;
+    wallet.balance = typeof nb.prl === 'number' && Number.isFinite(nb.prl) ? nb.prl : null;
+    wallet.multiBalances = {
+      sol: nb.sol,
+      eth: nb.eth,
+      base: nb.base,
+      arb: nb.arb,
+      bsc: nb.bsc,
+      bnb: nb.bsc,
+      op: nb.op,
+      pol: nb.pol,
+      avax: nb.avax,
+      hype: nb.hype,
+      hood: nb.hood,
+      arc: nb.arc
+    };
+    return wallet;
+  }
+
+  function normalizeErc20Map(rawMap) {
+    const out = {};
+    if (!rawMap || typeof rawMap !== 'object') return out;
+    for (const [k, v] of Object.entries(rawMap)) {
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        out[k] = v;
+        const sep = k.indexOf('_');
+        if (sep > 0) {
+          const chainKey = k.slice(0, sep).toLowerCase();
+          const contract = k.slice(sep + 1).toLowerCase();
+          if (!out[chainKey] || typeof out[chainKey] !== 'object') out[chainKey] = {};
+          out[chainKey][contract] = v;
+        }
+      } else if (v && typeof v === 'object') {
+        const chainKey = k.toLowerCase();
+        if (!out[chainKey] || typeof out[chainKey] !== 'object') out[chainKey] = {};
+        for (const [contract, bal] of Object.entries(v)) {
+          if (typeof bal === 'number' && Number.isFinite(bal)) {
+            const cLower = contract.toLowerCase();
+            out[chainKey][cLower] = bal;
+            out[`${chainKey}_${cLower}`] = bal;
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  function setWalletErc20Balance(wallet, chainKey, contractAddress, amount) {
+    if (!wallet || !chainKey || !contractAddress) return;
+    if (!wallet.erc20Balances || typeof wallet.erc20Balances !== 'object') {
+      wallet.erc20Balances = {};
+    }
+    const cKey = String(chainKey).toLowerCase();
+    const addrLower = String(contractAddress).toLowerCase();
+    const val = typeof amount === 'number' && Number.isFinite(amount) ? amount : null;
+    if (val === null) return;
+    wallet.erc20Balances[`${cKey}_${addrLower}`] = val;
+    if (!wallet.erc20Balances[cKey] || typeof wallet.erc20Balances[cKey] !== 'object') {
+      wallet.erc20Balances[cKey] = {};
+    }
+    wallet.erc20Balances[cKey][addrLower] = val;
+  }
+
+  function getWalletErc20Balance(wallet, chainKey, contractAddress) {
+    if (!wallet || !wallet.erc20Balances || !chainKey || !contractAddress) return null;
+    const cKey = String(chainKey).toLowerCase();
+    const addrLower = String(contractAddress).toLowerCase();
+    const flatVal = wallet.erc20Balances[`${cKey}_${addrLower}`];
+    if (typeof flatVal === 'number' && Number.isFinite(flatVal)) return flatVal;
+    const nested = wallet.erc20Balances[cKey];
+    if (nested && typeof nested[addrLower] === 'number' && Number.isFinite(nested[addrLower])) {
+      return nested[addrLower];
+    }
+    return null;
+  }
+
+  function normalizeWalletRecord(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const acctType = String(raw.accountType || 'standard').trim();
+    if (acctType !== 'standard') {
+      if (!String(raw.mnemonic || '').trim() && (!String(raw.nearPrivateKey || '').trim() || !String(raw.nearPublicKey || '').trim())) {
+        return null;
+      }
+    }
+
+    const nativeBalances = createEmptyNativeBalances();
+    const rawNb = raw.nativeBalances && typeof raw.nativeBalances === 'object' ? raw.nativeBalances : {};
+    const rawMb = raw.multiBalances && typeof raw.multiBalances === 'object' ? raw.multiBalances : {};
+
+    for (const k of NATIVE_BALANCE_KEYS) {
+      let val = rawNb[k];
+      if (val === undefined) {
+        if (k === 'near') val = raw.nearBalance;
+        else if (k === 'prl') val = raw.balance;
+        else if (k === 'bsc') val = rawMb.bnb !== undefined ? rawMb.bnb : rawMb.bsc;
+        else val = rawMb[k];
+      }
+      nativeBalances[k] = (val !== null && val !== undefined && Number.isFinite(Number(val)))
+        ? Number(val)
+        : null;
+    }
+
+    const nearNamedAccount = String(raw.nearNamedAccount || '').trim().toLowerCase();
+    const nearAddress = String(raw.nearAddress || '').trim().toLowerCase();
+    const activeNearId = nearNamedAccount || nearAddress;
+
+    let mpcEvmAddress = String(raw.mpcEvmAddress || '').trim();
+    let evmAddress = String(raw.evmAddress || '').trim();
+    let solAddress = String(raw.solAddress || '').trim();
+    let pearlAddress = String(raw.address || raw.pearlAddress || '').trim();
+    let privateKeyHex = String(raw.privateKeyHex || '').trim();
+    let tweakedPrivateKeyHex = String(raw.tweakedPrivateKeyHex || '').trim();
+    let btcAddress = String(raw.btcAddress || '').trim();
+    let btcPrivateKeyHex = String(raw.btcPrivateKeyHex || '').trim();
+    let btcTweakedPrivateKeyHex = String(raw.btcTweakedPrivateKeyHex || '').trim();
+
+    let mpcDerivedForNearId = String(raw._mpcDerivedForNearId || '').trim().toLowerCase();
+    let didSelfHeal = false;
+
+    const cryptoEngine = getCryptoEngine();
+    const mnemonicClean = String(raw.mnemonic || '').trim();
+    const needsPearl = Boolean(mnemonicClean) && (!pearlAddress || !privateKeyHex || !tweakedPrivateKeyHex);
+    if (needsPearl && cryptoEngine && typeof cryptoEngine.derivePearlFromSeed === 'function') {
+      try {
+        const pearlDerived = cryptoEngine.derivePearlFromSeed(mnemonicClean, "m/86'/808276'/0'/0/0", true);
+        if (pearlDerived && pearlDerived.address) {
+          pearlAddress = pearlDerived.address;
+          privateKeyHex = pearlDerived.privateKeyHex || privateKeyHex;
+          tweakedPrivateKeyHex = pearlDerived.tweakedPrivateKeyHex || tweakedPrivateKeyHex;
+          didSelfHeal = true;
+        }
+      } catch (_) {}
+    }
+
+    const needsBtc = Boolean(mnemonicClean) && (!btcAddress || !btcPrivateKeyHex || !btcTweakedPrivateKeyHex);
+    if (needsBtc && cryptoEngine && typeof cryptoEngine.deriveBitcoinFromSeed === 'function') {
+      try {
+        const btcDerived = cryptoEngine.deriveBitcoinFromSeed(mnemonicClean, "m/86'/0'/0'/0/0", true);
+        if (btcDerived && btcDerived.address) {
+          btcAddress = btcDerived.address;
+          btcPrivateKeyHex = btcDerived.privateKeyHex || btcPrivateKeyHex;
+          btcTweakedPrivateKeyHex = btcDerived.tweakedPrivateKeyHex || btcTweakedPrivateKeyHex;
+          didSelfHeal = true;
+        }
+      } catch (_) {}
+    }
+
+    const hasCachedMpc = Boolean(
+      mpcDerivedForNearId &&
+      mpcDerivedForNearId === activeNearId &&
+      mpcEvmAddress &&
+      evmAddress &&
+      solAddress
+    );
+    if (activeNearId && !hasCachedMpc && cryptoEngine) {
+      if (typeof cryptoEngine.deriveNearMpcEvmAddress === 'function' && typeof cryptoEngine.deriveNearMpcSolanaAddress === 'function') {
+        try {
+          const evmMpc = cryptoEngine.deriveNearMpcEvmAddress(activeNearId, 'ethereum-1');
+          const solMpc = cryptoEngine.deriveNearMpcSolanaAddress(activeNearId, 'solana-1');
+          mpcEvmAddress = evmMpc.mpcEvmAddress;
+          evmAddress = evmMpc.mpcEvmAddress;
+          solAddress = solMpc.mpcSolAddress;
+          mpcDerivedForNearId = activeNearId;
+          didSelfHeal = true;
+        } catch (_) {}
+      } else if (typeof cryptoEngine.deriveNearMpcAllAddresses === 'function') {
+        try {
+          const mpcAll = cryptoEngine.deriveNearMpcAllAddresses(activeNearId);
+          mpcEvmAddress = mpcAll.evmAddress;
+          evmAddress = mpcAll.evmAddress;
+          solAddress = mpcAll.solAddress;
+          mpcDerivedForNearId = activeNearId;
+          didSelfHeal = true;
+        } catch (_) {}
+      }
+    }
+
+    const rawIter = Number(raw.pinIterations) || 100_000;
+    const pinIterations = Math.min(250_000, Math.max(1000, rawIter));
+    let healedNearAddr = nearAddress;
+    let healedNearPub = String(raw.nearPublicKey || '').trim();
+    let healedNearPriv = String(raw.nearPrivateKey || '').trim();
+    if (mnemonicClean && (!healedNearAddr || !healedNearPub || !healedNearPriv) && cryptoEngine && typeof cryptoEngine.deriveNearFromSeed === 'function') {
+      try {
+        const nearDerived = cryptoEngine.deriveNearFromSeed(mnemonicClean);
+        if (nearDerived && nearDerived.nearAddress) {
+          healedNearAddr = healedNearAddr || nearDerived.nearAddress;
+          healedNearPub = healedNearPub || nearDerived.nearPublicKey || '';
+          healedNearPriv = healedNearPriv || nearDerived.nearPrivateKey || '';
+          didSelfHeal = true;
+        }
+      } catch (_) {}
+    }
+
+    const wallet = {
+      id: String(raw.id || `w_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),
+      accountType: acctType,
+      name: String(raw.name || 'NEAR Account'),
+      mnemonic: mnemonicClean,
+      pin: String(raw.pin || ''),
+      pinHash: String(raw.pinHash || ''),
+      pinSalt: String(raw.pinSalt || ''),
+      pinIterations,
+      biometricEnabled: raw.biometricEnabled !== undefined ? Boolean(raw.biometricEnabled) : true,
+      biometricLocked: Boolean(raw.biometricLocked),
+      webauthnCredentialId: String(raw.webauthnCredentialId || '').trim(),
+      // Primary NEAR CA Identity
+      nearNamedAccount,
+      nearAddress: healedNearAddr,
+      nearPublicKey: healedNearPub,
+      nearPrivateKey: healedNearPriv,
+      nearPrivateSeedHex: String(raw.nearPrivateSeedHex || '').trim(),
+      _nearAccountChecked: Boolean(raw._nearAccountChecked || nearNamedAccount),
+      // External Chain Addresses Controlled by NEAR MPC (v1.signer) + Native BIP-86 Pearl & Bitcoin Addresses
+      mpcEvmAddress,
+      evmAddress,
+      solAddress,
+      solPublicKey: solAddress,
+      address: pearlAddress,
+      privateKeyHex,
+      tweakedPrivateKeyHex,
+      btcAddress,
+      btcPrivateKeyHex,
+      btcTweakedPrivateKeyHex,
+      _mpcDerivedForNearId: mpcDerivedForNearId,
+      qtcDepositAddress: String(raw.qtcDepositAddress || '').trim(),
+      // Balances
+      nearNep141Balances: (raw.nearNep141Balances && typeof raw.nearNep141Balances === 'object') ? { ...raw.nearNep141Balances } : {},
+      intentsBalances: (raw.intentsBalances && typeof raw.intentsBalances === 'object') ? { ...raw.intentsBalances } : {},
+      nativeBalances,
+      splBalances: (raw.splBalances && typeof raw.splBalances === 'object') ? { ...raw.splBalances } : {},
+      solAtaMints: (raw.solAtaMints && typeof raw.solAtaMints === 'object') ? { ...raw.solAtaMints } : null,
+      erc20Balances: normalizeErc20Map(raw.erc20Balances),
+      nearStakingPositions: Array.isArray(raw.nearStakingPositions) ? raw.nearStakingPositions.slice() : [],
+      solStakingPositions: Array.isArray(raw.solStakingPositions) ? raw.solStakingPositions.slice() : [],
+      evmStakingPositions: Array.isArray(raw.evmStakingPositions) ? raw.evmStakingPositions.slice() : [],
+      activityHistory: Array.isArray(raw.activityHistory) ? raw.activityHistory.slice(0, 100) : []
+    };
+    if (didSelfHeal) wallet._needsSelfHealSave = true;
+
+    return syncWalletCompatBalances(wallet);
+  }
+
+  function recomputeWalletMpcAddresses(wallet) {
+    if (!wallet || typeof wallet !== 'object') return wallet;
+    const cryptoEngine = getCryptoEngine();
+    const needsPearl = Boolean(wallet.mnemonic) && (!wallet.address || !wallet.privateKeyHex || !wallet.tweakedPrivateKeyHex);
+    if (needsPearl && cryptoEngine && typeof cryptoEngine.derivePearlFromSeed === 'function') {
+      try {
+        const pearlDerived = cryptoEngine.derivePearlFromSeed(wallet.mnemonic, "m/86'/808276'/0'/0/0", true);
+        if (pearlDerived && pearlDerived.address) {
+          wallet.address = pearlDerived.address;
+          wallet.privateKeyHex = pearlDerived.privateKeyHex || wallet.privateKeyHex;
+          wallet.tweakedPrivateKeyHex = pearlDerived.tweakedPrivateKeyHex || wallet.tweakedPrivateKeyHex;
+        }
+      } catch (_) {}
+    }
+    const needsBtc = Boolean(wallet.mnemonic) && (!wallet.btcAddress || !wallet.btcPrivateKeyHex || !wallet.btcTweakedPrivateKeyHex);
+    if (needsBtc && cryptoEngine && typeof cryptoEngine.deriveBitcoinFromSeed === 'function') {
+      try {
+        const btcDerived = cryptoEngine.deriveBitcoinFromSeed(wallet.mnemonic, "m/86'/0'/0'/0/0", true);
+        if (btcDerived && btcDerived.address) {
+          wallet.btcAddress = btcDerived.address;
+          wallet.btcPrivateKeyHex = btcDerived.privateKeyHex || wallet.btcPrivateKeyHex;
+          wallet.btcTweakedPrivateKeyHex = btcDerived.tweakedPrivateKeyHex || wallet.btcTweakedPrivateKeyHex;
+        }
+      } catch (_) {}
+    }
+    const activeNearId = String(wallet.nearNamedAccount || wallet.nearAddress || '').trim().toLowerCase();
+    if (!activeNearId) return wallet;
+    const hasCachedMpc = Boolean(
+      wallet._mpcDerivedForNearId === activeNearId &&
+      wallet.mpcEvmAddress &&
+      wallet.evmAddress &&
+      wallet.solAddress &&
+      wallet.solPublicKey
+    );
+    if (!hasCachedMpc && cryptoEngine) {
+      if (typeof cryptoEngine.deriveNearMpcEvmAddress === 'function' && typeof cryptoEngine.deriveNearMpcSolanaAddress === 'function') {
+        const evmMpc = cryptoEngine.deriveNearMpcEvmAddress(activeNearId, 'ethereum-1');
+        const solMpc = cryptoEngine.deriveNearMpcSolanaAddress(activeNearId, 'solana-1');
+        wallet.mpcEvmAddress = evmMpc.mpcEvmAddress;
+        wallet.evmAddress = evmMpc.mpcEvmAddress;
+        wallet.solAddress = solMpc.mpcSolAddress;
+        wallet.solPublicKey = solMpc.mpcSolAddress;
+        wallet._mpcDerivedForNearId = activeNearId;
+      } else if (typeof cryptoEngine.deriveNearMpcAllAddresses === 'function') {
+        const mpcAll = cryptoEngine.deriveNearMpcAllAddresses(activeNearId);
+        wallet.mpcEvmAddress = mpcAll.evmAddress;
+        wallet.evmAddress = mpcAll.evmAddress;
+        wallet.solAddress = mpcAll.solAddress;
+        wallet.solPublicKey = mpcAll.solAddress;
+        wallet._mpcDerivedForNearId = activeNearId;
+      }
+    }
+    return wallet;
+  }
+
+  function hasWalletPin(wallet) {
+    return Boolean(wallet && ((wallet.pinHash && wallet.pinSalt) || (wallet.pin && String(wallet.pin).trim())));
+  }
+
+  async function setWalletPinAsync(wallet, rawPin) {
+    if (!wallet || typeof wallet !== 'object') return false;
+    const clean = String(rawPin || '').trim();
+    if (!clean) {
+      wallet.pin = '';
+      wallet.pinHash = '';
+      wallet.pinSalt = '';
+      return true;
+    }
+    const cryptoEngine = getCryptoEngine();
+    if (cryptoEngine && typeof cryptoEngine.hashPinAsync === 'function') {
+      const h = await cryptoEngine.hashPinAsync(clean);
+      wallet.pinHash = h.hashHex;
+      wallet.pinSalt = h.saltHex;
+      wallet.pinIterations = h.iterations;
+      wallet.pin = '';
+      return true;
+    }
+    wallet.pin = clean;
+    return true;
+  }
+
+  async function verifyWalletPinAsync(wallet, enteredPin) {
+    if (!wallet) return false;
+    const clean = String(enteredPin || '').trim();
+    if (!clean) return false;
+    const cryptoEngine = getCryptoEngine();
+    if (wallet.pinHash && wallet.pinSalt && cryptoEngine && typeof cryptoEngine.verifyPinHashAsync === 'function') {
+      return cryptoEngine.verifyPinHashAsync(clean, wallet.pinHash, wallet.pinSalt, wallet.pinIterations || 100_000);
+    }
+    if (wallet.pin && wallet.pin === clean) {
+      await setWalletPinAsync(wallet, clean).catch(() => {});
+      saveWallets();
+      return true;
+    }
+    return false;
+  }
+

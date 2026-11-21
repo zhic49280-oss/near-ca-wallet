@@ -29,5 +29,6 @@
 ## 7. 源码分片规范（拆分重构后）
 - **大文件由分片拼接生成**：`src/ui-controller.js` 等大文件由 `scripts/build-parts.js` 按文件名顺序拼接 `src/parts/<name>/*.part.js` 生成（纯拼接，共享同一个 IIFE 作用域）。**只改分片，禁止直接编辑生成文件**；改完运行 `npm run build`，`test/08-build-parts.test.js` 会拦截不同步的情况。
 - **按需读取**：修改功能时先 `Select-String` 定位到具体分片，只读相关分片，禁止整读生成的大文件。分片单个文件尽量不超过 80 KB，新页面/新链请新建分片（编号插在合适位置，如 `125-xxx.part.js`）。
-- **i18n 词条位置**：`i18nDict` / `t()` / `applyLanguage()` 实际位于 `src/state.js`。
+- **i18n 词条位置**：`i18nDict` 位于 `src/parts/state/010-i18n-dict.part.js`，`t()` / `applyLanguage()` 位于 `src/parts/state/020-i18n-render.part.js`（生成到 `src/state.js`）。
+- **已分片的文件**：`ui-controller`、`chain-contracts`、`near-intents`、`token-registry`、`state`（见 `src/parts/`）。
 - **测试分文件**：公共工具在 `test/helpers.js`，新版本测试写入对应的 `test/NN-*.test.js`（或新建），禁止再堆回单文件。

@@ -1,4 +1,5 @@
-﻿/**
+// GENERATED FILE: assembled by scripts/build-parts.js from src/parts/state/*.part.js. Edit the parts, then run npm run build.
+/**
  * NEAR Chain Abstraction Wallet - Unified State Store & Bilingual i18n
  * Persists multi-chain wallets under 'near_ca_wallets_v1' (auto-migrating 'pearl_user_wallets_v4'),
  * contacts under 'near_ca_contacts_v1', and language under 'near_ca_lang_v1'.

@@ -1,3 +1,4 @@
+// GENERATED FILE: assembled by scripts/build-parts.js from src/parts/token-registry/*.part.js. Edit the parts, then run npm run build.
 /**
  * NEAR Chain Abstraction Wallet - Authoritative Token & Chain Icon Registry
  * Multi-CDN icon resolution (TrustWallet Assets, CoinGecko, Solana/Jupiter, cryptocurrency-icons)
