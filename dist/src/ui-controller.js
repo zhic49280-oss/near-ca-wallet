@@ -55,7 +55,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.14');
+      await loadScriptOnce('ethers.umd.min.js?v=6.15');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -65,7 +65,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.14').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.15').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -75,7 +75,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.14').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.15').catch(() => false);
       return getMining();
     }
     return null;
@@ -4080,15 +4080,15 @@
       regBtn.classList.toggle('hidden', Boolean(wallet.nearNamedAccount));
     }
 
-    const mpcBtn = $('header-mpc-btn');
-    if (mpcBtn) {
-      mpcBtn.classList.remove('hidden');
-    }
-
+    const wcCount = st.wc.client ? Object.keys(st.wc.client.getActiveSessions() || {}).length : 0;
     const wcDot = $('header-wc-dot');
     if (wcDot) {
-      const hasSessions = st.wc.client && Object.keys(st.wc.client.getActiveSessions() || {}).length > 0;
-      wcDot.classList.toggle('connected', Boolean(hasSessions));
+      wcDot.classList.toggle('connected', wcCount > 0);
+    }
+    const hubWcBadge = $('hub-wc-count-badge');
+    if (hubWcBadge) {
+      hubWcBadge.textContent = String(wcCount);
+      hubWcBadge.classList.toggle('hidden', wcCount === 0);
     }
   }
 
@@ -4104,17 +4104,11 @@
   }
 
   function jumpToNearDomainManager() {
-    switchTab('hub');
-    const inp = $('hub-near-domain-input');
-    if (inp) inp.focus();
+    openNearAccountSheet();
   }
 
   function focusMpcInspector() {
     switchTab('hub');
-    const card = $('hub-mpc-card');
-    if (card && typeof card.scrollIntoView === 'function') {
-      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
   }
 
   // ==================== Unified Send Sheet (100% Real On-Chain Balances) ====================
@@ -11892,14 +11886,44 @@
     }
   }
 
-  async function openNearAccessKeysSheet() {
+  function renderNearAccountSummary(wallet) {
+    if (!wallet) return;
+    const accountId = wallet.nearNamedAccount || wallet.nearAddress || '';
+    if ($('near-keys-account-id')) {
+      $('near-keys-account-id').textContent = wallet.nearNamedAccount || shortenAddr(accountId, 12, 8) || '--';
+    }
+    const nearBal = wallet.nativeBalances && typeof wallet.nativeBalances.near === 'number'
+      ? wallet.nativeBalances.near
+      : (typeof wallet.nearBalance === 'number' ? wallet.nearBalance : null);
+    if ($('near-acct-balance-val')) {
+      $('near-acct-balance-val').textContent = nearBal !== null ? `${formatBal(nearBal, 5)} NEAR` : '--';
+    }
+    const guideEl = $('near-acct-unactivated-guide');
+    if (guideEl) {
+      guideEl.classList.toggle('hidden', Boolean(wallet.nearNamedAccount));
+    }
+  }
+
+  async function openNearAccountSheet() {
     const st = getState();
     const wallet = st.getActiveWallet();
     if (!wallet) return;
-    if (!(await verifySecurityAuthAsync(wallet, t('管理 NEAR 密钥与更换助记词', 'Manage NEAR Access Keys')))) return;
+    renderNearAccountSummary(wallet);
     if ($('near-keys-rotate-mnemonic')) $('near-keys-rotate-mnemonic').value = '';
-    openSheet('sheet-near-keys');
+    if ($('hub-near-bind-auth-input')) $('hub-near-bind-auth-input').value = '';
+    $('near-bind-drawer')?.classList.add('hidden');
+    $('near-keys-rotate-card')?.classList.add('hidden');
+    const availEl = $('near-domain-avail-status');
+    if (availEl) {
+      availEl.textContent = '';
+      availEl.classList.add('hidden');
+    }
+    openSheet('sheet-near-account');
     await refreshNearAccessKeysSheet();
+  }
+
+  async function openNearAccessKeysSheet() {
+    return openNearAccountSheet();
   }
 
   async function refreshNearAccessKeysSheet() {
@@ -11909,9 +11933,12 @@
     if (!wallet || !contracts) return;
     const creds = contracts.getWalletNearSignerCredentials(wallet);
     const accountId = creds.accountId;
-    if ($('near-keys-account-id')) {
-      $('near-keys-account-id').textContent = shortenAddr(accountId, 12, 8) || '--';
-    }
+    renderNearAccountSummary(wallet);
+
+    const rotateCard = $('near-keys-rotate-card');
+    if (rotateCard) rotateCard.classList.add('hidden');
+    const statusBadge = $('near-acct-status-badge');
+    const guideEl = $('near-acct-unactivated-guide');
     const listEl = $('near-keys-list');
     if (listEl) {
       listEl.innerHTML = `<div class="text-muted" style="font-size:12px;padding:8px;">${t('正在查询链上密钥...', 'Loading on-chain keys...')}</div>`;
@@ -11919,11 +11946,26 @@
 
     try {
       const res = await contracts.fetchNearAccessKeysAsync(accountId);
-      if (!listEl) return;
       if (!res.exists || res.keys.length === 0) {
-        listEl.innerHTML = `<div class="text-muted" style="font-size:12px;padding:8px;">${t('账户尚未在链上激活（首次收款或激活后可见密钥）', 'Account not yet active on-chain')}</div>`;
+        if (rotateCard) rotateCard.classList.add('hidden');
+        if (guideEl) guideEl.classList.remove('hidden');
+        if (statusBadge) {
+          statusBadge.textContent = t('未激活', 'Unactivated');
+          statusBadge.className = 'badge badge-cyan';
+        }
+        if (listEl) {
+          listEl.innerHTML = `<div class="text-muted" style="font-size:12px;padding:8px;">${t('账户尚未在链上激活（首次收款或激活后可见密钥）', 'Account not yet active on-chain')}</div>`;
+        }
         return;
       }
+
+      if (rotateCard) rotateCard.classList.remove('hidden');
+      if (guideEl) guideEl.classList.toggle('hidden', Boolean(wallet.nearNamedAccount));
+      if (statusBadge) {
+        statusBadge.textContent = wallet.nearNamedAccount ? t('已激活 .near', 'Active .near') : t('已激活隐式账户', 'Active Implicit');
+        statusBadge.className = 'badge badge-emerald';
+      }
+      if (!listEl) return;
 
       const fullCount = res.keys.filter((k) => k.access_key && k.access_key.permission === 'FullAccess').length;
       listEl.innerHTML = res.keys.map((k) => {
@@ -11947,6 +11989,7 @@
         `;
       }).join('');
     } catch (e) {
+      if (rotateCard) rotateCard.classList.add('hidden');
       if (listEl) {
         listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:8px;">${escapeHtml(e && e.message ? e.message : t('查询失败', 'Query failed'))}</div>`;
       }
@@ -12036,12 +12079,73 @@
     }
   }
 
+  function openWalletAddressesSheet() {
+    renderHubView();
+    openSheet('sheet-wallet-addresses');
+  }
+
+  function toggleNearBindDrawer() {
+    $('near-bind-drawer')?.classList.toggle('hidden');
+  }
+
+  async function checkNearDomainAvailabilityUI() {
+    const contracts = getContracts();
+    const statusEl = $('near-domain-avail-status');
+    const domain = ($('hub-near-domain-input')?.value || '').trim().toLowerCase();
+    if (!contracts || typeof contracts.checkNearAccountAvailability !== 'function') return;
+    if (statusEl) {
+      statusEl.classList.remove('hidden');
+      statusEl.style.color = 'var(--text-secondary)';
+      statusEl.textContent = t('正在检测域名...', 'Checking availability...');
+    }
+    try {
+      const res = await contracts.checkNearAccountAvailability(domain);
+      if (statusEl) {
+        statusEl.classList.remove('hidden');
+        if (res.available) {
+          statusEl.style.color = 'var(--near-emerald)';
+          statusEl.textContent = `✓ ${res.accountId} ${t('可注册', 'is available')}`;
+        } else {
+          statusEl.style.color = 'var(--rose-alert)';
+          statusEl.textContent = `✕ ${res.accountId} ${t('已被占用（若为您本人账号可点击下方绑定）', 'is already taken (bind below if yours)')}`;
+        }
+      }
+    } catch (e) {
+      if (statusEl) {
+        statusEl.classList.remove('hidden');
+        statusEl.style.color = 'var(--rose-alert)';
+        statusEl.textContent = e && e.message ? e.message : t('检测失败', 'Check failed');
+      }
+    }
+  }
+
   function renderHubView() {
     const st = getState();
     const wallet = st.getActiveWallet();
     if (!wallet) return;
     if (typeof st.recomputeWalletMpcAddresses === 'function') {
       st.recomputeWalletMpcAddresses(wallet);
+    }
+
+    const nearDisplay = wallet.nearNamedAccount || shortenAddr(wallet.nearAddress, 10, 8) || '--';
+    if ($('hub-identity-name')) $('hub-identity-name').textContent = wallet.name || 'Nexus Wallet';
+    if ($('hub-identity-near-id')) $('hub-identity-near-id').textContent = nearDisplay;
+    const nearStatusBadge = $('hub-near-status-badge');
+    if (nearStatusBadge) {
+      nearStatusBadge.textContent = wallet.nearNamedAccount ? t('已命名 .near', 'Named .near') : t('隐式账户', 'Implicit');
+      nearStatusBadge.className = wallet.nearNamedAccount ? 'badge badge-emerald' : 'badge badge-cyan';
+    }
+    if ($('hub-near-menu-sub')) {
+      $('hub-near-menu-sub').textContent = wallet.nearNamedAccount
+        ? wallet.nearNamedAccount
+        : t('注册 .near / 链上密钥管理', 'Register .near / Manage Keys');
+    }
+
+    const wcCount = st.wc.client ? Object.keys(st.wc.client.getActiveSessions() || {}).length : 0;
+    const hubWcBadge = $('hub-wc-count-badge');
+    if (hubWcBadge) {
+      hubWcBadge.textContent = String(wcCount);
+      hubWcBadge.classList.toggle('hidden', wcCount === 0);
     }
 
     if ($('hub-near-current-id')) {
@@ -12053,8 +12157,6 @@
 
     const addrList = $('hub-addresses-list');
     if (addrList) {
-      $('hub-mpc-card')?.classList.remove('hidden');
-      $('hub-near-domain-card')?.classList.remove('hidden');
       const items = [
         { k: t('NEAR 主账户', 'NEAR Master Account'), v: wallet.nearNamedAccount || wallet.nearAddress },
         { k: 'EVM (ETH / Base / ARB / OP / POL / BSC / Arc)', v: wallet.mpcEvmAddress || wallet.evmAddress },
@@ -12063,11 +12165,11 @@
         { k: t('Pearl (PRL 主网)', 'Pearl (PRL Mainnet)'), v: wallet.address }
       ];
       addrList.innerHTML = items.map((x) => `
-        <div class="meta-row">
+        <div class="meta-row hub-addr-row">
           <span class="meta-key">${escapeHtml(x.k)}</span>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2" style="flex-shrink:0;">
             <span class="mono" style="font-size:11px;">${escapeHtml(shortenAddr(x.v, 8, 6))}</span>
-            <button type="button" class="btn-ghost-sm" data-action="copy-text" data-val="${escapeHtml(x.v || '')}" data-label="${escapeHtml(x.k)}">${t('复制', 'Copy')}</button>
+            <button type="button" class="btn-ghost-sm hub-addr-copy-btn" data-action="copy-text" data-val="${escapeHtml(x.v || '')}" data-label="${escapeHtml(x.k)}">${t('复制', 'Copy')}</button>
           </div>
         </div>
       `).join('');
@@ -12141,7 +12243,16 @@
       }
       st.saveWallets();
       renderAll();
-      showToast(`✅ ${res.accountId} ${t('注册成功，MPC 全链地址已切换', 'registered & MPC addresses updated')}`);
+      if (res.sweptMode === 'delete_account_full_sweep') {
+        showToast(`✅ ${res.accountId} ${t('无损注册成功，原隐式账户 100% 余额与押金已归集', 'registered with 100% implicit balance & deposit swept')}`);
+      } else if (res.sweptMode === 'transfer_kept_ft') {
+        showToast(`✅ ${res.accountId} ${t('注册成功，NEAR 余额已归集（保留原账户代币）', 'registered & NEAR swept (FT preserved)')}`);
+      } else {
+        showToast(`✅ ${res.accountId} ${t('注册成功，MPC 全链地址已切换', 'registered & MPC addresses updated')}`);
+      }
+      if ($('sheet-near-account')?.classList?.contains('open')) {
+        await refreshNearAccessKeysSheet();
+      }
       refreshAllBalancesAsync(true);
     } catch (err) {
       showToast(err && err.message ? err.message : t('注册失败', 'Registration failed'));
@@ -12226,9 +12337,13 @@
         wallet.evmAddress = wallet.mpcEvmAddress;
       }
       if ($('hub-near-bind-auth-input')) $('hub-near-bind-auth-input').value = '';
+      $('near-bind-drawer')?.classList.add('hidden');
       st.saveWallets();
       renderAll();
       showToast(`✅ ${t('已绑定主账户', 'Bound master account')}: ${domain}`);
+      if ($('sheet-near-account')?.classList?.contains('open')) {
+        await refreshNearAccessKeysSheet();
+      }
       refreshAllBalancesAsync(true);
     } catch (err) {
       showToast(err && err.message ? err.message : t('绑定失败', 'Bind failed'));
@@ -12926,7 +13041,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.14');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.15');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -13021,10 +13136,16 @@
     }).join('');
   }
 
+  function toggleWcAdvancedSettings() {
+    $('wc-advanced-drawer')?.classList.toggle('hidden');
+  }
+
   async function openWalletConnectSheet() {
     const st = getState();
     if ($('wc-project-id-input')) $('wc-project-id-input').value = st.wc.projectId || '';
     if ($('wc-uri-input')) $('wc-uri-input').value = '';
+    const advDrawer = $('wc-advanced-drawer');
+    if (advDrawer) advDrawer.classList.toggle('hidden', Boolean(st.wc.projectId));
     renderWcCards();
     renderWcSessions();
     openSheet('sheet-walletconnect');
@@ -13046,6 +13167,7 @@
     if (typeof localStorage !== 'undefined') localStorage.setItem('near_ca_wc_project_id', val);
     try {
       await ensureWcReady();
+      $('wc-advanced-drawer')?.classList.add('hidden');
       showToast(t('✅ WalletConnect 已就绪', '✅ WalletConnect ready'));
     } catch (e) {
       showToast(e && e.message ? e.message : t('连接失败', 'Connection failed'));
@@ -13370,6 +13492,8 @@
       }
       if (isOpen('sheet-sol-rent')) renderSolRentList();
       if (isOpen('sheet-near-storage')) renderNearStorageList();
+      if (isOpen('sheet-wallet-addresses')) renderHubView();
+      if (isOpen('sheet-near-account')) renderNearAccountSummary(st.getActiveWallet());
       if (isOpen('sheet-walletconnect')) {
         renderWcCards();
         renderWcSessions();
@@ -13600,6 +13724,13 @@
     openBackupKeysSheet,
     toggleBackupKeysReveal,
     openPinSheet,
+    openWalletAddressesSheet,
+    openNearAccountSheet,
+    checkNearDomainAvailabilityUI,
+    toggleNearBindDrawer,
+    toggleWcAdvancedSettings,
+    registerNearDomainFromHub,
+    bindNearDomainFromHub,
     openNearAccessKeysSheet,
     refreshNearAccessKeysSheet,
     deleteNearAccessKeyFromSheet,
@@ -13625,6 +13756,11 @@
     startAdditionalWalletImport,
     openBackupKeysSheet,
     toggleBackupKeysReveal,
+    openWalletAddressesSheet,
+    openNearAccountSheet,
+    checkNearDomainAvailabilityUI,
+    toggleNearBindDrawer,
+    toggleWcAdvancedSettings,
     openNearAccessKeysSheet,
     refreshNearAccessKeysSheet,
     deleteNearAccessKeyFromSheet,

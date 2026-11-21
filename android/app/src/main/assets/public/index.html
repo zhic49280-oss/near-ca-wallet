@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#06080F" />
   <title>Nexus Wallet — NEAR Chain Abstraction</title>
-  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon.png?v=6.14" />
-  <link rel="apple-touch-icon" sizes="192x192" href="assets/nexus-logo-192.png?v=6.14" />
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon.png?v=6.15" />
+  <link rel="apple-touch-icon" sizes="192x192" href="assets/nexus-logo-192.png?v=6.15" />
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=6.14" />
+  <link rel="stylesheet" href="style.css?v=6.15" />
   <script>
     (function () {
       try {
@@ -32,13 +32,13 @@
 <body>
   <div id="app-privacy-shield" class="app-privacy-shield" aria-hidden="true">
     <div class="app-lock-card">
-      <img src="assets/nexus-logo-192.png?v=6.14" alt="Nexus Wallet" class="app-lock-logo" />
+      <img src="assets/nexus-logo-192.png?v=6.15" alt="Nexus Wallet" class="app-lock-logo" />
       <div class="app-lock-brand">Nexus Wallet</div>
     </div>
   </div>
   <div id="app-lock-overlay" class="app-lock-overlay" role="dialog" aria-modal="true" aria-hidden="true">
     <div class="app-lock-card">
-      <img src="assets/nexus-logo-192.png?v=6.14" alt="Nexus Wallet" class="app-lock-logo" />
+      <img src="assets/nexus-logo-192.png?v=6.15" alt="Nexus Wallet" class="app-lock-logo" />
       <div class="app-lock-brand">Nexus Wallet</div>
       <div id="app-lock-title" class="app-lock-title" data-i18n="lock.title">安全锁定</div>
       <div id="app-lock-status" class="app-lock-status" data-i18n="lock.hint">请通过生物识别或锁屏密码解锁</div>
@@ -59,9 +59,6 @@
       </button>
 
       <div class="header-actions">
-        <button type="button" id="header-mpc-btn" class="header-chip-btn mpc-pill" onclick="focusMpcInspector()">
-          <span>MPC</span>
-        </button>
         <button type="button" id="header-wc-btn" class="header-chip-btn" onclick="openWalletConnectSheet()">
           <span id="header-wc-dot" class="wc-dot"></span>
           <span data-i18n="header.wcBtn">WC</span>
@@ -76,7 +73,7 @@
       <!-- ==================== Onboarding View ==================== -->
       <section id="view-onboarding" class="view-section hidden">
         <div class="ios-glass-card hero-card" style="padding: 24px 18px; text-align: center;">
-          <img src="assets/nexus-logo-512.png?v=6.14" alt="Nexus Wallet" style="width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 18px; border: 1px solid rgba(0,236,151,0.35); display: block; object-fit: cover; box-shadow: 0 8px 24px rgba(0,236,151,0.16);" />
+          <img src="assets/nexus-logo-512.png?v=6.15" alt="Nexus Wallet" style="width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 18px; border: 1px solid rgba(0,236,151,0.35); display: block; object-fit: cover; box-shadow: 0 8px 24px rgba(0,236,151,0.16);" />
           <span class="ca-badge" data-i18n="onboard.badge">NEAR 链抽象自托管账户</span>
           <h1 style="margin: 12px 0 8px; font-size: 21px; font-weight: 800; color: #fff;" data-i18n="onboard.title">一个 NEAR 账户，畅通全链资产</h1>
           <p style="margin: 0 0 20px; font-size: 12.5px; color: var(--text-secondary);" data-i18n="onboard.subtitle">一站式多链自托管资产管理、跨链闪兑与链上理财</p>
@@ -769,93 +766,105 @@
 
       <!-- ==================== Tab 4: Hub & Settings (#view-hub) ==================== -->
       <section id="view-hub" class="view-section hidden">
-        <!-- 1. NEAR Named Account (.near) Registration & Binding -->
-        <div id="hub-near-domain-card" class="ios-glass-card flex flex-col gap-3">
-          <div style="font-weight: 700; font-size: 14px;" data-i18n="hub.nearDomainTitle">NEAR .near 账户注册与绑定</div>
-          <div class="meta-row" style="font-size: 12px;">
-            <span class="meta-key" data-i18n="hub.nearDomainCurrent">当前主账户</span>
-            <span id="hub-near-current-id" class="mono text-emerald" style="font-size: 11.5px; max-width: 210px; overflow: hidden; text-overflow: ellipsis;">--</span>
-          </div>
-          <input id="hub-near-domain-input" type="text" class="input-field mono" data-i18n-placeholder="hub.nearDomainPlaceholder" placeholder="输入期望域名，如 alice.near" />
-          <input id="hub-near-bind-auth-input" type="text" class="input-field mono" data-i18n-placeholder="hub.nearDomainAuthPlaceholder" placeholder="绑定其他钱包的 .near 时，可填原助记词/私钥自动授权（可选）" />
-          <div class="flex gap-2">
-            <button type="button" class="btn-primary flex-1" onclick="registerNearDomainFromHub()" data-i18n="hub.nearDomainRegisterBtn">链上注册 (0.1 NEAR)</button>
-            <button type="button" class="btn-secondary" onclick="bindNearDomainFromHub()" data-i18n="hub.nearDomainBindBtn">绑定已有账号</button>
-          </div>
-        </div>
-
-        <!-- 2. NEAR MPC Chain Signatures Inspector -->
-        <div id="hub-mpc-card" class="ios-glass-card flex flex-col gap-3">
-          <div class="flex items-center justify-between">
-            <span style="font-weight: 700; font-size: 14px;" data-i18n="hub.mpcTitle">多链派生与签名授权</span>
-            <span class="ca-badge">MPC</span>
-          </div>
-          <div class="meta-list">
-            <div class="meta-row">
-              <span class="meta-key" data-i18n="hub.mpcPathLabel">派生路径</span>
-              <input id="hub-mpc-path-input" type="text" class="input-field mono" value="ethereum-1" style="width: 145px; padding: 5px 8px; font-size: 11.5px;" oninput="recomputeHubMpcAddress()" />
-            </div>
-            <div class="meta-row">
-              <span class="meta-key" data-i18n="hub.mpcDerivedAddr">派生地址</span>
-              <button type="button" class="btn-ghost-sm" onclick="copyHubMpcAddress()" data-i18n="common.copy">复制</button>
-            </div>
-            <div id="hub-mpc-evm-address" class="mono text-cyan" style="font-size: 11.5px; word-break: break-all;">--</div>
-          </div>
-          <input id="hub-mpc-payload-input" type="text" class="input-field mono" data-i18n-placeholder="hub.mpcPayloadPlaceholder" placeholder="输入消息或 32 字节 Hex 哈希进行链抽象签名" />
-          <button type="button" class="btn-secondary" onclick="executeHubMpcSign()" data-i18n="hub.mpcSignBtn">发起签名</button>
-          <div id="hub-mpc-receipt" class="hidden meta-list" style="border-color: rgba(56,189,248,0.35);"></div>
-        </div>
-
-        <!-- 3. Deep Mining Telemetry Entry Card -->
-        <div class="ios-glass-card flex flex-col gap-2" style="border-color: rgba(56,189,248,0.22);">
-          <div style="font-weight: 700; font-size: 14px;" data-i18n="hub.miningTitle">⛏️ Pearl 矿工深度遥测与归集</div>
-          <div style="font-size: 12px; color: var(--text-secondary);" data-i18n="hub.miningSubtitle">多矿池算力追踪、单机状态监控与 PRL 一键桥接至 .near</div>
-          <button type="button" class="btn-secondary" onclick="openMiningProSheet()" data-i18n="hub.miningOpenBtn">打开专业矿工面板</button>
-        </div>
-
-        <!-- 4. NEAR Master & MPC Addresses & Wallet Management -->
+        <!-- Identity Hero Card -->
         <div class="ios-glass-card flex flex-col gap-3">
-          <div style="font-weight: 700; font-size: 14px;" data-i18n="hub.keysTitle">NEAR 主账户与 MPC 全链地址</div>
-          <div id="hub-addresses-list" class="meta-list"></div>
+          <div class="flex items-center justify-between gap-2">
+            <div class="min-w-0 flex-1">
+              <div id="hub-identity-name" style="font-weight: 800; font-size: 16px; color: #ffffff;">Nexus Wallet</div>
+              <div id="hub-identity-near-id" class="mono text-emerald" style="font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">--</div>
+            </div>
+            <span id="hub-near-status-badge" class="badge badge-cyan">--</span>
+          </div>
           <div class="flex gap-2">
             <button type="button" class="btn-secondary flex-1" onclick="openWalletSwitcherSheet()" data-i18n="hub.manageWalletsBtn">切换 / 新增钱包</button>
-            <button type="button" class="btn-secondary flex-1" onclick="openBackupKeysSheet()" data-i18n="hub.backupKeysBtn">导出助记词与 NEAR 主密钥</button>
+            <button type="button" class="btn-secondary flex-1" onclick="openBackupKeysSheet()" data-i18n="hub.backupKeysBtn">导出助记词与主密钥</button>
           </div>
-          <button type="button" class="btn-secondary" onclick="openNearAccessKeysSheet()" data-i18n="hub.accessKeysBtn">NEAR 密钥管理与更换助记词</button>
         </div>
 
-        <!-- 5. Security -->
-        <div id="hub-security-bio-card" class="ios-glass-card flex flex-col gap-3">
-          <div class="flex items-center justify-between">
-            <span style="font-weight: 700; font-size: 14px;" data-i18n="hub.bioCardTitle">安全验证</span>
-            <span id="hub-bio-status-badge" class="ca-badge">--</span>
-          </div>
-          <button type="button" id="btn-hub-set-pin" class="btn-secondary" onclick="openSetWalletPinPrompt()" data-i18n="hub.bioSetPinBtn">设置安全 PIN</button>
+        <!-- Group 1: Account & Web3 -->
+        <div class="hub-menu-group">
+          <button type="button" class="hub-menu-row" onclick="openNearAccountSheet()">
+            <span class="hub-menu-icon">🪪</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.nearAcctMenuTitle">NEAR 账户与密钥</span>
+              <span id="hub-near-menu-sub" class="hub-menu-sub" data-i18n="hub.nearAcctMenuSub">注册 .near / 链上密钥管理</span>
+            </span>
+            <span class="hub-menu-right">›</span>
+          </button>
+          <button type="button" class="hub-menu-row" onclick="openWalletAddressesSheet()">
+            <span class="hub-menu-icon">◈</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.addrMenuTitle">多链收款地址</span>
+              <span class="hub-menu-sub" data-i18n="hub.addrMenuSub">查看并复制全链主地址</span>
+            </span>
+            <span class="hub-menu-right">›</span>
+          </button>
+          <button type="button" class="hub-menu-row" onclick="openWalletConnectSheet()">
+            <span class="hub-menu-icon">🔗</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.wcTitle">WalletConnect v2 授权</span>
+            </span>
+            <span class="hub-menu-right">
+              <span id="hub-wc-count-badge" class="ca-badge hidden">0</span>
+              <span>›</span>
+            </span>
+          </button>
         </div>
-        <!-- 6. Contacts & WalletConnect & Security -->
-        <div class="ios-glass-card flex flex-col gap-3">
-          <div class="flex items-center justify-between">
-            <span style="font-weight: 700; font-size: 13.5px;" data-i18n="hub.contactsTitle">常用地址簿</span>
-            <button type="button" class="btn-secondary" onclick="openContactsSheet()" data-i18n="hub.contactsOpenBtn">管理联系人</button>
-          </div>
-          <div class="flex items-center justify-between">
-            <span style="font-weight: 700; font-size: 13.5px;" data-i18n="hub.wcTitle">WalletConnect v2 授权</span>
-            <button type="button" class="btn-secondary" onclick="openWalletConnectSheet()" data-i18n="hub.wcOpenBtn">管理 DApp 连接</button>
-          </div>
-          <div class="flex items-center justify-between">
-            <span style="font-weight: 700; font-size: 13.5px;" data-i18n="hub.solRentTitle">Solana 租金回收与粉尘粉碎</span>
-            <button type="button" class="btn-secondary" onclick="openSolRentReclaimSheet()" data-i18n="hub.solRentOpenBtn">扫描回收</button>
-          </div>
-          <div class="flex items-center justify-between">
-            <span style="font-weight: 700; font-size: 13.5px;" data-i18n="hub.nearStorageTitle">NEAR 存储押金回收</span>
-            <button type="button" class="btn-secondary" onclick="openNearStorageReclaimSheet()" data-i18n="hub.nearStorageOpenBtn">扫描回收</button>
-          </div>
-          <div class="flex items-center justify-between">
-            <span style="font-weight: 700; font-size: 13.5px;" data-i18n="hub.securityTitle">安全与偏好设置</span>
-            <div class="flex gap-2">
-              <button type="button" class="btn-ghost-sm" onclick="toggleLanguage()" data-i18n="hub.langBtn">切换语言 (中/EN)</button>
-            </div>
-          </div>
+
+        <!-- Group 2: On-Chain Tools -->
+        <div class="hub-menu-group">
+          <button type="button" class="hub-menu-row" onclick="openMiningProSheet()">
+            <span class="hub-menu-icon">⛏️</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.miningMenuTitle">Pearl 矿工监控</span>
+            </span>
+            <span class="hub-menu-right">›</span>
+          </button>
+          <button type="button" class="hub-menu-row" onclick="openContactsSheet()">
+            <span class="hub-menu-icon">📒</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.contactsTitle">常用地址簿</span>
+            </span>
+            <span class="hub-menu-right">›</span>
+          </button>
+          <button type="button" class="hub-menu-row" onclick="openSolRentReclaimSheet()">
+            <span class="hub-menu-icon">🧹</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.solRentTitle">Solana 租金回收与粉尘粉碎</span>
+            </span>
+            <span class="hub-menu-right">›</span>
+          </button>
+          <button type="button" class="hub-menu-row" onclick="openNearStorageReclaimSheet()">
+            <span class="hub-menu-icon">📦</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.nearStorageTitle">NEAR 存储押金回收</span>
+            </span>
+            <span class="hub-menu-right">›</span>
+          </button>
+        </div>
+
+        <!-- Group 3: Security & Preferences -->
+        <div class="hub-menu-group">
+          <button type="button" id="hub-security-bio-card" class="hub-menu-row" onclick="openSetWalletPinPrompt()">
+            <span class="hub-menu-icon">🔐</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.bioCardTitle">安全验证</span>
+            </span>
+            <span class="hub-menu-right">
+              <span id="hub-bio-status-badge" class="ca-badge">--</span>
+              <span>›</span>
+            </span>
+          </button>
+          <button type="button" class="hub-menu-row" onclick="toggleLanguage()">
+            <span class="hub-menu-icon">🌐</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.langTitle">语言偏好</span>
+            </span>
+            <span class="hub-menu-right">
+              <span id="hub-lang-current-pill" class="ca-badge" data-i18n="header.langToggle">EN</span>
+              <span>›</span>
+            </span>
+          </button>
         </div>
       </section>
     </main>
@@ -1172,14 +1181,15 @@
     </div>
     <div class="sheet-body">
       <div class="flex gap-2">
-        <input id="wc-project-id-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="sheet.wcProjectIdPlaceholder" placeholder="输入 Reown / WalletConnect Project ID" />
-        <button type="button" class="btn-secondary" onclick="saveWalletConnectProjectId()" data-i18n="sheet.wcSaveIdBtn">保存 ID</button>
-      </div>
-
-      <div class="flex gap-2">
         <input id="wc-uri-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="sheet.wcUriPlaceholder" placeholder="粘贴 wc: 配对链接" />
         <button type="button" class="btn-ghost-sm" onclick="pasteToWcUri()" data-i18n="common.paste">粘贴</button>
         <button type="button" class="btn-primary" style="width: auto; padding: 10px 14px;" onclick="pairWalletConnectUri()" data-i18n="sheet.wcPairBtn">配对连接</button>
+      </div>
+
+      <button type="button" id="wc-advanced-toggle-btn" class="btn-ghost-sm" style="align-self: flex-start;" onclick="toggleWcAdvancedSettings()" data-i18n="wc.advancedToggle">高级配置: Project ID ▾</button>
+      <div id="wc-advanced-drawer" class="hidden flex gap-2">
+        <input id="wc-project-id-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="sheet.wcProjectIdPlaceholder" placeholder="输入 Reown / WalletConnect Project ID" />
+        <button type="button" class="btn-secondary" onclick="saveWalletConnectProjectId()" data-i18n="sheet.wcSaveIdBtn">保存 ID</button>
       </div>
 
       <!-- Pending Proposal -->
@@ -1265,25 +1275,72 @@
     </div>
   </div>
 
-  <!-- ==================== Sheet: NEAR Access Keys & Key Rotation ==================== -->
-  <div id="sheet-near-keys" class="bottom-sheet" aria-hidden="true">
+  <!-- ==================== Sheet: Multi-Chain Receive Addresses ==================== -->
+  <div id="sheet-wallet-addresses" class="bottom-sheet" aria-hidden="true">
     <div class="sheet-handle"></div>
     <div class="sheet-header">
-      <h3 class="sheet-title" data-i18n="sheet.keysTitle">NEAR 密钥管理</h3>
+      <h3 class="sheet-title" data-i18n="sheet.addressesTitle">多链收款地址</h3>
       <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
     </div>
     <div class="sheet-body" style="max-height: 76vh; overflow-y: auto;">
-      <div id="near-keys-account-bar" class="meta-row" style="font-size: 12px;">
-        <span class="meta-key" data-i18n="sheet.keysAccountLabel">当前账户</span>
-        <span id="near-keys-account-id" class="mono">--</span>
-      </div>
-      <div class="flex items-center justify-between">
-        <span style="font-size: 12.5px; font-weight: 700;" data-i18n="sheet.keysListTitle">链上访问密钥</span>
-        <button type="button" class="btn-ghost-sm" onclick="refreshNearAccessKeysSheet()" data-i18n="common.refresh">刷新</button>
-      </div>
-      <div id="near-keys-list" class="flex flex-col gap-2"></div>
+      <div id="hub-addresses-list" class="flex flex-col gap-2"></div>
+    </div>
+  </div>
 
-      <div class="ios-glass-card flex flex-col gap-2" style="padding: 12px; margin-top: 6px;">
+  <!-- ==================== Sheet: Merged NEAR Account (.near Domain) & On-Chain Access Keys ==================== -->
+  <div id="sheet-near-account" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.nearAcctTitle">NEAR 账户与密钥</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body flex flex-col gap-3" style="max-height: 78vh; overflow-y: auto;">
+      <!-- Current Account & Balance Summary -->
+      <div class="ios-glass-card flex flex-col gap-2" style="padding: 12px;">
+        <div id="near-keys-account-bar" class="meta-row" style="font-size: 12px;">
+          <span class="meta-key" data-i18n="hub.nearDomainCurrent">当前主账户</span>
+          <div class="flex items-center gap-2">
+            <span id="near-keys-account-id" class="mono text-emerald">--</span>
+            <button type="button" class="btn-ghost-sm hub-addr-copy-btn" onclick="copyActiveNearId()" data-i18n="common.copy">复制</button>
+          </div>
+        </div>
+        <div class="meta-row" style="font-size: 12px;">
+          <span class="meta-key" data-i18n="near.balanceLabel">当前余额</span>
+          <div class="flex items-center gap-2">
+            <span id="near-acct-balance-val" class="mono">--</span>
+            <span id="near-acct-status-badge" class="badge badge-cyan">--</span>
+          </div>
+        </div>
+        <div id="near-acct-unactivated-guide" class="hidden" style="font-size: 11.5px; color: var(--text-secondary); line-height: 1.45; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06);" data-i18n="near.unactivatedGuide">向隐式地址转入 ≥ 0.055 NEAR 后即可一键注册 .near，系统将自动销毁空隐式账户并将 100% 余额与存储押金无损归集至新域名。</div>
+      </div>
+
+      <!-- .near Registration & Collapsible Binding -->
+      <div id="hub-near-domain-card" class="ios-glass-card flex flex-col gap-2" style="padding: 12px;">
+        <div style="font-size: 13px; font-weight: 700;" data-i18n="hub.nearDomainTitle">NEAR .near 账户注册与绑定</div>
+        <div class="flex gap-2">
+          <input id="hub-near-domain-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="hub.nearDomainPlaceholder" placeholder="输入期望域名，如 alice.near" />
+          <button type="button" class="btn-secondary" style="width: auto; padding: 0 12px; white-space: nowrap;" onclick="checkNearDomainAvailabilityUI()" data-i18n="near.checkAvailBtn">检测</button>
+        </div>
+        <div id="near-domain-avail-status" class="hidden" style="font-size: 11.5px;"></div>
+        <button type="button" id="btn-register-near-domain" class="btn-primary" onclick="registerNearDomainFromHub()" data-i18n="hub.nearDomainRegisterBtn">无损注册 .near (0.05 NEAR)</button>
+        <button type="button" class="btn-ghost-sm" style="align-self: flex-start;" onclick="toggleNearBindDrawer()" data-i18n="near.bindToggleBtn">绑定已有 .near 账号 ▾</button>
+        <div id="near-bind-drawer" class="hidden flex flex-col gap-2" style="padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06);">
+          <input id="hub-near-bind-auth-input" type="password" class="input-field mono" data-i18n-placeholder="hub.nearDomainAuthPlaceholder" placeholder="绑定其他钱包的 .near 时，可填原助记词/私钥自动授权（可选）" />
+          <button type="button" class="btn-secondary" onclick="bindNearDomainFromHub()" data-i18n="hub.nearDomainBindBtn">确认绑定</button>
+        </div>
+      </div>
+
+      <!-- On-Chain Access Keys List -->
+      <div class="ios-glass-card flex flex-col gap-2" style="padding: 12px;">
+        <div class="flex items-center justify-between">
+          <span style="font-size: 12.5px; font-weight: 700;" data-i18n="sheet.keysListTitle">链上访问密钥</span>
+          <button type="button" class="btn-ghost-sm" onclick="refreshNearAccessKeysSheet()" data-i18n="common.refresh">刷新</button>
+        </div>
+        <div id="near-keys-list" class="flex flex-col gap-2"></div>
+      </div>
+
+      <!-- Rotate Seed / Upgrade Key (Strictly hidden when account is unactivated) -->
+      <div id="near-keys-rotate-card" class="ios-glass-card hidden flex flex-col gap-2" style="padding: 12px;">
         <div style="font-size: 13px; font-weight: 700;" data-i18n="sheet.keysRotateTitle">更换助记词 / 升级密钥</div>
         <textarea id="near-keys-rotate-mnemonic" class="input-field mono" style="min-height: 64px;" data-i18n-placeholder="sheet.keysRotatePlaceholder" placeholder="点击下方生成新助记词，或粘贴已有助记词"></textarea>
         <div class="flex gap-2">
@@ -1521,14 +1578,14 @@
   </div>
 
   <!-- Scripts in Exact Required Order (ethers, qrcode, mining-pro lazy-loaded on demand) -->
-  <script defer src="bip39-wordlist.js?v=6.14"></script>
-  <script defer src="src/crypto-engine.js?v=6.14"></script>
-  <script defer src="src/token-registry.js?v=6.14"></script>
-  <script defer src="src/near-intents.js?v=6.14"></script>
-  <script defer src="src/chain-contracts.js?v=6.14"></script>
-  <script defer src="src/limit-orders.js?v=6.14"></script>
-  <script defer src="src/hyperliquid-perps.js?v=6.14"></script>
-  <script defer src="src/state.js?v=6.14"></script>
-  <script defer src="src/ui-controller.js?v=6.14"></script>
+  <script defer src="bip39-wordlist.js?v=6.15"></script>
+  <script defer src="src/crypto-engine.js?v=6.15"></script>
+  <script defer src="src/token-registry.js?v=6.15"></script>
+  <script defer src="src/near-intents.js?v=6.15"></script>
+  <script defer src="src/chain-contracts.js?v=6.15"></script>
+  <script defer src="src/limit-orders.js?v=6.15"></script>
+  <script defer src="src/hyperliquid-perps.js?v=6.15"></script>
+  <script defer src="src/state.js?v=6.15"></script>
+  <script defer src="src/ui-controller.js?v=6.15"></script>
 </body>
 </html>

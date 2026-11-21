@@ -5300,6 +5300,38 @@
     ]);
   }
 
+  function buildDeleteAccountActionBytes({ beneficiaryId } = {}) {
+    const beneficiary = String(beneficiaryId || '').trim().toLowerCase();
+    if (!beneficiary) {
+      throw new Error(t('缺少 DeleteAccount 受益账户', 'Missing DeleteAccount beneficiaryId'));
+    }
+    return concatUint8Arrays([
+      new Uint8Array([7]), // Action::DeleteAccount
+      encodeBorshString(beneficiary)
+    ]);
+  }
+
+  async function checkNearAccountAvailability(accountId) {
+    const domain = String(accountId || '').trim().toLowerCase();
+    if (!/^[a-z0-9_-]{2,59}\.near$/.test(domain)) {
+      throw new Error(t('请输入有效的 .near 域名（如 alice.near）', 'Enter a valid .near account ID (e.g. alice.near)'));
+    }
+    const res = await nearRpcPostAsync({
+      jsonrpc: '2.0',
+      id: 'avail-check',
+      method: 'query',
+      params: { request_type: 'view_account', finality: 'final', account_id: domain }
+    }, 8000);
+    if (res && res.result && res.result.amount !== undefined) {
+      return { ok: true, available: false, exists: true, accountId: domain };
+    }
+    const errText = JSON.stringify(res?.error || '');
+    if (/UNKNOWN_ACCOUNT|does not exist/i.test(errText)) {
+      return { ok: true, available: true, exists: false, accountId: domain };
+    }
+    throw new Error(res?.error?.message || t('无法查询该账户状态', 'Failed to query account availability'));
+  }
+
   async function addNearAccessKeyAsync({ wallet, newPublicKeyStr } = {}) {
     if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
     const resolved = await ensureWalletSigningKeysAsync(wallet);
@@ -5419,10 +5451,11 @@
     privateKeyStr,
     newAccountId,
     availableBalanceNear = null,
-    wallet = null
+    wallet = null,
+    sweepImplicitToNamed = true
   } = {}) {
     const resolvedWallet = wallet ? await ensureWalletSigningKeysAsync(wallet) : null;
-    const sender = implicitAccountId || (resolvedWallet && resolvedWallet.nearAddress);
+    const sender = implicitAccountId || (resolvedWallet && (resolvedWallet.nearNamedAccount || resolvedWallet.nearAddress));
     const pub = publicKeyStr || (resolvedWallet && resolvedWallet.nearPublicKey);
     const priv = privateKeyStr || (resolvedWallet && resolvedWallet.nearPrivateKey);
     const domain = String(newAccountId || '').trim().toLowerCase();
@@ -5446,7 +5479,7 @@
         wallet: { nearBalance: knownBal },
         chain: 'near',
         tokenSymbol: 'NEAR',
-        amount: 0.1,
+        amount: 0.05,
         isNative: true,
         gasBuffer: 0.005
       });
@@ -5468,7 +5501,7 @@
         wallet: { nearBalance: liveNearBal },
         chain: 'near',
         tokenSymbol: 'NEAR',
-        amount: 0.1,
+        amount: 0.05,
         isNative: true,
         gasBuffer: 0.005
       });
@@ -5485,13 +5518,122 @@
         new_public_key: pub
       }),
       gas: '30000000000000',
-      depositYocto: '100000000000000000000000' // 0.1 NEAR
+      depositYocto: '50000000000000000000000' // 0.05 NEAR
     });
+
+    let sweepTxHash = null;
+    let sweptMode = 'create_only';
+    let sweepError = '';
+    const isImplicitSender = /^[0-9a-f]{64}$/i.test(String(sender || '').trim()) && sender.toLowerCase() !== domain;
+
+    if (sweepImplicitToNamed !== false && isImplicitSender) {
+      try {
+        let domainExists = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const chk = await nearRpcPostAsync({
+            jsonrpc: '2.0',
+            id: `verify-dom-${attempt}`,
+            method: 'query',
+            params: { request_type: 'view_account', finality: 'final', account_id: domain }
+          }, 5000).catch(() => null);
+          if (chk && chk.result && chk.result.amount !== undefined) {
+            domainExists = true;
+            break;
+          }
+          if (attempt < 2) await new Promise((r) => setTimeout(r, 50));
+        }
+
+        if (domainExists) {
+          const localFtMap = (resolvedWallet && resolvedWallet.nearNep141Balances) || {};
+          const hasLocalFt = Object.values(localFtMap).some((entry) => {
+            if (!entry) return false;
+            try {
+              if (entry.raw && BigInt(String(entry.raw)) > 0n) return true;
+            } catch (_) {}
+            return Number(entry.formatted || 0) > 0;
+          });
+
+          let fastNearConfirmedZero = false;
+          if (!hasLocalFt) {
+            let fnTokens = null;
+            let fnStatus = 0;
+            try {
+              const fnResp = await fetchJsonWithTimeout(
+                `https://api.fastnear.com/v1/account/${encodeURIComponent(sender)}/ft`,
+                {},
+                4000
+              );
+              if (fnResp && Array.isArray(fnResp.tokens)) {
+                fnTokens = fnResp.tokens;
+              } else if (fnResp && fnResp.data && Array.isArray(fnResp.data.tokens)) {
+                fnTokens = fnResp.data.tokens;
+              } else if (fnResp && fnResp.status === 404) {
+                fnStatus = 404;
+              }
+            } catch (fnErr) {
+              fnStatus = Number((fnErr && fnErr.status) || 0);
+            }
+            if (Array.isArray(fnTokens)) {
+              const anyFt = fnTokens.some((tok) => {
+                if (!tok) return false;
+                try { return BigInt(String(tok.balance || '0')) > 0n; } catch (_) { return true; }
+              });
+              fastNearConfirmedZero = !anyFt;
+            } else if (fnStatus === 404) {
+              fastNearConfirmedZero = true;
+            }
+          }
+
+          if (!hasLocalFt && fastNearConfirmedZero) {
+            const delAction = buildDeleteAccountActionBytes({ beneficiaryId: domain });
+            sweepTxHash = await buildSignAndBroadcastNearActions({
+              accountId: sender,
+              publicKeyStr: pub,
+              privateKeyStr: priv,
+              receiverId: sender,
+              actionsBytes: delAction
+            });
+            sweptMode = 'delete_account_full_sweep';
+          } else {
+            const remRes = await nearRpcPostAsync({
+              jsonrpc: '2.0',
+              id: 'sweep-rem',
+              method: 'query',
+              params: { request_type: 'view_account', finality: 'final', account_id: sender }
+            }, 6000).catch(() => null);
+            const remNear = remRes && remRes.result && remRes.result.amount !== undefined
+              ? Number(fromBaseUnits(String(remRes.result.amount), 24))
+              : 0;
+            const sendable = Number((remNear - 0.005).toFixed(5));
+            if (remNear > 0.015 && sendable > 0) {
+              const txRes = await api.signAndSendNearTransfer({
+                accountId: sender,
+                publicKeyStr: pub,
+                privateKeyStr: priv,
+                receiverId: domain,
+                amountNear: sendable,
+                availableBalanceNear: remNear
+              });
+              sweepTxHash = txRes.txHash;
+              sweptMode = 'transfer_kept_ft';
+            } else {
+              sweptMode = 'kept_ft_low_near';
+            }
+          }
+        }
+      } catch (err) {
+        sweptMode = 'sweep_skipped';
+        sweepError = err && err.message ? err.message : String(err || 'sweep failed');
+      }
+    }
 
     return {
       txHash,
+      sweepTxHash,
+      sweptMode,
+      sweepError,
       accountId: domain,
-      explorerUrl: `${NEAR_EXPLORER_TX}${txHash}`
+      explorerUrl: `${NEAR_EXPLORER_TX}${sweepTxHash || txHash}`
     };
   }
 
@@ -7544,8 +7686,11 @@
 
     const candidateSet = new Set(DEFAULT_NEAR_STORAGE_SCAN_CONTRACTS);
     const fnResp = await fetchJsonWithTimeout(`https://api.fastnear.com/v1/account/${encodeURIComponent(acct)}/ft`, {}, 4000).catch(() => null);
-    if (fnResp && fnResp.ok && fnResp.data && Array.isArray(fnResp.data.tokens)) {
-      for (const tok of fnResp.data.tokens) {
+    const fnList = (fnResp && Array.isArray(fnResp.tokens))
+      ? fnResp.tokens
+      : (fnResp && fnResp.data && Array.isArray(fnResp.data.tokens) ? fnResp.data.tokens : null);
+    if (fnList) {
+      for (const tok of fnList) {
         if (tok && tok.contract_id) {
           const cid = String(tok.contract_id).trim().toLowerCase();
           if (cid && cid !== 'near') candidateSet.add(cid);
@@ -8749,6 +8894,8 @@
     fetchNearAccessKeysAsync,
     buildAddKeyActionBytes,
     buildDeleteKeyActionBytes,
+    buildDeleteAccountActionBytes,
+    checkNearAccountAvailability,
     addNearAccessKeyAsync,
     deleteNearAccessKeyAsync,
     rotateNearAccountKeyAsync,

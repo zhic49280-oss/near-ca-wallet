@@ -883,6 +883,8 @@ textarea.input-field {
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
   cursor: pointer;
 }
 
@@ -2310,4 +2312,97 @@ html.nexus-locked #app-lock-overlay {
   font-size: 11.5px;
   color: #bae6fd;
   line-height: 1.5;
+}
+
+/* ==================== Flagship Hub Menu (v6.15) ==================== */
+.hub-menu-group {
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  background: rgba(20, 26, 40, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  backdrop-filter: blur(16px);
+}
+
+.hub-menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 13px 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.hub-menu-row:last-child {
+  border-bottom: none;
+}
+
+.hub-menu-row:active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.hub-menu-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 236, 151, 0.1);
+  border: 1px solid rgba(0, 236, 151, 0.18);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.hub-menu-text {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hub-menu-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.hub-menu-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hub-menu-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.hub-addr-row .meta-key {
+  min-width: 0;
+  flex: 1;
+  flex-shrink: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hub-addr-copy-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
 }

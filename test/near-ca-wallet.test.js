@@ -7501,3 +7501,237 @@ test('v6.14 Swap/Limit Live USD Prices, Smart Price Orientation & Zero-Lag Perp 
     }
   });
 });
+
+test('v6.15 Flagship Hub Redesign, Merged NEAR Account/Keys & Lossless .near DeleteAccount Sweep', async () => {
+  // 1. Borsh DeleteAccount action tag=7 + beneficiaryId
+  const delBytes = chainContracts.buildDeleteAccountActionBytes({ beneficiaryId: 'alice.near' });
+  assert.equal(delBytes[0], 7, 'Action::DeleteAccount tag must be 7');
+  const parsedBeneficiary = readBorshString(Buffer.from(delBytes), 1);
+  assert.equal(parsedBeneficiary.value, 'alice.near');
+  assert.equal(parsedBeneficiary.nextOffset, delBytes.length);
+  assert.throws(() => chainContracts.buildDeleteAccountActionBytes({ beneficiaryId: '' }), /DeleteAccount|beneficiary|受益账户/i);
+
+  // 2. checkNearAccountAvailability
+  await withMockedFetch(async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    const target = body.params?.account_id;
+    if (target === 'fresh123.near') {
+      return jsonResponse({ jsonrpc: '2.0', id: body.id, error: { cause: { name: 'UNKNOWN_ACCOUNT' }, message: 'account fresh123.near does not exist' } });
+    }
+    return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { amount: '1000000000000000000000000' } });
+  }, async () => {
+    const avail = await chainContracts.checkNearAccountAvailability('fresh123.near');
+    assert.equal(avail.available, true);
+    assert.equal(avail.exists, false);
+
+    const taken = await chainContracts.checkNearAccountAvailability('taken.near');
+    assert.equal(taken.available, false);
+    assert.equal(taken.exists, true);
+
+    await assert.rejects(() => chainContracts.checkNearAccountAvailability('invalid-domain'), /\.near/);
+  });
+
+  // 3. registerNearNamedAccountOnChain: <0.055 NEAR blocked locally, 0 FT -> DeleteAccount sweep, >0 FT -> safe transfer
+  const keys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+  const lowBalWallet = state.normalizeWalletRecord({
+    id: 'w_v615_low',
+    mnemonic: TEST_MNEMONIC,
+    nearAddress: keys.nearAddress,
+    nearPublicKey: keys.nearPublicKey,
+    nearPrivateKey: keys.nearPrivateKey,
+    nativeBalances: { near: 0.04 }
+  });
+  let rpcCallsLow = 0;
+  await withMockedFetch(async () => {
+    rpcCallsLow++;
+    return jsonResponse({});
+  }, async () => {
+    await assert.rejects(
+      () => chainContracts.registerNearNamedAccountOnChain({ wallet: lowBalWallet, newAccountId: 'alice.near' }),
+      /NEAR|余额不足|Insufficient/i
+    );
+    assert.equal(rpcCallsLow, 0, 'Must pre-validate >=0.055 NEAR locally before hitting RPC');
+  });
+
+  // 3b. 0 FT -> DeleteAccount full sweep
+  const zeroFtWallet = state.normalizeWalletRecord({
+    id: 'w_v615_zeroft',
+    mnemonic: TEST_MNEMONIC,
+    nearAddress: keys.nearAddress,
+    nearPublicKey: keys.nearPublicKey,
+    nearPrivateKey: keys.nearPrivateKey,
+    nativeBalances: { near: 0.2 },
+    nearNep141Balances: {}
+  });
+  const broadcastsZeroFt = [];
+  await withMockedFetch(async (url, opts) => {
+    if (url.includes('api.fastnear.com/v1/account/')) {
+      return jsonResponse({ account_id: keys.nearAddress, tokens: [] });
+    }
+    const body = JSON.parse(opts.body);
+    if (body.method === 'query' && body.params?.request_type === 'view_access_key') {
+      return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { nonce: 10, block_hash: '11111111111111111111111111111111' } });
+    }
+    if (body.method === 'query' && body.params?.request_type === 'view_account') {
+      return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { amount: '150000000000000000000000' } });
+    }
+    if (body.method === 'broadcast_tx_commit') {
+      const signedBytes = Buffer.from(body.params[0], 'base64');
+      broadcastsZeroFt.push(signedBytes);
+      return jsonResponse({
+        jsonrpc: '2.0',
+        id: body.id,
+        result: { status: { SuccessValue: '' }, transaction: { hash: `tx_${broadcastsZeroFt.length}` } }
+      });
+    }
+    return jsonResponse({}, 404, 'Not Found');
+  }, async () => {
+    const res = await chainContracts.registerNearNamedAccountOnChain({ wallet: zeroFtWallet, newAccountId: 'alice.near' });
+    assert.equal(res.sweptMode, 'delete_account_full_sweep');
+    assert.equal(res.accountId, 'alice.near');
+    assert.equal(res.txHash, 'tx_1');
+    assert.equal(res.sweepTxHash, 'tx_2');
+    assert.equal(broadcastsZeroFt.length, 2);
+
+    // Verify tx_1 FunctionCall uses 0.05 NEAR deposit (50000000000000000000000)
+    const tx1 = broadcastsZeroFt[0];
+    assert.ok(tx1.includes(Buffer.from('create_account', 'utf8')));
+    // u128 LE of 50000000000000000000000 (0.05 NEAR) at end of action before 65-byte sig
+    const expectedDeposit = Buffer.alloc(16);
+    expectedDeposit.writeBigUInt64LE(50000000000000000000000n & 0xffffffffffffffffn, 0);
+    expectedDeposit.writeBigUInt64LE(50000000000000000000000n >> 64n, 8);
+    assert.ok(tx1.subarray(tx1.length - 65 - 16, tx1.length - 65).equals(expectedDeposit), 'create_account deposit must be 0.05 NEAR');
+
+    // Verify tx_2 contains exact DeleteAccount action bytes (tag=7 + 'alice.near')
+    const tx2 = broadcastsZeroFt[1];
+    const expectedDel = Buffer.from(chainContracts.buildDeleteAccountActionBytes({ beneficiaryId: 'alice.near' }));
+    assert.ok(tx2.subarray(tx2.length - 65 - expectedDel.length, tx2.length - 65).equals(expectedDel), 'Sweep tx must execute DeleteAccount action');
+  });
+
+  // 3c. Positive FT balance -> safe transfer keeping implicit account & FT intact
+  const withFtWallet = state.normalizeWalletRecord({
+    id: 'w_v615_withft',
+    mnemonic: TEST_MNEMONIC,
+    nearAddress: keys.nearAddress,
+    nearPublicKey: keys.nearPublicKey,
+    nearPrivateKey: keys.nearPrivateKey,
+    nativeBalances: { near: 0.2 },
+    nearNep141Balances: { 'usdt.tether-token.near': { raw: '1000000', formatted: 1 } }
+  });
+  const broadcastsWithFt = [];
+  await withMockedFetch(async (_url, opts) => {
+    const body = JSON.parse(opts.body);
+    if (body.method === 'query' && body.params?.request_type === 'view_access_key') {
+      return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { nonce: 20, block_hash: '11111111111111111111111111111111' } });
+    }
+    if (body.method === 'query' && body.params?.request_type === 'view_account') {
+      return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { amount: '150000000000000000000000' } });
+    }
+    if (body.method === 'broadcast_tx_commit') {
+      const signedBytes = Buffer.from(body.params[0], 'base64');
+      broadcastsWithFt.push(signedBytes);
+      return jsonResponse({
+        jsonrpc: '2.0',
+        id: body.id,
+        result: { status: { SuccessValue: '' }, transaction: { hash: `txft_${broadcastsWithFt.length}` } }
+      });
+    }
+    return jsonResponse({}, 404, 'Not Found');
+  }, async () => {
+    const res = await chainContracts.registerNearNamedAccountOnChain({ wallet: withFtWallet, newAccountId: 'alice.near' });
+    assert.equal(res.sweptMode, 'transfer_kept_ft');
+    assert.equal(res.sweepTxHash, 'txft_2');
+    assert.equal(broadcastsWithFt.length, 2);
+    const tx2 = broadcastsWithFt[1];
+    // Action::Transfer tag=3 + 16-byte u128 amount before 65-byte sig
+    assert.equal(tx2[tx2.length - 65 - 17], 3, 'When FTs exist, sweep must use Action::Transfer (tag 3) instead of DeleteAccount');
+  });
+
+  // 4. UI: #near-keys-rotate-card strictly hidden on unactivated account, visible on activated account
+  await withMockedStorage({}, async () => {
+    state.initState();
+    const w = state.normalizeWalletRecord({
+      id: 'w_v615_ui',
+      mnemonic: TEST_MNEMONIC,
+      nearAddress: keys.nearAddress,
+      nearPublicKey: keys.nearPublicKey,
+      nearPrivateKey: keys.nearPrivateKey,
+      nativeBalances: { near: 0 }
+    });
+    state.wallets = [w];
+    state.activeWalletId = w.id;
+
+    const prevDoc = globalThis.document;
+    const domMap = new Map();
+    const getOrMake = (id) => {
+      if (!domMap.has(id)) domMap.set(id, createMockDomElement(id));
+      return domMap.get(id);
+    };
+    getOrMake('near-keys-rotate-card').classList.add('hidden');
+    getOrMake('near-acct-unactivated-guide').classList.add('hidden');
+    getOrMake('near-bind-drawer').classList.add('hidden');
+    getOrMake('wc-advanced-drawer').classList.add('hidden');
+
+    globalThis.document = {
+      getElementById: (id) => getOrMake(id),
+      querySelectorAll: () => [],
+      querySelector: () => null
+    };
+
+    try {
+      // Unactivated account
+      await withMockedFetch(async (_url, opts) => {
+        const b = JSON.parse(opts.body);
+        if (b.params?.request_type === 'view_access_key_list') {
+          return jsonResponse({ jsonrpc: '2.0', id: b.id, error: { cause: { name: 'UNKNOWN_ACCOUNT' }, message: 'account does not exist' } });
+        }
+        return jsonResponse({}, 404);
+      }, async () => {
+        await uiController.openNearAccountSheet();
+        assert.equal(getOrMake('sheet-near-account').classList.contains('open'), true);
+        assert.equal(getOrMake('near-keys-rotate-card').classList.contains('hidden'), true, 'Unactivated account must strictly hide #near-keys-rotate-card');
+        assert.equal(getOrMake('near-acct-unactivated-guide').classList.contains('hidden'), false, 'Unactivated account must show funding guide');
+      });
+
+      // Activated account
+      await withMockedFetch(async (_url, opts) => {
+        const b = JSON.parse(opts.body);
+        if (b.params?.request_type === 'view_access_key_list') {
+          return jsonResponse({
+            jsonrpc: '2.0',
+            id: b.id,
+            result: { keys: [{ public_key: keys.nearPublicKey, access_key: { permission: 'FullAccess', nonce: 1 } }] }
+          });
+        }
+        return jsonResponse({}, 404);
+      }, async () => {
+        await uiController.refreshNearAccessKeysSheet();
+        assert.equal(getOrMake('near-keys-rotate-card').classList.contains('hidden'), false, 'Activated account must show #near-keys-rotate-card');
+        assert.ok(getOrMake('near-keys-list').innerHTML.includes('FullAccess'));
+      });
+
+      uiController.openWalletAddressesSheet();
+      assert.equal(getOrMake('sheet-wallet-addresses').classList.contains('open'), true);
+      assert.ok(getOrMake('hub-addresses-list').innerHTML.includes('hub-addr-copy-btn'));
+      uiController.toggleNearBindDrawer();
+      assert.equal(getOrMake('near-bind-drawer').classList.contains('hidden'), false);
+      uiController.toggleWcAdvancedSettings();
+      assert.equal(getOrMake('wc-advanced-drawer').classList.contains('hidden'), false);
+    } finally {
+      globalThis.document = prevDoc;
+    }
+  });
+
+  // 5. HTML & CSS DOM verification for v6.15 cleanup
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const css = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
+  assert.equal(html.includes('id="header-mpc-btn"'), false, '#header-mpc-btn must be removed');
+  assert.equal(html.includes('id="hub-mpc-card"'), false, '#hub-mpc-card must be removed');
+  assert.equal(html.includes('id="sheet-near-keys"'), false, 'Old #sheet-near-keys must be replaced by #sheet-near-account');
+  assert.ok(html.includes('id="sheet-wallet-addresses"'));
+  assert.ok(html.includes('id="hub-addresses-list"'));
+  assert.ok(html.includes('id="sheet-near-account"'));
+  assert.ok(html.includes('id="near-keys-rotate-card"'));
+  assert.ok(html.includes('id="wc-advanced-drawer"'));
+  assert.ok(css.includes('.hub-menu-group') && css.includes('.hub-addr-copy-btn'));
+});
