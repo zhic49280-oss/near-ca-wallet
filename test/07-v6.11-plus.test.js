@@ -401,13 +401,13 @@ test('v6.14 Swap/Limit Live USD Prices, Smart Price Orientation & Zero-Lag Perp 
         }
         return jsonResponse({ code: -1121, msg: 'Invalid symbol.' }, 400);
       }, async () => {
-        const btcLs = await hlPerps.fetchGlobalLongShortAccountRatio('BTC');
+        const btcLs = await hlPerps.fetchGlobalLongShortAccountRatio('BTC', { force: true });
         assert.ok(btcLs && Math.abs(btcLs.longPct - 61.2) < 0.01);
         const btcLsCached = await hlPerps.fetchGlobalLongShortAccountRatio('BTC');
         assert.equal(btcLsCached.symbol, 'BTCUSDT');
         assert.equal(binanceCalls, 1, 'Second BTC L/S lookup within 90s must hit cache');
 
-        const pepeLs = await hlPerps.fetchGlobalLongShortAccountRatio('kPEPE');
+        const pepeLs = await hlPerps.fetchGlobalLongShortAccountRatio('kPEPE', { force: true });
         assert.equal(pepeLs.symbol, '1000PEPEUSDT');
 
         state.perp.selectedCoin = 'BTC';

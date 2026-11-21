@@ -205,7 +205,7 @@ public class NativeSecurityPlugin extends Plugin {
                             if (activeSignal == mySignal) activeSignal = null;
                             boolean isCancel = errorCode == BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED
                                     || errorCode == BiometricPrompt.BIOMETRIC_ERROR_CANCELED
-                                    || errorCode == BiometricPrompt.BIOMETRIC_ERROR_NEGATIVE_BUTTON;
+                                    || errorCode == 13; // ERROR_NEGATIVE_BUTTON
                             call.reject(
                                     errString != null ? errString.toString() : "Biometric error",
                                     isCancel ? "AUTH_CANCELLED" : "AUTH_FAILED"
