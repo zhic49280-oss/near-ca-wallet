@@ -25,3 +25,9 @@
 ## 6. Git 提交与推送规范
 - **按模块分步本地提交**：每完成一个独立功能模块并严格通过上述验证流程后，仅执行本地 `git commit` 保存版本节点，便于分步回溯与验收。
 - **严禁自动推送远端**：未经用户明确确认验收，严禁主动执行 `git push`；必须等待用户明确指令后，再推送至 GitHub 触发 iOS / Android 包编译流程。
+
+## 7. 源码分片规范（拆分重构后）
+- **大文件由分片拼接生成**：`src/ui-controller.js` 等大文件由 `scripts/build-parts.js` 按文件名顺序拼接 `src/parts/<name>/*.part.js` 生成（纯拼接，共享同一个 IIFE 作用域）。**只改分片，禁止直接编辑生成文件**；改完运行 `npm run build`，`test/08-build-parts.test.js` 会拦截不同步的情况。
+- **按需读取**：修改功能时先 `Select-String` 定位到具体分片，只读相关分片，禁止整读生成的大文件。分片单个文件尽量不超过 80 KB，新页面/新链请新建分片（编号插在合适位置，如 `125-xxx.part.js`）。
+- **i18n 词条位置**：`i18nDict` / `t()` / `applyLanguage()` 实际位于 `src/state.js`。
+- **测试分文件**：公共工具在 `test/helpers.js`，新版本测试写入对应的 `test/NN-*.test.js`（或新建），禁止再堆回单文件。

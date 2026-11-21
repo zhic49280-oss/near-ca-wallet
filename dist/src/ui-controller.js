@@ -3,6 +3,9 @@
  * Wires crypto-engine, token-registry, near-intents, chain-contracts, mining-pro, and state
  * to index.html with zero fake data, strict balance pre-validation, and full zh/en i18n.
  * Attaches to globalThis.NearCAUI, window.NearCAUI, globalThis.NearCA.ui, and module.exports.
+ *
+ * GENERATED FILE: assembled by scripts/build-parts.js from src/parts/ui-controller/*.part.js.
+ * Edit the parts, then run `npm run build`. Do not edit src/ui-controller.js directly.
  */
 (function (root) {
   'use strict';
@@ -55,7 +58,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.16');
+      await loadScriptOnce('ethers.umd.min.js?v=6.17');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -65,7 +68,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.16').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.17').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -75,7 +78,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.16').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.17').catch(() => false);
       return getMining();
     }
     return null;
@@ -13041,7 +13044,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.16');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.17');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {

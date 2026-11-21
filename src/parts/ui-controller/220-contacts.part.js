@@ -1,0 +1,108 @@
+  // ==================== Contacts Sheet ====================
+
+  function openContactsSheet() {
+    _contactsPickerTarget = null;
+    renderContactsList();
+    openSheet('sheet-contacts');
+  }
+
+  function openContactsPicker(target) {
+    if (target === 'swap') {
+      const st = getState();
+      const ft = resolveSwapToken(st.swap.fromAssetId, 0);
+      const tt = resolveSwapToken(st.swap.toAssetId, 1);
+      if (doesSwapRouteRequireSelfRecipient(ft, tt, st.swap.quoteData || null)) {
+        showToast(t('当前路由仅支持当前钱包自收', 'Self-recipient required for this route'));
+        return;
+      }
+    }
+    _contactsPickerTarget = target;
+    renderContactsList();
+    openSheet('sheet-contacts');
+  }
+
+  function renderContactsList() {
+    const st = getState();
+    const listEl = $('contacts-list');
+    if (!listEl) return;
+    if (!st.contacts || st.contacts.length === 0) {
+      listEl.innerHTML = `<div class="text-muted" style="text-align:center;padding:12px;">${t('暂无保存地址', 'No saved contacts')}</div>`;
+      return;
+    }
+    listEl.innerHTML = st.contacts.map((c) => `
+      <div class="meta-list">
+        <div class="meta-row">
+          <span style="font-weight:700;color:#fff;">${escapeHtml(c.name)}</span>
+          <div class="flex gap-1">
+            ${_contactsPickerTarget
+              ? `<button type="button" class="mini-action-btn primary" data-action="pick-contact" data-addr="${escapeHtml(c.address)}">${t('选用', 'Use')}</button>`
+              : `<button type="button" class="btn-ghost-sm" data-action="copy-text" data-val="${escapeHtml(c.address)}" data-label="${escapeHtml(c.name)}">${t('复制', 'Copy')}</button>`}
+            <button type="button" class="btn-danger" style="padding:4px 8px;font-size:10.5px;" data-action="delete-contact" data-id="${escapeHtml(c.id)}">${t('删除', 'Del')}</button>
+          </div>
+        </div>
+        <div class="mono text-secondary" style="font-size:11px;word-break:break-all;">${escapeHtml(c.address)}</div>
+      </div>
+    `).join('');
+  }
+
+  function addContactFromSheet() {
+    const st = getState();
+    const crypto = getCrypto();
+    const name = ($('contact-name-input')?.value || '').trim();
+    const address = ($('contact-addr-input')?.value || '').trim();
+    if (!name || !address) {
+      showToast(t('请填写备注名和地址', 'Enter contact name and address'));
+      return;
+    }
+    const net = crypto.detectAddressNetwork(address);
+    if (!net) {
+      showToast(t('地址格式无效', 'Invalid wallet address'));
+      return;
+    }
+    st.contacts.unshift({
+      id: `c_${Date.now()}`,
+      name,
+      address,
+      network: net,
+      createdAt: new Date().toISOString()
+    });
+    st.saveContacts();
+    if ($('contact-name-input')) $('contact-name-input').value = '';
+    if ($('contact-addr-input')) $('contact-addr-input').value = '';
+    renderContactsList();
+    showToast(t('联系人已保存', 'Contact saved'));
+  }
+
+  function deleteContactById(id) {
+    const st = getState();
+    st.contacts = st.contacts.filter((c) => c.id !== id);
+    st.saveContacts();
+    renderContactsList();
+  }
+
+  function pickContactAddress(address) {
+    const st = getState();
+    const target = _contactsPickerTarget;
+    _contactsPickerTarget = null;
+    if (target === 'send') {
+      const contactsSheet = $('sheet-contacts');
+      if (contactsSheet) {
+        contactsSheet.classList.remove('open');
+        contactsSheet.setAttribute('aria-hidden', 'true');
+      }
+      openSheet('sheet-send');
+      if ($('send-recipient-input')) $('send-recipient-input').value = address;
+      handleSendRecipientInput();
+    } else if (target === 'swap') {
+      closeAllSheets();
+      const ft = resolveSwapToken(st.swap.fromAssetId, 0);
+      const tt = resolveSwapToken(st.swap.toAssetId, 1);
+      if (!doesSwapRouteRequireSelfRecipient(ft, tt, st.swap.quoteData || null)) {
+        st.swap.recipientAddress = address;
+        if ($('swap-recipient-input')) $('swap-recipient-input').value = address;
+      }
+    } else {
+      closeAllSheets();
+    }
+  }
+
