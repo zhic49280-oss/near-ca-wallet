@@ -1,4 +1,5 @@
-﻿(function (root) {
+// GENERATED FILE: assembled by scripts/build-parts.js from src/parts/chain-contracts/*.part.js. Edit the parts, then run npm run build.
+(function (root) {
   'use strict';
 
   const NEAR_RPC_URL = 'https://rpc.mainnet.near.org';
