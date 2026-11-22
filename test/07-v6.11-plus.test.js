@@ -1,5 +1,7 @@
 'use strict';
 
+const zlib = require('node:zlib');
+
 const {
   test,
   assert,
@@ -660,4 +662,106 @@ test('v6.15 Flagship Hub Redesign, Merged NEAR Account/Keys & Lossless .near Del
   assert.ok(html.includes('id="near-keys-rotate-card"'));
   assert.ok(html.includes('id="wc-advanced-drawer"'));
   assert.ok(css.includes('.hub-menu-group') && css.includes('.hub-addr-copy-btn'));
+});
+
+test('v6.22 Icon Integrity: all inline PNG/SVG data URIs in TOKEN_ICON_MAP and STAKING_POOLS pass CRC32, zlib inflate & SVG checks', () => {
+  const ieeeCrc32 = (buf) => {
+    let crc = 0xffffffff;
+    for (let i = 0; i < buf.length; i++) {
+      crc ^= buf[i];
+      for (let b = 0; b < 8; b++) {
+        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+      }
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  };
+
+  const pngSig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const channelsByType = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
+
+  const entries = [
+    ...Object.entries(tokenRegistry.TOKEN_ICON_MAP || {}).map(([sym, uri]) => [`TOKEN_ICON_MAP.${sym}`, uri]),
+    ...(chainContracts.STAKING_POOLS || []).map((p) => [`STAKING_POOLS.${p.id}`, p.icon])
+  ];
+
+  assert.ok(
+    String(tokenRegistry.TOKEN_ICON_MAP.RHEA || '').startsWith('data:image/png;base64,'),
+    'TOKEN_ICON_MAP.RHEA must be an inline PNG data URI'
+  );
+  assert.ok(
+    String(tokenRegistry.TOKEN_ICON_MAP.XRHEA || '').startsWith('data:image/png;base64,'),
+    'TOKEN_ICON_MAP.XRHEA must be an inline PNG data URI'
+  );
+
+  let checkedPng = 0;
+  let checkedSvg = 0;
+  for (const [label, uri] of entries) {
+    if (typeof uri !== 'string' || !uri.startsWith('data:image/')) continue;
+
+    if (uri.startsWith('data:image/png;base64,')) {
+      checkedPng += 1;
+      const buf = Buffer.from(uri.slice('data:image/png;base64,'.length), 'base64');
+      assert.ok(buf.length >= 33 && buf.subarray(0, 8).equals(pngSig), `${label}: invalid PNG signature`);
+
+      let pos = 8;
+      let width = 0;
+      let height = 0;
+      let bitDepth = 0;
+      let colorType = -1;
+      let sawIend = false;
+      const idats = [];
+
+      while (pos < buf.length) {
+        assert.ok(pos + 12 <= buf.length, `${label}: truncated PNG chunk header at ${pos}`);
+        const len = buf.readUInt32BE(pos);
+        assert.ok(pos + 12 + len <= buf.length, `${label}: truncated PNG chunk payload at ${pos}`);
+        const type = buf.toString('ascii', pos + 4, pos + 8);
+        const storedCrc = buf.readUInt32BE(pos + 8 + len);
+        const calcCrc = ieeeCrc32(buf.subarray(pos + 4, pos + 8 + len));
+        assert.equal(storedCrc, calcCrc, `${label}: PNG chunk ${type} CRC32 mismatch`);
+
+        if (type === 'IHDR') {
+          width = buf.readUInt32BE(pos + 8);
+          height = buf.readUInt32BE(pos + 12);
+          bitDepth = buf[pos + 16];
+          colorType = buf[pos + 17];
+        } else if (type === 'IDAT') {
+          idats.push(buf.subarray(pos + 8, pos + 8 + len));
+        } else if (type === 'IEND') {
+          sawIend = true;
+        }
+        pos += 12 + len;
+      }
+
+      assert.equal(pos, buf.length, `${label}: trailing PNG bytes`);
+      assert.equal(sawIend, true, `${label}: missing IEND chunk`);
+      assert.ok(width > 0 && height > 0 && idats.length > 0, `${label}: missing IHDR or IDAT`);
+      const channels = channelsByType[colorType];
+      assert.ok(channels, `${label}: unsupported PNG colorType ${colorType}`);
+
+      const raw = zlib.inflateSync(Buffer.concat(idats));
+      const expectedBytes = height * (Math.ceil((width * channels * bitDepth) / 8) + 1);
+      assert.equal(raw.length, expectedBytes, `${label}: unexpected inflated PNG pixel byte count`);
+    } else if (/^data:image\/svg\+xml/i.test(uri)) {
+      checkedSvg += 1;
+      const commaIdx = uri.indexOf(',');
+      assert.ok(commaIdx > 0, `${label}: malformed SVG data URI`);
+      const body = uri.slice(commaIdx + 1);
+      let svgText;
+      if (/;base64,/i.test(uri.slice(0, commaIdx + 1))) {
+        svgText = Buffer.from(body, 'base64').toString('utf8');
+      } else {
+        try {
+          svgText = decodeURIComponent(body);
+        } catch (_) {
+          svgText = body;
+        }
+      }
+      const trimmed = svgText.trim();
+      assert.ok(trimmed.startsWith('<svg') && trimmed.endsWith('</svg>'), `${label}: invalid inline SVG markup`);
+    }
+  }
+
+  assert.ok(checkedPng >= 3, `Expected at least 3 inline PNGs (RHEA/XRHEA/pool), checked ${checkedPng}`);
+  assert.ok(checkedSvg >= 10, `Expected at least 10 inline SVGs, checked ${checkedSvg}`);
 });
