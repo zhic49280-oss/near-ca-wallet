@@ -109,7 +109,9 @@
     const impactPromptSuffix = authImpact && (authImpact.level === 'high' || authImpact.level === 'critical')
       ? ` (⚠️ ${t('价差', 'Impact')} -${authImpact.pct.toFixed(1)}%)`
       : '';
-    if (!(await verifySecurityAuthAsync(wallet, `${t('确认兑换', 'Confirm swap')} ${st.swap.amountIn} ${fromToken.symbol} → ${toToken.symbol}${impactPromptSuffix}`))) return;
+    const isThirdParty = isCustomThirdPartySwapRecipient(wallet, toToken);
+    const thirdPartySuffix = isThirdParty ? ` → ${shortenAddr(st.swap.recipientAddress)}` : '';
+    if (!(await verifySecurityAuthAsync(wallet, `${t('确认兑换', 'Confirm swap')} ${st.swap.amountIn} ${fromToken.symbol} → ${toToken.symbol}${impactPromptSuffix}${thirdPartySuffix}`))) return;
 
     st.swap._executing = true;
     setSwapError('');
@@ -127,7 +129,7 @@
             st.swap.quoteData
             && (st.swap.quoteData.actions?.length || (st.swap.quoteData.isDcl && st.swap.quoteData.poolIds?.length))
           );
-          if (!st.swap.quoteData?.compositeType && !is1ClickBest) {
+          if (!st.swap.quoteData?.compositeType && !is1ClickBest && !isThirdParty) {
             const refQ = hasNearDexQuote
               ? st.swap.quoteData
               : await contracts.quoteNearRefFinanceSwap({
@@ -167,6 +169,9 @@
             }
           }
         } else if (fromToken.blockchain === 'sol') {
+          if (isThirdParty) {
+            throw new Error(t('当前路由不支持发往第三方地址，请改回本人地址后重试', 'Current route cannot send to a third-party address; switch recipient to your own address'));
+          }
           const quoteResp = st.swap.quoteData && st.swap.quoteData.outAmount
             ? st.swap.quoteData
             : await contracts.quoteSolanaJupiterSwap({
@@ -195,6 +200,9 @@
           refreshAllBalancesAsync(false);
           return;
         } else {
+          if (isThirdParty) {
+            throw new Error(t('当前路由不支持发往第三方地址，请改回本人地址后重试', 'Current route cannot send to a third-party address; switch recipient to your own address'));
+          }
           // EVM Contract DEX Execution (signed via NEAR MPC)
           await ensureEthersLoaded();
           const q = st.swap.quoteData && st.swap.quoteData.routeData
@@ -245,7 +253,7 @@
 
       let activeQuote = st.swap.quoteData;
       const forceSelfPre = doesSwapRouteRequireSelfRecipient(fromToken, toToken, activeQuote);
-      let recipient = forceSelfPre ? (getWalletDefaultRecipientForChain(wallet, toToken.blockchain) || rawRecipient) : rawRecipient;
+      let recipient = (!isThirdParty && forceSelfPre) ? (getWalletDefaultRecipientForChain(wallet, toToken.blockchain) || rawRecipient) : rawRecipient;
       if (!activeQuote && typeof intents.quoteCrossChainWithDexRelay === 'function') {
         activeQuote = await intents.quoteCrossChainWithDexRelay({
           fromToken,
@@ -256,10 +264,14 @@
           refundTo,
           nearAccountId: nearId,
           solAddress: wallet.solAddress,
-          evmAddress: wallet.mpcEvmAddress || wallet.evmAddress
+          evmAddress: wallet.mpcEvmAddress || wallet.evmAddress,
+          requireThirdPartyRecipient: isThirdParty
         }).catch(() => null);
       }
-      if (doesSwapRouteRequireSelfRecipient(fromToken, toToken, activeQuote)) {
+      if (isThirdParty && doesSwapRouteRequireSelfRecipient(fromToken, toToken, activeQuote)) {
+        throw new Error(t('当前路由不支持发往第三方地址，请改回本人地址后重试', 'Current route cannot send to a third-party address; switch recipient to your own address'));
+      }
+      if (!isThirdParty && doesSwapRouteRequireSelfRecipient(fromToken, toToken, activeQuote)) {
         recipient = getWalletDefaultRecipientForChain(wallet, toToken.blockchain) || recipient;
       }
 

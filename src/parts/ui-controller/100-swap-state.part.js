@@ -128,7 +128,7 @@
 
     const needsNearHub = Boolean(
       (compType === 'SMART_HUB_ROUTE' && stages.some((s) => s && (s.type === 'NEAR_SWAP' || s.type === 'BRIDGE_OUT'))) ||
-      (isPrlSwapToken(fromToken) !== isPrlSwapToken(toToken)) ||
+      ((isPrlSwapToken(fromToken) !== isPrlSwapToken(toToken)) && !isDirectOneClickQuote(quoteData)) ||
       ['PRL_TO_EXTERNAL', 'EXTERNAL_TO_PRL', 'PRL_TO_NEAR_DCL', 'PRL_TO_NEAR_REF'].includes(compType)
     );
 
@@ -359,9 +359,27 @@
       (tok.blockchain === 'arc' && c === '0x3600000000000000000000000000000000000000');
   }
 
+  function isDirectOneClickQuote(quoteData) {
+    if (!quoteData || quoteData.compositeType) return false;
+    return quoteData.routeSource === 'NEAR_INTENTS_1CLICK' || quoteData.bestSource === '1Click Solver';
+  }
+
+  function isCustomThirdPartySwapRecipient(wallet, toToken) {
+    const st = getState();
+    if (!wallet || !toToken) return false;
+    const custom = String(st.swap.recipientAddress || '').trim();
+    if (!custom) return false;
+    const selfAddr = String(getWalletDefaultRecipientForChain(wallet, toToken.blockchain) || '').trim();
+    if (!selfAddr) return false;
+    return custom.toLowerCase() !== selfAddr.toLowerCase();
+  }
+
   function doesSwapRouteRequireSelfRecipient(fromToken, toToken, quoteData = null) {
     if (!fromToken || !toToken) return false;
-    if (isSameChainContractSwap(fromToken, toToken)) return true;
+    if (isSameChainContractSwap(fromToken, toToken)) {
+      if (quoteData && isDirectOneClickQuote(quoteData)) return false;
+      return true;
+    }
 
     const toBc = String(toToken.blockchain || '').toLowerCase();
     const arcUsdcLower = '0x3600000000000000000000000000000000000000';
@@ -416,7 +434,14 @@
     const recInput = $('swap-recipient-input');
     const contactsBtn = $('swap-recipient-contacts-btn');
     if (!recInput) return false;
-    const locked = doesSwapRouteRequireSelfRecipient(fromToken, toToken, quoteData);
+    const keepNearThirdPartyEditable = Boolean(
+      !quoteData &&
+      fromToken && toToken &&
+      String(fromToken.blockchain || '').toLowerCase() === 'near' &&
+      String(toToken.blockchain || '').toLowerCase() === 'near' &&
+      isCustomThirdPartySwapRecipient(wallet, toToken)
+    );
+    const locked = doesSwapRouteRequireSelfRecipient(fromToken, toToken, quoteData) && !keepNearThirdPartyEditable;
     if (locked) {
       recInput.value = getWalletDefaultRecipientForChain(wallet, toToken?.blockchain);
       recInput.disabled = true;

@@ -1255,6 +1255,9 @@ test('Module 3 & 4: Ref Finance SmartRouter & PRL composite routing (PRL -> NEAR
       }
       if (url === `${nearIntents.ONECLICK_API_URL}/quote`) {
         const req = JSON.parse(opts.body);
+        if (req.originAsset === nearIntents.PRL_NEAR_ASSET_ID) {
+          return jsonResponse({ message: 'No liquidity available' }, 400);
+        }
         assert.equal(req.originAsset, nearIntents.NEAR_USDC_ASSET_ID);
         assert.equal(req.destinationAsset, 'nep141:sol.omft.near');
         assert.equal(req.amount, '1672891');
@@ -1363,7 +1366,7 @@ test('Module 2 & 3: PRL -> QTC composite fallthrough + 1Click DEPRECATED filteri
         if (req.destinationAsset === 'nep141:qtc.omft.near' && req.recipientType === 'DESTINATION_CHAIN' && req.recipient === 'alice.near') {
           return jsonResponse({ message: 'recipient is not valid' }, 400);
         }
-        if (req.destinationAsset === '1cs_v1:near:nep141:qtc.omft.near') {
+        if (req.originAsset === nearIntents.NEAR_USDC_ASSET_ID && req.destinationAsset === '1cs_v1:near:nep141:qtc.omft.near') {
           return jsonResponse({
             quote: { amountOut: '300268000000', amountOutFormatted: '0.300268', amountInUsd: '12.00', amountOutUsd: '11.95' }
           });

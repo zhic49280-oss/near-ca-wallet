@@ -238,6 +238,8 @@
               </div>
             </div>
 
+            <div id="limit-price-warning-banner" class="swap-impact-banner hidden" role="alert"></div>
+
             <!-- NEAR Split-2-Ticks Option -->
             <div id="limit-split-row" class="flex flex-col gap-2 hidden">
               <div class="meta-row" style="padding: 2px 2px;">
@@ -265,6 +267,10 @@
               <div class="meta-row">
                 <span class="meta-key" data-i18n="limit.estReceive">预计获得</span>
                 <span id="limit-meta-est-out" class="meta-val">--</span>
+              </div>
+              <div id="limit-meta-fee-row" class="meta-row hidden">
+                <span class="meta-key" data-i18n="limit.poolFeeLabel">池子费率</span>
+                <span id="limit-meta-pool-fee" class="meta-val">--</span>
               </div>
               <div class="meta-row">
                 <span class="meta-key" data-i18n="limit.gasLabel">网络费 (Gas)</span>

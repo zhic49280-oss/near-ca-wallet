@@ -74,6 +74,7 @@
     slippageBps = 100,
     recipient,
     nearAccountId,
+    requireThirdPartyRecipient = false,
     signal = null
   } = {}) {
     const contracts = getContractsHelper();
@@ -84,9 +85,47 @@
     const outDec = typeof toToken.decimals === 'number' ? toToken.decimals : resolveTokenDecimals(toToken.assetId);
 
     const curFetch = (typeof globalThis !== 'undefined' && globalThis.fetch) || null;
-    const cacheKey = `near|${tokenInContract}|${tokenOutContract}|${amtStr}|${slippageBps}|${nearAcct || ''}`;
+    const cacheKey = `near|${tokenInContract}|${tokenOutContract}|${amtStr}|${slippageBps}|${nearAcct || ''}|${requireThirdPartyRecipient ? `3p:${String(recipient || '')}` : 'any'}`;
     const hit = _quoteCache.get(cacheKey);
     if (hit && hit.fetchRef === curFetch && Date.now() - hit.ts < 10_000) return { ...hit.val };
+
+    if (requireThirdPartyRecipient) {
+      const ocVal = await quoteRawOneClick({
+        originAsset: fromToken.assetId,
+        destinationAsset: toToken.assetId,
+        amountRaw: amtStr,
+        slippageBps,
+        recipient: recipient || nearAcct,
+        refundTo: nearAcct,
+        nearAccountId: nearAcct,
+        depositType: 'ORIGIN_CHAIN',
+        recipientType: 'DESTINATION_CHAIN',
+        dry: true,
+        signal
+      }).catch(() => null);
+      if (ocVal && ocVal.ok && /^\d+$/.test(String(ocVal.amountOut || '0')) && BigInt(ocVal.amountOut) > 0n) {
+        const out = {
+          ...ocVal,
+          ok: true,
+          routeSource: 'NEAR_INTENTS_1CLICK',
+          bestSource: '1Click Solver',
+          comparedRoutesCount: 1,
+          comparedPools: 1,
+          routeLabel: t('1Click 直连 (第三方收款)', '1Click Direct (Custom Recipient)'),
+          serviceFeeBps: ocVal.serviceFeeBps !== undefined ? ocVal.serviceFeeBps : 25,
+          amountOut: String(ocVal.amountOut),
+          amountOutFormatted: ocVal.amountOutFormatted || fromBaseUnits(ocVal.amountOut, outDec)
+        };
+        _quoteCache.set(cacheKey, { ts: Date.now(), fetchRef: curFetch, val: out });
+        if (_quoteCache.size > 60) _quoteCache.delete(_quoteCache.keys().next().value);
+        return out;
+      }
+      return {
+        ok: false,
+        error: t('该币对暂不支持自定义第三方收款地址，请改回本人地址', 'Custom recipient is unavailable for this pair; use your own address'),
+        comparedRoutesCount: 0
+      };
+    }
 
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const mergedSignal = (ctrl && signal && typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function')
@@ -170,7 +209,7 @@
         pushCand(compVal.bestSource || 'Ref + Composite', compVal, compVal.serviceFeeBps || 0);
       }
       const ocVal = oRes && oRes.status === 'fulfilled' ? oRes.value : null;
-      if (ocVal && ocVal.ok) pushCand('1Click Solver', ocVal, 25);
+      if (ocVal && ocVal.ok) pushCand('1Click Solver', { ...ocVal, routeSource: 'NEAR_INTENTS_1CLICK' }, 25);
 
       if (candidates.length === 0) {
         const errMsg = (compVal && compVal.error) || (ocVal && ocVal.error) || (refVal && refVal.error) || t('暂无 NEAR 流动性报价', 'No NEAR quote available');

@@ -487,6 +487,30 @@
     return { disabled: true, action: 'submit', text: t('当前链不支持限价单', 'Unsupported chain'), error: '' };
   }
 
+  function computeNearLimitWorseMarketPct({ sellToken, buyToken, rate, poolId }) {
+    const st = getState();
+    const lo = getLimitOrders();
+    if (!sellToken || !buyToken || !Number.isFinite(rate) || rate <= 0) return 0;
+    let dclMktRate = null;
+    if (lo && poolId && st.limit.poolInfo && Number.isFinite(Number(st.limit.poolInfo.currentPoint))) {
+      try {
+        dclMktRate = lo.dclPointToPrice({
+          point: Number(st.limit.poolInfo.currentPoint),
+          sellToken: sellToken.contractAddress,
+          poolId,
+          poolInfo: st.limit.poolInfo,
+          sellDecimals: sellToken.decimals,
+          buyDecimals: buyToken.decimals
+        });
+      } catch (_) {}
+    }
+    if (!Number.isFinite(dclMktRate) || dclMktRate <= 0) {
+      dclMktRate = Number(st.limit.liveMarketRate);
+    }
+    if (!Number.isFinite(dclMktRate) || dclMktRate <= 0 || rate >= dclMktRate) return 0;
+    return ((dclMktRate - rate) / dclMktRate) * 100;
+  }
+
   function renderLimitOrderCalculations() {
     const st = getState();
     const lo = getLimitOrders();
@@ -567,6 +591,42 @@
     }
     if ($('limit-meta-est-out')) {
       $('limit-meta-est-out').textContent = estOut !== null && buyToken ? `${formatBal(estOut, 6)} ${buyToken.symbol}` : '--';
+    }
+    const feeRowEl = $('limit-meta-fee-row');
+    const feeValEl = $('limit-meta-pool-fee');
+    const activeNearPoolId = (chain === 'near' && lo && sellToken && buyToken)
+      ? ((st.limit.poolInfo && st.limit.poolInfo.poolId) || lo.resolveNearLimitPoolId(sellToken.contractAddress, buyToken.contractAddress))
+      : null;
+    if (feeRowEl && feeValEl) {
+      const feeRaw = activeNearPoolId
+        ? Number((st.limit.poolInfo && st.limit.poolInfo.fee) || String(activeNearPoolId).split('|')[2] || 0)
+        : 0;
+      if (chain === 'near' && Number.isFinite(feeRaw) && feeRaw > 0) {
+        feeRowEl.classList.remove('hidden');
+        feeValEl.textContent = `${Number((feeRaw / 10000).toFixed(4))}%`;
+      } else {
+        feeRowEl.classList.add('hidden');
+        feeValEl.textContent = '--';
+      }
+    }
+    const warnBanner = $('limit-price-warning-banner');
+    if (warnBanner) {
+      const worsePct = chain === 'near'
+        ? computeNearLimitWorseMarketPct({ sellToken, buyToken, rate, poolId: activeNearPoolId })
+        : 0;
+      if (worsePct >= 0.5) {
+        warnBanner.classList.remove('hidden');
+        warnBanner.classList.toggle('is-critical', worsePct >= 5);
+        warnBanner.classList.toggle('is-high', worsePct < 5);
+        warnBanner.textContent = t(
+          `⚠️ 挂单价劣于当前 DCL 盘口价 -${worsePct.toFixed(1)}%，可能按更差价格被立即吃单，请核对目标价`,
+          `⚠️ Target price is -${worsePct.toFixed(1)}% worse than DCL market price and may fill immediately at an unfavorable rate`
+        );
+      } else {
+        warnBanner.classList.add('hidden');
+        warnBanner.classList.remove('is-high', 'is-critical');
+        warnBanner.textContent = '';
+      }
     }
 
     const sellPrice = sellToken ? ((typeof sellToken.price === 'number' && sellToken.price > 0) ? sellToken.price : getSymbolPrice(sellToken.symbol === 'wNEAR' ? 'NEAR' : sellToken.symbol)) : null;
@@ -730,26 +790,15 @@
     if (chain === 'near') {
       const sender = wallet.nearNamedAccount || wallet.nearAddress;
       const poolId = lo.resolveNearLimitPoolId(sellToken.contractAddress, buyToken.contractAddress);
-      const oneUnit = contracts.toBaseUnits('1', sellToken.decimals);
-      const [poolInfo, storageState, refQuote] = await Promise.all([
+      const [poolInfo, storageState] = await Promise.all([
         poolId ? lo.fetchNearDclPoolInfo(poolId).catch(() => null) : Promise.resolve(null),
-        sender ? lo.checkNearDclStorage(sender).catch(() => null) : Promise.resolve(null),
-        contracts.quoteNearRefFinanceSwap({
-          tokenIn: sellToken.contractAddress,
-          tokenOut: buyToken.contractAddress,
-          amountRaw: oneUnit,
-          slippageBps: 100
-        }).catch(() => null)
+        sender ? lo.checkNearDclStorage(sender).catch(() => null) : Promise.resolve(null)
       ]);
       if (poolInfo) st.limit.poolInfo = poolInfo;
       if (storageState) st.limit.dclStorageRegistered = Boolean(storageState.registered);
-      if (refQuote && refQuote.ok && refQuote.amountOut) {
-        const outNum = Number(contracts.fromBaseUnits(refQuote.amountOut, buyToken.decimals));
-        if (Number.isFinite(outNum) && outNum > 0) liveRate = outNum;
-      }
-      if (liveRate === null && poolInfo) {
+      if (poolInfo && Number.isFinite(Number(poolInfo.currentPoint))) {
         try {
-          liveRate = lo.dclPointToPrice({
+          const dclRate = lo.dclPointToPrice({
             point: poolInfo.currentPoint,
             sellToken: sellToken.contractAddress,
             poolId,
@@ -757,7 +806,21 @@
             sellDecimals: sellToken.decimals,
             buyDecimals: buyToken.decimals
           });
+          if (Number.isFinite(dclRate) && dclRate > 0) liveRate = dclRate;
         } catch (_) {}
+      }
+      if (liveRate === null) {
+        const oneUnit = contracts.toBaseUnits('1', sellToken.decimals);
+        const refQuote = await contracts.quoteNearRefFinanceSwap({
+          tokenIn: sellToken.contractAddress,
+          tokenOut: buyToken.contractAddress,
+          amountRaw: oneUnit,
+          slippageBps: 100
+        }).catch(() => null);
+        if (refQuote && refQuote.ok && refQuote.amountOut) {
+          const outNum = Number(contracts.fromBaseUnits(refQuote.amountOut, buyToken.decimals));
+          if (Number.isFinite(outNum) && outNum > 0) liveRate = outNum;
+        }
       }
     } else if (chain === 'sol') {
       const oneUnit = contracts.toBaseUnits('1', sellToken.decimals);
@@ -1025,9 +1088,31 @@
     const { sellToken, buyToken } = resolveLimitSelectedTokens();
     if (!sellToken || !buyToken) return;
 
+    let worsePromptSuffix = '';
+    if (chain === 'near' && btnState.action !== 'approve') {
+      const activePoolId = (st.limit.poolInfo && st.limit.poolInfo.poolId) || lo.resolveNearLimitPoolId(sellToken.contractAddress, buyToken.contractAddress);
+      let effRate = Number(st.limit.targetRate);
+      if (activePoolId && st.limit.snappedPoint !== null && st.limit.snappedPoint !== undefined) {
+        try {
+          effRate = lo.dclPointToPrice({
+            point: st.limit.snappedPoint,
+            sellToken: sellToken.contractAddress,
+            poolId: activePoolId,
+            poolInfo: st.limit.poolInfo,
+            sellDecimals: sellToken.decimals,
+            buyDecimals: buyToken.decimals
+          });
+        } catch (_) {}
+      }
+      const worsePct = computeNearLimitWorseMarketPct({ sellToken, buyToken, rate: effRate, poolId: activePoolId });
+      if (worsePct >= 5) {
+        worsePromptSuffix = ` (⚠️ ${t('劣于盘口', 'Worse than market')} -${worsePct.toFixed(1)}%)`;
+      }
+    }
+
     const actionTitle = btnState.action === 'approve'
       ? t(`授权 ${sellToken.symbol}`, `Approve ${sellToken.symbol}`)
-      : t(`提交 ${sellToken.symbol} → ${buyToken.symbol} 限价单`, `Place ${sellToken.symbol} → ${buyToken.symbol} Limit Order`);
+      : `${t(`提交 ${sellToken.symbol} → ${buyToken.symbol} 限价单`, `Place ${sellToken.symbol} → ${buyToken.symbol} Limit Order`)}${worsePromptSuffix}`;
     const authed = await verifySecurityAuthAsync(wallet, actionTitle);
     if (!authed) return;
 

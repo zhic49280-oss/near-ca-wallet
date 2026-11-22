@@ -490,7 +490,7 @@
       }
 
       // Cross-Chain 1Click Route (ORIGIN_CHAIN -> DESTINATION_CHAIN direct L1 to L1, including Pearl PRL multi-stage closure)
-      const isPearlOriginFollowUp = originIsPrl && !destIsPrl && fromToken.blockchain === 'prl';
+      const isPearlOriginFollowUp = originIsPrl && !destIsPrl && fromToken.blockchain === 'prl' && !isDirect1ClickPrl;
       const isPearlToNearDcl = isPearlOriginFollowUp && toToken.blockchain === 'near' && toToken.assetId === intents.QTC_NEAR_ASSET_ID;
       const isPearlToNearRef = isPearlOriginFollowUp && toToken.blockchain === 'near' && Boolean(toToken.contractAddress) && toToken.contractAddress !== intents.PRL_NEAR_CONTRACT && !isPearlToNearDcl;
       const isPearlToExternal = isPearlOriginFollowUp && toToken.blockchain !== 'near';

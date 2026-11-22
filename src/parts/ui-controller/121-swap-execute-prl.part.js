@@ -1,5 +1,7 @@
+      const isDirect1ClickPrl = Boolean((originIsPrl !== destIsPrl) && activeQuote && isDirectOneClickQuote(activeQuote));
+
       // Sub-route A: NEAR Token -> PRL (Pearl L1) via Ref Finance -> 1Click bridge
-      if (!originIsPrl && destIsPrl && toToken.blockchain === 'prl' && fromToken.blockchain === 'near') {
+      if (!isDirect1ClickPrl && !originIsPrl && destIsPrl && toToken.blockchain === 'prl' && fromToken.blockchain === 'near') {
         const refRes = await contracts.executeNearRefFinanceSwap({
           wallet,
           tokenIn: fromToken.contractAddress || 'wrap.near',
@@ -68,7 +70,7 @@
       }
 
       // Sub-route P: PRL -> NEAR-chain token via Ref multi-hop (tokens 1Click does not list, e.g. oRHEA)
-      if (originIsPrl && !destIsPrl && toToken.blockchain === 'near' && toToken.contractAddress
+      if (!isDirect1ClickPrl && originIsPrl && !destIsPrl && toToken.blockchain === 'near' && toToken.contractAddress
           && st.swap.quoteData?.compositeType === 'PRL_TO_NEAR_REF' && st.swap.quoteData.refQuote) {
         const refQ = st.swap.quoteData.refQuote;
         if (fromToken.blockchain === 'near') {
@@ -157,7 +159,7 @@
         return;
       }
       // Sub-route B: PRL (NEAR) -> External chain (e.g. SOL / ETH / BNB)
-      if (originIsPrl && !destIsPrl && fromToken.blockchain === 'near') {
+      if (!isDirect1ClickPrl && originIsPrl && !destIsPrl && fromToken.blockchain === 'near') {
         const preUsdc = await intents.fetchNearNep141Balances(nearId, { usdc: intents.NEAR_USDC_CONTRACT }).catch(() => null);
         const preUsdcRaw = BigInt(preUsdc?.usdc?.raw || '0');
         const step1Q = (st.swap.quoteData && st.swap.quoteData.refQuote)
@@ -326,7 +328,7 @@
       }
 
       // Sub-route C: Non-Ref token (e.g. SOL / ETH / BNB / QTC) -> PRL (Step 1: 1Click -> NEAR USDC, Step 2 follow-up: Ref USDC -> PRL [+ Stage 3 -> Pearl L1])
-      if (!originIsPrl && destIsPrl && (fromToken.blockchain !== 'near' || st.swap.quoteData?.compositeType === 'EXTERNAL_TO_PRL')) {
+      if (!isDirect1ClickPrl && !originIsPrl && destIsPrl && (fromToken.blockchain !== 'near' || st.swap.quoteData?.compositeType === 'EXTERNAL_TO_PRL')) {
         const destNeedsPearlBridge = toToken.blockchain === 'prl';
         const liveQuote = await intents.quoteIntentSwapOrWithdraw({
           originAsset: fromToken.assetId,

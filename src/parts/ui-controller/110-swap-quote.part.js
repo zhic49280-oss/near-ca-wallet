@@ -52,7 +52,7 @@
       const toMeta = tokens.getChainMeta(toToken.blockchain);
       if (sameChainDex) {
         if (fromToken.blockchain === 'near') {
-          routeBadge.textContent = t('NEAR 多池比价 (Ref + Rhea CLMM)', 'NEAR Multi-Pool (Ref + Rhea CLMM)');
+          routeBadge.textContent = t('NEAR 多池比价 (Ref + Rhea + 1Click)', 'NEAR Multi-Pool (Ref + Rhea + 1Click)');
         } else if (fromToken.blockchain === 'sol') {
           routeBadge.textContent = t('Solana 多池比价 (Jupiter + Raydium)', 'Solana Multi-Pool (Jupiter + Raydium)');
         } else if (fromToken.blockchain === 'arc') {
@@ -103,7 +103,11 @@
   }
 
   function handleSwapRecipientInput() {
-    getState().swap.recipientAddress = ($('swap-recipient-input')?.value || '').trim();
+    const st = getState();
+    st.swap.recipientAddress = ($('swap-recipient-input')?.value || '').trim();
+    if (Number(st.swap.amountIn) > 0) {
+      scheduleSwapQuote();
+    }
   }
 
   function resetSwapQuoteDisplay() {
@@ -388,9 +392,13 @@
 
       // Super-Aggregator: NEAR multi-pool (Ref V2 + Rhea CLMM + 1Click), PRL composite, Direct 1Click & 2-Stage Cross-Chain + DEX Relay
       const nearId = wallet.nearNamedAccount || wallet.nearAddress;
-      const recipient = doesSwapRouteRequireSelfRecipient(fromToken, toToken, null)
-        ? (getWalletDefaultRecipientForChain(wallet, toToken.blockchain) || nearId)
-        : (st.swap.recipientAddress || getWalletDefaultRecipientForChain(wallet, toToken.blockchain) || nearId);
+      const isThirdParty = isCustomThirdPartySwapRecipient(wallet, toToken);
+      const defaultSelf = getWalletDefaultRecipientForChain(wallet, toToken.blockchain);
+      const recipient = isThirdParty
+        ? st.swap.recipientAddress
+        : (doesSwapRouteRequireSelfRecipient(fromToken, toToken, null)
+            ? (defaultSelf || nearId)
+            : (st.swap.recipientAddress || defaultSelf || nearId));
       const refundTo = getWalletDefaultRecipientForChain(wallet, fromToken.blockchain) || nearId;
 
       const q = await intents.quoteCrossChainWithDexRelay({
@@ -403,6 +411,7 @@
         nearAccountId: nearId,
         solAddress: wallet.solAddress,
         evmAddress: wallet.mpcEvmAddress || wallet.evmAddress,
+        requireThirdPartyRecipient: isThirdParty,
         signal: reqSignal
       });
       if (isCancelledOrStale()) return;

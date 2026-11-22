@@ -50,7 +50,7 @@
     const smartOk = smart && smart.ok;
     const legacyOk = legacy && legacy.ok && /^\d+$/.test(String(legacy.amountOut || '')) && BigInt(legacy.amountOut) > 0n;
     if (smartOk && legacyOk) {
-      if (prlInvolved) return smart;
+      if (prlInvolved && legacy.compositeType) return smart;
       const sBig = BigInt(smart.amountOut);
       const lBig = BigInt(legacy.amountOut);
       const sStages = Array.isArray(smart.stages) ? smart.stages.length : 2;
@@ -74,6 +74,7 @@
     nearAccountId,
     solAddress,
     evmAddress,
+    requireThirdPartyRecipient = false,
     signal = null
   } = {}) {
     if (!fromToken || !toToken) {
@@ -85,7 +86,7 @@
     const contracts = getContractsHelper();
 
     if (fromBc === 'near' && toBc === 'near') {
-      return quoteBestNearPairSwap({ fromToken, toToken, amountRaw: amtStr, slippageBps, recipient, nearAccountId, signal });
+      return quoteBestNearPairSwap({ fromToken, toToken, amountRaw: amtStr, slippageBps, recipient, nearAccountId, requireThirdPartyRecipient, signal });
     }
 
     const originIsPrl = isPrlAssetId(fromToken.assetId);
@@ -100,7 +101,7 @@
 
     // 1. PRL pairs with 1Click-reachable tokens (not DEX-only target tokens or Arc)
     if ((originIsPrl !== destIsPrl) && !isTargetSolDex && !isTargetEvmDex && toBc !== 'arc' && fromBc !== 'arc') {
-      const prlRes = await quoteCompositePrlSwap({
+      const prlRes = await quoteIntentSwapOrWithdraw({
         originAsset: resolvedOriginAsset,
         destinationAsset: resolvedDestAsset,
         amountRaw: amtStr,
@@ -108,9 +109,12 @@
         recipient,
         refundTo,
         nearAccountId,
+        depositType: 'ORIGIN_CHAIN',
+        recipientType: 'DESTINATION_CHAIN',
+        dry: true,
         signal
       });
-      if (prlRes && prlRes.ok && !prlRes.routeLabel) {
+      if (prlRes && prlRes.ok && prlRes.compositeType && !prlRes.routeLabel) {
         if (prlRes.bridgeQuote && prlRes.compositeType === 'PRL_TO_NEAR_REF') {
           prlRes.routeLabel = prlRes.refQuote && prlRes.refQuote.isDcl
             ? '1Click (Pearl➔NEAR) + Rhea DCL'

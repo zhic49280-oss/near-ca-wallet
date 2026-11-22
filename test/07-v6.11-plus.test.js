@@ -765,3 +765,400 @@ test('v6.22 Icon Integrity: all inline PNG/SVG data URIs in TOKEN_ICON_MAP and S
   assert.ok(checkedPng >= 3, `Expected at least 3 inline PNGs (RHEA/XRHEA/pool), checked ${checkedPng}`);
   assert.ok(checkedSvg >= 10, `Expected at least 10 inline SVGs, checked ${checkedSvg}`);
 });
+
+test('v6.23 Limit Order: NEAR DCL prioritizes pool currentPoint over Ref V2, displays pool fee & warns when worse than market', async () => {
+  const prevWallets = state.wallets;
+  const prevActiveId = state.activeWalletId;
+  const prevLimit = { ...state.limit };
+  const prevDoc = globalThis.document;
+
+  const domMap = new Map();
+  const getOrMake = (id) => {
+    if (!domMap.has(id)) domMap.set(id, createMockDomElement(id));
+    return domMap.get(id);
+  };
+  globalThis.document = {
+    getElementById: (id) => getOrMake(id),
+    querySelectorAll: () => [],
+    querySelector: () => null,
+    activeElement: null
+  };
+
+  try {
+    const keys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+    const w = state.normalizeWalletRecord({
+      id: 'w_v623_limit',
+      mnemonic: TEST_MNEMONIC,
+      nearAddress: keys.nearAddress,
+      nearPublicKey: keys.nearPublicKey,
+      nearPrivateKey: keys.nearPrivateKey,
+      nativeBalances: { near: 5 },
+      nearNep141Balances: { 'token.rhealab.near': { raw: '500000000000000000000', formatted: 500 } }
+    });
+    state.wallets = [w];
+    state.activeWalletId = w.id;
+    state.limit.chain = 'near';
+    state.limit.sellContract = 'token.rhealab.near';
+    state.limit.buyContract = 'otoken.rhealab.near';
+    state.limit.amountIn = '100';
+    state.limit.targetRate = '';
+    state.limit.snappedPoint = null;
+    state.limit.liveMarketRate = null;
+    state.limit.poolInfo = null;
+    state.limit.priceInverted = null;
+
+    await withMockedFetch(async (url, opts) => {
+      if (url.includes('smartrouter.ref.finance')) {
+        return jsonResponse({
+          result_code: 0,
+          result_data: { amount_out: '1440100000000000000', routes: [{ pools: [{ pool_id: 6573 }] }] }
+        });
+      }
+      if (opts && opts.body) {
+        const b = JSON.parse(opts.body);
+        if (b.params && b.params.account_id === 'dclv2.ref-labs.near' && b.params.method_name === 'get_pool') {
+          const payload = {
+            pool_id: 'otoken.rhealab.near|token.rhealab.near|10000',
+            token_x: 'otoken.rhealab.near',
+            token_y: 'token.rhealab.near',
+            fee: 10000,
+            point_delta: 200,
+            current_point: -6600,
+            state: 'Running'
+          };
+          return jsonResponse({ jsonrpc: '2.0', id: b.id, result: { result: Array.from(Buffer.from(JSON.stringify(payload))) } });
+        }
+        if (b.params && b.params.account_id === 'dclv2.ref-labs.near' && b.params.method_name === 'storage_balance_of') {
+          const payload = { total: '500000000000000000000000', available: '500000000000000000000000' };
+          return jsonResponse({ jsonrpc: '2.0', id: b.id, result: { result: Array.from(Buffer.from(JSON.stringify(payload))) } });
+        }
+      }
+      return jsonResponse({}, 404);
+    }, async () => {
+      await uiController.refreshLimitMarketContextAsync();
+      assert.ok(
+        Math.abs(state.limit.liveMarketRate - 1.934728) < 0.002,
+        `DCL market ref must come from current_point (-6600 -> ~1.9347), got ${state.limit.liveMarketRate}`
+      );
+      assert.equal(getOrMake('limit-meta-fee-row').classList.contains('hidden'), false);
+      assert.equal(getOrMake('limit-meta-pool-fee').textContent, '1%');
+      assert.equal(getOrMake('limit-price-warning-banner').classList.contains('hidden'), true);
+
+      // Worse-than-market price (1.44 vs 1.9347 -> ~25.6% worse) triggers critical warning
+      state.limit.targetRate = '1.44';
+      state.limit.snappedPoint = null;
+      uiController.renderLimitOrderView();
+      const banner = getOrMake('limit-price-warning-banner');
+      assert.equal(banner.classList.contains('hidden'), false);
+      assert.equal(banner.classList.contains('is-critical'), true);
+      assert.ok(banner.textContent.includes('-'));
+    });
+  } finally {
+    state.wallets = prevWallets;
+    state.activeWalletId = prevActiveId;
+    Object.assign(state.limit, prevLimit);
+    globalThis.document = prevDoc;
+  }
+});
+
+test('v6.23 Swap Recipient: same-chain 1Click unlocks custom recipient, locks 1Click on 3rd-party input & hard-guards DEX routes', async () => {
+  const prevWallets = state.wallets;
+  const prevActiveId = state.activeWalletId;
+  const prevSwap = { ...state.swap };
+  const prevDoc = globalThis.document;
+  const prevWin = globalThis.window;
+
+  const nearTok = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'NEAR' && t.blockchain === 'near');
+  const qtcNearTok = (tokenRegistry.DEX_CHAIN_TOKENS.near || []).find((t) => t.symbol === 'QTC');
+  assert.ok(nearTok && qtcNearTok);
+
+  assert.equal(uiController.doesSwapRouteRequireSelfRecipient(nearTok, qtcNearTok, null), true);
+  assert.equal(
+    uiController.doesSwapRouteRequireSelfRecipient(nearTok, qtcNearTok, { bestSource: '1Click Solver', routeSource: 'NEAR_INTENTS_1CLICK' }),
+    false
+  );
+  assert.equal(
+    uiController.doesSwapRouteRequireSelfRecipient(nearTok, qtcNearTok, { bestSource: 'Ref Finance V2', actions: [{ pool_id: 1 }] }),
+    true
+  );
+
+  // When requireThirdPartyRecipient is true, quoteBestNearPairSwap skips Ref/Rhea and only queries 1Click
+  let calledRef = false;
+  let called1ClickRecipient = '';
+  await withMockedFetch(async (url, opts) => {
+    if (url.includes('smartrouter.ref.finance')) {
+      calledRef = true;
+      return jsonResponse({ result_code: 0, result_data: { amount_out: '999999999999', routes: [{ pools: [{ pool_id: 1 }] }] } });
+    }
+    if (url.includes('1click.chaindefuser.com/v0/quote')) {
+      const body = JSON.parse(opts.body);
+      called1ClickRecipient = body.recipient;
+      return jsonResponse({
+        quote: { amountOut: '1063015000000', amountOutFormatted: '1.063015', amountInUsd: '29.90', amountOutUsd: '29.59' }
+      });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const q3p = await nearIntents.quoteBestNearPairSwap({
+      fromToken: nearTok,
+      toToken: qtcNearTok,
+      amountRaw: '10000000000000000000000000',
+      recipient: 'alice.near',
+      nearAccountId: 'bob.near',
+      requireThirdPartyRecipient: true
+    });
+    assert.equal(calledRef, false, '3rd-party recipient must not query Ref Finance DEX');
+    assert.equal(called1ClickRecipient, 'alice.near');
+    assert.equal(q3p.ok, true);
+    assert.equal(q3p.routeSource, 'NEAR_INTENTS_1CLICK');
+    assert.equal(q3p.bestSource, '1Click Solver');
+  });
+
+  // When 1Click fails on 3rd-party recipient, do NOT fall back to Ref DEX
+  await withMockedFetch(async (url) => {
+    if (url.includes('smartrouter.ref.finance')) {
+      return jsonResponse({ result_code: 0, result_data: { amount_out: '999999999999', routes: [{ pools: [{ pool_id: 1 }] }] } });
+    }
+    if (url.includes('1click.chaindefuser.com/v0/quote')) {
+      return jsonResponse({ message: 'No liquidity available' }, 400);
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const qFail = await nearIntents.quoteBestNearPairSwap({
+      fromToken: nearTok,
+      toToken: qtcNearTok,
+      amountRaw: '5000000000000000000000000',
+      recipient: 'alice.near',
+      nearAccountId: 'bob.near',
+      requireThirdPartyRecipient: true
+    });
+    assert.equal(qFail.ok, false);
+    assert.ok(qFail.error);
+  });
+
+  // Hard execution guard blocks DEX route if a 3rd-party recipient is configured
+  const domMap = new Map();
+  const pinDots = Array.from({ length: 6 }, (_, i) => createMockDomElement(`dot_${i}`, { classes: ['bio-pin-dot'] }));
+  const getOrMake = (id) => {
+    if (!domMap.has(id)) {
+      domMap.set(id, id === 'security-pin-dots'
+        ? createMockDomElement(id, { querySelectorAll: () => pinDots })
+        : createMockDomElement(id));
+    }
+    return domMap.get(id);
+  };
+  globalThis.document = {
+    getElementById: (id) => getOrMake(id),
+    querySelectorAll: () => [],
+    querySelector: () => null
+  };
+  globalThis.window = {
+    Capacitor: {
+      Plugins: {
+        NativeSecurity: {
+          async getSecurityCapabilities() {
+            return { platform: 'ios', biometryType: 'faceID', supportsBiometrics: true, supportsPasscode: true };
+          },
+          async authenticateWithBiometrics() {
+            return { authenticated: true, type: 'faceID' };
+          }
+        }
+      }
+    }
+  };
+
+  try {
+    const keys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+    const w = state.normalizeWalletRecord({
+      id: 'w_v623_3p_guard',
+      mnemonic: TEST_MNEMONIC,
+      nearAddress: keys.nearAddress,
+      nearPublicKey: keys.nearPublicKey,
+      nearPrivateKey: keys.nearPrivateKey,
+      pin: '123456',
+      nativeBalances: { near: 5 }
+    });
+    state.wallets = [w];
+    state.activeWalletId = w.id;
+    state.swap.fromAssetId = nearTok.assetId;
+    state.swap.toAssetId = qtcNearTok.assetId;
+    state.swap.amountIn = '1';
+    state.swap.recipientAddress = 'alice.near';
+    state.swap.quoteData = { ok: true, bestSource: 'Ref Finance V2', actions: [{ pool_id: 1 }] };
+
+    let broadcastCount = 0;
+    await withMockedFetch(async (url) => {
+      if (url.includes('fastnear') || url.includes('mainnet.near.org')) {
+        broadcastCount += 1;
+      }
+      return jsonResponse({}, 400);
+    }, async () => {
+      const execPromise = uiController.executeActiveSwap();
+      await new Promise((r) => setTimeout(r, 15));
+      if (getOrMake('sheet-security-auth').classList.contains('open')) {
+        for (const d of ['1', '2', '3', '4', '5', '6']) await uiController.pressSecurityPinDigit(d);
+      }
+      await execPromise;
+      assert.equal(broadcastCount, 0, 'Must abort without broadcasting DEX tx when 3rd-party recipient is set');
+      assert.ok(
+        /第三方|third-party/i.test(state.swap._lastError),
+        `Expected explicit third-party guard error, got: ${state.swap._lastError}`
+      );
+    });
+  } finally {
+    state.wallets = prevWallets;
+    state.activeWalletId = prevActiveId;
+    Object.assign(state.swap, prevSwap);
+    globalThis.document = prevDoc;
+    globalThis.window = prevWin;
+  }
+});
+
+test('v6.23 PRL Route Adaptation: concurrent direct 1Click vs 3-stage composite & automatic fallback', async () => {
+  const prlTok = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'PRL' && t.blockchain === 'prl');
+  const qtcNativeTok = { symbol: 'QTC', blockchain: 'qtc', assetId: 'nep141:qtc.omft.near', decimals: 12 };
+  const keys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+  const zeroNearWallet = state.normalizeWalletRecord({
+    id: 'w_v623_prl_direct',
+    mnemonic: TEST_MNEMONIC,
+    address: keys.address,
+    nearAddress: keys.nearAddress,
+    nativeBalances: { near: 0, prl: 20 }
+  });
+  const qtcAddr = 'qzk2q8To1dRKd4EwHUMWnyH5iMf7G7VrFcfu5XRpxMhCjGK7Z';
+
+  // Case A: 1Click begins supporting direct PRL -> QTC and beats/matches 3-stage composite
+  await withMockedFetch(async (url, opts) => {
+    if (url.includes('1click.chaindefuser.com/v0/quote')) {
+      const req = JSON.parse(opts.body);
+      if (req.originAsset === 'nep141:prl.omft.near' && req.destinationAsset === 'nep141:qtc.omft.near') {
+        return jsonResponse({
+          quote: { amountOut: '700000000000', amountOutFormatted: '0.7', amountInUsd: '19.82', amountOutUsd: '19.60' }
+        });
+      }
+      if (req.originAsset === 'nep141:prl.omft.near' && req.destinationAsset === nearIntents.PRL_NEAR_ASSET_ID) {
+        return jsonResponse({
+          quote: { amountOut: '999600000', amountOutFormatted: '9.996', amountInUsd: '19.82', amountOutUsd: '19.81' }
+        });
+      }
+      if (req.originAsset === nearIntents.NEAR_USDC_ASSET_ID) {
+        return jsonResponse({
+          quote: { amountOut: '697000000000', amountOutFormatted: '0.697', amountInUsd: '19.60', amountOutUsd: '19.36' }
+        });
+      }
+      return jsonResponse({ message: 'No liquidity available' }, 400);
+    }
+    if (url.includes('smartrouter.ref.finance')) {
+      return jsonResponse({
+        result_code: 0,
+        result_data: {
+          amount_out: '19600000',
+          routes: [{
+            min_amount_out: '19400000',
+            pools: [{
+              pool_id: 9010,
+              token_in: 'prl.omft.near',
+              token_out: nearIntents.NEAR_USDC_CONTRACT,
+              amount_in: '999600000',
+              min_amount_out: '19400000'
+            }]
+          }]
+        }
+      });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const directRes = await nearIntents.quoteCrossChainWithDexRelay({
+      fromToken: prlTok,
+      toToken: qtcNativeTok,
+      amountRaw: '1000000000',
+      slippageBps: 100,
+      recipient: qtcAddr,
+      refundTo: keys.address,
+      nearAccountId: keys.nearAddress
+    });
+    assert.equal(directRes.ok, true);
+    assert.equal(directRes.compositeType, undefined, 'Direct 1Click win must not set compositeType');
+    assert.equal(directRes.routeSource, 'NEAR_INTENTS_1CLICK');
+    assert.equal(directRes.bestSource, '1Click Solver');
+
+    // Direct 1Click PRL route requires zero NEAR hub gas
+    const gasCheck = uiController.validateSwapNearGasRequirement({
+      wallet: zeroNearWallet,
+      fromToken: prlTok,
+      toToken: qtcNativeTok,
+      quoteData: directRes,
+      amountIn: 10
+    });
+    assert.equal(gasCheck.ok, true);
+    assert.equal(gasCheck.requiredNear, 0);
+  });
+
+  // Case B: 1Click does NOT support direct PRL (returns 400) -> seamless fallback to 3-stage PRL_TO_EXTERNAL
+  await withMockedFetch(async (url, opts) => {
+    if (url.includes('1click.chaindefuser.com/v0/quote')) {
+      const req = JSON.parse(opts.body);
+      if (req.originAsset === 'nep141:prl.omft.near' && req.destinationAsset === 'nep141:qtc.omft.near') {
+        return jsonResponse({ message: 'No liquidity available' }, 400);
+      }
+      if (req.originAsset === 'nep141:prl.omft.near' && req.destinationAsset === nearIntents.PRL_NEAR_ASSET_ID) {
+        return jsonResponse({
+          quote: { amountOut: '999600000', amountOutFormatted: '9.996', amountInUsd: '19.82', amountOutUsd: '19.81' }
+        });
+      }
+      if (req.originAsset === nearIntents.NEAR_USDC_ASSET_ID) {
+        return jsonResponse({
+          quote: { amountOut: '697361000000', amountOutFormatted: '0.697361', amountInUsd: '19.60', amountOutUsd: '19.36' }
+        });
+      }
+      return jsonResponse({ message: 'No liquidity available' }, 400);
+    }
+    if (url.includes('smartrouter.ref.finance')) {
+      return jsonResponse({
+        result_code: 0,
+        result_data: {
+          amount_out: '19600000',
+          routes: [{
+            min_amount_out: '19400000',
+            pools: [{
+              pool_id: 9010,
+              token_in: 'prl.omft.near',
+              token_out: nearIntents.NEAR_USDC_CONTRACT,
+              amount_in: '999600000',
+              min_amount_out: '19400000'
+            }]
+          }]
+        }
+      });
+    }
+    return jsonResponse({}, 404);
+  }, async () => {
+    const compIntent = await nearIntents.quoteIntentSwapOrWithdraw({
+      originAsset: prlTok.assetId,
+      destinationAsset: qtcNativeTok.assetId,
+      amountRaw: '1000000000',
+      slippageBps: 100,
+      recipient: qtcAddr,
+      refundTo: keys.address,
+      nearAccountId: keys.nearAddress,
+      dry: true
+    });
+    assert.equal(compIntent.ok, true);
+    assert.equal(compIntent.compositeType, 'PRL_TO_EXTERNAL');
+
+    const compRes = await nearIntents.quoteCrossChainWithDexRelay({
+      fromToken: prlTok,
+      toToken: qtcNativeTok,
+      amountRaw: '1000000000',
+      slippageBps: 100,
+      recipient: qtcAddr,
+      refundTo: keys.address,
+      nearAccountId: keys.nearAddress
+    });
+    assert.equal(compRes.ok, true);
+    assert.ok(
+      ['SMART_HUB_ROUTE', 'PRL_TO_EXTERNAL'].includes(compRes.compositeType),
+      `Expected 3-stage fallback compositeType, got: ${compRes.compositeType}`
+    );
+  });
+});

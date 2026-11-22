@@ -645,16 +645,47 @@
     const originIsPrl = isPrlAssetId(originAsset);
     const destIsPrl = isPrlAssetId(destinationAsset);
     if (dry !== false && (originIsPrl !== destIsPrl)) {
-      return quoteCompositePrlSwap({
-        originAsset,
-        destinationAsset,
-        amountRaw: amountStr,
-        slippageBps,
-        recipient,
-        refundTo,
-        nearAccountId: params.nearAccountId,
-        signal
-      });
+      const [directSettled, compSettled] = await Promise.allSettled([
+        quoteRawOneClick({ ...params, amountRaw: amountStr }),
+        quoteCompositePrlSwap({
+          originAsset,
+          destinationAsset,
+          amountRaw: amountStr,
+          slippageBps,
+          recipient,
+          refundTo,
+          nearAccountId: params.nearAccountId,
+          signal
+        })
+      ]);
+      const directRes = directSettled.status === 'fulfilled' ? directSettled.value : null;
+      const compRes = compSettled.status === 'fulfilled' ? compSettled.value : null;
+      const directOk = Boolean(directRes && directRes.ok && /^\d+$/.test(String(directRes.amountOut || '')) && BigInt(directRes.amountOut) > 0n);
+      const compOk = Boolean(compRes && compRes.ok && /^\d+$/.test(String(compRes.amountOut || '')) && BigInt(compRes.amountOut) > 0n);
+      if (directOk) {
+        const directOut = {
+          ...directRes,
+          routeSource: 'NEAR_INTENTS_1CLICK',
+          bestSource: '1Click Solver',
+          routeLabel: directRes.routeLabel || '⚡ 1Click Direct'
+        };
+        if (!compOk) return directOut;
+        const directBig = BigInt(directRes.amountOut);
+        const compBig = BigInt(compRes.amountOut);
+        if (compBig * 1000n <= directBig * 1003n) return directOut;
+        return compRes;
+      }
+      return compRes || {
+        ok: false,
+        quote: null,
+        depositAddress: null,
+        memo: null,
+        amountOut: null,
+        amountOutFormatted: null,
+        amountInUsd: null,
+        amountOutUsd: null,
+        error: t('PRL 路由询价失败', 'PRL route quote failed')
+      };
     }
 
     try {
