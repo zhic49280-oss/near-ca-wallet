@@ -492,8 +492,26 @@
     return res.data;
   }
 
-  async function fetchHlMarkets() {
-    const raw = await postHlInfo({ type: 'metaAndAssetCtxs' });
+  let _cachedActiveHip3Dexs = ['xyz', 'para', 'io'];
+
+  function extractPerpDexTag(coin) {
+    const s = String(coin || '').trim();
+    const idx = s.indexOf(':');
+    return idx > 0 ? s.slice(0, idx) : '';
+  }
+
+  function extractPerpBaseSymbol(coin) {
+    const s = String(coin || '').trim();
+    const idx = s.indexOf(':');
+    return idx >= 0 ? s.slice(idx + 1) : s;
+  }
+
+  function formatPerpPairName(coin) {
+    const base = extractPerpBaseSymbol(coin);
+    return base ? `${base}-USDC` : '--';
+  }
+
+  function parsePerpUniverseList(raw, dexName = '', dexIdx = 0) {
     if (!Array.isArray(raw) || raw.length < 2 || !raw[0] || !Array.isArray(raw[0].universe)) {
       return [];
     }
@@ -507,24 +525,74 @@
       const markPx = Number(ctx.markPx ?? ctx.midPx);
       const midPx = Number(ctx.midPx ?? ctx.markPx);
       const prevDayPx = Number(ctx.prevDayPx);
+      const priceChange24h = Number.isFinite(markPx) && Number.isFinite(prevDayPx) && prevDayPx > 0
+        ? (markPx - prevDayPx)
+        : null;
       const change24hPct = Number.isFinite(markPx) && Number.isFinite(prevDayPx) && prevDayPx > 0
         ? ((markPx - prevDayPx) / prevDayPx) * 100
         : null;
+      const rawName = String(meta.name);
+      const cleanDex = dexName || extractPerpDexTag(rawName);
+      const assetIndex = cleanDex ? (100000 + Number(dexIdx) * 10000 + i) : i;
+      const baseSymbol = extractPerpBaseSymbol(rawName);
       list.push({
-        index: i,
-        name: String(meta.name),
+        index: assetIndex,
+        name: rawName,
+        baseSymbol,
+        pairLabel: `${baseSymbol}-USDC`,
+        dex: cleanDex,
+        category: cleanDex ? 'stocks' : 'crypto',
         szDecimals: Number(meta.szDecimals) || 0,
         maxLeverage: Number(meta.maxLeverage) || 20,
-        onlyIsolated: Boolean(meta.onlyIsolated),
+        onlyIsolated: Boolean(meta.onlyIsolated || (meta.marginMode && meta.marginMode !== 'normal')),
         markPx: Number.isFinite(markPx) && markPx > 0 ? markPx : null,
         midPx: Number.isFinite(midPx) && midPx > 0 ? midPx : null,
         prevDayPx: Number.isFinite(prevDayPx) && prevDayPx > 0 ? prevDayPx : null,
+        priceChange24h,
         change24hPct,
         fundingRate: ctx.funding !== undefined && Number.isFinite(Number(ctx.funding)) ? Number(ctx.funding) : null,
         openInterest: ctx.openInterest !== undefined && Number.isFinite(Number(ctx.openInterest)) ? Number(ctx.openInterest) : null,
         dayNtlVlm: ctx.dayNtlVlm !== undefined && Number.isFinite(Number(ctx.dayNtlVlm)) ? Number(ctx.dayNtlVlm) : 0
       });
     }
+    return list;
+  }
+
+  async function fetchHlMarkets() {
+    const [mainRaw, dexsRaw] = await Promise.all([
+      postHlInfo({ type: 'metaAndAssetCtxs' }),
+      postHlInfo({ type: 'perpDexs' }).catch(() => null)
+    ]);
+    const list = parsePerpUniverseList(mainRaw, '', 0);
+
+    if (Array.isArray(dexsRaw) && dexsRaw.length > 1) {
+      const dexTargets = [];
+      for (let dexIdx = 1; dexIdx < dexsRaw.length; dexIdx++) {
+        const entry = dexsRaw[dexIdx];
+        if (entry && entry.name) {
+          dexTargets.push({ dexIdx, dexName: String(entry.name) });
+        }
+      }
+      if (dexTargets.length > 0) {
+        const dexResults = await Promise.allSettled(
+          dexTargets.map((d) => postHlInfo({ type: 'metaAndAssetCtxs', dex: d.dexName }))
+        );
+        const activeDexNames = [];
+        for (let j = 0; j < dexTargets.length; j++) {
+          const res = dexResults[j];
+          if (res.status !== 'fulfilled' || !res.value) continue;
+          const items = parsePerpUniverseList(res.value, dexTargets[j].dexName, dexTargets[j].dexIdx);
+          if (items.length > 0) {
+            activeDexNames.push(dexTargets[j].dexName);
+            list.push(...items);
+          }
+        }
+        if (activeDexNames.length > 0) {
+          _cachedActiveHip3Dexs = activeDexNames;
+        }
+      }
+    }
+
     const pinRank = new Map(PINNED_COINS.map((c, idx) => [c, idx]));
     list.sort((a, b) => {
       const pa = pinRank.has(a.name) ? pinRank.get(a.name) : 9999;
@@ -535,32 +603,18 @@
     return list;
   }
 
-  async function fetchHlAccountState(userAddress) {
-    const addr = String(userAddress || '').trim();
-    if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) return null;
-    const [chRes, spotRes, ordRes, fillsRes] = await Promise.allSettled([
-      postHlInfo({ type: 'clearinghouseState', user: addr }),
-      postHlInfo({ type: 'spotClearinghouseState', user: addr }),
-      postHlInfo({ type: 'openOrders', user: addr }),
-      postHlInfo({ type: 'userFills', user: addr })
-    ]);
-
-    const ch = chRes.status === 'fulfilled' && chRes.value ? chRes.value : {};
-    const marginSummary = ch.marginSummary || ch.crossMarginSummary || {};
-    const accountValue = Number.isFinite(Number(marginSummary.accountValue)) ? Number(marginSummary.accountValue) : 0;
-    const totalMarginUsed = Number.isFinite(Number(marginSummary.totalMarginUsed)) ? Number(marginSummary.totalMarginUsed) : 0;
-    const totalNtlPos = Number.isFinite(Number(marginSummary.totalNtlPos)) ? Number(marginSummary.totalNtlPos) : 0;
-    const withdrawable = Number.isFinite(Number(ch.withdrawable)) ? Number(ch.withdrawable) : Math.max(0, accountValue - totalMarginUsed);
-
-    const positions = [];
-    const assetPositions = Array.isArray(ch.assetPositions) ? ch.assetPositions : [];
+  function mapClearinghousePositions(ch) {
+    const out = [];
+    const assetPositions = Array.isArray(ch && ch.assetPositions) ? ch.assetPositions : [];
     for (const item of assetPositions) {
       const p = item && item.position ? item.position : item;
       if (!p || !p.coin) continue;
       const szi = Number(p.szi || 0);
       if (!Number.isFinite(szi) || Math.abs(szi) <= 0) continue;
-      positions.push({
+      out.push({
         coin: String(p.coin),
+        pairLabel: formatPerpPairName(p.coin),
+        dex: extractPerpDexTag(p.coin),
         szi,
         isLong: szi > 0,
         absSize: Math.abs(szi),
@@ -573,8 +627,84 @@
           : null,
         marginUsed: Number.isFinite(Number(p.marginUsed)) ? Number(p.marginUsed) : null,
         leverageValue: p.leverage && Number.isFinite(Number(p.leverage.value)) ? Number(p.leverage.value) : null,
-        leverageType: p.leverage && p.leverage.type ? String(p.leverage.type) : 'isolated'
+        leverageType: p.leverage && p.leverage.type ? String(p.leverage.type) : 'isolated',
+        tpTriggerPx: null,
+        slTriggerPx: null,
+        tpslOrders: []
       });
+    }
+    return out;
+  }
+
+  async function fetchHlAccountState(userAddress) {
+    const addr = String(userAddress || '').trim();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) return null;
+    const hip3Dexes = _cachedActiveHip3Dexs.slice(0, 4);
+    const [chRes, spotRes, ordRes, fillsRes, foRes, feesRes, ...hip3Settled] = await Promise.allSettled([
+      postHlInfo({ type: 'clearinghouseState', user: addr }),
+      postHlInfo({ type: 'spotClearinghouseState', user: addr }),
+      postHlInfo({ type: 'openOrders', user: addr }),
+      postHlInfo({ type: 'userFills', user: addr }),
+      postHlInfo({ type: 'frontendOpenOrders', user: addr }),
+      postHlInfo({ type: 'userFees', user: addr }),
+      ...hip3Dexes.flatMap((d) => [
+        postHlInfo({ type: 'clearinghouseState', user: addr, dex: d }),
+        postHlInfo({ type: 'frontendOpenOrders', user: addr, dex: d })
+      ])
+    ]);
+
+    const ch = chRes.status === 'fulfilled' && chRes.value ? chRes.value : {};
+    const marginSummary = ch.marginSummary || ch.crossMarginSummary || {};
+    const accountValue = Number.isFinite(Number(marginSummary.accountValue)) ? Number(marginSummary.accountValue) : 0;
+    const totalMarginUsed = Number.isFinite(Number(marginSummary.totalMarginUsed)) ? Number(marginSummary.totalMarginUsed) : 0;
+    const totalNtlPos = Number.isFinite(Number(marginSummary.totalNtlPos)) ? Number(marginSummary.totalNtlPos) : 0;
+    const withdrawable = Number.isFinite(Number(ch.withdrawable)) ? Number(ch.withdrawable) : Math.max(0, accountValue - totalMarginUsed);
+
+    const positions = mapClearinghousePositions(ch);
+    const baseOrders = (foRes.status === 'fulfilled' && Array.isArray(foRes.value))
+      ? foRes.value
+      : (ordRes.status === 'fulfilled' && Array.isArray(ordRes.value) ? ordRes.value : []);
+    const openOrders = [...baseOrders];
+
+    for (let idx = 0; idx < hip3Dexes.length; idx++) {
+      const hChRes = hip3Settled[idx * 2];
+      const hOrdRes = hip3Settled[idx * 2 + 1];
+      if (hChRes && hChRes.status === 'fulfilled' && hChRes.value) {
+        positions.push(...mapClearinghousePositions(hChRes.value));
+      }
+      if (hOrdRes && hOrdRes.status === 'fulfilled' && Array.isArray(hOrdRes.value)) {
+        openOrders.push(...hOrdRes.value);
+      }
+    }
+
+    const seenOids = new Set();
+    const dedupOrders = [];
+    for (const o of openOrders) {
+      if (!o) continue;
+      const key = `${o.coin || ''}:${o.oid || ''}`;
+      if (seenOids.has(key)) continue;
+      seenOids.add(key);
+      dedupOrders.push(o);
+    }
+
+    for (const pos of positions) {
+      const matching = dedupOrders.filter((o) => String(o.coin || '') === pos.coin && (o.isTrigger || /Take Profit|Stop/i.test(String(o.orderType || ''))));
+      pos.tpslOrders = matching;
+      for (const ord of matching) {
+        const trigPx = Number(ord.triggerPx || ord.limitPx || 0);
+        if (!Number.isFinite(trigPx) || trigPx <= 0) continue;
+        if (/Take Profit/i.test(String(ord.orderType || ''))) {
+          pos.tpTriggerPx = trigPx;
+        } else if (/Stop/i.test(String(ord.orderType || ''))) {
+          pos.slTriggerPx = trigPx;
+        } else {
+          const isTpHeuristic = pos.isLong
+            ? (pos.entryPx ? trigPx > pos.entryPx : true)
+            : (pos.entryPx ? trigPx < pos.entryPx : true);
+          if (isTpHeuristic) pos.tpTriggerPx = pos.tpTriggerPx || trigPx;
+          else pos.slTriggerPx = pos.slTriggerPx || trigPx;
+        }
+      }
     }
 
     let spotUsdc = 0;
@@ -587,7 +717,12 @@
       }
     }
 
-    const openOrders = ordRes.status === 'fulfilled' && Array.isArray(ordRes.value) ? ordRes.value : [];
+    const feesData = feesRes.status === 'fulfilled' && feesRes.value ? feesRes.value : null;
+    const rawTaker = feesData && (feesData.userCrossRate ?? feesData.feeSchedule?.cross);
+    const rawMaker = feesData && (feesData.userAddRate ?? feesData.feeSchedule?.add);
+    const takerFeeRate = rawTaker !== undefined && Number.isFinite(Number(rawTaker)) ? Number(rawTaker) : 0.00045;
+    const makerFeeRate = rawMaker !== undefined && Number.isFinite(Number(rawMaker)) ? Number(rawMaker) : 0.00015;
+
     const fillsRaw = fillsRes.status === 'fulfilled' && Array.isArray(fillsRes.value) ? fillsRes.value : [];
     const fills = fillsRaw.slice(0, 40);
 
@@ -600,8 +735,10 @@
       availableMargin: Math.max(0, accountValue - totalMarginUsed),
       spotUsdc,
       positions,
-      openOrders,
-      fills
+      openOrders: dedupOrders,
+      fills,
+      makerFeeRate,
+      takerFeeRate
     };
   }
 
@@ -712,6 +849,7 @@
     isBuy,
     size,
     orderType = 'market',
+    tif = null,
     limitPrice = null,
     slippageBps = 50,
     reduceOnly = false,
@@ -731,7 +869,11 @@
       throw new Error(t('下单数量过小', 'Order size too small'));
     }
 
-    const isMarket = String(orderType).toLowerCase() !== 'limit';
+    const typeLower = String(orderType || 'market').toLowerCase();
+    const isPostOnly = typeLower === 'post_only' || String(tif || '').toLowerCase() === 'alo';
+    const isMarket = typeLower !== 'limit' && !isPostOnly;
+    const resolvedTif = isMarket ? 'Ioc' : (isPostOnly ? 'Alo' : (tif || 'Gtc'));
+
     let refPx = 0;
     if (isMarket) {
       const mark = Number(market.markPx || market.midPx || 0);
@@ -793,7 +935,7 @@
         p: pxStr,
         s: sizeStr,
         r: Boolean(reduceOnly),
-        t: { limit: { tif: isMarket ? 'Ioc' : 'Gtc' } }
+        t: { limit: { tif: resolvedTif } }
       }
     ];
 
@@ -842,6 +984,85 @@
     return { ok: true, response: res };
   }
 
+  async function cancelHlOrdersBatch({ wallet, cancels = [] }) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    const clean = (Array.isArray(cancels) ? cancels : []).filter((c) => c && c.a !== undefined && c.o !== undefined);
+    if (clean.length === 0) return { ok: true, cancelled: 0 };
+    const action = {
+      type: 'cancel',
+      cancels: clean.map((c) => ({ a: Number(c.a), o: Number(c.o) }))
+    };
+    const signed = await signHlL1Action({ wallet, action });
+    const res = await postHlExchange({ action, nonce: signed.nonce, signature: signed.signature });
+    return { ok: true, cancelled: clean.length, response: res };
+  }
+
+  async function cancelAllHlOrders({ wallet, openOrders = [], markets = [] }) {
+    const byName = new Map((Array.isArray(markets) ? markets : []).map((m) => [m.name, m]));
+    const cancels = [];
+    for (const o of (Array.isArray(openOrders) ? openOrders : [])) {
+      const m = byName.get(o && o.coin);
+      if (m && o && o.oid !== undefined) {
+        cancels.push({ a: m.index, o: o.oid });
+      }
+    }
+    return cancelHlOrdersBatch({ wallet, cancels });
+  }
+
+  async function updateHlPositionTpSl({ wallet, market, position, tpPrice = null, slPrice = null, openOrders = [] }) {
+    if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
+    if (!market || market.index === undefined) throw new Error(t('请选择有效合约市场', 'Select a valid perpetual market'));
+    if (!position || !position.absSize) throw new Error(t('无效持仓', 'Invalid position'));
+
+    const existingTriggers = (Array.isArray(openOrders) ? openOrders : []).filter(
+      (o) => o && String(o.coin || '') === String(position.coin || '') && (o.isTrigger || /Take Profit|Stop/i.test(String(o.orderType || ''))) && o.oid !== undefined
+    );
+    if (existingTriggers.length > 0) {
+      await cancelHlOrdersBatch({
+        wallet,
+        cancels: existingTriggers.map((o) => ({ a: market.index, o: o.oid }))
+      });
+    }
+
+    const szDec = Number(market.szDecimals) || 0;
+    const sizeStr = formatHlSize(position.absSize, szDec);
+    const orders = [];
+    const tpNum = Number(tpPrice);
+    const slNum = Number(slPrice);
+
+    if (Number.isFinite(tpNum) && tpNum > 0) {
+      const tpStr = formatHlPrice(tpNum, szDec);
+      orders.push({
+        a: Number(market.index),
+        b: !Boolean(position.isLong),
+        p: tpStr,
+        s: sizeStr,
+        r: true,
+        t: { trigger: { isMarket: true, triggerPx: tpStr, tpsl: 'tp' } }
+      });
+    }
+    if (Number.isFinite(slNum) && slNum > 0) {
+      const slStr = formatHlPrice(slNum, szDec);
+      orders.push({
+        a: Number(market.index),
+        b: !Boolean(position.isLong),
+        p: slStr,
+        s: sizeStr,
+        r: true,
+        t: { trigger: { isMarket: true, triggerPx: slStr, tpsl: 'sl' } }
+      });
+    }
+
+    if (orders.length === 0) {
+      return { ok: true, cleared: existingTriggers.length };
+    }
+
+    const action = { type: 'order', orders, grouping: 'positionTpsl' };
+    const signed = await signHlL1Action({ wallet, action });
+    const res = await postHlExchange({ action, nonce: signed.nonce, signature: signed.signature });
+    return { ok: true, action, response: res };
+  }
+
   async function closeHlPositionMarket({ wallet, market, position, slippageBps = 80 }) {
     if (!position || !position.absSize) throw new Error(t('无效持仓', 'Invalid position'));
     return placeHlPerpOrder({
@@ -852,6 +1073,23 @@
       orderType: 'market',
       slippageBps,
       reduceOnly: true
+    });
+  }
+
+  async function reverseHlPositionMarket({ wallet, market, position, slippageBps = 80, availableMargin = null }) {
+    if (!position || !position.absSize) throw new Error(t('无效持仓', 'Invalid position'));
+    const curLev = Number(position.leverageValue || 5);
+    return placeHlPerpOrder({
+      wallet,
+      market,
+      isBuy: !position.isLong,
+      size: Number(position.absSize) * 2,
+      orderType: 'market',
+      slippageBps,
+      reduceOnly: false,
+      leverage: curLev,
+      isCross: position.leverageType === 'cross',
+      availableMargin
     });
   }
 
@@ -1132,6 +1370,9 @@
     formatHlPrice,
     formatHlSize,
     formatHlUsdcAmount,
+    extractPerpDexTag,
+    extractPerpBaseSymbol,
+    formatPerpPairName,
     computeEstimatedLiqPrice,
     nextHlNonce,
     computeHlActionHash,
@@ -1146,7 +1387,11 @@
     updateHlLeverage,
     placeHlPerpOrder,
     cancelHlOrder,
+    cancelHlOrdersBatch,
+    cancelAllHlOrders,
+    updateHlPositionTpSl,
     closeHlPositionMarket,
+    reverseHlPositionMarket,
     transferHlUsdClass,
     withdrawHlToArbitrum,
     depositArbUsdcToHlBridge,

@@ -539,6 +539,95 @@
     }
   }
 
+  function floorToDecimals(val, decimals = 6) {
+    const n = Number(val);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    const dp = Math.max(0, Math.min(12, Math.floor(Number(decimals) || 6)));
+    const factor = Math.pow(10, dp);
+    return Number((Math.floor(n * factor + 1e-9) / factor).toFixed(dp));
+  }
+
+  /**
+   * Resolve external ("extra") vs internal ("internal") gas deduction plan.
+   * Partial amounts use external gas (send/swap full entered amount + extra gas).
+   * Full-balance / Max inputs use internal gas deduction so users never hit
+   * false Gas insufficient errors or leave unspendable native dust.
+   */
+  function resolveNativeFeeDeductPlan({
+    wallet,
+    chain,
+    amount,
+    avail,
+    isNative = false,
+    gasBuffer = null,
+    decimals = 6
+  } = {}) {
+    const amt = Number(amount);
+    const bal = avail !== null && avail !== undefined
+      ? Number(avail)
+      : (wallet && chain ? Number(getWalletChainNativeBalance(wallet, chain) || 0) : 0);
+    const contracts = getContracts();
+    const buffers = (contracts && contracts.DEFAULT_GAS_BUFFERS) || {};
+    const chainLower = String(chain || '').toLowerCase();
+    const buf = (gasBuffer !== null && gasBuffer !== undefined && Number.isFinite(Number(gasBuffer)) && Number(gasBuffer) > 0)
+      ? Number(gasBuffer)
+      : Number(buffers[chainLower] || 0);
+    const fullTol = Math.max(2e-6, bal * 1e-6);
+
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return { mode: 'extra', effectiveAmount: 0, totalInputAmount: 0, gasReserve: buf, avail: bal };
+    }
+    if (!isNative) {
+      if (amt > bal + fullTol) {
+        return { mode: 'insufficient_balance', effectiveAmount: 0, totalInputAmount: amt, gasReserve: buf, avail: bal };
+      }
+      return {
+        mode: 'extra',
+        effectiveAmount: amt > bal ? bal : amt,
+        totalInputAmount: amt,
+        gasReserve: buf,
+        avail: bal
+      };
+    }
+
+    const flooredBal = floorToDecimals(bal, decimals);
+    const isFullBalance = bal > 0 && (
+      (amt >= bal - fullTol && amt <= bal + fullTol) ||
+      (flooredBal > 0 && amt >= flooredBal - 1e-9 && amt <= bal + fullTol)
+    );
+
+    if (amt > bal + fullTol) {
+      return { mode: 'insufficient_balance', effectiveAmount: 0, totalInputAmount: amt, gasReserve: buf, avail: bal };
+    }
+
+    if (isFullBalance) {
+      const effectiveRaw = bal - buf;
+      if (!Number.isFinite(effectiveRaw) || effectiveRaw <= 0) {
+        return { mode: 'insufficient_gas', effectiveAmount: 0, totalInputAmount: bal, gasReserve: buf, avail: bal };
+      }
+      const dp = Math.min(8, Math.max(4, Number(decimals) || 6));
+      let effectiveAmount = floorToDecimals(effectiveRaw, dp);
+      if (effectiveAmount + buf > bal + 1e-12) {
+        effectiveAmount = floorToDecimals(Math.max(0, bal - buf - Math.pow(10, -dp)), dp);
+      }
+      if (!Number.isFinite(effectiveAmount) || effectiveAmount <= 0) {
+        return { mode: 'insufficient_gas', effectiveAmount: 0, totalInputAmount: bal, gasReserve: buf, avail: bal };
+      }
+      return {
+        mode: 'internal',
+        effectiveAmount,
+        totalInputAmount: bal,
+        gasReserve: buf,
+        avail: bal
+      };
+    }
+
+    if (amt + buf > bal + 1e-12) {
+      return { mode: 'insufficient_gas', effectiveAmount: amt, totalInputAmount: amt, gasReserve: buf, avail: bal };
+    }
+    return { mode: 'extra', effectiveAmount: amt, totalInputAmount: amt, gasReserve: buf, avail: bal };
+  }
+
   function evaluateSwapButtonState({
     wallet,
     fromToken,
@@ -570,27 +659,59 @@
     if (!Number.isFinite(amt) || amt <= 0) {
       return { disabled: false, isError: false, isWarning: false, text: t('确认闪兑', 'Execute Swap'), reason: 'empty' };
     }
+    let activeFeePlan = null;
     if (wallet && fromToken && toToken) {
       const contracts = getContracts();
       const avail = getWalletNativeBalanceForToken(wallet, fromToken.blockchain, fromToken.symbol, fromToken.contractAddress);
       const isNative = isSwapTokenNative(fromToken);
       const gasReserveInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, gasReserveMode || 'auto', quoteData);
+      const customGasBuf = isNative && fromToken.blockchain === 'sol' && gasReserveInfo.selectedReserve > 0
+        ? gasReserveInfo.selectedReserve
+        : null;
+      activeFeePlan = resolveNativeFeeDeductPlan({
+        wallet,
+        chain: fromToken.blockchain,
+        amount: amt,
+        avail: avail !== null ? avail : 0,
+        isNative,
+        gasBuffer: customGasBuf,
+        decimals: fromToken.decimals || 6
+      });
+      if (activeFeePlan.mode === 'insufficient_balance') {
+        return {
+          disabled: true,
+          isError: true,
+          isWarning: false,
+          text: t(`${fromToken.symbol} 余额不足`, `Insufficient ${fromToken.symbol}`),
+          reason: 'insufficient_balance'
+        };
+      }
+      if (activeFeePlan.mode === 'insufficient_gas') {
+        const gasMap = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' };
+        const gasSym = gasMap[String(fromToken.blockchain || '').toLowerCase()] || 'ETH';
+        return {
+          disabled: true,
+          isError: true,
+          isWarning: false,
+          text: t(`${gasSym} Gas 余额不足`, `Insufficient ${gasSym} for gas`),
+          reason: 'insufficient_gas'
+        };
+      }
+      const effectiveAmt = activeFeePlan.mode === 'internal' ? activeFeePlan.effectiveAmount : amt;
       if (contracts && typeof contracts.validateSufficientChainBalance === 'function') {
         try {
           contracts.validateSufficientChainBalance({
             wallet,
             chain: fromToken.blockchain,
             tokenSymbol: fromToken.symbol,
-            amount: amt,
+            amount: effectiveAmt,
             isNative,
             tokenBalance: avail !== null ? avail : 0,
-            gasBuffer: isNative && fromToken.blockchain === 'sol' && gasReserveInfo.selectedReserve > 0
-              ? gasReserveInfo.selectedReserve
-              : null
+            gasBuffer: customGasBuf
           });
         } catch (_) {
           const effectiveAvail = avail !== null ? avail : 0;
-          if (amt > effectiveAvail) {
+          if (effectiveAmt > effectiveAvail) {
             return {
               disabled: true,
               isError: true,
@@ -611,7 +732,7 @@
         }
       }
       try {
-        validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData, amountIn: amt });
+        validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData, amountIn: effectiveAmt });
       } catch (_) {
         return {
           disabled: true,
@@ -635,6 +756,15 @@
         isWarning: true,
         text: t(`高价差 (-${priceImpact.pct.toFixed(1)}%) · 仍要闪兑`, `High Impact (-${priceImpact.pct.toFixed(1)}%) · Swap Anyway`),
         reason: 'ready_high_impact'
+      };
+    }
+    if (activeFeePlan && activeFeePlan.mode === 'internal') {
+      return {
+        disabled: false,
+        isError: false,
+        isWarning: false,
+        text: t('确认闪兑 (内扣Gas)', 'Execute Swap (Internal Gas)'),
+        reason: 'ready'
       };
     }
     return { disabled: false, isError: false, isWarning: false, text: t('确认闪兑', 'Execute Swap'), reason: 'ready' };

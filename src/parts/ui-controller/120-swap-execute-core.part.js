@@ -63,8 +63,8 @@
     const wallet = st.getActiveWallet();
     if (!wallet) return;
 
-    const amt = Number(st.swap.amountIn);
-    if (!Number.isFinite(amt) || amt <= 0) {
+    const rawAmt = Number(st.swap.amountIn);
+    if (!Number.isFinite(rawAmt) || rawAmt <= 0) {
       showToast(t('请输入兑换数量', 'Enter swap amount'));
       return;
     }
@@ -83,10 +83,24 @@
 
     const avail = getSwapTokenAvailableBalance(fromToken);
     const isNative = isSwapTokenNative(fromToken);
+    const gasReserveInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
+    const gasBuf = isNative && fromToken.blockchain === 'sol' && gasReserveInfo.selectedReserve > 0
+      ? gasReserveInfo.selectedReserve
+      : null;
+    const feePlan = resolveNativeFeeDeductPlan({
+      wallet,
+      chain: fromToken.blockchain,
+      amount: rawAmt,
+      avail,
+      isNative,
+      gasBuffer: gasBuf,
+      decimals: fromToken.decimals || 6
+    });
+    const amt = feePlan.mode === 'internal' ? feePlan.effectiveAmount : rawAmt;
+    const amtStr = feePlan.mode === 'internal' ? String(feePlan.effectiveAmount) : String(st.swap.amountIn);
 
     // Strict Local Balance Pre-Validation BEFORE firing RPC / quotes
     try {
-      const gasReserveInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
       contracts.validateSufficientChainBalance({
         wallet,
         chain: fromToken.blockchain,
@@ -94,9 +108,7 @@
         amount: amt,
         isNative,
         tokenBalance: avail !== null ? avail : 0,
-        gasBuffer: isNative && fromToken.blockchain === 'sol' && gasReserveInfo.selectedReserve > 0
-          ? gasReserveInfo.selectedReserve
-          : null
+        gasBuffer: gasBuf
       });
       validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData: st.swap.quoteData, amountIn: amt });
     } catch (err) {
@@ -111,14 +123,15 @@
       : '';
     const isThirdParty = isCustomThirdPartySwapRecipient(wallet, toToken);
     const thirdPartySuffix = isThirdParty ? ` → ${shortenAddr(st.swap.recipientAddress)}` : '';
-    if (!(await verifySecurityAuthAsync(wallet, `${t('确认兑换', 'Confirm swap')} ${st.swap.amountIn} ${fromToken.symbol} → ${toToken.symbol}${impactPromptSuffix}${thirdPartySuffix}`))) return;
+    const authLabelAmt = feePlan.mode === 'internal' ? `${amtStr} (${t('全额内扣Gas', 'Internal Gas')})` : amtStr;
+    if (!(await verifySecurityAuthAsync(wallet, `${t('确认兑换', 'Confirm swap')} ${authLabelAmt} ${fromToken.symbol} → ${toToken.symbol}${impactPromptSuffix}${thirdPartySuffix}`))) return;
 
     st.swap._executing = true;
     setSwapError('');
 
     try {
       await contracts.ensureWalletSigningKeysAsync(wallet);
-      const amountRaw = intents.toBaseUnits(st.swap.amountIn, fromToken.decimals);
+      const amountRaw = intents.toBaseUnits(amtStr, fromToken.decimals);
       const sameChainDex = isSameChainContractSwap(fromToken, toToken);
 
       if (sameChainDex) {

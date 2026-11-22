@@ -208,16 +208,8 @@
     const inp = $('send-amount-input');
     if (!inp || !asset || bal === null || bal <= 0) return;
 
-    const reserves = { near: 0.005, sol: 0.002, eth: 0.0015, base: 0.0002, arb: 0.0002, bsc: 0.0005, op: 0.0002, pol: 0.01, avax: 0.005, hype: 0.0005, hood: 0.0002, arc: 0.02, prl: 0.001, btc: 0.0001 };
-    const isNativeGas = !asset.contractAddress ||
-      asset.blockchain === 'prl' ||
-      asset.blockchain === 'btc' ||
-      asset.contractAddress === 'So11111111111111111111111111111111111111112' ||
-      asset.contractAddress.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' ||
-      asset.contractAddress === 'wrap.near' ||
-      (asset.blockchain === 'arc' && asset.contractAddress.toLowerCase() === '0x3600000000000000000000000000000000000000');
-    const maxVal = isNativeGas ? Math.max(0, bal - (reserves[asset.blockchain] || 0)) : bal;
-    inp.value = maxVal > 0 ? Number(maxVal.toFixed(6)).toString() : '0';
+    const maxVal = floorToDecimals(bal, 6);
+    inp.value = maxVal > 0 ? String(maxVal) : '0';
   }
 
   async function pasteToSendAddress() {
@@ -331,21 +323,45 @@
       asset.contractAddress.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' ||
       asset.contractAddress === 'wrap.near' ||
       (asset.blockchain === 'arc' && asset.contractAddress.toLowerCase() === '0x3600000000000000000000000000000000000000');
-    try {
-      contracts.validateSufficientChainBalance({
-        wallet,
-        chain: asset.blockchain,
-        tokenSymbol: asset.symbol,
-        amount: amountNum,
-        isNative: isNativeGas,
-        tokenBalance: avail !== null ? avail : 0
-      });
-    } catch (err) {
-      showToast(err.message);
+
+    const feePlan = resolveNativeFeeDeductPlan({
+      wallet,
+      chain: asset.blockchain,
+      amount: amountNum,
+      avail,
+      isNative: isNativeGas,
+      decimals: asset.decimals || 6
+    });
+    if (feePlan.mode === 'insufficient_balance') {
+      showToast(`${asset.symbol} ${t('余额不足', 'balance insufficient')}`);
+      return;
+    }
+    if (feePlan.mode === 'insufficient_gas') {
+      showToast(`${String(asset.blockchain || '').toUpperCase()} ${t('Gas 余额不足', 'Gas insufficient')}`);
       return;
     }
 
-    if (!(await verifySecurityAuthAsync(wallet, `${t('确认发送', 'Confirm send')} ${amountNum} ${asset.symbol}`))) return;
+    const effectiveSendAmt = feePlan.mode === 'internal' ? feePlan.effectiveAmount : amountNum;
+    const isPrlOrBtcInternalSweep = feePlan.mode === 'internal' && (asset.blockchain === 'prl' || asset.blockchain === 'btc');
+
+    if (!isPrlOrBtcInternalSweep) {
+      try {
+        contracts.validateSufficientChainBalance({
+          wallet,
+          chain: asset.blockchain,
+          tokenSymbol: asset.symbol,
+          amount: effectiveSendAmt,
+          isNative: isNativeGas,
+          tokenBalance: avail !== null ? avail : 0
+        });
+      } catch (err) {
+        showToast(err.message);
+        return;
+      }
+    }
+
+    const authSuffix = feePlan.mode === 'internal' ? ` (${t('全额内扣Gas', 'Internal Gas')})` : '';
+    if (!(await verifySecurityAuthAsync(wallet, `${t('确认发送', 'Confirm send')} ${feePlan.totalInputAmount} ${asset.symbol}${authSuffix}`))) return;
 
     const btn = $('btn-confirm-send');
     if (btn) btn.disabled = true;
@@ -370,9 +386,9 @@
           const res = await contracts.signAndSendNearTransfer({
             wallet,
             receiverId: recipient.toLowerCase(),
-            amountNear: amountNum
+            amountNear: effectiveSendAmt
           });
-          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
+          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: effectiveSendAmt, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
           showToast(`✅ NEAR ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
           closeAllSheets();
           refreshAllBalancesAsync(false);
@@ -384,12 +400,12 @@
             wallet,
             tokenContract: asset.contractAddress,
             receiverId: recipient.toLowerCase(),
-            amount: amountNum,
+            amount: effectiveSendAmt,
             decimals: asset.decimals || 8,
             tokenSymbol: asset.symbol,
             tokenBalance: avail
           });
-          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
+          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: effectiveSendAmt, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
           showToast(`✅ ${asset.symbol} (NEAR) ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
           closeAllSheets();
           refreshAllBalancesAsync(false);
@@ -398,8 +414,8 @@
 
         if (asset.blockchain === 'sol') {
           if (!asset.contractAddress || asset.contractAddress === 'So11111111111111111111111111111111111111112') {
-            const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: recipient, amountSol: amountNum });
-            recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
+            const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: recipient, amountSol: effectiveSendAmt });
+            recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: effectiveSendAmt, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
             showToast(`✅ SOL ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
             closeAllSheets();
             refreshAllBalancesAsync(false);
@@ -409,11 +425,11 @@
             wallet,
             mintAddress: asset.contractAddress,
             toAddress: recipient,
-            amount: amountNum,
+            amount: effectiveSendAmt,
             decimals: asset.decimals || 6,
             tokenBalance: avail
           });
-          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
+          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: effectiveSendAmt, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
           showToast(`✅ ${asset.symbol} (Solana) ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
           closeAllSheets();
           refreshAllBalancesAsync(false);
@@ -425,12 +441,12 @@
             wallet,
             chainKey: asset.blockchain,
             toAddress: recipient,
-            amount: amountNum,
+            amount: effectiveSendAmt,
             tokenContract: asset.contractAddress,
             decimals: asset.decimals,
             tokenBalance: avail
           });
-          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
+          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: effectiveSendAmt, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
           showToast(`✅ EVM ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
           closeAllSheets();
           refreshAllBalancesAsync(false);
@@ -438,21 +454,24 @@
         }
 
         if (asset.blockchain === 'prl') {
+          const prlMode = feePlan.mode === 'internal' ? 'internal' : 'extra';
+          const prlReq = feePlan.mode === 'internal' ? feePlan.totalInputAmount : effectiveSendAmt;
           const res = await contracts.executePearlTransfer({
             wallet,
             toAddress: recipient,
-            amountPrl: amountNum,
-            feeDeductMode: 'extra'
+            amountPrl: prlReq,
+            feeDeductMode: prlMode
           });
           const feePrl = Number(res.feePrl) || 0;
-          applyOptimisticChainSpend(wallet, 'prl', amountNum, feePrl, res.txHash);
+          const netSent = Number(res.sentPrl) || (prlMode === 'internal' ? Math.max(0, prlReq - feePrl) : prlReq);
+          applyOptimisticChainSpend(wallet, 'prl', netSent, feePrl, res.txHash);
           recordWalletActivity(wallet, {
             type: 'send',
             symbol: asset.symbol,
             chain: asset.blockchain,
-            amount: amountNum,
+            amount: netSent,
             fee: feePrl > 0 ? feePrl : null,
-            netAmount: -(amountNum + feePrl),
+            netAmount: -(netSent + feePrl),
             counterparty: recipient,
             txHash: res.txHash,
             title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}`
@@ -463,21 +482,24 @@
           return;
         }
         if (asset.blockchain === 'btc') {
+          const btcMode = feePlan.mode === 'internal' ? 'internal' : 'extra';
+          const btcReq = feePlan.mode === 'internal' ? feePlan.totalInputAmount : effectiveSendAmt;
           const res = await contracts.executeBitcoinTransfer({
             wallet,
             toAddress: recipient,
-            amountBtc: amountNum,
-            feeDeductMode: 'extra'
+            amountBtc: btcReq,
+            feeDeductMode: btcMode
           });
           const feeBtc = Number(res.feeBtc) || 0;
-          applyOptimisticChainSpend(wallet, 'btc', amountNum, feeBtc, res.txHash);
+          const netSent = Number(res.sentBtc) || (btcMode === 'internal' ? Math.max(0, btcReq - feeBtc) : btcReq);
+          applyOptimisticChainSpend(wallet, 'btc', netSent, feeBtc, res.txHash);
           recordWalletActivity(wallet, {
             type: 'send',
             symbol: asset.symbol,
             chain: 'btc',
-            amount: amountNum,
+            amount: netSent,
             fee: feeBtc > 0 ? feeBtc : null,
-            netAmount: -(amountNum + feeBtc),
+            netAmount: -(netSent + feeBtc),
             counterparty: recipient,
             txHash: res.txHash,
             title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}`
@@ -503,7 +525,7 @@
       }
 
       const destAsset = resolveDestinationAssetForNetwork(asset.symbol, detectedNet, asset.assetId, targetEvmChain);
-      const amountRaw = intents.toBaseUnits(amountNum, asset.decimals || 8);
+      const amountRaw = intents.toBaseUnits(effectiveSendAmt, asset.decimals || 8);
       const refundTo = getWalletDefaultRecipientForChain(wallet, asset.blockchain) || (wallet.nearNamedAccount || wallet.nearAddress);
 
       const quote = await intents.quoteIntentSwapOrWithdraw({
@@ -525,14 +547,14 @@
       let depositTxHash = '';
       let depositFeeNum = null;
       if (asset.blockchain === 'near' && asset.kind !== 'nep141' && asset.symbol === 'NEAR') {
-        const res = await contracts.signAndSendNearTransfer({ wallet, receiverId: quote.depositAddress, amountNear: amountNum });
+        const res = await contracts.signAndSendNearTransfer({ wallet, receiverId: quote.depositAddress, amountNear: effectiveSendAmt });
         depositTxHash = res.txHash;
       } else if (asset.blockchain === 'near' && asset.contractAddress && typeof contracts.executeNearNep141Transfer === 'function') {
         const res = await contracts.executeNearNep141Transfer({
           wallet,
           tokenContract: asset.contractAddress,
           receiverId: quote.depositAddress,
-          amount: amountNum,
+          amount: effectiveSendAmt,
           decimals: asset.decimals || 8,
           tokenSymbol: asset.symbol,
           tokenBalance: avail
@@ -540,14 +562,14 @@
         depositTxHash = res.txHash;
       } else if (asset.blockchain === 'sol') {
         if (!asset.contractAddress || asset.contractAddress === 'So11111111111111111111111111111111111111112') {
-          const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: quote.depositAddress, amountSol: amountNum });
+          const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: quote.depositAddress, amountSol: effectiveSendAmt });
           depositTxHash = res.txHash;
         } else {
           const res = await contracts.executeSolanaSplTransfer({
             wallet,
             mintAddress: asset.contractAddress,
             toAddress: quote.depositAddress,
-            amount: amountNum,
+            amount: effectiveSendAmt,
             decimals: asset.decimals || 6,
             tokenBalance: avail
           });
@@ -557,28 +579,28 @@
         const res = await contracts.executePearlTransfer({
           wallet,
           toAddress: quote.depositAddress,
-          amountPrl: amountNum,
+          amountPrl: effectiveSendAmt,
           feeDeductMode: 'extra'
         });
         depositTxHash = res.txHash;
         depositFeeNum = Number(res.feePrl) || 0;
-        applyOptimisticChainSpend(wallet, 'prl', amountNum, depositFeeNum, depositTxHash);
+        applyOptimisticChainSpend(wallet, 'prl', effectiveSendAmt, depositFeeNum, depositTxHash);
       } else if (asset.blockchain === 'btc') {
         const res = await contracts.executeBitcoinTransfer({
           wallet,
           toAddress: quote.depositAddress,
-          amountBtc: amountNum,
+          amountBtc: effectiveSendAmt,
           feeDeductMode: 'extra'
         });
         depositTxHash = res.txHash;
         depositFeeNum = Number(res.feeBtc) || 0;
-        applyOptimisticChainSpend(wallet, 'btc', amountNum, depositFeeNum, depositTxHash);
+        applyOptimisticChainSpend(wallet, 'btc', effectiveSendAmt, depositFeeNum, depositTxHash);
       } else if (isEvmOrigin) {
         const res = await contracts.executeEvmTransfer({
           wallet,
           chainKey: asset.blockchain,
           toAddress: quote.depositAddress,
-          amount: amountNum,
+          amount: effectiveSendAmt,
           tokenContract: asset.contractAddress,
           decimals: asset.decimals,
           tokenBalance: avail

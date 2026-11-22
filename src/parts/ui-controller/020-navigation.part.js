@@ -144,6 +144,7 @@
       setSwapPanelMode(st.swap.panelMode || 'market');
       if (st.swap.panelMode !== 'limit' && !st.swap.quoteData && st.swap.amountIn) scheduleSwapQuote();
     } else if (st.activeTab === 'perp') {
+      st.perp.subView = 'overview';
       renderPerpView();
       refreshPerpDataAsync(false).catch(() => {});
       refreshPerpLongShortAsync(st.perp.selectedCoin || 'BTC', false).catch(() => {});

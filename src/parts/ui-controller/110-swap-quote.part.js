@@ -146,10 +146,8 @@
     const bal = getSwapTokenAvailableBalance(fromToken);
     if (!fromToken || bal === null || bal <= 0) return;
 
-    const reserves = { sol: 0.002, eth: 0.0015, base: 0.0002, arb: 0.0002, bsc: 0.0005, op: 0.0002, pol: 0.01, avax: 0.005, hype: 0.0005, hood: 0.0002, arc: 0.02, near: 0.005, prl: 0.003, btc: 0.0001 };
-    const isNative = isSwapTokenNative(fromToken);
-    const maxVal = isNative ? Math.max(0, bal - (reserves[fromToken.blockchain] || 0)) : bal;
-    st.swap.amountIn = maxVal > 0 ? Number(maxVal.toFixed(6)).toString() : '0';
+    const maxVal = floorToDecimals(bal, 6);
+    st.swap.amountIn = maxVal > 0 ? String(maxVal) : '0';
     if ($('swap-amount-in')) $('swap-amount-in').value = st.swap.amountIn;
     handleSwapAmountInput();
   }
@@ -209,8 +207,8 @@
     const wallet = st.getActiveWallet();
     if (!wallet) return;
 
-    const amt = Number(st.swap.amountIn);
-    if (!Number.isFinite(amt) || amt <= 0) {
+    const amtRaw = Number(st.swap.amountIn);
+    if (!Number.isFinite(amtRaw) || amtRaw <= 0) {
       st.swap._quoting = false;
       setSwapError('');
       return;
@@ -230,8 +228,24 @@
       return;
     }
 
+    const avail = getSwapTokenAvailableBalance(fromToken);
+    const isNative = isSwapTokenNative(fromToken);
+    const preGasInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
+    const preGasBuf = isNative && fromToken.blockchain === 'sol' && preGasInfo.selectedReserve > 0 ? preGasInfo.selectedReserve : null;
+    const feePlan = resolveNativeFeeDeductPlan({
+      wallet,
+      chain: fromToken.blockchain,
+      amount: amtRaw,
+      avail,
+      isNative,
+      gasBuffer: preGasBuf,
+      decimals: fromToken.decimals || 6
+    });
+    const amt = feePlan.mode === 'internal' ? feePlan.effectiveAmount : amtRaw;
+    const amtInputStr = feePlan.mode === 'internal' ? String(feePlan.effectiveAmount) : String(st.swap.amountIn);
+
     const sameChainDex = isSameChainContractSwap(fromToken, toToken);
-    const amountRaw = intents.toBaseUnits(st.swap.amountIn, fromToken.decimals);
+    const amountRaw = intents.toBaseUnits(amtInputStr, fromToken.decimals);
     if (amountRaw === '0') {
       st.swap._quoting = false;
       updateSwapPrimaryButtonState();

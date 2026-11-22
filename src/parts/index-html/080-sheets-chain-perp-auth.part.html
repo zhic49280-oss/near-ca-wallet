@@ -117,6 +117,7 @@
       <div id="perp-market-filters" class="pill-scroll">
         <button type="button" class="filter-pill active" data-mkt-filter="hot" onclick="setPerpMarketFilter('hot')" data-i18n="perp.mktFilterHot">热门</button>
         <button type="button" class="filter-pill" data-mkt-filter="all" onclick="setPerpMarketFilter('all')" data-i18n="perp.mktFilterAll">全部</button>
+        <button type="button" class="filter-pill" data-mkt-filter="stocks" onclick="setPerpMarketFilter('stocks')" data-i18n="perp.mktFilterStocks">股票</button>
         <button type="button" class="filter-pill" data-mkt-filter="gainers" onclick="setPerpMarketFilter('gainers')" data-i18n="perp.mktFilterGainers">涨幅榜</button>
         <button type="button" class="filter-pill" data-mkt-filter="vol" onclick="setPerpMarketFilter('vol')" data-i18n="perp.mktFilterVol">成交额</button>
       </div>
@@ -395,6 +396,39 @@
       <div class="flex gap-2">
         <button type="button" id="btn-dapp-reject" class="btn-secondary flex-1" onclick="rejectDAppApproval()" data-i18n="dapp.rejectBtn">拒绝</button>
         <button type="button" id="btn-dapp-confirm" class="btn-primary flex-1" onclick="confirmDAppApproval()" data-i18n="dapp.confirmBtn">授权并签名</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: Perp Position TP / SL Editor ==================== -->
+  <div id="sheet-perp-tpsl" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="perp.tpslSheetTitle">设置 / 修改止盈止损</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div class="meta-list">
+        <div class="meta-row">
+          <span class="meta-key" data-i18n="perp.colContractVol">合约</span>
+          <span id="perp-tpsl-sheet-pair" class="meta-val mono">--</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-key" data-i18n="perp.liqEstLabel">预估强平价</span>
+          <span id="perp-tpsl-sheet-liq" class="meta-val text-rose mono">--</span>
+        </div>
+      </div>
+      <div class="flex flex-col gap-1">
+        <span class="meta-key" style="font-size: 11.5px;" data-i18n="perp.tpPlaceholder">止盈触发价</span>
+        <input id="perp-pos-tp-input" type="number" step="any" min="0" class="input-field mono" data-i18n-placeholder="perp.tpPlaceholder" placeholder="止盈触发价 (留空即不设或清除)" />
+      </div>
+      <div class="flex flex-col gap-1">
+        <span class="meta-key" style="font-size: 11.5px;" data-i18n="perp.slPlaceholder">止损触发价</span>
+        <input id="perp-pos-sl-input" type="number" step="any" min="0" class="input-field mono" data-i18n-placeholder="perp.slPlaceholder" placeholder="止损触发价 (留空即不设或清除)" />
+      </div>
+      <div class="flex gap-2">
+        <button type="button" class="btn-secondary flex-1" onclick="submitPerpPositionTpSlUI(true)" data-i18n="perp.tpslClearBtn">清除止盈止损</button>
+        <button type="button" id="btn-perp-tpsl-save" class="btn-primary flex-1" onclick="submitPerpPositionTpSlUI(false)" data-i18n="perp.tpslSaveBtn">确认提交止盈止损</button>
       </div>
     </div>
   </div>

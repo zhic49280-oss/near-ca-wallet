@@ -340,6 +340,7 @@
     registerDynamicTokenIcons,
     setLiveDefuseTokens,
     resolveTokenIcon,
+    normalizePerpBaseSymbol,
     renderTokenIconWithBadge,
     getAllCoreTokens,
     getDexTokensForChain,

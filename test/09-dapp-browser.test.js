@@ -10,11 +10,14 @@ const {
   cryptoEngine,
   tokenRegistry,
   chainContracts,
+  hlPerps,
   miningPro,
   state,
   dappBrowser,
   uiController,
   TEST_MNEMONIC,
+  jsonResponse,
+  withMockedFetch,
   withMockedStorage,
   createMockClassList,
   createMockDomElement
@@ -77,7 +80,7 @@ test('v6.24 UI & UX Fixes: global sheet scroll lock, keyboard-safe picker/perp h
 
 test('v6.24 UI & UX Fixes: kPEPE/kBONK/kSHIB perp icon normalization preserves kHYPE & collapsible TP/SL', () => {
   const kpepeIcon = tokenRegistry.resolveTokenIcon({ symbol: 'kPEPE', blockchain: 'arb' });
-  assert.ok(kpepeIcon.primaryUrl && kpepeIcon.primaryUrl.includes('mitte.gg'), `kPEPE should resolve PEPE icon, got ${kpepeIcon.primaryUrl}`);
+  assert.ok(kpepeIcon.primaryUrl && kpepeIcon.primaryUrl.startsWith('https://') && !kpepeIcon.primaryUrl.includes('mitte.gg'), `kPEPE should resolve valid non-mitte PEPE icon, got ${kpepeIcon.primaryUrl}`);
   assert.equal(kpepeIcon.primaryUrl, tokenRegistry.resolveTokenIcon({ symbol: 'PEPE' }).primaryUrl);
 
   const kbonkIcon = tokenRegistry.resolveTokenIcon({ symbol: 'kBONK' });
@@ -467,4 +470,329 @@ test('v6.24 DApp Browser: Native iOS/Android plugin registration, CI workflows, 
   assert.ok(mainAct.includes('registerPlugin(NativeDAppBrowserPlugin.class)'));
   assert.ok(iosYml.includes('NativeDAppBrowserPlugin.swift'));
   assert.ok(androidYml.includes('NativeDAppBrowserPlugin.java'));
+});
+
+
+test('v6.25 Token & Perp Icons + Sheet Scroll Lock Fix: zero dead mitte.gg URLs, HIP-3 stocks & prefix normalization', () => {
+  const iconMapVals = Object.values(tokenRegistry.TOKEN_ICON_MAP || {});
+  assert.equal(
+    iconMapVals.some((u) => typeof u === 'string' && u.includes('mitte.gg')),
+    false,
+    'TOKEN_ICON_MAP must not contain dead image.mitte.gg URLs'
+  );
+
+  assert.equal(tokenRegistry.normalizePerpBaseSymbol('xyz:CRCL'), 'CRCL');
+  assert.equal(tokenRegistry.normalizePerpBaseSymbol('io:PEARL'), 'PRL');
+  assert.equal(tokenRegistry.normalizePerpBaseSymbol('kPEPE-USDC'), 'PEPE');
+  assert.notEqual(
+    tokenRegistry.resolveTokenIcon({ symbol: 'kHYPE', blockchain: 'hype' }).primaryUrl,
+    tokenRegistry.resolveTokenIcon({ symbol: 'HYPE', blockchain: 'hype' }).primaryUrl
+  );
+
+  for (const sym of ['PEPE', 'kPEPE', 'SHIB', 'xyz:CRCL', 'CRCL', 'NVDA', 'TSLA']) {
+    const res = tokenRegistry.resolveTokenIcon({ symbol: sym, blockchain: sym.includes(':') ? 'eth' : 'hype' });
+    assert.ok(res && res.primaryUrl && res.primaryUrl.startsWith('https://'), `${sym} should resolve a valid HTTPS icon`);
+    assert.equal(res.primaryUrl.includes('mitte.gg'), false, `${sym} icon must not use dead mitte.gg host`);
+  }
+  const pearlPerpIcon = tokenRegistry.resolveTokenIcon({ symbol: 'io:PEARL', blockchain: 'eth' });
+  assert.equal(pearlPerpIcon.isPearlSvg, true, 'io:PEARL should resolve built-in Pearl SVG');
+
+  const styleCss = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
+  const lockBlockMatch = styleCss.match(/body\.sheet-scroll-locked\s*\{[^}]*\}/);
+  assert.ok(lockBlockMatch, 'sheet-scroll-locked CSS block must exist');
+  assert.equal(lockBlockMatch[0].includes('touch-action: none'), false, 'sheet-scroll-locked must not freeze touch-action scrolling');
+});
+
+test('v6.25 Hyperliquid HIP-3 Markets, -USDC Pairs, Real Fees, Post-Only (Alo), TP/SL Edit & Reverse Position', async () => {
+  assert.equal(hlPerps.formatPerpPairName('BTC'), 'BTC-USDC');
+  assert.equal(hlPerps.formatPerpPairName('xyz:CRCL'), 'CRCL-USDC');
+  assert.equal(hlPerps.extractPerpDexTag('xyz:CRCL'), 'xyz');
+
+  await withMockedFetch(async (_url, opts) => {
+    const body = opts && opts.body ? JSON.parse(opts.body) : {};
+    if (body.type === 'perpDexs') {
+      return jsonResponse([null, { name: 'xyz', fullName: 'Trade.xyz' }]);
+    }
+    if (body.type === 'metaAndAssetCtxs' && body.dex === 'xyz') {
+      return jsonResponse([
+        { universe: [{ name: 'xyz:CRCL', szDecimals: 2, maxLeverage: 10, onlyIsolated: true }] },
+        [{ markPx: '50.10', midPx: '50.10', prevDayPx: '48.90', funding: '0.000077', openInterest: '100000', dayNtlVlm: '8347634' }]
+      ]);
+    }
+    if (body.type === 'metaAndAssetCtxs') {
+      return jsonResponse([
+        { universe: [{ name: 'BTC', szDecimals: 5, maxLeverage: 40 }] },
+        [{ markPx: '60900', midPx: '60900', prevDayPx: '60000', funding: '0.000012', openInterest: '50000', dayNtlVlm: '2950000000' }]
+      ]);
+    }
+    if (body.type === 'clearinghouseState' && body.dex === 'xyz') {
+      return jsonResponse({
+        assetPositions: [{
+          position: {
+            coin: 'xyz:CRCL',
+            szi: '1',
+            entryPx: '67.50',
+            positionValue: '50.10',
+            unrealizedPnl: '-17.40',
+            returnOnEquity: '-2.538',
+            liquidationPx: '21.53',
+            marginUsed: '5.06',
+            leverage: { value: 10, type: 'isolated' }
+          }
+        }]
+      });
+    }
+    if (body.type === 'clearinghouseState') {
+      return jsonResponse({
+        marginSummary: { accountValue: '250.00', totalMarginUsed: '5.06', totalNtlPos: '50.10' },
+        withdrawable: '244.94',
+        assetPositions: []
+      });
+    }
+    if (body.type === 'spotClearinghouseState') {
+      return jsonResponse({ balances: [{ coin: 'USDC', total: '12.50', hold: '0' }] });
+    }
+    if (body.type === 'frontendOpenOrders' && body.dex === 'xyz') {
+      return jsonResponse([
+        { coin: 'xyz:CRCL', oid: 7001, orderType: 'Take Profit Market', isTrigger: true, triggerPx: '80.0' },
+        { coin: 'xyz:CRCL', oid: 7002, orderType: 'Stop Market', isTrigger: true, triggerPx: '25.0' }
+      ]);
+    }
+    if (body.type === 'frontendOpenOrders' || body.type === 'openOrders' || body.type === 'userFills') {
+      return jsonResponse([]);
+    }
+    if (body.type === 'userFees') {
+      return jsonResponse({ userCrossRate: '0.00045', userAddRate: '0.00015' });
+    }
+    return jsonResponse({});
+  }, async () => {
+    const mkts = await hlPerps.fetchHlMarkets();
+    const crcl = mkts.find((m) => m.name === 'xyz:CRCL');
+    assert.ok(crcl, 'xyz:CRCL HIP-3 market must be discovered');
+    assert.equal(crcl.index, 110000, 'HIP-3 dexIdx=1 idx=0 asset index must equal 100000 + 1*10000 + 0');
+    assert.equal(crcl.pairLabel, 'CRCL-USDC');
+    assert.equal(crcl.baseSymbol, 'CRCL');
+    assert.equal(crcl.dex, 'xyz');
+    assert.equal(crcl.category, 'stocks');
+    assert.ok(Math.abs(crcl.priceChange24h - 1.2) < 1e-6);
+
+    const acct = await hlPerps.fetchHlAccountState('0x1111111111111111111111111111111111111111');
+    assert.equal(acct.makerFeeRate, 0.00015);
+    assert.equal(acct.takerFeeRate, 0.00045);
+    assert.equal(acct.spotUsdc, 12.5);
+    const crclPos = acct.positions.find((p) => p.coin === 'xyz:CRCL');
+    assert.ok(crclPos, 'HIP-3 xyz:CRCL position must be merged into positions');
+    assert.equal(crclPos.tpTriggerPx, 80);
+    assert.equal(crclPos.slTriggerPx, 25);
+  });
+
+  const derived = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+  const evmSigner = ethersLib.Wallet.fromPhrase(TEST_MNEMONIC);
+  const wallet = {
+    id: 'w_hl_test',
+    name: 'HL Test',
+    mnemonic: TEST_MNEMONIC,
+    ...derived,
+    evmPrivateKey: evmSigner.privateKey,
+    evmAddress: evmSigner.address
+  };
+  const prevEthers = globalThis.ethers;
+  globalThis.ethers = ethersLib;
+  const postedActions = [];
+  try {
+    await withMockedFetch(async (url, opts) => {
+      if (String(url).includes('/exchange')) {
+        const payload = JSON.parse(opts.body);
+        postedActions.push(payload.action);
+        return jsonResponse({ status: 'ok', response: { type: 'order', data: { statuses: [{ resting: { oid: 999 } }] } } });
+      }
+      return jsonResponse({});
+    }, async () => {
+      const crclMkt = { index: 110000, name: 'xyz:CRCL', szDecimals: 2, maxLeverage: 10, onlyIsolated: true, markPx: 50.1 };
+      await hlPerps.placeHlPerpOrder({
+        wallet,
+        market: crclMkt,
+        isBuy: true,
+        size: 1,
+        orderType: 'post_only',
+        limitPrice: 49.5,
+        reduceOnly: true
+      });
+      const postOnlyAct = postedActions.find((a) => a.type === 'order');
+      assert.ok(postOnlyAct, 'post_only order must be posted');
+      assert.equal(postOnlyAct.orders[0].a, 110000);
+      assert.equal(postOnlyAct.orders[0].r, true);
+      assert.deepEqual(postOnlyAct.orders[0].t, { limit: { tif: 'Alo' } });
+
+      postedActions.length = 0;
+      await hlPerps.updateHlPositionTpSl({
+        wallet,
+        market: crclMkt,
+        position: { coin: 'xyz:CRCL', isLong: true, absSize: 2 },
+        tpPrice: 75,
+        slPrice: 30,
+        openOrders: [{ coin: 'xyz:CRCL', oid: 7001, isTrigger: true, orderType: 'Take Profit Market' }]
+      });
+      const cancelAct = postedActions.find((a) => a.type === 'cancel');
+      const tpslAct = postedActions.find((a) => a.type === 'order' && a.grouping === 'positionTpsl');
+      assert.ok(cancelAct && cancelAct.cancels[0].o === 7001, 'old TP/SL trigger order must be cancelled first');
+      assert.ok(tpslAct && tpslAct.orders.length === 2, 'TP & SL positionTpsl orders must be submitted');
+      assert.equal(tpslAct.orders[0].t.trigger.tpsl, 'tp');
+      assert.equal(tpslAct.orders[1].t.trigger.tpsl, 'sl');
+
+      postedActions.length = 0;
+      await hlPerps.reverseHlPositionMarket({
+        wallet,
+        market: crclMkt,
+        position: { coin: 'xyz:CRCL', isLong: true, absSize: 2, leverageValue: 5, leverageType: 'isolated' }
+      });
+      const revOrderAct = postedActions.find((a) => a.type === 'order');
+      assert.ok(revOrderAct, 'reverse position must place opposite order');
+      assert.equal(revOrderAct.orders[0].b, false, 'reversing Long must submit Sell');
+      assert.equal(Number(revOrderAct.orders[0].s), 4, 'reversing 2 contracts must submit 2x size = 4');
+    });
+  } finally {
+    globalThis.ethers = prevEthers;
+  }
+});
+
+test('v6.25 Two-Stage Perp Overview, Search+Sort Filter Fix, Real Maker/Taker Fee Preview & -USDC UI', () => {
+  const prevDoc = globalThis.document;
+  const prevPerp = { ...state.perp };
+  const domIds = [
+    'perp-overview-panel', 'perp-trade-panel', 'perp-overview-positions-wrap',
+    'perp-overview-list', 'perp-overview-search', 'perp-sort-ind-vol',
+    'perp-sort-ind-px', 'perp-sort-ind-chg', 'perp-market-search',
+    'perp-market-list', 'perp-coin-icon', 'perp-coin-name', 'perp-mark-px',
+    'perp-change-24h', 'perp-funding-rate', 'perp-vol-24h', 'perp-oi-val',
+    'perp-ob-asks', 'perp-ob-bids', 'perp-ob-mid-badge', 'perp-ob-bid-sz-hdr',
+    'perp-ob-bid-summary', 'perp-ob-ask-summary', 'perp-ob-bid-bar',
+    'perp-ob-ask-bar', 'perp-ls-ratio-wrap', 'perp-bottom-list',
+    'perp-meta-notional', 'perp-meta-size', 'perp-meta-liq', 'perp-meta-fee',
+    'perp-error-banner', 'btn-perp-submit', 'perp-limit-price-row'
+  ];
+  const domMap = new Map(domIds.map((id) => [id, createMockDomElement(id)]));
+  globalThis.document = {
+    getElementById: (id) => domMap.get(id) || null,
+    querySelectorAll: () => []
+  };
+
+  try {
+    state.perp.markets = [
+      { index: 0, name: 'BTC', baseSymbol: 'BTC', pairLabel: 'BTC-USDC', dex: '', category: 'crypto', szDecimals: 4, maxLeverage: 40, markPx: 60000, prevDayPx: 59000, priceChange24h: 1000, change24hPct: 1.69, dayNtlVlm: 2_500_000_000 },
+      { index: 1, name: 'ETH', baseSymbol: 'ETH', pairLabel: 'ETH-USDC', dex: '', category: 'crypto', szDecimals: 3, maxLeverage: 25, markPx: 3000, prevDayPx: 2800, priceChange24h: 200, change24hPct: 7.14, dayNtlVlm: 1_200_000_000 },
+      { index: 110000, name: 'xyz:CRCL', baseSymbol: 'CRCL', pairLabel: 'CRCL-USDC', dex: 'xyz', category: 'stocks', szDecimals: 2, maxLeverage: 10, onlyIsolated: true, markPx: 50, prevDayPx: 48, priceChange24h: 2, change24hPct: 4.17, dayNtlVlm: 8_300_000 }
+    ];
+    state.perp.account = { availableMargin: 500, equity: 500, accountValue: 500, makerFeeRate: 0.00015, takerFeeRate: 0.00045, positions: [], openOrders: [], fills: [] };
+
+    const crclMarket = state.perp.markets[2];
+    const takerEval = uiController.evaluatePerpOrderState({
+      market: crclMarket,
+      account: state.perp.account,
+      orderType: 'market',
+      leverage: 10,
+      marginInput: '100'
+    });
+    assert.equal(takerEval.disabled, false);
+    assert.ok(Math.abs(takerEval.estFeeUsd - 0.45) < 1e-6, 'Market taker fee = $1000 * 0.00045 = $0.45');
+    assert.ok(takerEval.text.includes('CRCL-USDC'), `Button text should show CRCL-USDC, got ${takerEval.text}`);
+
+    const makerEval = uiController.evaluatePerpOrderState({
+      market: crclMarket,
+      account: state.perp.account,
+      orderType: 'post_only',
+      limitPriceInput: '50',
+      leverage: 10,
+      marginInput: '100'
+    });
+    assert.ok(Math.abs(makerEval.estFeeUsd - 0.15) < 1e-6, 'Post-Only maker fee = $1000 * 0.00015 = $0.15');
+
+    // Market search + gainers sort MUST both apply even when query is non-empty!
+    domMap.get('perp-market-search').value = 'C';
+    state.perp.marketFilter = 'gainers';
+    uiController.renderPerpMarketsSheet();
+    const sheetHtml = domMap.get('perp-market-list').innerHTML;
+    assert.ok(sheetHtml.includes('CRCL-USDC') && sheetHtml.includes('BTC-USDC'));
+    assert.equal(sheetHtml.includes('-PERP'), false, 'Market sheet must use -USDC naming, never -PERP');
+    assert.ok(sheetHtml.indexOf('CRCL-USDC') < sheetHtml.indexOf('BTC-USDC'), 'gainers filter must sort CRCL (+4.17%) ahead of BTC (+1.69%) even with search="C"');
+
+    state.perp.marketFilter = 'stocks';
+    domMap.get('perp-market-search').value = '';
+    uiController.renderPerpMarketsSheet();
+    const stocksHtml = domMap.get('perp-market-list').innerHTML;
+    assert.ok(stocksHtml.includes('CRCL-USDC') && !stocksHtml.includes('BTC-USDC'));
+
+    uiController.openPerpTradeScreen('xyz:CRCL');
+    assert.equal(state.perp.subView, 'trade');
+    assert.equal(state.perp.selectedCoin, 'xyz:CRCL');
+    assert.equal(domMap.get('perp-trade-panel').classList.contains('hidden'), false);
+    assert.equal(domMap.get('perp-overview-panel').classList.contains('hidden'), true);
+
+    uiController.backToPerpOverview();
+    assert.equal(state.perp.subView, 'overview');
+    assert.equal(domMap.get('perp-overview-panel').classList.contains('hidden'), false);
+  } finally {
+    Object.assign(state.perp, prevPerp);
+    globalThis.document = prevDoc;
+  }
+});
+
+test('v6.25 Native Gas Internal vs External Mode: 10/12 PRL stays extra, 12/12 or UI-rounded full PRL goes internal, partial SOL stays insufficient_gas', async () => {
+  assert.equal(uiController.floorToDecimals(15.7791468, 6), 15.779146);
+
+  const prlBuf = Number(chainContracts.DEFAULT_GAS_BUFFERS.prl || 0);
+  const partialPrl = uiController.resolveNativeFeeDeductPlan({ chain: 'prl', amount: 10, avail: 12, isNative: true, decimals: 8 });
+  assert.equal(partialPrl.mode, 'extra');
+  assert.equal(partialPrl.effectiveAmount, 10);
+
+  const fullPrlExact = uiController.resolveNativeFeeDeductPlan({ chain: 'prl', amount: 12, avail: 12, isNative: true, decimals: 8 });
+  assert.equal(fullPrlExact.mode, 'internal');
+  assert.equal(fullPrlExact.totalInputAmount, 12);
+  assert.ok(fullPrlExact.effectiveAmount < 12 && fullPrlExact.effectiveAmount <= 12 - prlBuf);
+
+  const fullPrlFloored = uiController.resolveNativeFeeDeductPlan({ chain: 'prl', amount: 15.779146, avail: 15.7791468, isNative: true, decimals: 8 });
+  assert.equal(fullPrlFloored.mode, 'internal');
+
+  const fullPrlRoundedUp = uiController.resolveNativeFeeDeductPlan({ chain: 'prl', amount: 15.779147, avail: 15.7791468, isNative: true, decimals: 8 });
+  assert.equal(fullPrlRoundedUp.mode, 'internal');
+
+  const solShortfall = uiController.resolveNativeFeeDeductPlan({ chain: 'sol', amount: 0.002, avail: 0.0025, isNative: true, decimals: 9 });
+  assert.equal(solShortfall.mode, 'insufficient_gas');
+
+  const derived = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+  const prlWallet = {
+    id: 'w_prl_fee_test',
+    name: 'PRL Gas Plan',
+    mnemonic: TEST_MNEMONIC,
+    ...derived,
+    nativeBalances: { prl: 15.7791468, near: 2, sol: 0.0025 },
+    erc20Balances: {},
+    splBalances: {},
+    nearFtBalances: {},
+    intentsBalances: {}
+  };
+  const prlToken = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'PRL' && t.blockchain === 'prl')
+    || { assetId: 'prl-native', symbol: 'PRL', blockchain: 'prl', decimals: 8, isNative: true };
+  const solToken = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'SOL' && t.blockchain === 'sol')
+    || { assetId: 'nep141:sol.omft.near', symbol: 'SOL', blockchain: 'sol', decimals: 9, isNative: true };
+  const usdcNear = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'USDC' && t.blockchain === 'near')
+    || { assetId: 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', symbol: 'USDC', blockchain: 'near', decimals: 6 };
+
+  const btnRoundedFull = uiController.evaluateSwapButtonState({
+    wallet: prlWallet,
+    fromToken: prlToken,
+    toToken: usdcNear,
+    amountIn: '15.779147'
+  });
+  assert.equal(btnRoundedFull.disabled, false, 'Full UI-rounded PRL input must use internal gas mode cleanly');
+  assert.equal(btnRoundedFull.reason, 'ready');
+
+  const btnSolShortfall = uiController.evaluateSwapButtonState({
+    wallet: prlWallet,
+    fromToken: solToken,
+    toToken: usdcNear,
+    amountIn: '0.002'
+  });
+  assert.equal(btnSolShortfall.disabled, true);
+  assert.equal(btnSolShortfall.reason, 'insufficient_gas');
 });
