@@ -1,0 +1,126 @@
+      <!-- ==================== Tab 4: Hub & Settings (#view-hub) ==================== -->
+      <section id="view-hub" class="view-section hidden">
+        <!-- Identity Hero Card -->
+        <div class="ios-glass-card flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="min-w-0 flex-1">
+              <div id="hub-identity-name" style="font-weight: 800; font-size: 16px; color: #ffffff;">Nexus Wallet</div>
+              <div id="hub-identity-near-id" class="mono text-emerald" style="font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">--</div>
+            </div>
+            <span id="hub-near-status-badge" class="badge badge-cyan">--</span>
+          </div>
+          <div class="flex gap-2">
+            <button type="button" class="btn-secondary flex-1" onclick="openWalletSwitcherSheet()" data-i18n="hub.manageWalletsBtn">切换 / 新增钱包</button>
+            <button type="button" class="btn-secondary flex-1" onclick="openBackupKeysSheet()" data-i18n="hub.backupKeysBtn">导出助记词与主密钥</button>
+          </div>
+        </div>
+
+        <!-- Group 1: Account & Web3 -->
+        <div class="hub-menu-group">
+          <button type="button" class="hub-menu-row" onclick="openNearAccountSheet()">
+            <span class="hub-menu-icon">🪪</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.nearAcctMenuTitle">NEAR 账户与密钥</span>
+              <span id="hub-near-menu-sub" class="hub-menu-sub" data-i18n="hub.nearAcctMenuSub">注册 .near / 链上密钥管理</span>
+            </span>
+            <span class="hub-menu-right">›</span>
+          </button>
+          <button type="button" class="hub-menu-row" onclick="openWalletAddressesSheet()">
+            <span class="hub-menu-icon">◈</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.addrMenuTitle">多链收款地址</span>
+              <span class="hub-menu-sub" data-i18n="hub.addrMenuSub">查看并复制全链主地址</span>
+            </span>
+            <span class="hub-menu-right">›</span>
+          </button>
+          <button type="button" class="hub-menu-row" onclick="openWalletConnectSheet()">
+            <span class="hub-menu-icon">🔗</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.wcTitle">WalletConnect v2 授权</span>
+            </span>
+            <span class="hub-menu-right">
+              <span id="hub-wc-count-badge" class="ca-badge hidden">0</span>
+              <span>›</span>
+            </span>
+          </button>
+        </div>
+
+        <!-- Group 2: On-Chain Tools -->
+        <div class="hub-menu-group">
+          <button type="button" class="hub-menu-row" onclick="openMiningProSheet()">
+            <span class="hub-menu-icon">⛏️</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.miningMenuTitle">Pearl 矿工监控</span>
+            </span>
+            <span class="hub-menu-right">›</span>
+          </button>
+          <button type="button" class="hub-menu-row" onclick="openContactsSheet()">
+            <span class="hub-menu-icon">📒</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.contactsTitle">常用地址簿</span>
+            </span>
+            <span class="hub-menu-right">›</span>
+          </button>
+          <button type="button" class="hub-menu-row" onclick="openSolRentReclaimSheet()">
+            <span class="hub-menu-icon">🧹</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.solRentTitle">Solana 租金回收与粉尘粉碎</span>
+            </span>
+            <span class="hub-menu-right">›</span>
+          </button>
+          <button type="button" class="hub-menu-row" onclick="openNearStorageReclaimSheet()">
+            <span class="hub-menu-icon">📦</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.nearStorageTitle">NEAR 存储押金回收</span>
+            </span>
+            <span class="hub-menu-right">›</span>
+          </button>
+        </div>
+
+        <!-- Group 3: Security & Preferences -->
+        <div class="hub-menu-group">
+          <button type="button" id="hub-security-bio-card" class="hub-menu-row" onclick="openSetWalletPinPrompt()">
+            <span class="hub-menu-icon">🔐</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.bioCardTitle">安全验证</span>
+            </span>
+            <span class="hub-menu-right">
+              <span id="hub-bio-status-badge" class="ca-badge">--</span>
+              <span>›</span>
+            </span>
+          </button>
+          <button type="button" class="hub-menu-row" onclick="toggleLanguage()">
+            <span class="hub-menu-icon">🌐</span>
+            <span class="hub-menu-text">
+              <span class="hub-menu-title" data-i18n="hub.langTitle">语言偏好</span>
+            </span>
+            <span class="hub-menu-right">
+              <span id="hub-lang-current-pill" class="ca-badge" data-i18n="header.langToggle">EN</span>
+              <span>›</span>
+            </span>
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <!-- Bottom Navigation -->
+    <nav id="bottom-nav" class="bottom-nav hidden" aria-label="Main Navigation">
+      <button type="button" class="nav-item active" data-tab="wallet" onclick="switchTab('wallet')">
+        <span class="nav-icon">◈</span>
+        <span data-i18n="nav.wallet">资产</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="swap" onclick="switchTab('swap')">
+        <span class="nav-icon">⇄</span>
+        <span data-i18n="nav.swap">闪兑</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="perp" onclick="switchTab('perp')">
+        <span class="nav-icon">⚡</span>
+        <span data-i18n="nav.perp">合约</span>
+      </button>
+      <button type="button" class="nav-item" data-tab="hub" onclick="switchTab('hub')">
+        <span class="nav-icon">⌘</span>
+        <span data-i18n="nav.hub">枢纽</span>
+      </button>
+    </nav>
+  </div>
+

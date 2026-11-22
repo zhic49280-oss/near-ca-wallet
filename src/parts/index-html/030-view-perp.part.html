@@ -1,0 +1,216 @@
+      <!-- ==================== Tab 3: Perpetuals / Hyperliquid (#view-perp) ==================== -->
+      <section id="view-perp" class="view-section hidden">
+        <!-- 1. Perp Account Summary Card -->
+        <div class="ios-glass-card flex flex-col gap-2">
+          <div class="perp-summary-grid">
+            <div class="perp-stat-box">
+              <span class="kpi-label" data-i18n="perp.equityLabel">合约净值</span>
+              <span id="perp-equity-val" class="kpi-value">--</span>
+            </div>
+            <div class="perp-stat-box">
+              <span class="kpi-label" data-i18n="perp.availMarginLabel">可用保证金</span>
+              <span id="perp-avail-val" class="kpi-value text-emerald">--</span>
+            </div>
+            <div class="perp-stat-box">
+              <span class="kpi-label" data-i18n="perp.upnlLabel">未实现盈亏</span>
+              <span id="perp-upnl-val" class="kpi-value">--</span>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button type="button" class="mini-action-btn primary flex-1" onclick="openPerpFundingSheet('deposit')" data-i18n="perp.depositBtn">充值</button>
+            <button type="button" class="mini-action-btn flex-1" onclick="openPerpFundingSheet('withdraw')" data-i18n="perp.withdrawBtn">提现</button>
+            <button type="button" class="btn-ghost-sm" onclick="refreshPerpDataAsync(true)" data-i18n="common.refresh">刷新</button>
+          </div>
+
+          <div id="perp-spot-banner" class="perp-spot-banner hidden">
+            <span style="font-size: 11.5px; color: var(--text-primary);">
+              <span data-i18n="perp.spotPendingPrefix">跨链资金已到账</span>
+              <strong id="perp-spot-pending-amt" class="mono text-emerald">--</strong>
+            </span>
+            <button type="button" class="mini-action-btn primary" onclick="quickTransferSpotToPerpUI()" data-i18n="perp.transferToPerpBtn">一键转入合约 (免费)</button>
+          </div>
+        </div>
+
+        <!-- 2. Market Header + Chart + Mini Orderbook -->
+        <div class="ios-glass-card flex flex-col gap-2">
+          <div class="flex items-center justify-between gap-2">
+            <button type="button" id="perp-coin-btn" class="token-select-btn" onclick="openPerpMarketsSheet()">
+              <span id="perp-coin-icon" class="perp-coin-icon-slot"></span>
+              <span id="perp-coin-name">BTC-PERP</span>
+              <span>▾</span>
+            </button>
+            <div class="flex items-center gap-3">
+              <div class="flex flex-col" style="text-align: right;">
+                <span id="perp-mark-px" class="mono" style="font-size: 16px; font-weight: 800; color: #ffffff;">--</span>
+                <span id="perp-change-24h" class="mono" style="font-size: 11px; color: var(--text-secondary);">--</span>
+              </div>
+              <button type="button" id="btn-perp-chart-toggle" class="btn-ghost-sm" onclick="togglePerpChart()" data-i18n="perp.chartBtn">K线</button>
+            </div>
+          </div>
+
+          <div id="perp-market-stats" class="perp-market-stats">
+            <div class="perp-mstat">
+              <span class="meta-key" data-i18n="perp.vol24hLabel">24h 成交额</span>
+              <span id="perp-vol-24h" class="mono" style="font-size: 11.5px; font-weight: 700;">--</span>
+            </div>
+            <div class="perp-mstat">
+              <span class="meta-key" data-i18n="perp.oiLabel">全网持仓 (OI)</span>
+              <span id="perp-oi-val" class="mono" style="font-size: 11.5px; font-weight: 700;">--</span>
+            </div>
+            <div class="perp-mstat" style="text-align: right;">
+              <span class="meta-key" data-i18n="perp.fundingRateLabel">资金费率(1h)</span>
+              <span id="perp-funding-rate" class="mono" style="font-size: 11.5px; font-weight: 700;">--</span>
+            </div>
+          </div>
+
+          <div id="perp-chart-wrap" class="perp-chart-wrap hidden">
+            <div class="flex items-center justify-between gap-2" style="margin-bottom: 6px;">
+              <div id="perp-interval-pills" class="flex gap-1">
+                <button type="button" class="filter-pill" data-iv="5m" onclick="setPerpChartInterval('5m')">5m</button>
+                <button type="button" class="filter-pill active" data-iv="15m" onclick="setPerpChartInterval('15m')">15m</button>
+                <button type="button" class="filter-pill" data-iv="1h" onclick="setPerpChartInterval('1h')">1h</button>
+                <button type="button" class="filter-pill" data-iv="4h" onclick="setPerpChartInterval('4h')">4h</button>
+              </div>
+              <span id="perp-chart-hl" class="mono" style="font-size: 10.5px; color: var(--text-muted);">--</span>
+            </div>
+            <div id="perp-chart-svg"></div>
+          </div>
+
+          <div id="perp-ls-ratio-wrap" class="perp-ob-power-wrap hidden">
+            <div class="flex items-center justify-between" style="font-size: 10.5px;">
+              <span id="perp-ls-long-label" class="mono text-emerald">--</span>
+              <span style="font-size: 10px; color: var(--text-muted);" data-i18n="perp.lsRatioLabel">全网多空人数比</span>
+              <span id="perp-ls-short-label" class="mono text-rose">--</span>
+            </div>
+            <div class="perp-ob-power-track">
+              <div id="perp-ls-long-bar" class="perp-ob-power-bid" style="width: 50%;"></div>
+              <div id="perp-ls-short-bar" class="perp-ob-power-ask" style="width: 50%;"></div>
+            </div>
+          </div>
+
+          <div id="perp-ob-power-wrap" class="perp-ob-power-wrap">
+            <div class="flex items-center justify-between" style="font-size: 10.5px;">
+              <span id="perp-ob-bid-summary" class="mono text-emerald">--</span>
+              <span id="perp-ob-ask-summary" class="mono text-rose">--</span>
+            </div>
+            <div class="perp-ob-power-track">
+              <div id="perp-ob-bid-bar" class="perp-ob-power-bid" style="width: 50%;"></div>
+              <div id="perp-ob-ask-bar" class="perp-ob-power-ask" style="width: 50%;"></div>
+            </div>
+          </div>
+
+          <div id="perp-ob-header" class="perp-ob-header">
+            <div class="perp-ob-hcol">
+              <span id="perp-ob-bid-sz-hdr">数量</span>
+              <span data-i18n="perp.obBidPx">买价</span>
+            </div>
+            <div class="perp-ob-hcol">
+              <span data-i18n="perp.obAskPx">卖价</span>
+              <span id="perp-ob-ask-sz-hdr">数量</span>
+            </div>
+          </div>
+
+          <div class="perp-ob-grid" id="perp-orderbook-box">
+            <div class="perp-ob-col" id="perp-ob-bids"></div>
+            <div class="perp-ob-col" id="perp-ob-asks"></div>
+          </div>
+        </div>
+
+        <!-- 3. Order Ticket Card -->
+        <div class="ios-glass-card flex flex-col gap-3">
+          <div class="perp-side-switch">
+            <button type="button" id="perp-side-long" class="perp-side-btn long active" onclick="setPerpSide('long')" data-i18n="perp.longBtn">做多 Long</button>
+            <button type="button" id="perp-side-short" class="perp-side-btn short" onclick="setPerpSide('short')" data-i18n="perp.shortBtn">做空 Short</button>
+          </div>
+
+          <div class="flex items-center justify-between gap-2">
+            <div class="mode-pill-switch">
+              <button type="button" id="perp-mode-isolated" class="mode-pill-btn active" onclick="setPerpMarginMode('isolated')" data-i18n="perp.isolatedBtn">逐仓</button>
+              <button type="button" id="perp-mode-cross" class="mode-pill-btn" onclick="setPerpMarginMode('cross')" data-i18n="perp.crossBtn">全仓</button>
+            </div>
+            <div class="mode-pill-switch">
+              <button type="button" id="perp-type-market" class="mode-pill-btn active" onclick="setPerpOrderType('market')" data-i18n="perp.marketBtn">市价</button>
+              <button type="button" id="perp-type-limit" class="mode-pill-btn" onclick="setPerpOrderType('limit')" data-i18n="perp.limitBtn">限价</button>
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-1">
+            <div class="flex items-center justify-between" style="font-size: 12px;">
+              <span class="meta-key" data-i18n="perp.leverageLabel">杠杆</span>
+              <span id="perp-lev-val" class="mono text-emerald" style="font-weight: 800;">5x</span>
+            </div>
+            <input id="perp-leverage-slider" type="range" min="1" max="50" step="1" value="5" class="perp-slider" oninput="setPerpLeverage(this.value)" />
+          </div>
+
+          <div id="perp-limit-price-row" class="swap-box hidden">
+            <div class="swap-box-top">
+              <span data-i18n="perp.limitPriceLabel">委托价格</span>
+              <span class="mono" style="font-size: 11px;">USDC</span>
+            </div>
+            <input id="perp-limit-price-input" type="number" step="any" min="0" class="amount-input-lg" placeholder="0.00" oninput="handlePerpLimitPriceInput()" />
+          </div>
+
+          <div class="swap-box">
+            <div class="swap-box-top">
+              <span data-i18n="perp.marginInputLabel">投入保证金 (USDC)</span>
+              <span style="font-size: 11px;"><span data-i18n="swap.balanceLabel">可用</span>: <span id="perp-ticket-avail" class="mono">--</span></span>
+            </div>
+            <div class="swap-box-main">
+              <span style="font-weight: 700; font-size: 14px;">USDC</span>
+              <input id="perp-margin-input" type="number" step="any" min="0" class="amount-input-lg" placeholder="0.00" oninput="handlePerpMarginInput()" />
+            </div>
+            <div class="perp-pct-row">
+              <button type="button" class="mini-action-btn" onclick="setPerpMarginPercent(0.25)">25%</button>
+              <button type="button" class="mini-action-btn" onclick="setPerpMarginPercent(0.50)">50%</button>
+              <button type="button" class="mini-action-btn" onclick="setPerpMarginPercent(0.75)">75%</button>
+              <button type="button" class="mini-action-btn primary" onclick="setPerpMarginPercent(0.99)">MAX</button>
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-1">
+            <span class="meta-key" style="font-size: 11.5px;" data-i18n="perp.tpslLabel">止盈 / 止损 (可选)</span>
+            <div class="flex gap-2">
+              <input id="perp-tp-input" type="number" step="any" min="0" class="input-field mono flex-1" data-i18n-placeholder="perp.tpPlaceholder" placeholder="止盈触发价" oninput="evaluatePerpOrderUI()" />
+              <input id="perp-sl-input" type="number" step="any" min="0" class="input-field mono flex-1" data-i18n-placeholder="perp.slPlaceholder" placeholder="止损触发价" oninput="evaluatePerpOrderUI()" />
+            </div>
+          </div>
+
+          <div class="meta-list">
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="perp.notionalLabel">名义价值</span>
+              <span id="perp-meta-notional" class="meta-val">--</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="perp.sizeLabel">委托数量</span>
+              <span id="perp-meta-size" class="meta-val">--</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="perp.liqEstLabel">预估强平价</span>
+              <span id="perp-meta-liq" class="meta-val">--</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="perp.minOrderLabel">最低下单</span>
+              <span class="meta-val" data-i18n="perp.minOrderVal">$10 USDC</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key" data-i18n="perp.gasLabel">网络费</span>
+              <span class="meta-val text-emerald" data-i18n="perp.gasZeroVal">0 Gas</span>
+            </div>
+          </div>
+
+          <div id="perp-error-banner" class="swap-error-banner hidden"></div>
+          <button type="button" id="btn-perp-submit" class="btn-primary" onclick="executePerpOrderUI()" data-i18n="perp.submitLongBtn">开多</button>
+        </div>
+
+        <!-- 4. Positions / Open Orders / Fills -->
+        <div class="ios-glass-card flex flex-col gap-3">
+          <div class="flex items-center gap-1">
+            <button type="button" id="perp-tab-positions" class="filter-pill active" onclick="setPerpBottomTab('positions')" data-i18n="perp.tabPositions">当前持仓</button>
+            <button type="button" id="perp-tab-orders" class="filter-pill" onclick="setPerpBottomTab('orders')" data-i18n="perp.tabOrders">当前委托</button>
+            <button type="button" id="perp-tab-fills" class="filter-pill" onclick="setPerpBottomTab('fills')" data-i18n="perp.tabFills">历史成交</button>
+          </div>
+          <div id="perp-bottom-list" class="flex flex-col gap-2"></div>
+        </div>
+      </section>
+

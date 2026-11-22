@@ -1,0 +1,72 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#06080F" />
+  <title>Nexus Wallet — NEAR Chain Abstraction</title>
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon.png?v=6.21" />
+  <link rel="apple-touch-icon" sizes="192x192" href="assets/nexus-logo-192.png?v=6.21" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="style.css?v=6.21" />
+  <script>
+    (function () {
+      try {
+        var raw = localStorage.getItem('near_ca_wallets_v1') || localStorage.getItem('pearl_user_wallets_v4');
+        if (!raw) return;
+        var list = JSON.parse(raw);
+        if (!Array.isArray(list) || list.length === 0) return;
+        var cap = window.Capacitor;
+        var isNative = Boolean(
+          (typeof location !== 'undefined' && location.protocol === 'capacitor:') ||
+          (cap && ((cap.Plugins && cap.Plugins.NativeSecurity) || (typeof cap.isNativePlatform === 'function' && cap.isNativePlatform())))
+        );
+        var hasSec = list.some(function (w) { return Boolean(w && (w.pinHash || w.pin || w.webauthnCredentialId)); });
+        if (isNative || hasSec) {
+          document.documentElement.classList.add('nexus-locked');
+        }
+      } catch (_) {}
+    })();
+  </script>
+</head>
+<body>
+  <div id="app-privacy-shield" class="app-privacy-shield" aria-hidden="true">
+    <div class="app-lock-card">
+      <img src="assets/nexus-logo-192.png?v=6.21" alt="Nexus Wallet" class="app-lock-logo" />
+      <div class="app-lock-brand">Nexus Wallet</div>
+    </div>
+  </div>
+  <div id="app-lock-overlay" class="app-lock-overlay" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="app-lock-card">
+      <img src="assets/nexus-logo-192.png?v=6.21" alt="Nexus Wallet" class="app-lock-logo" />
+      <div class="app-lock-brand">Nexus Wallet</div>
+      <div id="app-lock-title" class="app-lock-title" data-i18n="lock.title">安全锁定</div>
+      <div id="app-lock-status" class="app-lock-status" data-i18n="lock.hint">请通过生物识别或锁屏密码解锁</div>
+      <button type="button" id="btn-app-lock-unlock" class="btn-primary" style="width: 100%;" onclick="unlockAppLockNow()" data-i18n="lock.unlockBtn">生物识别 / 锁屏密码解锁</button>
+      <button type="button" id="btn-app-lock-pin" class="btn-ghost-sm hidden" onclick="unlockAppLockWithPin()" data-i18n="lock.pinFallbackBtn">使用交易 PIN 解锁</button>
+    </div>
+  </div>
+  <div class="ambient-bg" aria-hidden="true"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <div class="app-shell">
+    <!-- Top Header -->
+    <header class="app-header">
+      <button type="button" id="header-account-pill" class="header-account-pill" onclick="openWalletSwitcherSheet()">
+        <span class="header-account-dot"></span>
+        <span id="header-account-label" class="header-account-label">--</span>
+        <span class="ca-badge" data-i18n="header.caBadge">NEAR CA</span>
+      </button>
+
+      <div class="header-actions">
+        <button type="button" id="header-wc-btn" class="header-chip-btn" onclick="openWalletConnectSheet()">
+          <span id="header-wc-dot" class="wc-dot"></span>
+          <span data-i18n="header.wcBtn">WC</span>
+        </button>
+        <button type="button" id="header-lang-btn" class="header-chip-btn" onclick="toggleLanguage()">
+          <span data-i18n="header.langToggle">EN</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="main-content">
