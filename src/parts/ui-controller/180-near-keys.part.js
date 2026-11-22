@@ -28,6 +28,10 @@
     if (guideEl) {
       guideEl.classList.toggle('hidden', Boolean(wallet.nearNamedAccount));
     }
+    const registerCard = $('hub-near-domain-card');
+    if (registerCard) {
+      registerCard.classList.toggle('hidden', Boolean(wallet.nearNamedAccount));
+    }
   }
 
   async function openNearAccountSheet() {
@@ -87,6 +91,8 @@
 
       if (rotateCard) rotateCard.classList.remove('hidden');
       if (guideEl) guideEl.classList.toggle('hidden', Boolean(wallet.nearNamedAccount));
+      const registerCard = $('hub-near-domain-card');
+      if (registerCard) registerCard.classList.toggle('hidden', Boolean(wallet.nearNamedAccount));
       if (statusBadge) {
         statusBadge.textContent = wallet.nearNamedAccount ? t('已激活 .near', 'Active .near') : t('已激活隐式账户', 'Active Implicit');
         statusBadge.className = 'badge badge-emerald';
@@ -349,6 +355,11 @@
     const contracts = getContracts();
     const wallet = st.getActiveWallet();
     if (!wallet) return;
+    if (wallet.nearNamedAccount) {
+      showToast(t(`当前钱包已绑定主账户 ${wallet.nearNamedAccount}，无需重复注册`, `Account already linked to ${wallet.nearNamedAccount}`));
+      renderNearAccountSummary(wallet);
+      return;
+    }
     const domain = ($('hub-near-domain-input')?.value || '').trim().toLowerCase();
     if (!domain) {
       showToast(t('请输入要注册的 .near 域名', 'Enter .near domain'));

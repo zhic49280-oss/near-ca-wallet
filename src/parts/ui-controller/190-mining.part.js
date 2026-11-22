@@ -137,13 +137,18 @@
     const tel = getState().mining.telemetry;
     if ($('mining-kpi-30m')) $('mining-kpi-30m').textContent = tel ? (tel.hashrateCurrentFormatted || '--') : '--';
     if ($('mining-kpi-3h')) $('mining-kpi-3h').textContent = tel ? (tel.hashrateAvg3hFormatted || '--') : '--';
+    const st = getState();
+    const isOnChainMode = (st && st.mining && st.mining.poolKey === 'onchain') || Boolean(tel && tel.poolSource === 'onchain');
+
     if ($('mining-kpi-24h')) $('mining-kpi-24h').textContent = tel ? (tel.hashrateAvg24hFormatted || '--') : '--';
     if ($('mining-kpi-unpaid')) $('mining-kpi-unpaid').textContent = tel && tel.unpaidBalancePrl !== null ? `${formatBal(tel.unpaidBalancePrl, 4)} PRL` : '--';
     if ($('mining-payout-progress')) $('mining-payout-progress').style.width = `${tel && tel.payoutProgressPct !== null ? tel.payoutProgressPct : 0}%`;
     if ($('mining-threshold-label')) {
       $('mining-threshold-label').textContent = tel && tel.payoutThresholdPrl !== null
         ? `${t('阈值', 'Threshold')}: ${tel.payoutThresholdPrl} PRL (${tel.payoutProgressPct ?? '--'}%)`
-        : `${t('已支付', 'Paid')}: ${tel && tel.totalPaidPrl !== null ? tel.totalPaidPrl + ' PRL' : '--'}`;
+        : (isOnChainMode
+          ? `${t('链上累计转入', 'On-Chain In')}: ${tel && tel.totalPaidPrl !== null ? tel.totalPaidPrl + ' PRL' : '--'}`
+          : `${t('已支付', 'Paid')}: ${tel && tel.totalPaidPrl !== null ? tel.totalPaidPrl + ' PRL' : '--'}`);
     }
     if ($('mining-kpi-share-rate')) $('mining-kpi-share-rate').textContent = tel && tel.shareAcceptRatePct !== null ? `${tel.shareAcceptRatePct}%` : '--';
     if ($('mining-kpi-share-counts')) {
@@ -170,6 +175,11 @@
       }
     }
 
+    const payoutsTitleEl = $('mining-payouts-title');
+    if (payoutsTitleEl) {
+      payoutsTitleEl.textContent = isOnChainMode ? t('链上转入记录', 'On-Chain Transfers') : t('近期打款记录', 'Recent Payouts');
+    }
+
     const payoutsEl = $('mining-payouts-list');
     const payoutsAllBtn = $('mining-payouts-all-btn');
     if (payoutsEl) {
@@ -178,7 +188,7 @@
         const tsSec = p.timestamp ? Math.floor(new Date(p.timestamp).getTime() / 1000) : null;
         return {
           id: `mine_${p.txid || idx}`,
-          type: 'mine',
+          type: isOnChainMode ? 'receive' : 'mine',
           symbol: 'PRL',
           chain: 'prl',
           amount: p.amountPrl !== null && Number.isFinite(Number(p.amountPrl)) ? Number(p.amountPrl) : null,
@@ -186,13 +196,13 @@
           txHash: p.txid || '',
           status: p.status || 'confirmed',
           counterparty: (tel && tel.address) || getState().mining.minerAddress || '',
-          title: t('矿池打款', 'Pool Payout'),
+          title: isOnChainMode ? t('链上转入', 'On-Chain Transfer') : t('矿池打款', 'Pool Payout'),
           timestamp: Number.isFinite(tsSec) ? tsSec : null
         };
       });
       if (payoutsAllBtn) payoutsAllBtn.classList.toggle('hidden', _lastMiningNormalizedPayouts.length === 0);
       if (_lastMiningNormalizedPayouts.length === 0) {
-        payoutsEl.innerHTML = `<div class="text-muted" style="font-size:11.5px;text-align:center;padding:8px;">${t('暂无打款记录', 'No payout history')}</div>`;
+        payoutsEl.innerHTML = `<div class="text-muted" style="font-size:11.5px;text-align:center;padding:8px;">${isOnChainMode ? t('暂无链上转入记录', 'No incoming transfers') : t('暂无打款记录', 'No payout history')}</div>`;
       } else {
         payoutsEl.innerHTML = renderCompactTxPreviewHtml(_lastMiningNormalizedPayouts, 'mining', 'PRL');
       }

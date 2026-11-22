@@ -533,6 +533,7 @@
       rec.innerHTML = '';
     }
     renderEarnView();
+    openSheet('sheet-earn-stake');
   }
 
   function setEarnMaxAmount() {

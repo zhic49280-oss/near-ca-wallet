@@ -1033,6 +1033,13 @@ textarea.input-field {
 }
 
 /* Bottom Sheets & Backdrop */
+html.sheet-scroll-locked,
+body.sheet-scroll-locked {
+  overflow: hidden !important;
+  overscroll-behavior: none !important;
+  touch-action: none;
+}
+
 .sheet-backdrop {
   position: fixed;
   inset: 0;
@@ -1048,6 +1055,35 @@ textarea.input-field {
 .sheet-backdrop.open {
   opacity: 1;
   pointer-events: auto;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+#sheet-token-picker.open,
+#sheet-perp-markets.open {
+  display: flex;
+  flex-direction: column;
+  height: min(82vh, calc(var(--nexus-vv-height, 100vh) - 24px));
+  max-height: min(86vh, calc(var(--nexus-vv-height, 100vh) - 16px));
+}
+
+#sheet-token-picker .sheet-body,
+#sheet-perp-markets .sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#token-picker-list,
+#perp-market-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none !important;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .bottom-sheet {
@@ -1105,9 +1141,15 @@ textarea.input-field {
   color: #ffffff;
 }
 
+.bottom-sheet {
+  overscroll-behavior-y: contain;
+}
+
 .sheet-body {
   padding: 14px 18px calc(24px + env(safe-area-inset-bottom, 0px));
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -2114,7 +2156,7 @@ html.nexus-locked #app-lock-overlay {
 .perp-ob-col {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .perp-ob-row {
@@ -2122,9 +2164,10 @@ html.nexus-locked #app-lock-overlay {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 3px 6px;
-  border-radius: 6px;
-  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  line-height: 1.25;
   font-variant-numeric: tabular-nums;
   background: rgba(255, 255, 255, 0.025);
   border: none;
@@ -2404,5 +2447,89 @@ html.nexus-locked #app-lock-overlay {
 
 .hub-addr-copy-btn {
   white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.perp-tpsl-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 5px 10px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.perp-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  padding: 8px 10px;
+}
+
+.perp-meta-cell {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 0;
+  border-bottom: none;
+}
+
+.perp-meta-cell-full {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.picker-more-chains-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dapp-catalog-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dapp-catalog-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dapp-catalog-card:hover {
+  border-color: rgba(0, 236, 151, 0.35);
+  background: rgba(0, 236, 151, 0.06);
+}
+
+.dapp-badge-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(0, 236, 151, 0.14);
+  color: #00ec97;
   flex-shrink: 0;
 }

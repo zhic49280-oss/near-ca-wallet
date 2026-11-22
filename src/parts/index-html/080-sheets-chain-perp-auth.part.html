@@ -288,3 +288,114 @@
     </div>
   </div>
 
+  <!-- ==================== Sheet: Earn Liquid Staking Execute ==================== -->
+  <div id="sheet-earn-stake" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 id="earn-selected-title" class="sheet-title">--</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div class="flex items-center justify-between">
+        <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="earn.amountLabel">质押数量</span>
+        <span style="font-size: 12px; color: var(--text-secondary);">
+          <span data-i18n="swap.balanceLabel">可用</span>: <span id="earn-avail-balance" class="mono">--</span>
+        </span>
+      </div>
+
+      <div class="swap-box">
+        <div class="swap-box-top">
+          <span data-i18n="earn.amountLabel">质押数量</span>
+          <button type="button" class="mini-action-btn primary" onclick="setEarnMaxAmount()" data-i18n="swap.maxBtn">全部</button>
+        </div>
+        <div class="swap-box-main">
+          <span id="earn-in-symbol" style="font-weight: 700; font-size: 15px;">NEAR</span>
+          <input id="earn-amount-in" type="number" step="any" min="0" class="amount-input-lg" placeholder="0.00" oninput="updateEarnEstimatedOut()" />
+        </div>
+      </div>
+
+      <div id="earn-lock-row" class="hidden flex flex-col gap-2">
+        <span class="meta-key" style="font-size: 12px;" data-i18n="earn.lockLabel">锁仓周期</span>
+        <div id="earn-lock-tiers" class="pill-scroll"></div>
+      </div>
+
+      <div class="meta-list">
+        <div class="meta-row">
+          <span class="meta-key" data-i18n="earn.apyLabel">实时年化</span>
+          <span id="earn-live-apy" class="meta-val text-emerald">--</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-key" data-i18n="earn.tvlLabel">总质押量 (TVL)</span>
+          <span id="earn-tvl-val" class="meta-val">--</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-key" data-i18n="earn.stakersLabel">质押人数</span>
+          <span id="earn-stakers-val" class="meta-val">--</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-key" data-i18n="earn.rateLabel">兑换比例</span>
+          <span id="earn-live-rate" class="meta-val">--</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-key" data-i18n="earn.estReceive">预计获得</span>
+          <span id="earn-est-out" class="meta-val">--</span>
+        </div>
+      </div>
+
+      <button type="button" id="btn-execute-stake" class="btn-primary" onclick="executeSelectedStake()" data-i18n="earn.stakeBtn">确认链上质押</button>
+
+      <div id="earn-tx-receipt" class="hidden meta-list" style="border-color: rgba(0,236,151,0.3);"></div>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: In-App DApp Browser ==================== -->
+  <div id="sheet-dapp-browser" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.dappBrowserTitle">DApp 浏览器</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div class="flex gap-2">
+        <input id="dapp-url-input" type="url" class="input-field flex-1" data-i18n-placeholder="dapp.urlPlaceholder" placeholder="输入 DApp 网址 (https://...)" />
+        <button type="button" id="btn-dapp-open" class="mini-action-btn primary" onclick="openDAppFromInput()" data-i18n="dapp.openBtn">访问</button>
+      </div>
+      <div id="dapp-filter-bar" class="pill-scroll"></div>
+      <div id="dapp-catalog-list" class="dapp-catalog-grid"></div>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: DApp Sign / Connect Approval ==================== -->
+  <div id="sheet-dapp-approve" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 id="dapp-approve-title" class="sheet-title" data-i18n="dapp.approveTitle">DApp 请求授权</h3>
+      <button type="button" class="btn-ghost-sm" onclick="rejectDAppApproval()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body">
+      <div class="meta-list">
+        <div class="meta-row">
+          <span class="meta-key" data-i18n="dapp.approveOrigin">来源网站</span>
+          <span id="dapp-approve-origin" class="meta-val mono">--</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-key" data-i18n="dapp.approveChain">目标网络</span>
+          <span id="dapp-approve-chain" class="meta-val">--</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-key" data-i18n="dapp.approveMethod">请求操作</span>
+          <span id="dapp-approve-method" class="meta-val mono">--</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-key" data-i18n="dapp.approveAccount">签署账户</span>
+          <span id="dapp-approve-account" class="meta-val mono">--</span>
+        </div>
+      </div>
+      <div id="dapp-approve-detail" class="ios-glass-card mono" style="padding:10px 12px;font-size:11.5px;max-height:150px;overflow-y:auto;word-break:break-all;color:var(--text-secondary);">--</div>
+      <div class="flex gap-2">
+        <button type="button" id="btn-dapp-reject" class="btn-secondary flex-1" onclick="rejectDAppApproval()" data-i18n="dapp.rejectBtn">拒绝</button>
+        <button type="button" id="btn-dapp-confirm" class="btn-primary flex-1" onclick="confirmDAppApproval()" data-i18n="dapp.confirmBtn">授权并签名</button>
+      </div>
+    </div>
+  </div>
+

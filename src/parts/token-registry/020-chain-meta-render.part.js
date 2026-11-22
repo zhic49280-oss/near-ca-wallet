@@ -411,10 +411,20 @@
     return '';
   }
 
+  function normalizePerpBaseSymbol(symUpper) {
+    const clean = String(symUpper || '').trim().toUpperCase().replace(/^\$/, '');
+    if (!clean) return '';
+    if (/^1000000[A-Z0-9]{2,}$/.test(clean)) return clean.slice(7);
+    if (/^1000[A-Z0-9]{2,}$/.test(clean)) return clean.slice(4);
+    if (/^K[A-Z0-9]{3,}$/.test(clean)) return clean.slice(1);
+    return clean;
+  }
+
   function resolveTokenIcon({ symbol, blockchain, logoURI, contractAddress } = {}) {
     const symUpper = String(symbol || '').trim().toUpperCase();
     const symClean = symUpper.replace(/^\$/, '');
-    const symLower = symClean.toLowerCase();
+    const symBase = normalizePerpBaseSymbol(symClean);
+    const symLower = (symBase || symClean).toLowerCase();
     const contractLower = String(contractAddress || '').trim().toLowerCase();
     const chainKey = getChainMeta(blockchain).key;
 
@@ -428,9 +438,12 @@
       || (contractLower ? DYNAMIC_ICON_BY_CONTRACT[contractLower] : '')
       || DYNAMIC_ICON_BY_SYMBOL[symUpper]
       || DYNAMIC_ICON_BY_SYMBOL[symClean]
+      || (symBase && symBase !== symClean ? (TOKEN_ICON_MAP[symBase] || DYNAMIC_ICON_BY_SYMBOL[symBase] || '') : '')
       || '';
 
-    const localFallback = getLocalFallbackIconUrl(symClean) || getLocalFallbackIconUrl(symUpper);
+    const localFallback = getLocalFallbackIconUrl(symClean)
+      || getLocalFallbackIconUrl(symUpper)
+      || (symBase && symBase !== symClean ? getLocalFallbackIconUrl(symBase) : '');
     const isStaleGeneratedSvg = Boolean(
       explicitUrl &&
       explicitUrl.startsWith('data:image/svg+xml') &&

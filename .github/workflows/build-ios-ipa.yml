@@ -31,6 +31,7 @@ jobs:
           mkdir -p /tmp/ios-custom
           cp ios/App/App/Info.plist /tmp/ios-custom/Info.plist
           cp ios/App/App/NativeSecurityPlugin.swift /tmp/ios-custom/NativeSecurityPlugin.swift
+          cp ios/App/App/NativeDAppBrowserPlugin.swift /tmp/ios-custom/NativeDAppBrowserPlugin.swift
           cp ios/App/App/MainViewController.swift /tmp/ios-custom/MainViewController.swift
 
           rm -rf ios
@@ -41,6 +42,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 2.7.${GITHUB_RUN_NUMBER}" ios/App/App/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" ios/App/App/Info.plist
           cp /tmp/ios-custom/NativeSecurityPlugin.swift ios/App/App/NativeSecurityPlugin.swift
+          cp /tmp/ios-custom/NativeDAppBrowserPlugin.swift ios/App/App/NativeDAppBrowserPlugin.swift
           cp /tmp/ios-custom/MainViewController.swift ios/App/App/MainViewController.swift
           sed -i '' 's/customClass="CAPBridgeViewController" customModule="Capacitor"/customClass="MainViewController" customModule="App"/' ios/App/App/Base.lproj/Main.storyboard
           grep -n MainViewController ios/App/App/Base.lproj/Main.storyboard
@@ -51,7 +53,7 @@ jobs:
             project = Xcodeproj::Project.open(proj_path)
             target = project.targets.find { |t| t.name == "App" }
             app_group = project.main_group.find_subpath("App/App", false) || project.main_group.find_subpath("App", false)
-            ["NativeSecurityPlugin.swift", "MainViewController.swift"].each do |fname|
+            ["NativeSecurityPlugin.swift", "NativeDAppBrowserPlugin.swift", "MainViewController.swift"].each do |fname|
               file_ref = app_group.files.find { |f| f.path == fname } || app_group.new_file(fname)
               unless target.source_build_phase.files_references.include?(file_ref)
                 target.source_build_phase.add_file_reference(file_ref)

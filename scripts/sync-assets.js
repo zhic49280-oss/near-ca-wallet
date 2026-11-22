@@ -23,6 +23,7 @@ const FILES_TO_SYNC = [
   'src/hyperliquid-perps.js',
   'src/mining-pro.js',
   'src/state.js',
+  'src/dapp-browser.js',
   'src/ui-controller.js'
 ];
 

@@ -39,10 +39,12 @@
         case 'select-receive-network': selectReceiveNetwork(ds.net || 'near'); break;
         case 'select-swap-token': selectSwapToken(ds.assetId || ''); break;
         case 'set-picker-chain': setTokenPickerChain(ds.chain || 'all'); break;
+        case 'toggle-picker-more-chains': toggleTokenPickerMoreChains(); break;
         case 'toggle-fav-token': toggleFavoriteSwapToken(ds.assetId || ''); break;
         case 'claim-limit-order': claimLimitOrderUI(ds.orderId || '', ds.buyToken || ''); break;
         case 'cancel-limit-order': cancelLimitOrderUI(ds.chain || 'near', ds.orderId || '', ds.remain || '', ds.sellToken || '', ds.buyToken || ''); break;
         case 'select-perp-market': selectPerpMarket(ds.coin || 'BTC'); break;
+        case 'toggle-perp-tpsl': togglePerpTpSl(); break;
         case 'fill-perp-ob-px': fillPerpLimitPrice(ds.px || ''); break;
         case 'close-perp-pos': closePerpPositionUI(ds.coin || ''); break;
         case 'cancel-perp-order': cancelPerpOrderUI(ds.coin || '', ds.oid || ''); break;
@@ -55,6 +57,8 @@
         case 'pick-contact': pickContactAddress(ds.addr || ''); break;
         case 'delete-contact': deleteContactById(ds.id || ''); break;
         case 'disconnect-wc': disconnectWcSession(ds.topic || ''); break;
+        case 'set-dapp-filter': setDAppCatalogFilter(ds.chain || 'ALL'); break;
+        case 'launch-dapp': launchDAppUrl(ds.url || ''); break;
         default: break;
       }
     });
@@ -106,6 +110,7 @@
       if (isOpen('sheet-token-picker')) renderTokenPickerList();
       if (isOpen('sheet-perp-markets')) renderPerpMarketsSheet();
       if (isOpen('sheet-perp-funding')) renderPerpFundingSheet();
+      if (isOpen('sheet-dapp-browser')) renderDAppCatalog();
       if (isOpen('sheet-mining-pro')) {
         renderMiningWatchlist();
         renderMiningPoolSelector();
@@ -358,7 +363,20 @@
     deleteNearAccessKeyFromSheet,
     generateRotateMnemonicInSheet,
     addNearMnemonicKeyOnlyFromSheet,
-    confirmRotateNearAccountKey
+    confirmRotateNearAccountKey,
+    toggleTokenPickerMoreChains,
+    togglePerpTpSl,
+    openDAppBrowserSheet,
+    openDAppFromInput,
+    launchDAppUrl,
+    setDAppCatalogFilter,
+    confirmDAppApproval,
+    rejectDAppApproval,
+    setTokenPickerChain,
+    renderNearAccountSummary,
+    renderMiningTelemetry,
+    openSheet,
+    closeAllSheets
   };
 
   const globalHandlers = {
@@ -557,6 +575,17 @@
     approveWcRequest,
     rejectWcRequest,
     disconnectWcSession,
+    toggleTokenPickerMoreChains,
+    togglePerpTpSl,
+    openDAppBrowserSheet,
+    openDAppFromInput,
+    launchDAppUrl,
+    setDAppCatalogFilter,
+    confirmDAppApproval,
+    rejectDAppApproval,
+    renderNearAccountSummary,
+    renderMiningTelemetry,
+    openSheet,
     closeAllSheets
   };
 

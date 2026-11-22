@@ -18,6 +18,7 @@ const limitOrders = require('../src/limit-orders.js');
 const hlPerps = require('../src/hyperliquid-perps.js');
 const miningPro = require('../src/mining-pro.js');
 const state = require('../src/state.js');
+const dappBrowser = require('../src/dapp-browser.js');
 const uiController = require('../src/ui-controller.js');
 
 const TEST_MNEMONIC =
@@ -154,6 +155,7 @@ module.exports = {
   hlPerps,
   miningPro,
   state,
+  dappBrowser,
   uiController,
   TEST_MNEMONIC,
   jsonResponse,

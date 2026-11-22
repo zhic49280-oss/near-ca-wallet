@@ -58,7 +58,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.23');
+      await loadScriptOnce('ethers.umd.min.js?v=6.24');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -68,7 +68,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.23').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.24').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -78,7 +78,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.23').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.24').catch(() => false);
       return getMining();
     }
     return null;
@@ -134,6 +134,12 @@
     return (typeof globalThis !== 'undefined' && globalThis.NearCAMining) ||
       (typeof window !== 'undefined' && window.NearCAMining) ||
       safeRequire('./mining-pro.js');
+  }
+
+  function getDAppBrowser() {
+    return (typeof globalThis !== 'undefined' && globalThis.NearCADAppBrowser) ||
+      (typeof window !== 'undefined' && window.NearCADAppBrowser) ||
+      safeRequire('./dapp-browser.js');
   }
 
   function getState() {

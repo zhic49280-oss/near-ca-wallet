@@ -9,6 +9,7 @@ class MainViewController: CAPBridgeViewController {
 
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(NativeSecurityPlugin())
+    bridge?.registerPluginInstance(NativeDAppBrowserPlugin())
     }
 
     override func viewDidLoad() {

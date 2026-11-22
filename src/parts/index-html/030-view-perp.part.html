@@ -169,31 +169,34 @@
           </div>
 
           <div class="flex flex-col gap-1">
-            <span class="meta-key" style="font-size: 11.5px;" data-i18n="perp.tpslLabel">止盈 / 止损 (可选)</span>
-            <div class="flex gap-2">
+            <button type="button" id="btn-perp-tpsl-toggle" class="perp-tpsl-toggle-btn" data-action="toggle-perp-tpsl" aria-expanded="false">
+              <span data-i18n="perp.tpslLabel">止盈 / 止损 (可选)</span>
+              <span class="perp-tpsl-caret">▾</span>
+            </button>
+            <div id="perp-tpsl-drawer" class="flex gap-2 hidden">
               <input id="perp-tp-input" type="number" step="any" min="0" class="input-field mono flex-1" data-i18n-placeholder="perp.tpPlaceholder" placeholder="止盈触发价" oninput="evaluatePerpOrderUI()" />
               <input id="perp-sl-input" type="number" step="any" min="0" class="input-field mono flex-1" data-i18n-placeholder="perp.slPlaceholder" placeholder="止损触发价" oninput="evaluatePerpOrderUI()" />
             </div>
           </div>
 
-          <div class="meta-list">
-            <div class="meta-row">
+          <div class="meta-list perp-meta-grid">
+            <div class="meta-row perp-meta-cell">
               <span class="meta-key" data-i18n="perp.notionalLabel">名义价值</span>
               <span id="perp-meta-notional" class="meta-val">--</span>
             </div>
-            <div class="meta-row">
+            <div class="meta-row perp-meta-cell">
               <span class="meta-key" data-i18n="perp.sizeLabel">委托数量</span>
               <span id="perp-meta-size" class="meta-val">--</span>
             </div>
-            <div class="meta-row">
+            <div class="meta-row perp-meta-cell">
               <span class="meta-key" data-i18n="perp.liqEstLabel">预估强平价</span>
               <span id="perp-meta-liq" class="meta-val">--</span>
             </div>
-            <div class="meta-row">
+            <div class="meta-row perp-meta-cell">
               <span class="meta-key" data-i18n="perp.minOrderLabel">最低下单</span>
               <span class="meta-val" data-i18n="perp.minOrderVal">$10 USDC</span>
             </div>
-            <div class="meta-row">
+            <div class="meta-row perp-meta-cell perp-meta-cell-full">
               <span class="meta-key" data-i18n="perp.gasLabel">网络费</span>
               <span class="meta-val text-emerald" data-i18n="perp.gasZeroVal">0 Gas</span>
             </div>

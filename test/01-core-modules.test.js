@@ -1674,6 +1674,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
     'src/limit-orders.js',
     'src/hyperliquid-perps.js',
     'src/state.js',
+    'src/dapp-browser.js',
     'src/ui-controller.js'
   ];
   const strippedScripts = scriptSrcs.map((s) => s.split('?')[0]);
@@ -1688,7 +1689,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
   const versionedHtmlAssets = [
     ...indexHtml.matchAll(/(?:href|src)="((?:style\.css|src\/[^"]+\.js)\?v=[^"]+)"/g)
   ].map((m) => `./${m[1]}`);
-  assert.equal(versionedHtmlAssets.length, 9);
+  assert.equal(versionedHtmlAssets.length, 10);
   for (const asset of versionedHtmlAssets) {
     assert.ok(swJs.includes(`'${asset}'`), `sw.js CORE_ASSETS must include ${asset}`);
   }
@@ -1698,7 +1699,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
   const listMatch = syncScript.match(/const FILES_TO_SYNC = \[([\s\S]*?)\];/);
   assert.ok(listMatch, 'scripts/sync-assets.js must define FILES_TO_SYNC');
   const filesToSync = [...listMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  assert.equal(filesToSync.length, 20);
+  assert.equal(filesToSync.length, 21);
 
   const targets = [
     path.join(ROOT_DIR, 'dist'),

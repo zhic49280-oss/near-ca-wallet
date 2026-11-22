@@ -1187,7 +1187,7 @@
     return score;
   }
 
-  function buildUnifiedMinerTelemetry(cleanAddr, poolData, onChainData) {
+  function buildUnifiedMinerTelemetry(cleanAddr, poolData, onChainData, requestedPoolKey = 'auto') {
     const workers = poolData && Array.isArray(poolData.workers) ? poolData.workers : [];
     const workersOnlineCount = workers.filter((w) => w.status === 'online').length;
     const workersOfflineCount = workers.filter((w) => w.status !== 'online').length;
@@ -1204,15 +1204,18 @@
     const sharesInvalid = poolData ? poolData.sharesInvalid : null;
     const shareAcceptRatePct = computeShareAcceptRate(sharesValid, sharesInvalid);
 
-    const poolSource = poolData ? poolData.poolSource : 'onchain';
+    const isOnChainMode = String(requestedPoolKey || '').trim().toLowerCase() === 'onchain';
+    const poolSource = poolData
+      ? poolData.poolSource
+      : (isOnChainMode ? 'onchain' : 'none');
     const totalPaidPrl = poolData
       ? poolData.totalPaidPrl
-      : (onChainData ? onChainData.totalReceivedPrl : null);
+      : (isOnChainMode && onChainData ? onChainData.totalReceivedPrl : null);
 
     let payoutHistory = [];
     if (poolData && Array.isArray(poolData.payoutHistory) && poolData.payoutHistory.length > 0) {
       payoutHistory = poolData.payoutHistory;
-    } else if (!poolData && onChainData && Array.isArray(onChainData.incomingTxs)) {
+    } else if (isOnChainMode && onChainData && Array.isArray(onChainData.incomingTxs)) {
       payoutHistory = onChainData.incomingTxs;
     }
 
@@ -1274,13 +1277,13 @@
 
       if (normalizedPool === 'onchain') {
         const onChainData = await onChainPromise;
-        result = buildUnifiedMinerTelemetry(cleanAddr, null, onChainData);
+        result = buildUnifiedMinerTelemetry(cleanAddr, null, onChainData, 'onchain');
       } else if (normalizedPool === 'kryptex') {
         const settled = await Promise.allSettled([fetchKryptexMinerRaw(cleanAddr), onChainPromise]);
-        result = buildUnifiedMinerTelemetry(cleanAddr, _settledValue(settled[0]), _settledValue(settled[1]));
+        result = buildUnifiedMinerTelemetry(cleanAddr, _settledValue(settled[0]), _settledValue(settled[1]), 'kryptex');
       } else if (normalizedPool === 'herominers') {
         const settled = await Promise.allSettled([fetchHeroMinersMinerRaw(cleanAddr), onChainPromise]);
-        result = buildUnifiedMinerTelemetry(cleanAddr, _settledValue(settled[0]), _settledValue(settled[1]));
+        result = buildUnifiedMinerTelemetry(cleanAddr, _settledValue(settled[0]), _settledValue(settled[1]), 'herominers');
       } else {
         // 'auto' mode: concurrently probe Kryptex, HeroMiners, and on-chain prlscan
         const settled = await Promise.allSettled([
@@ -1298,7 +1301,7 @@
         if (kScore >= 0 || hScore >= 0) {
           chosen = kScore >= hScore ? kryptexData : heroData;
         }
-        result = buildUnifiedMinerTelemetry(cleanAddr, chosen, onChainData);
+        result = buildUnifiedMinerTelemetry(cleanAddr, chosen, onChainData, 'auto');
       }
 
       _minerStatsCache.set(cacheKey, { ts: Date.now(), data: result });
@@ -1612,6 +1615,7 @@
     buildExplorerTxUrl,
     fetchNetworkAndPoolTelemetry,
     queryMinerDeepStats,
+    buildUnifiedMinerTelemetry,
     formatHashrate,
     getSavedMinerAddresses,
     addSavedMinerAddress,

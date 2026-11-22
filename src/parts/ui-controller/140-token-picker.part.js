@@ -16,6 +16,7 @@
     st.limit.pickerSide = null;
     st.swap.pickerSide = side === 'to' ? 'to' : 'from';
     st.swap.pickerChainFilter = loadSavedPickerChain();
+    st.swap.pickerShowMoreChains = false;
     st.swap.pickerSearch = '';
     if ($('token-picker-search')) $('token-picker-search').value = '';
     renderTokenPickerList();
@@ -26,6 +27,7 @@
     const st = getState();
     st.limit.pickerSide = side === 'to' ? 'to' : 'from';
     st.swap.pickerSide = st.limit.pickerSide;
+    st.swap.pickerShowMoreChains = false;
     st.swap.pickerSearch = '';
     if ($('token-picker-search')) $('token-picker-search').value = '';
     renderTokenPickerList();
@@ -33,8 +35,16 @@
   }
 
   function setTokenPickerChain(chainKey) {
-    getState().swap.pickerChainFilter = chainKey;
+    const st = getState();
+    st.swap.pickerChainFilter = chainKey;
+    st.swap.pickerShowMoreChains = false;
     try { if (typeof localStorage !== 'undefined') localStorage.setItem(PICKER_CHAIN_STORAGE_KEY, String(chainKey)); } catch (_) {}
+    renderTokenPickerList();
+  }
+
+  function toggleTokenPickerMoreChains() {
+    const st = getState();
+    st.swap.pickerShowMoreChains = !Boolean(st.swap.pickerShowMoreChains);
     renderTokenPickerList();
   }
 
@@ -48,7 +58,8 @@
 
   let _jupSearchTimer = null;
   let _lastJupSearchQuery = '';
-  const PREFERRED_PICKER_CHAINS = ['near', 'prl', 'qtc', 'sol', 'eth', 'base', 'arb', 'bsc', 'arc', 'hood', 'btc'];
+  const PINNED_PICKER_CHAINS = ['near', 'sol', 'eth', 'hood', 'arc'];
+  const PREFERRED_PICKER_CHAINS = ['near', 'sol', 'eth', 'hood', 'arc', 'hype', 'prl', 'qtc', 'base', 'arb', 'bsc', 'btc', 'op', 'pol', 'avax'];
 
   function renderTokenPickerList() {
     const st = getState();
@@ -63,6 +74,11 @@
       if (favBar) {
         favBar.classList.add('hidden');
         favBar.innerHTML = '';
+      }
+      const moreEl = $('token-picker-more-chains');
+      if (moreEl) {
+        moreEl.classList.add('hidden');
+        moreEl.innerHTML = '';
       }
       const chainBar = $('token-picker-chains');
       if (chainBar) {
@@ -145,15 +161,46 @@
       }
     }
 
+    const activeChain = st.swap.pickerChainFilter || 'all';
+    const availableChainSet = new Set(orderedChains);
+    const pinnedVisible = PINNED_PICKER_CHAINS.filter((ck) => (!isFromPicker || isSwapOriginSupported({ blockchain: ck })) && (ck === 'arc' || availableChainSet.has(ck)));
+    const tempExtraChain = (activeChain !== 'all' && !PINNED_PICKER_CHAINS.includes(activeChain) && availableChainSet.has(activeChain))
+      ? activeChain
+      : '';
+    const showMoreChains = Boolean(st.swap.pickerShowMoreChains);
+
     const chainBar = $('token-picker-chains');
     if (chainBar) {
       chainBar.innerHTML = [
-        `<button type="button" class="filter-pill ${st.swap.pickerChainFilter === 'all' ? 'active' : ''}" data-action="set-picker-chain" data-chain="all">${t('全部网络', 'All')}</button>`,
-        ...orderedChains.slice(0, 15).map((ck) => {
+        `<button type="button" class="filter-pill ${activeChain === 'all' ? 'active' : ''}" data-action="set-picker-chain" data-chain="all">${t('全部网络', 'All')}</button>`,
+        ...pinnedVisible.map((ck) => {
           const meta = tokens.getChainMeta(ck);
-          return `<button type="button" class="filter-pill ${st.swap.pickerChainFilter === ck ? 'active' : ''}" data-action="set-picker-chain" data-chain="${escapeHtml(ck)}">${escapeHtml(meta.shortName)}</button>`;
-        })
+          return `<button type="button" class="filter-pill ${activeChain === ck ? 'active' : ''}" data-action="set-picker-chain" data-chain="${escapeHtml(ck)}">${escapeHtml(meta.shortName)}</button>`;
+        }),
+        ...(tempExtraChain ? [(() => {
+          const meta = tokens.getChainMeta(tempExtraChain);
+          return `<button type="button" class="filter-pill active" data-action="set-picker-chain" data-chain="${escapeHtml(tempExtraChain)}">${escapeHtml(meta.shortName)}</button>`;
+        })()] : []),
+        `<button type="button" class="filter-pill ${showMoreChains ? 'active' : ''}" data-action="toggle-picker-more-chains">${escapeHtml(showMoreChains ? t('收起网络 ▲', 'Less ▲') : t('更多网络 ▾', 'More ▾'))}</button>`
       ].join('');
+    }
+
+    const moreChainsEl = $('token-picker-more-chains');
+    if (moreChainsEl) {
+      if (showMoreChains) {
+        moreChainsEl.classList.remove('hidden');
+        const allMoreOrder = Array.from(new Set([
+          ...PREFERRED_PICKER_CHAINS.filter((ck) => !isFromPicker || isSwapOriginSupported({ blockchain: ck })),
+          ...orderedChains
+        ])).filter((ck) => availableChainSet.has(ck) || ck === 'arc');
+        moreChainsEl.innerHTML = allMoreOrder.map((ck) => {
+          const meta = tokens.getChainMeta(ck);
+          return `<button type="button" class="filter-pill ${activeChain === ck ? 'active' : ''}" data-action="set-picker-chain" data-chain="${escapeHtml(ck)}">${escapeHtml(meta.shortName)}</button>`;
+        }).join('');
+      } else {
+        moreChainsEl.classList.add('hidden');
+        moreChainsEl.innerHTML = '';
+      }
     }
 
     if (search.length >= 2 && search !== _lastJupSearchQuery && intents && typeof intents.searchJupiterTokensV2 === 'function') {

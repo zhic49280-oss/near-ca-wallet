@@ -1,8 +1,75 @@
   // ==================== Navigation & Sheets ====================
 
   let _contactsPickerTarget = null;
+  let _lockedScrollY = 0;
+  let _sheetScrollBound = false;
+
+  function updateVisualViewportVars() {
+    if (typeof document === 'undefined' || typeof window === 'undefined') return;
+    const root = document.documentElement;
+    if (!root || !root.style) return;
+    const vv = window.visualViewport;
+    if (vv && vv.height > 0) {
+      root.style.setProperty('--nexus-vv-height', `${Math.round(vv.height)}px`);
+      const kbInset = Math.max(0, Math.round(window.innerHeight - vv.height - (vv.offsetTop || 0)));
+      root.style.setProperty('--nexus-kb-inset', `${kbInset}px`);
+    } else {
+      root.style.setProperty('--nexus-vv-height', `${window.innerHeight || 800}px`);
+      root.style.setProperty('--nexus-kb-inset', '0px');
+    }
+  }
+
+  function ensureSheetInteractionGuards() {
+    if (_sheetScrollBound || typeof document === 'undefined') return;
+    _sheetScrollBound = true;
+    const backdrop = $('sheet-backdrop');
+    if (backdrop && typeof backdrop.addEventListener === 'function') {
+      backdrop.addEventListener('touchmove', (ev) => {
+        if (backdrop.classList.contains('open')) ev.preventDefault();
+      }, { passive: false });
+      if (typeof MutationObserver !== 'undefined') {
+        try {
+          const obs = new MutationObserver(() => syncSheetScrollLock());
+          obs.observe(backdrop, { attributes: true, attributeFilter: ['class'] });
+        } catch (_) {}
+      }
+    }
+    if (typeof window !== 'undefined' && window.visualViewport && typeof window.visualViewport.addEventListener === 'function') {
+      window.visualViewport.addEventListener('resize', updateVisualViewportVars);
+      window.visualViewport.addEventListener('scroll', updateVisualViewportVars);
+    }
+    updateVisualViewportVars();
+  }
+
+  function syncSheetScrollLock() {
+    if (typeof document === 'undefined') return;
+    const hasOpen = typeof document.querySelectorAll === 'function'
+      ? document.querySelectorAll('.bottom-sheet.open').length > 0
+      : false;
+    const html = document.documentElement;
+    const body = document.body;
+    const hasBodyClassList = Boolean(body && body.classList && typeof body.classList.contains === 'function');
+    const hasHtmlClassList = Boolean(html && html.classList && typeof html.classList.add === 'function');
+    if (hasOpen) {
+      if (hasBodyClassList && !body.classList.contains('sheet-scroll-locked')) {
+        _lockedScrollY = (typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0);
+        body.classList.add('sheet-scroll-locked');
+        if (hasHtmlClassList) html.classList.add('sheet-scroll-locked');
+      }
+      updateVisualViewportVars();
+    } else {
+      const wasLocked = Boolean(hasBodyClassList && body.classList.contains('sheet-scroll-locked'));
+      if (hasBodyClassList) body.classList.remove('sheet-scroll-locked');
+      if (hasHtmlClassList) html.classList.remove('sheet-scroll-locked');
+      if (wasLocked && typeof window !== 'undefined' && typeof window.scrollTo === 'function' && _lockedScrollY > 0) {
+        try { window.scrollTo(0, _lockedScrollY); } catch (_) {}
+      }
+      _lockedScrollY = 0;
+    }
+  }
 
   function openSheet(sheetId) {
+    ensureSheetInteractionGuards();
     const backdrop = $('sheet-backdrop');
     const sheet = $(sheetId);
     if (sheetId !== 'sheet-security-auth' && typeof _secAuthState.resolve === 'function') {
@@ -23,6 +90,7 @@
       sheet.classList.add('open');
       sheet.setAttribute('aria-hidden', 'false');
     }
+    syncSheetScrollLock();
   }
 
   function closeAllSheets() {
@@ -47,6 +115,7 @@
         s.setAttribute('aria-hidden', 'true');
       });
     }
+    syncSheetScrollLock();
   }
 
   function switchTab(tab) {

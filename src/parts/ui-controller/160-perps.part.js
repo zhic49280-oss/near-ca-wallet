@@ -480,6 +480,15 @@
     renderPerpBottomList();
   }
 
+  function togglePerpTpSl() {
+    const drawer = $('perp-tpsl-drawer');
+    const btn = $('btn-perp-tpsl-toggle');
+    if (!drawer) return;
+    const willOpen = drawer.classList.contains('hidden');
+    drawer.classList.toggle('hidden', !willOpen);
+    if (btn) btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+  }
+
   function renderPerpLongShortBar() {
     const st = getState();
     const wrap = $('perp-ls-ratio-wrap');

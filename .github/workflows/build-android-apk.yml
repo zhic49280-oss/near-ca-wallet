@@ -38,6 +38,7 @@ jobs:
           cp android/app/src/main/AndroidManifest.xml /tmp/android-custom/AndroidManifest.xml
           cp android/app/src/main/java/io/nexus/wallet/MainActivity.java /tmp/android-custom/MainActivity.java
           cp android/app/src/main/java/io/nexus/wallet/NativeSecurityPlugin.java /tmp/android-custom/NativeSecurityPlugin.java
+          cp android/app/src/main/java/io/nexus/wallet/NativeDAppBrowserPlugin.java /tmp/android-custom/NativeDAppBrowserPlugin.java
 
           rm -rf android
           npm install --no-save @capacitor/core@^6.1.0 @capacitor/cli@^6.1.0 @capacitor/android@^6.1.0
@@ -47,6 +48,7 @@ jobs:
           cp /tmp/android-custom/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           cp /tmp/android-custom/MainActivity.java android/app/src/main/java/io/nexus/wallet/MainActivity.java
           cp /tmp/android-custom/NativeSecurityPlugin.java android/app/src/main/java/io/nexus/wallet/NativeSecurityPlugin.java
+          cp /tmp/android-custom/NativeDAppBrowserPlugin.java android/app/src/main/java/io/nexus/wallet/NativeDAppBrowserPlugin.java
           for f in android/app/src/main/res/mipmap-*/ic_launcher*.png; do
             if [ -f "$f" ]; then cp assets/nexus-logo-512.png "$f"; fi
           done
