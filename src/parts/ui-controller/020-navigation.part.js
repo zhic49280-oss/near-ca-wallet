@@ -119,6 +119,7 @@
   }
 
   function switchTab(tab) {
+    syncSheetScrollLock();
     const st = getState();
     const wallet = st.getActiveWallet();
     if (!wallet) {

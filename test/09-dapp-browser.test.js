@@ -796,3 +796,48 @@ test('v6.25 Native Gas Internal vs External Mode: 10/12 PRL stays extra, 12/12 o
   assert.equal(btnSolShortfall.disabled, true);
   assert.equal(btnSolShortfall.reason, 'insufficient_gas');
 });
+
+test('v6.26 OKX Default-On K-Line Chart, Full HIP-3 Icon Resolution & Scrollability Fixes', () => {
+  assert.equal(state.perp.showChart, true, 'K-line chart must be enabled by default');
+  const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'parts', 'index-html', '030-view-perp.part.html'), 'utf8');
+  assert.equal(/id="perp-chart-wrap"[^>]*\bhidden\b/.test(perpHtml), false, '#perp-chart-wrap must not start hidden');
+  assert.ok(perpHtml.includes('data-iv="1d"'), 'Interval pills must include 1d');
+
+  const now = Date.now();
+  const series = Array.from({ length: 28 }, (_, i) => {
+    const base = 100 + Math.sin(i / 3) * 6 + i * 0.4;
+    return {
+      t: now - (28 - i) * 900_000,
+      o: base - 0.8,
+      h: base + 1.9,
+      l: base - 1.7,
+      c: base + 0.6,
+      v: 1000 + i * 120
+    };
+  });
+  const okxSvg = uiController.renderPerpCandleSvg(series, { markPx: 112.4 });
+  assert.ok(okxSvg.includes('MA5:') && okxSvg.includes('MA10:') && okxSvg.includes('MA20:'), 'K-line SVG must display MA5/MA10/MA20 legend');
+  assert.ok(okxSvg.includes('stroke="#f59e0b"') && okxSvg.includes('stroke="#38bdf8"') && okxSvg.includes('stroke="#c084fc"'), 'K-line SVG must draw MA5/10/20 polylines');
+  assert.ok(okxSvg.includes('←') || okxSvg.includes('→'), 'K-line SVG must render High/Low callout pins');
+  assert.ok(okxSvg.includes('stroke="#00ec97"'), 'K-line SVG must preserve live mark price dashed line');
+
+  for (const sym of [
+    'xyz:SP500', 'xyz:SKHX', 'xyz:SOXL', 'xyz:MU', 'xyz:CL',
+    'xyz:BRENTOIL', 'xyz:SILVER', 'xyz:ANT', 'io:OAI', 'para:TOTAL2',
+    'xyz:QCOM', 'xyz:AVGO', 'xyz:UNKNOWN'
+  ]) {
+    const icon = tokenRegistry.resolveTokenIcon({ symbol: sym, blockchain: 'hype' });
+    assert.ok(icon.primaryUrl && icon.primaryUrl.startsWith('https://'), `${sym} should resolve a valid HTTPS icon`);
+    assert.equal(icon.primaryUrl.includes('cryptocurrency-icons'), false, `${sym} must not resolve dead spothq crypto icon URL`);
+    if (icon.fallbackUrl) {
+      assert.equal(icon.fallbackUrl.includes('cryptocurrency-icons'), false, `${sym} fallback must not use dead spothq URL`);
+    }
+  }
+
+  const unknFallback = tokenRegistry.getFallbackTokenIconSvg('xyz:UNKNOWN', 'hype', 32);
+  assert.ok(unknFallback.includes('>UNKN<'), `Expected UNKN fallback badge, got ${unknFallback}`);
+  assert.equal(unknFallback.includes('XYZ:'), false, 'Fallback badge must strip dex prefix');
+
+  const styleCss = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
+  assert.ok(styleCss.includes('overflow-x: clip;'), 'body must use overflow-x: clip so Chromium does not create a secondary scroll blocker');
+});

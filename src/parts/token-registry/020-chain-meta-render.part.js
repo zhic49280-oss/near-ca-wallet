@@ -361,7 +361,8 @@
   }
 
   function getFallbackTokenIconSvg(symbol, blockchain = '', size = 36) {
-    const sym = String(symbol || '?').toUpperCase();
+    const cleanBase = normalizePerpBaseSymbol(symbol) || String(symbol || '?').trim().toUpperCase().replace(/^\$/, '');
+    const sym = cleanBase;
     const s = Number(size) || 36;
     if (sym === 'PRL') return getPearlIconSvg(s);
     const meta = getChainMeta(blockchain);
@@ -388,7 +389,8 @@
     const textColor = (sym === 'NEAR' || sym === 'WNEAR' || sym === 'BNB')
       ? '#000000'
       : (sym === 'HYPE' ? '#97FCE4' : '#FFFFFF');
-    const label = escapeHtml(sym.slice(0, 4));
+    const letters = cleanBase.slice(0, 4) || '?';
+    const label = escapeHtml(letters);
     const fontSize = label.length >= 4 ? 8.5 : (label.length === 3 ? 10 : 12);
     return `<svg width="${s}" height="${s}" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="rounded-full flex-shrink-0"><circle cx="16" cy="16" r="16" fill="${bg}"/><text x="16" y="19.5" text-anchor="middle" fill="${textColor}" font-size="${fontSize}" font-weight="800" font-family="system-ui,-apple-system,sans-serif">${label}</text></svg>`;
   }
@@ -424,15 +426,18 @@
   }
 
   function resolveTokenIcon({ symbol, blockchain, logoURI, contractAddress } = {}) {
-    const symUpper = String(symbol || '').trim().toUpperCase();
-    const symClean = symUpper.replace(/^\$/, '');
+    const rawTrim = String(symbol || '').trim().replace(/^\$/, '');
+    const colonIdx = rawTrim.indexOf(':');
+    const dexPrefix = colonIdx > 0 ? rawTrim.slice(0, colonIdx).toLowerCase() : '';
+    const symUpper = rawTrim.toUpperCase();
+    const symClean = symUpper;
     const symBase = normalizePerpBaseSymbol(symClean);
     const symLower = (symBase || symClean).toLowerCase();
     const contractLower = String(contractAddress || '').trim().toLowerCase();
     const chainKey = getChainMeta(blockchain).key;
 
     if (symClean === 'PRL' || symBase === 'PRL') {
-      return { primaryUrl: '', fallbackUrl: '', isPearlSvg: true };
+      return { primaryUrl: '', fallbackUrl: '', secondFallbackUrl: '', isPearlSvg: true };
     }
 
     const explicitUrl = sanitizeImageUrl(logoURI);
@@ -464,7 +469,7 @@
       if (u && !unique.includes(u)) unique.push(u);
     }
 
-    if (unique.length < 2) {
+    if (unique.length < 3) {
       let contractTwUrl = '';
       const twChain = TRUSTWALLET_CHAIN_SLUGS[chainKey] || TRUSTWALLET_CHAIN_SLUGS[String(blockchain || '').toLowerCase()];
       if (twChain && contractAddress) {
@@ -473,23 +478,40 @@
           contractTwUrl = `https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/${twChain}/assets/${formattedAddr}/logo.png`;
         }
       }
-      const ccIconsUrl = symLower && /^[a-z0-9]+$/.test(symLower)
+      const hlDexUrl = (dexPrefix && symBase)
+        ? `https://app.hyperliquid.xyz/coins/${dexPrefix}:${symBase}.svg`
+        : '';
+      const hlXyzUrl = (dexPrefix && dexPrefix !== 'xyz' && symBase)
+        ? `https://app.hyperliquid.xyz/coins/xyz:${symBase}.svg`
+        : '';
+      const hlBareUrl = (!dexPrefix && chainKey === 'hype' && symBase)
+        ? `https://app.hyperliquid.xyz/coins/${symBase}.svg`
+        : '';
+      const parqetUrl = (dexPrefix && symBase && /^[A-Z0-9.-]+$/.test(symBase))
+        ? `https://assets.parqet.com/logos/symbol/${symBase}?format=png`
+        : '';
+      const ccIconsUrl = (!dexPrefix && symLower && /^[a-z0-9]+$/.test(symLower))
         ? `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/${symLower}.png`
         : '';
-      for (const u of [contractTwUrl, ccIconsUrl, localFallback]) {
+      for (const u of [contractTwUrl, hlDexUrl, hlXyzUrl, hlBareUrl, parqetUrl, ccIconsUrl, localFallback]) {
         if (u && !unique.includes(u)) unique.push(u);
       }
     }
 
     const primaryUrl = unique[0] || '';
     let fallbackUrl = unique[1] || '';
+    let secondFallbackUrl = unique[2] || '';
     if (primaryUrl && !primaryUrl.startsWith('data:image/') && localFallback && (!fallbackUrl || !fallbackUrl.startsWith('data:image/'))) {
+      if (!secondFallbackUrl && fallbackUrl && fallbackUrl !== localFallback) {
+        secondFallbackUrl = fallbackUrl;
+      }
       fallbackUrl = localFallback;
     }
 
     return {
       primaryUrl,
       fallbackUrl,
+      secondFallbackUrl,
       isPearlSvg: false
     };
   }
@@ -499,7 +521,7 @@
     const symbol = opts.symbol || '?';
     const blockchain = opts.blockchain || opts.chain || '';
     const s = Number(size) || 36;
-    const { primaryUrl, fallbackUrl, isPearlSvg } = resolveTokenIcon({
+    const { primaryUrl, fallbackUrl, secondFallbackUrl, isPearlSvg } = resolveTokenIcon({
       symbol,
       blockchain,
       logoURI: opts.logoURI || opts.iconUrl || '',
@@ -513,8 +535,9 @@
     } else if (primaryUrl) {
       const safeAlt = escapeHtml(String(symbol).toUpperCase());
       const safeFb = escapeHtml(fallbackUrl);
+      const safeFb2 = escapeHtml(secondFallbackUrl || '');
       const hiddenFallbackSvg = fallbackSvg.replace('<svg ', '<svg style="display:none" ');
-      iconInner = `<img src="${escapeHtml(primaryUrl)}" alt="${safeAlt}" data-fb="${safeFb}" width="${s}" height="${s}" style="width:${s}px;height:${s}px" class="rounded-full object-cover flex-shrink-0 bg-white/[0.06] token-img-fb" />${hiddenFallbackSvg}`;
+      iconInner = `<img src="${escapeHtml(primaryUrl)}" alt="${safeAlt}" data-fb="${safeFb}" data-fb2="${safeFb2}" width="${s}" height="${s}" style="width:${s}px;height:${s}px" class="rounded-full object-cover flex-shrink-0 bg-white/[0.06] token-img-fb" />${hiddenFallbackSvg}`;
     } else {
       iconInner = fallbackSvg;
     }

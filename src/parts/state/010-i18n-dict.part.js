@@ -813,7 +813,7 @@
       lsRatio: null,
       candles: [],
       chartInterval: '15m',
-      showChart: false,
+      showChart: true,
       marketFilter: 'hot',
       side: 'long',
       marginMode: 'isolated',

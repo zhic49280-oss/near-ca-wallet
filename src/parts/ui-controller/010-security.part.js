@@ -635,6 +635,7 @@
       const stillOpen = typeof document !== 'undefined' && document.querySelector('.bottom-sheet.open');
       if (!stillOpen) backdrop.classList.remove('open');
     }
+    if (typeof syncSheetScrollLock === 'function') syncSheetScrollLock();
     if (typeof resolver === 'function') {
       resolver(Boolean(accepted));
     }

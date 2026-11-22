@@ -88,9 +88,73 @@
         img.src = fb;
         return;
       }
+      const fb2 = img.dataset ? img.dataset.fb2 : '';
+      if (fb2 && !img.dataset.fb2Tried) {
+        img.dataset.fb2Tried = '1';
+        img.src = fb2;
+        return;
+      }
       img.style.display = 'none';
       if (img.nextElementSibling) img.nextElementSibling.style.display = 'block';
     }, true);
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      const dragState = { down: false, dragging: false, startX: 0, startY: 0, lastY: 0, scroller: null, lastDragEndTs: 0 };
+      const findScrollContainer = (el) => {
+        let cur = el && el.nodeType === 1 ? el : null;
+        while (cur && cur !== document.body && cur !== document.documentElement) {
+          if (cur.scrollHeight > cur.clientHeight + 2 && typeof window.getComputedStyle === 'function') {
+            const ov = window.getComputedStyle(cur).overflowY;
+            if (ov === 'auto' || ov === 'scroll') return cur;
+          }
+          cur = cur.parentElement;
+        }
+        return null;
+      };
+      document.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        const tgt = e.target && e.target.nodeType === 1 ? e.target : null;
+        if (tgt && typeof tgt.closest === 'function' && tgt.closest('input, textarea, select, option, [contenteditable]')) return;
+        dragState.down = true;
+        dragState.dragging = false;
+        dragState.startX = e.clientX;
+        dragState.startY = e.clientY;
+        dragState.lastY = e.clientY;
+        dragState.scroller = findScrollContainer(tgt);
+      });
+      window.addEventListener('mousemove', (e) => {
+        if (!dragState.down) return;
+        const dy = e.clientY - dragState.startY;
+        const dx = e.clientX - dragState.startX;
+        if (!dragState.dragging && Math.abs(dy) > 6 && Math.abs(dy) >= Math.abs(dx)) {
+          dragState.dragging = true;
+        }
+        if (dragState.dragging) {
+          const stepY = e.clientY - dragState.lastY;
+          dragState.lastY = e.clientY;
+          if (dragState.scroller) {
+            dragState.scroller.scrollTop -= stepY;
+          } else if (typeof window.scrollBy === 'function') {
+            window.scrollBy(0, -stepY);
+          }
+        }
+      });
+      window.addEventListener('mouseup', () => {
+        if (dragState.dragging) {
+          dragState.lastDragEndTs = Date.now();
+        }
+        dragState.down = false;
+        dragState.dragging = false;
+        dragState.scroller = null;
+      });
+      document.addEventListener('click', (e) => {
+        if (dragState.lastDragEndTs && (Date.now() - dragState.lastDragEndTs) < 120) {
+          dragState.lastDragEndTs = 0;
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }, true);
+    }
   }
 
   function renderAll() {

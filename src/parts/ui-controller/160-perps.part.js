@@ -168,50 +168,99 @@
   }
 
   function renderPerpCandleSvg(candles, market = null) {
-    const list = Array.isArray(candles) ? candles : [];
-    if (list.length < 2) {
+    const fullList = Array.isArray(candles) ? candles : [];
+    if (fullList.length < 2) {
       return `<div style="text-align:center; padding: 36px 0; font-size: 11.5px; color: var(--text-muted);">--</div>`;
     }
-    const W = 340;
-    const H = 168;
-    const plotL = 4;
-    const plotR = 276;
+    const computeMa = (period) => fullList.map((_, i) => {
+      const start = Math.max(0, i - period + 1);
+      let sum = 0;
+      for (let k = start; k <= i; k++) sum += Number(fullList[k].c || 0);
+      return sum / (i - start + 1);
+    });
+    const ma5All = computeMa(5);
+    const ma10All = computeMa(10);
+    const ma20All = computeMa(20);
+
+    const maxVisible = 42;
+    const offset = Math.max(0, fullList.length - maxVisible);
+    const list = fullList.slice(offset);
+    const ma5Vis = ma5All.slice(offset);
+    const ma10Vis = ma10All.slice(offset);
+    const ma20Vis = ma20All.slice(offset);
+
+    const W = 360;
+    const H = 212;
+    const plotL = 6;
+    const plotR = 294;
     const plotW = plotR - plotL;
-    const candleTop = 8;
-    const candleBottom = 114;
-    const volTop = 126;
-    const volBottom = 162;
+    const candleTop = 22;
+    const candleBottom = 138;
+    const volTop = 150;
+    const volBottom = 188;
 
     let minLow = Infinity;
     let maxHigh = -Infinity;
+    let minLowIdx = 0;
+    let maxHighIdx = 0;
     let maxVol = 0;
-    for (const c of list) {
-      if (c.l < minLow) minLow = c.l;
-      if (c.h > maxHigh) maxHigh = c.h;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if (c.l < minLow) { minLow = c.l; minLowIdx = i; }
+      if (c.h > maxHigh) { maxHigh = c.h; maxHighIdx = i; }
       if (Number.isFinite(c.v) && c.v > maxVol) maxVol = c.v;
     }
     const span = maxHigh - minLow || 1;
     const step = plotW / list.length;
-    const bw = Math.max(2, step * 0.58);
+    const bw = Math.max(2.2, step * 0.6);
     const yOf = (p) => Math.max(candleTop, Math.min(candleBottom, candleBottom - ((p - minLow) / span) * (candleBottom - candleTop)));
 
-    // Grid lines + right price axis (High, Mid, Low)
-    const midPx = (maxHigh + minLow) / 2;
-    const gridLevels = [
-      { y: candleTop + 2, px: maxHigh },
-      { y: (candleTop + candleBottom) / 2, px: midPx },
-      { y: candleBottom - 2, px: minLow }
-    ];
-    const gridSvg = gridLevels.map((g) =>
-      `<line x1="${plotL}" y1="${g.y.toFixed(1)}" x2="${plotR}" y2="${g.y.toFixed(1)}" stroke="rgba(255,255,255,0.08)" stroke-dasharray="2 3" stroke-width="0.8" />` +
-      `<text x="280" y="${(g.y + 3).toFixed(1)}" fill="rgba(203,213,225,0.7)" font-size="9" font-family="ui-monospace, monospace">${escapeHtml(formatPerpPx(g.px))}</text>`
-    ).join('');
+    // OKX MA Legend Header
+    const lastMa5 = ma5Vis[ma5Vis.length - 1];
+    const lastMa10 = ma10Vis[ma10Vis.length - 1];
+    const lastMa20 = ma20Vis[ma20Vis.length - 1];
+    const legendSvg =
+      `<text x="6" y="12" fill="#f59e0b" font-size="8.5" font-weight="600" font-family="ui-monospace, monospace">MA5:${escapeHtml(formatPerpPx(lastMa5))}</text>` +
+      `<text x="102" y="12" fill="#38bdf8" font-size="8.5" font-weight="600" font-family="ui-monospace, monospace">MA10:${escapeHtml(formatPerpPx(lastMa10))}</text>` +
+      `<text x="200" y="12" fill="#c084fc" font-size="8.5" font-weight="600" font-family="ui-monospace, monospace">MA20:${escapeHtml(formatPerpPx(lastMa20))}</text>`;
+
+    // 4 Horizontal Price Grid Lines + Right Price Axis
+    const gridSvg = [0, 1 / 3, 2 / 3, 1].map((frac) => {
+      const y = candleTop + frac * (candleBottom - candleTop);
+      const px = maxHigh - frac * span;
+      return `<line x1="${plotL}" y1="${y.toFixed(1)}" x2="${plotR}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.07)" stroke-dasharray="2 3" stroke-width="0.7" />` +
+        `<text x="298" y="${(y + 3).toFixed(1)}" fill="rgba(148,163,184,0.85)" font-size="8.5" font-family="ui-monospace, monospace">${escapeHtml(formatPerpPx(px))}</text>`;
+    }).join('');
+
+    // 3 Vertical Dashed Time Grid Lines + Bottom Time Labels
+    const formatCandleTime = (ts) => {
+      if (!Number.isFinite(ts) || ts <= 1e9) return '';
+      const d = new Date(ts);
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mi = String(d.getMinutes()).padStart(2, '0');
+      return `${mm}/${dd} ${hh}:${mi}`;
+    };
+    const timeIndices = [Math.floor(list.length * 0.16), Math.floor(list.length * 0.5), Math.max(0, list.length - 1)];
+    const seenT = new Set();
+    const timeGridSvg = timeIndices.map((idx) => {
+      if (seenT.has(idx) || !list[idx]) return '';
+      seenT.add(idx);
+      const x = plotL + idx * step + step / 2;
+      const lbl = formatCandleTime(list[idx].t);
+      const anchor = idx >= list.length - 2 ? 'end' : (idx <= 2 ? 'start' : 'middle');
+      const labelEl = lbl
+        ? `<text x="${x.toFixed(1)}" y="204" text-anchor="${anchor}" fill="rgba(148,163,184,0.72)" font-size="8" font-family="ui-monospace, monospace">${escapeHtml(lbl)}</text>`
+        : '';
+      return `<line x1="${x.toFixed(1)}" y1="${candleTop}" x2="${x.toFixed(1)}" y2="${volBottom}" stroke="rgba(255,255,255,0.05)" stroke-dasharray="2 3" stroke-width="0.7" />` + labelEl;
+    }).join('');
 
     // Candlesticks + Volume Histogram
     const candleSvg = list.map((c, idx) => {
       const xCenter = plotL + idx * step + step / 2;
       const isUp = c.c >= c.o;
-      const color = isUp ? '#34d399' : '#fb7185';
+      const color = isUp ? '#00ec97' : '#fb7185';
       const yH = yOf(c.h);
       const yL = yOf(c.l);
       const yO = yOf(c.o);
@@ -229,18 +278,42 @@
         volRect;
     }).join('');
 
-    // Separator between candle and volume zones + Mark Price indicator
+    // MA5 / MA10 / MA20 Polylines
+    const buildMaPolyline = (vals, color) => {
+      const pts = vals.map((v, idx) => {
+        const x = plotL + idx * step + step / 2;
+        return `${x.toFixed(1)},${yOf(v).toFixed(1)}`;
+      }).join(' ');
+      return `<polyline fill="none" stroke="${color}" stroke-width="1.15" stroke-linejoin="round" stroke-linecap="round" points="${pts}" />`;
+    };
+    const maSvg = buildMaPolyline(ma5Vis, '#f59e0b') + buildMaPolyline(ma10Vis, '#38bdf8') + buildMaPolyline(ma20Vis, '#c084fc');
+
+    // OKX High / Low Callout Pins
+    const hiX = plotL + maxHighIdx * step + step / 2;
+    const hiY = yOf(maxHigh);
+    const hiRight = maxHighIdx > list.length * 0.55;
+    const hiPin = hiRight
+      ? `<text x="${(hiX - 4).toFixed(1)}" y="${Math.max(candleTop + 7, hiY + 2).toFixed(1)}" text-anchor="end" fill="#e2e8f0" font-size="8.2" font-family="ui-monospace, monospace">${escapeHtml(formatPerpPx(maxHigh))} →</text>`
+      : `<text x="${(hiX + 4).toFixed(1)}" y="${Math.max(candleTop + 7, hiY + 2).toFixed(1)}" text-anchor="start" fill="#e2e8f0" font-size="8.2" font-family="ui-monospace, monospace">← ${escapeHtml(formatPerpPx(maxHigh))}</text>`;
+    const loX = plotL + minLowIdx * step + step / 2;
+    const loY = yOf(minLow);
+    const loRight = minLowIdx > list.length * 0.55;
+    const loPin = loRight
+      ? `<text x="${(loX - 4).toFixed(1)}" y="${Math.min(candleBottom - 2, loY + 3).toFixed(1)}" text-anchor="end" fill="#e2e8f0" font-size="8.2" font-family="ui-monospace, monospace">${escapeHtml(formatPerpPx(minLow))} →</text>`
+      : `<text x="${(loX + 4).toFixed(1)}" y="${Math.min(candleBottom - 2, loY + 3).toFixed(1)}" text-anchor="start" fill="#e2e8f0" font-size="8.2" font-family="ui-monospace, monospace">← ${escapeHtml(formatPerpPx(minLow))}</text>`;
+
+    // Separator between candle and volume zones + Live Mark Price indicator
     let markSvg = `<line x1="${plotL}" y1="${volTop - 4}" x2="${plotR}" y2="${volTop - 4}" stroke="rgba(255,255,255,0.06)" stroke-width="0.8" />`;
     const livePx = (market && Number(market.markPx)) || list[list.length - 1].c;
     if (Number.isFinite(livePx) && livePx > 0) {
       const ym = yOf(livePx);
-      const pillY = Math.max(2, Math.min(candleBottom - 10, ym - 6));
-      markSvg += `<line x1="${plotL}" y1="${ym.toFixed(1)}" x2="${plotR}" y2="${ym.toFixed(1)}" stroke="#00ec97" stroke-dasharray="3 2" stroke-width="0.9" stroke-opacity="0.8" />` +
-        `<rect x="278" y="${pillY.toFixed(1)}" width="58" height="13" rx="3" fill="rgba(0,236,151,0.22)" stroke="rgba(0,236,151,0.65)" stroke-width="0.7" />` +
-        `<text x="282" y="${(pillY + 9.5).toFixed(1)}" fill="#00ec97" font-size="8.5" font-weight="700" font-family="ui-monospace, monospace">${escapeHtml(formatPerpPx(livePx))}</text>`;
+      const pillY = Math.max(candleTop, Math.min(candleBottom - 13, ym - 6.5));
+      markSvg += `<line x1="${plotL}" y1="${ym.toFixed(1)}" x2="${plotR}" y2="${ym.toFixed(1)}" stroke="#00ec97" stroke-dasharray="3 2" stroke-width="0.95" stroke-opacity="0.85" />` +
+        `<rect x="296" y="${pillY.toFixed(1)}" width="62" height="13" rx="3" fill="rgba(0,236,151,0.22)" stroke="rgba(0,236,151,0.7)" stroke-width="0.7" />` +
+        `<text x="300" y="${(pillY + 9.5).toFixed(1)}" fill="#00ec97" font-size="8.2" font-weight="700" font-family="ui-monospace, monospace">${escapeHtml(formatPerpPx(livePx))}</text>`;
     }
 
-    return `<svg viewBox="0 0 ${W} ${H}" class="perp-chart-svg" preserveAspectRatio="xMidYMid meet">${gridSvg}${candleSvg}${markSvg}</svg>`;
+    return `<svg viewBox="0 0 ${W} ${H}" class="perp-chart-svg" preserveAspectRatio="xMidYMid meet">${legendSvg}${gridSvg}${timeGridSvg}${candleSvg}${maSvg}${hiPin}${loPin}${markSvg}</svg>`;
   }
 
   function renderPerpOrderbook() {
@@ -598,7 +671,7 @@
       const volText = typeof m.dayNtlVlm === 'number' && m.dayNtlVlm > 0 ? `${t('量', 'Vol')} ${formatCompactUsd(m.dayNtlVlm)}` : '--';
       const isFav = favSet.has(m.name);
       const iconHtml = tokens && typeof tokens.renderTokenIconWithBadge === 'function'
-        ? tokens.renderTokenIconWithBadge({ symbol: m.baseSymbol || m.name, blockchain: dexTag ? 'eth' : 'hype' }, 30, false)
+        ? tokens.renderTokenIconWithBadge({ symbol: m.name, blockchain: 'hype' }, 30, false)
         : '';
 
       return `
@@ -669,7 +742,7 @@
     const dexTag = (market && market.dex) || extractPerpDexBadge(coinRaw);
     const coinIconEl = $('perp-coin-icon');
     if (coinIconEl && tokens && typeof tokens.renderTokenIconWithBadge === 'function') {
-      coinIconEl.innerHTML = tokens.renderTokenIconWithBadge({ symbol: (market && market.baseSymbol) || coinRaw, blockchain: dexTag ? 'eth' : 'hype' }, 20, false);
+      coinIconEl.innerHTML = tokens.renderTokenIconWithBadge({ symbol: coinRaw, blockchain: 'hype' }, 20, false);
     }
     const coinNameEl = $('perp-coin-name');
     const favCurrentBtn = $('btn-perp-fav-current');
@@ -719,6 +792,7 @@
     const chartSvgEl = $('perp-chart-svg');
     const chartHlEl = $('perp-chart-hl');
     if (chartWrap) chartWrap.classList.toggle('hidden', !st.perp.showChart);
+    $('btn-perp-chart-toggle')?.classList.toggle('active', Boolean(st.perp.showChart));
     if (chartSvgEl && st.perp.showChart) {
       chartSvgEl.innerHTML = renderPerpCandleSvg(st.perp.candles, market);
       if (chartHlEl) {
@@ -813,7 +887,7 @@
     const coin = st.perp.selectedCoin || 'BTC';
     const iv = st.perp.chartInterval || '15m';
     const tasks = [hl.fetchHlOrderbook(coin).catch(() => null)];
-    if (st.perp.showChart) tasks.push(hl.fetchHlCandles(coin, iv, 48).catch(() => []));
+    if (st.perp.showChart) tasks.push(hl.fetchHlCandles(coin, iv, 64).catch(() => []));
     const [ob, candles] = await Promise.all(tasks);
     if (st.perp.selectedCoin !== coin) return;
     if (ob) st.perp.orderbook = ob;
@@ -823,7 +897,7 @@
 
   function setPerpChartInterval(interval) {
     const st = getState();
-    st.perp.chartInterval = ['5m', '15m', '1h', '4h'].includes(String(interval)) ? String(interval) : '15m';
+    st.perp.chartInterval = ['5m', '15m', '1h', '4h', '1d'].includes(String(interval)) ? String(interval) : '15m';
     st.perp.showChart = true;
     renderPerpView();
     refreshPerpOrderbookAndCandlesAsync().catch(() => {});
@@ -1071,7 +1145,7 @@
       const pairLabel = m.pairLabel || formatPerpDisplayPair(m.name);
       const dexTag = m.dex || extractPerpDexBadge(m.name);
       const iconHtml = tokens && typeof tokens.renderTokenIconWithBadge === 'function'
-        ? tokens.renderTokenIconWithBadge({ symbol: m.baseSymbol || m.name, blockchain: dexTag ? 'eth' : 'hype' }, 28, false)
+        ? tokens.renderTokenIconWithBadge({ symbol: m.name, blockchain: 'hype' }, 28, false)
         : '';
       const volText = typeof m.dayNtlVlm === 'number' && m.dayNtlVlm > 0 ? `${t('量', 'Vol')} ${formatCompactUsd(m.dayNtlVlm)}` : '';
       return `

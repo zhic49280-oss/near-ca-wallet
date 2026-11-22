@@ -47,14 +47,19 @@ body {
   font-size: 14px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
   overscroll-behavior-y: contain;
+}
+
+html {
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 body {
   position: relative;
   display: flex;
   justify-content: center;
+  overflow-x: clip;
 }
 
 /* Ambient NEAR Emerald + Cyan Atmospheric Glow */

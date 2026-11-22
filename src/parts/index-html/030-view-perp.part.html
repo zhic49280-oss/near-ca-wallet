@@ -101,13 +101,14 @@
               </div>
             </div>
 
-            <div id="perp-chart-wrap" class="perp-chart-wrap hidden">
+            <div id="perp-chart-wrap" class="perp-chart-wrap">
               <div class="flex items-center justify-between gap-2" style="margin-bottom: 6px;">
                 <div id="perp-interval-pills" class="flex gap-1">
                   <button type="button" class="filter-pill" data-iv="5m" onclick="setPerpChartInterval('5m')">5m</button>
                   <button type="button" class="filter-pill active" data-iv="15m" onclick="setPerpChartInterval('15m')">15m</button>
                   <button type="button" class="filter-pill" data-iv="1h" onclick="setPerpChartInterval('1h')">1h</button>
                   <button type="button" class="filter-pill" data-iv="4h" onclick="setPerpChartInterval('4h')">4h</button>
+                  <button type="button" class="filter-pill" data-iv="1d" onclick="setPerpChartInterval('1d')">1d</button>
                 </div>
                 <span id="perp-chart-hl" class="mono" style="font-size: 10.5px; color: var(--text-muted);">--</span>
               </div>
