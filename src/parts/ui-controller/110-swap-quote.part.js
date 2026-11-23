@@ -52,20 +52,20 @@
       const toMeta = tokens.getChainMeta(toToken.blockchain);
       if (sameChainDex) {
         if (fromToken.blockchain === 'near') {
-          routeBadge.textContent = t('NEAR 多池比价 (Ref + Rhea + 1Click)', 'NEAR Multi-Pool (Ref + Rhea + 1Click)');
+          routeBadge.textContent = t('NEAR 最优路由', 'NEAR Best Route');
         } else if (fromToken.blockchain === 'sol') {
-          routeBadge.textContent = t('Solana 多池比价 (Jupiter + Raydium)', 'Solana Multi-Pool (Jupiter + Raydium)');
+          routeBadge.textContent = t('Solana 最优路由', 'Solana Best Route');
         } else if (fromToken.blockchain === 'arc') {
-          routeBadge.textContent = t('Arc 主网 DEX 多池聚合 (KyberSwap + LI.FI)', 'Arc Mainnet DEX Aggregator (KyberSwap + LI.FI)');
+          routeBadge.textContent = t('Arc 最优路由', 'Arc Best Route');
         } else {
-          routeBadge.textContent = `${fromMeta.shortName} ${t('多池聚合 (Kyber + Para + OpenOcean)', 'Multi-Pool DEX (Kyber + Para)')}`;
+          routeBadge.textContent = `${fromMeta.shortName} ${t('多池聚合', 'Multi-Pool DEX')}`;
         }
       } else if (toToken.category === 'xstock' || fromToken.category === 'xstock') {
-        routeBadge.textContent = `${fromMeta.shortName} ➔ ${toMeta.shortName} · ${t('xStocks 跨链聚合', 'xStocks Bridge + DEX')}`;
+        routeBadge.textContent = `${fromMeta.shortName} ➔ ${toMeta.shortName} · ${t('xStocks 跨链聚合', 'xStocks Cross-Chain')}`;
       } else if (isPrlSwapToken(fromToken) !== isPrlSwapToken(toToken)) {
         routeBadge.textContent = t('多池跨链聚合', 'Multi-Pool Cross-Chain');
       } else {
-        routeBadge.textContent = `${fromMeta.shortName} ➔ ${toMeta.shortName} · ${t('超级多池聚合', 'Super-Aggregator')}`;
+        routeBadge.textContent = `${fromMeta.shortName} ➔ ${toMeta.shortName} · ${t('跨链最优聚合', 'Best Cross-Chain')}`;
       }
       routeBadge.title = routeBadge.textContent || '';
     }
@@ -227,13 +227,14 @@
     const st = getState();
     const el = $('swap-error-banner');
     const routeEl = $('swap-quote-route');
+    const text = msg ? String(msg) : '';
     if (el) {
-      el.classList.add('hidden');
-      el.textContent = '';
+      el.textContent = text;
+      el.classList.toggle('hidden', !text);
     }
-    st.swap._lastError = msg ? String(msg) : '';
-    if (msg && routeEl && (!routeEl.textContent || routeEl.textContent === '--' || routeEl.textContent.includes('比价') || routeEl.textContent.includes('Comparing'))) {
-      routeEl.textContent = msg;
+    st.swap._lastError = text;
+    if (text && routeEl && (!routeEl.textContent || routeEl.textContent === '--' || routeEl.textContent.includes('比价') || routeEl.textContent.includes('Comparing'))) {
+      routeEl.textContent = text;
     }
     updateSwapPrimaryButtonState();
   }
@@ -273,7 +274,7 @@
     const amountRaw = intents.toBaseUnits(amtInputStr, fromToken.decimals);
     if (amountRaw === '0') {
       st.swap._quoting = false;
-      updateSwapPrimaryButtonState();
+      setSwapError(t('输入金额过小', 'Amount too small'));
       return;
     }
 
@@ -284,7 +285,7 @@
     };
     const isStaleReq = () => st.swap.amountIn !== reqSnapshot.amountIn || st.swap.fromAssetId !== reqSnapshot.fromId || st.swap.toAssetId !== reqSnapshot.toId;
 
-    const cacheKey = `${fromToken.assetId}|${toToken.assetId}|${amountRaw}|${st.swap.slippageBps || 100}|${st.swap.recipientAddress || ''}`;
+    const cacheKey = `${wallet.id || ''}|${fromToken.assetId}|${toToken.assetId}|${amountRaw}|${st.swap.slippageBps || 100}|${st.swap.recipientAddress || ''}`;
     const cached = _swapQuoteCache.get(cacheKey);
     if (cached && (Date.now() - cached.ts < 15000)) {
       st.swap._quoting = false;

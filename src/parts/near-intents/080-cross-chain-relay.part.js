@@ -39,7 +39,10 @@
     const smartPromise = quoteSmartHubRoute(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'smart route failed' }));
     const legacyPromise = quoteCrossChainWithDexRelayLegacy(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'legacy failed' }));
     const confPromise = tryConfidential
-      ? quoteNearcomConfidentialSwap({ ...params, dry: true }).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'confidential quote failed' }))
+      ? Promise.race([
+          quoteNearcomConfidentialSwap({ ...params, dry: true }).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'confidential quote failed' })),
+          new Promise((resolve) => setTimeout(() => resolve({ ok: false, error: 'confidential quote timeout' }), 3500))
+        ])
       : Promise.resolve({ ok: false, error: 'skipped' });
 
     // Never let multi-stage Smart Hub route block swap quote > 2000ms after a direct/legacy route has succeeded

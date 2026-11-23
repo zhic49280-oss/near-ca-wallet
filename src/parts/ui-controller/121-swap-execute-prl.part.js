@@ -12,7 +12,7 @@
           inputDecimals: fromToken.decimals,
           tokenSymbol: fromToken.symbol
         });
-        const prlOutRaw = (st.swap.quoteData && st.swap.quoteData.refQuote && st.swap.quoteData.refQuote.amountOut) || refRes.amountOut;
+        const prlOutRaw = refRes.amountOut || (st.swap.quoteData && st.swap.quoteData.refQuote && st.swap.quoteData.refQuote.amountOut);
         if (!prlOutRaw) throw new Error(t('Ref Finance 成交后未获得预期 PRL 数量', 'Missing PRL amount after Ref swap'));
         const bridgeQuote = await intents.quoteIntentSwapOrWithdraw({
           originAsset: intents.PRL_NEAR_ASSET_ID,
@@ -24,9 +24,30 @@
           depositType: 'ORIGIN_CHAIN',
           recipientType: 'DESTINATION_CHAIN',
           dry: false
-        });
+        }).catch((err) => ({ ok: false, error: err && err.message ? err.message : 'Bridge quote failed' }));
         if (!bridgeQuote.ok || !bridgeQuote.depositAddress) {
-          throw new Error(bridgeQuote.error || t('获取 PRL 跨链桥路由失败', 'Failed to get PRL bridge route'));
+          st.swap.activeOrder = {
+            walletId: wallet.id,
+            depositAddress: refRes.txHash || `near_prl_${Date.now()}`,
+            status: 'SUCCESS',
+            fromSymbol: fromToken.symbol,
+            toSymbol: toToken.symbol,
+            originTxHash: refRes.txHash || '',
+            autoBroadcasted: true,
+            createdAt: Date.now(),
+            followUpFailed: true,
+            followUpError: bridgeQuote.error || t('获取 PRL 跨链桥路由失败，请点击继续重试', 'Failed to get PRL bridge route; tap Resume to retry'),
+            followUpBridgeOut: {
+              destinationAsset: intents.PRL_PEARL_ASSET_ID,
+              recipient,
+              expectedInRaw: prlOutRaw,
+              slippageBps: st.swap.slippageBps,
+              toSymbol: toToken.symbol
+            }
+          };
+          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+          renderSwapOrderCard();
+          throw new Error(bridgeQuote.error || t('获取 PRL 跨链桥路由失败，请点击订单卡片中的“继续执行下一步”重试', 'Failed to get PRL bridge route; tap Resume in the order card'));
         }
         const prlHuman = intents.fromBaseUnits(prlOutRaw, 8);
         const sendBridge = await contracts.executeNearNep141Transfer({

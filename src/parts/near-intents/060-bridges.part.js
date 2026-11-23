@@ -13,6 +13,7 @@
     originCurrency,
     destinationCurrency,
     amount,
+    slippageBps = 100,
     signal = null
   } = {}) {
     try {
@@ -23,21 +24,25 @@
       if (!u) {
         return { ok: false, error: t('缺少有效的 EVM 地址', 'Valid EVM address required for Relay bridge quote') };
       }
+      const reqBody = {
+        user: u,
+        recipient: r,
+        originChainId: Number(originChainId),
+        destinationChainId: Number(destinationChainId),
+        originCurrency,
+        destinationCurrency,
+        amount: String(amount),
+        tradeType: 'EXACT_INPUT'
+      };
+      if (Number.isFinite(Number(slippageBps)) && Number(slippageBps) > 0) {
+        reqBody.slippageTolerance = String(Math.round(Number(slippageBps)));
+      }
       const resp = await fetchJsonWithTimeout(
         RELAY_API_URL,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            user: u,
-            recipient: r,
-            originChainId: Number(originChainId),
-            destinationChainId: Number(destinationChainId),
-            originCurrency,
-            destinationCurrency,
-            amount: String(amount),
-            tradeType: 'EXACT_INPUT'
-          }),
+          body: JSON.stringify(reqBody),
           signal
         },
         DEFAULT_TIMEOUT_MS

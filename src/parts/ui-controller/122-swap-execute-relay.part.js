@@ -233,6 +233,9 @@
         const preArcRes = needsArcDexSwap
           ? await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null)
           : null;
+        if (needsArcDexSwap && !preArcRes) {
+          throw new Error(t('无法读取 Arc 网络初始余额，请稍后重试', 'Failed to read pre-bridge Arc balance; please retry'));
+        }
         let bridgeResTx = null;
         if (bQuote && bQuote.provider === 'LI.FI' && bQuote.transactionRequest) {
           const lRes = await contracts.executeEvmDexSwap({
@@ -421,6 +424,9 @@
         const preBaseRes = hasStage3
           ? await contracts.fetchEvmNativeAndErc20Balance('base', evmAddr, intents.BASE_USDC_EVM, 6).catch(() => null)
           : null;
+        if (hasStage3 && !preBaseRes) {
+          throw new Error(t('无法读取 Base 链初始余额，请稍后重试', 'Failed to read pre-bridge Base balance; please retry'));
+        }
         let rTx = null;
         let bridgeOutRaw = String(activeQuote.baseOutRaw || arcUsdcRaw);
         const arcBQuote = activeQuote.bridgeQuote;
@@ -510,6 +516,7 @@
         depositType: 'ORIGIN_CHAIN',
         recipientType: 'DESTINATION_CHAIN',
         appFeeBps: isPearlToExternal ? 0 : 25,
+        deadlineIso: fromToken.blockchain === 'btc' ? new Date(Date.now() + 90 * 60 * 1000).toISOString() : undefined,
         dry: false
       });
       if (!liveQuote.ok || !liveQuote.depositAddress) {

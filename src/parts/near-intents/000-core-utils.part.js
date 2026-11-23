@@ -10,6 +10,12 @@
   const SOLVER_RELAY_URL = 'https://solver-relay-v2.chaindefuser.com/rpc';
   const INTENTS_CONTRACT_ID = 'intents.near';
   const DEFAULT_REFERRAL_ACCOUNT = 'zhic49280.near';
+  const APP_FEE_CONFIG = {
+    SWAP_CROSS_CHAIN_BPS: 25,
+    SWAP_SAME_CHAIN_BPS: 0,
+    SEND_CROSS_CHAIN_BPS: 0,
+    CONFIDENTIAL_MIN_FEE_USD: 0.01
+  };
   const DEFAULT_TIMEOUT_MS = 8000;
   const _rpc429Until = Object.create(null);
   const _rpcInFlight = new Map();

@@ -344,12 +344,17 @@
       const fromChainName = toNearcomChainName(fromBc);
       const toChainName = toNearcomChainName(toBc);
 
+      const grossUsdNum = quoteObj.quote.amountOutUsd ? Number(quoteObj.quote.amountOutUsd) : NaN;
+      const netOutUsd = Number.isFinite(grossUsdNum) && grossUsdNum > 0
+        ? (grossUsdNum * (1 - feeBps / 10000)).toFixed(4)
+        : (quoteObj.quote.amountOutUsd || null);
+
       return {
         ok: true,
         compositeType: 'NEARCOM_CONFIDENTIAL_SWAP',
         routeSource: 'NEARCOM_CONFIDENTIAL_1CS',
-        bestSource: 'near.com 1CS Confidential',
-        routeLabel: '⚡ near.com Confidential Intents (1CS)',
+        bestSource: 'near.com 1CS',
+        routeLabel: '⚡ Confidential Intents',
         depositAddress: null,
         memo: null,
         amountOut: netOut.toString(),
@@ -358,7 +363,7 @@
         feeRecipient: DEFAULT_REFERRAL_ACCOUNT,
         amountOutFormatted: fromBaseUnits(netOut.toString(), destDecimals),
         amountInUsd: quoteObj.quote.amountInUsd || null,
-        amountOutUsd: quoteObj.quote.amountOutUsd || null,
+        amountOutUsd: netOutUsd,
         serviceFeeBps: feeBps,
         confidentialQuote: quoteObj,
         originAsset: confOriginAsset,
@@ -570,10 +575,14 @@
       throw new Error(t('机密兑换输出金额无效', 'Invalid confidential swap settled output'));
     }
 
-    // Step B: 0.25% Fee Collection via Confidential Internal Send (best-effort; never blocks user withdrawal)
+    // Step B: 0.25% Fee Collection via Confidential Internal Send (best-effort; skip micro-dust < $0.01)
     let actualFeeSentBig = 0n;
     const effFeeBps = Number.isFinite(Number(feeBps)) ? Math.max(0, Math.round(Number(feeBps))) : 0;
-    if (effFeeBps > 0 && feeRecipient && String(feeRecipient).toLowerCase() !== creds.signerId) {
+    const quoteOutUsd = swapQuoteOk.quote && swapQuoteOk.quote.amountOutUsd ? Number(swapQuoteOk.quote.amountOutUsd) : null;
+    const estFeeUsd = (quoteOutUsd && effFeeBps > 0) ? (quoteOutUsd * effFeeBps) / 10000 : null;
+    const minFeeUsd = (typeof APP_FEE_CONFIG !== 'undefined' && APP_FEE_CONFIG.CONFIDENTIAL_MIN_FEE_USD) || 0.01;
+    const feeAboveMin = estFeeUsd === null || estFeeUsd >= minFeeUsd;
+    if (effFeeBps > 0 && feeAboveMin && feeRecipient && String(feeRecipient).toLowerCase() !== creds.signerId) {
       const targetFeeBig = (settledOutBig * BigInt(effFeeBps)) / 10000n;
       if (targetFeeBig > 0n) {
         try {
