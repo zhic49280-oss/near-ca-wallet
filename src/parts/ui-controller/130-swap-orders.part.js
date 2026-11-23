@@ -113,6 +113,7 @@
     const contracts = getContracts();
     if (!order || order._followUpInFlight || order.followUpExecuted) return;
     const hasFollowUp = Boolean(
+      order.followUpConfidentialSwap ||
       order.followUpRefSwap ||
       order.followUpBridgeOut ||
       order.followUpSolDexSwap ||
@@ -129,6 +130,29 @@
     order._followUpInFlight = true;
     order.followUpFailed = false;
     try {
+      if (order.followUpConfidentialSwap && typeof intents.executeNearcomConfidentialSwapAndWithdraw === 'function') {
+        const conf = order.followUpConfidentialSwap;
+        const confRes = await intents.executeNearcomConfidentialSwapAndWithdraw({
+          wallet,
+          originAsset: conf.originAsset,
+          destinationAsset: conf.destinationAsset,
+          destinationChain: conf.destinationChain,
+          amountInRaw: conf.amountInRaw,
+          slippageBps: conf.slippageBps || 100,
+          recipient: conf.recipient,
+          feeBps: conf.feeBps !== undefined ? conf.feeBps : 25,
+          feeRecipient: conf.feeRecipient || intents.DEFAULT_REFERRAL_ACCOUNT
+        });
+        order.status = 'COMPLETED';
+        order.followUpExecuted = true;
+        order.followUpFailed = false;
+        order.confidentialSwapIntentHash = confRes.swapIntentHash || null;
+        order.confidentialWithdrawIntentHash = confRes.withdrawIntentHash || null;
+        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+        renderSwapOrderCard();
+        showToast(`✅ ${t('near.com 机密意图兑换与提现已自动完成', 'near.com confidential swap & withdraw completed')}`);
+        return;
+      }
       if (order.followUpRefSwap) {
         const follow = order.followUpRefSwap;
         const swapFn = (follow.isDcl && Array.isArray(follow.poolIds) && follow.poolIds.length > 0 && contracts?.executeNearDclPoolSwap)
@@ -581,6 +605,26 @@
         }
       }
       return;
+    }
+    if (order.followUpConfidentialSwap && order.followUpConfidentialSwap.depositProof && !order.followUpExecuted && !order.followUpFailed && typeof intents.fetchNearcomConfidentialDepositStatus === 'function') {
+      const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
+      if (wallet) {
+        const depRes = await intents.fetchNearcomConfidentialDepositStatus({ wallet, proof: order.followUpConfidentialSwap.depositProof }).catch(() => null);
+        if (depRes && depRes.ok && depRes.status) {
+          order.status = depRes.status;
+          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+          renderSwapOrderCard();
+          const upper = String(depRes.status).toUpperCase();
+          if (['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED', 'FAILED_EXECUTION'].includes(upper)) {
+            if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
+            if (['SUCCESS', 'COMPLETED'].includes(upper)) {
+              await runActiveSwapFollowUp(order);
+            }
+            refreshAllBalancesAsync(false);
+          }
+          return;
+        }
+      }
     }
     const res = await intents.fetchSwapOrderStatus(order.depositAddress);
     if (res.ok && res.status) {

@@ -60,7 +60,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-nearcom-cli-version',
       'Access-Control-Max-Age': '86400'
     });
     res.end();
@@ -150,6 +150,72 @@ const server = http.createServer((req, res) => {
     });
     proxyReq.on('timeout', () => proxyReq.destroy(new Error('Upstream timeout')));
     proxyReq.on('error', (err) => sendJsonError(res, 502, err.message));
+    return;
+  }
+
+  if (reqUrlStr.startsWith('/nearcom-proxy')) {
+    const parsed = safeParseReqUrl(reqUrlStr);
+    const pathParam = parsed ? parsed.searchParams.get('path') : null;
+    const targetUrl = isSafeProxyPath(
+      pathParam,
+      ['/api/auth/', '/api/deposit/', '/api/swap/', '/api/withdraw/', '/api/account/', '/api/earn/', '/api/perps/'],
+      'near.com'
+    );
+    if (!targetUrl) {
+      sendJsonError(res, 400, 'Invalid path parameter');
+      return;
+    }
+    const chunks = [];
+    let totalLen = 0;
+    let bodyTooLarge = false;
+    req.on('data', (c) => {
+      if (bodyTooLarge) return;
+      totalLen += c.length;
+      if (totalLen > MAX_PROXY_BODY_BYTES) {
+        bodyTooLarge = true;
+        sendJsonError(res, 413, 'Payload Too Large');
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('error', () => {
+      sendJsonError(res, 400, 'Request stream error');
+    });
+    req.on('end', () => {
+      if (bodyTooLarge) return;
+      const bodyBuf = Buffer.concat(chunks);
+      const headers = {
+        'Accept': 'application/json',
+        'x-nearcom-cli-version': req.headers['x-nearcom-cli-version'] || '0.4.0'
+      };
+      if (req.headers['authorization']) {
+        headers['Authorization'] = req.headers['authorization'];
+      }
+      if (bodyBuf.length > 0) {
+        headers['Content-Type'] = req.headers['content-type'] || 'application/json';
+        headers['Content-Length'] = bodyBuf.length;
+      }
+      const opts = {
+        method: req.method || 'GET',
+        hostname: 'near.com',
+        path: `${targetUrl.pathname}${targetUrl.search}`,
+        agent: keepAliveHttpsAgent,
+        timeout: UPSTREAM_TIMEOUT_MS,
+        headers
+      };
+      const proxyReq = https.request(opts, (proxyRes) => {
+        res.writeHead(proxyRes.statusCode || 200, {
+          'Content-Type': proxyRes.headers['content-type'] || 'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*'
+        });
+        proxyRes.pipe(res);
+      });
+      proxyReq.on('timeout', () => proxyReq.destroy(new Error('Upstream timeout')));
+      proxyReq.on('error', (err) => sendJsonError(res, 502, err.message));
+      if (bodyBuf.length > 0) proxyReq.write(bodyBuf);
+      proxyReq.end();
+    });
     return;
   }
 

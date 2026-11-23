@@ -125,8 +125,9 @@
 
     const compType = quoteData && quoteData.compositeType ? String(quoteData.compositeType) : '';
     const stages = quoteData && Array.isArray(quoteData.stages) ? quoteData.stages : [];
+    const isConfidential = compType === 'NEARCOM_CONFIDENTIAL_SWAP';
 
-    const needsNearHub = Boolean(
+    const needsNearHub = !isConfidential && Boolean(
       (compType === 'SMART_HUB_ROUTE' && stages.some((s) => s && (s.type === 'NEAR_SWAP' || s.type === 'BRIDGE_OUT'))) ||
       ((isPrlSwapToken(fromToken) !== isPrlSwapToken(toToken)) && !isDirectOneClickQuote(quoteData)) ||
       ['PRL_TO_EXTERNAL', 'EXTERNAL_TO_PRL', 'PRL_TO_NEAR_DCL', 'PRL_TO_NEAR_REF'].includes(compType)
@@ -388,6 +389,7 @@
 
     if (quoteData) {
       const compType = String(quoteData.compositeType || '');
+      if (compType === 'NEARCOM_CONFIDENTIAL_SWAP') return false;
       const stages = Array.isArray(quoteData.stages) ? quoteData.stages : [];
       if (compType === 'SMART_HUB_ROUTE' && stages.length > 0) {
         const lastType = stages[stages.length - 1]?.type;

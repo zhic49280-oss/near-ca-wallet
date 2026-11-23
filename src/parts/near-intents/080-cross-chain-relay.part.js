@@ -7,6 +7,10 @@
     if (fromBc === 'arc' || toBc === 'arc') return quoteCrossChainWithDexRelayLegacy(params);
 
     const prlInvolved = isPrlAssetId(fromToken.assetId) || isPrlAssetId(toToken.assetId);
+    const isQtcAsset = (tok) => /qtc\.omft\.near/i.test(String(tok && tok.assetId || '')) || String(tok && tok.blockchain || '').toLowerCase() === 'qtc';
+    const qtcInvolved = isQtcAsset(fromToken) || isQtcAsset(toToken);
+    const hasConfCreds = Boolean(params.nearPrivateSeedHex && params.nearPublicKey && (params.nearImplicitAddress || params.nearAddress));
+    const tryConfidential = Boolean(hasConfCreds && (prlInvolved || qtcInvolved) && !(isPrlAssetId(fromToken.assetId) && isPrlAssetId(toToken.assetId)));
     const isOneClickDirectAsset = (tok) => /^(nep141:|nep245:|1cs_v1:)/i.test(String(resolveOneClickAssetId(tok, tok.blockchain) || ''));
     const isDexOnlySol = toBc === 'sol' && Boolean(toToken.contractAddress) && toToken.contractAddress !== SOL_NATIVE_WSOL && !isOneClickDirectAsset(toToken);
     const isDexOnlyEvm = ['eth', 'base', 'arb', 'op', 'pol', 'avax', 'bsc', 'hood'].includes(toBc) && Boolean(toToken.contractAddress) && toToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL && !isOneClickDirectAsset(toToken);
@@ -15,7 +19,7 @@
 
     // Fast path: direct 1Click-to-1Click pair (e.g. NEAR -> SOL/ETH/USDC) runs in 1 single request (~1s);
     // only falls back to multi-hub Smart Hub Router when direct quote fails.
-    if (!prlInvolved && !isDexOnlySol && !isDexOnlyEvm && !isOriginDexOnly && isOneClickDirectAsset(fromToken) && isOneClickDirectAsset(toToken)) {
+    if (!prlInvolved && !qtcInvolved && !isDexOnlySol && !isDexOnlyEvm && !isOriginDexOnly && isOneClickDirectAsset(fromToken) && isOneClickDirectAsset(toToken)) {
       const legacyDirect = await quoteCrossChainWithDexRelayLegacy(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'legacy failed' }));
       if ((signal && signal.aborted) || (legacyDirect && legacyDirect.ok && /^\d+$/.test(String(legacyDirect.amountOut || '')) && BigInt(legacyDirect.amountOut) > 0n)) {
         return legacyDirect;
@@ -26,6 +30,9 @@
 
     const smartPromise = quoteSmartHubRoute(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'smart route failed' }));
     const legacyPromise = quoteCrossChainWithDexRelayLegacy(params).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'legacy failed' }));
+    const confPromise = tryConfidential
+      ? quoteNearcomConfidentialSwap({ ...params, dry: true }).catch((e) => ({ ok: false, error: e && e.message ? e.message : 'confidential quote failed' }))
+      : Promise.resolve({ ok: false, error: 'skipped' });
 
     // Never let multi-stage Smart Hub route block swap quote > 2000ms after a direct/legacy route has succeeded
     const cappedSmartPromise = new Promise((resolve) => {
@@ -46,22 +53,38 @@
       });
     });
 
-    const [smart, legacy] = await Promise.all([cappedSmartPromise, legacyPromise]);
+    const [smart, legacy, conf] = await Promise.all([cappedSmartPromise, legacyPromise, confPromise]);
     const smartOk = smart && smart.ok;
     const legacyOk = legacy && legacy.ok && /^\d+$/.test(String(legacy.amountOut || '')) && BigInt(legacy.amountOut) > 0n;
+    const confOk = conf && conf.ok && /^\d+$/.test(String(conf.amountOut || '')) && BigInt(conf.amountOut) > 0n;
+
+    let bestLegacyOrSmart = null;
     if (smartOk && legacyOk) {
-      if (prlInvolved && legacy.compositeType) return smart;
-      const sBig = BigInt(smart.amountOut);
-      const lBig = BigInt(legacy.amountOut);
-      const sStages = Array.isArray(smart.stages) ? smart.stages.length : 2;
-      const lStages = Array.isArray(legacy.stages) ? legacy.stages.length : (legacy.compositeType ? 2 : 1);
-      // Prefer fewer stages unless the extra stage beats it by > 0.3%; on equal stages & equal output, preserve legacy compositeType
-      if (lStages < sStages && sBig * 1000n <= lBig * 1003n) return legacy;
-      if (sStages < lStages && lBig * 1000n <= sBig * 1003n) return smart;
-      return sBig > lBig ? smart : legacy;
+      if (prlInvolved && legacy.compositeType) bestLegacyOrSmart = smart;
+      else {
+        const sBig = BigInt(smart.amountOut);
+        const lBig = BigInt(legacy.amountOut);
+        const sStages = Array.isArray(smart.stages) ? smart.stages.length : 2;
+        const lStages = Array.isArray(legacy.stages) ? legacy.stages.length : (legacy.compositeType ? 2 : 1);
+        if (lStages < sStages && sBig * 1000n <= lBig * 1003n) bestLegacyOrSmart = legacy;
+        else if (sStages < lStages && lBig * 1000n <= sBig * 1003n) bestLegacyOrSmart = smart;
+        else bestLegacyOrSmart = sBig > lBig ? smart : legacy;
+      }
+    } else if (smartOk) {
+      bestLegacyOrSmart = smart;
+    } else if (legacyOk) {
+      bestLegacyOrSmart = legacy;
     }
-    if (smartOk) return smart;
-    if (legacyOk) return legacy;
+
+    if (confOk && bestLegacyOrSmart) {
+      const cBig = BigInt(conf.amountOut);
+      const oBig = BigInt(bestLegacyOrSmart.amountOut);
+      // Prefer Confidential 1CS (0 NEAR gas, 1-step solver) unless legacy/smart beats it by > 0.3%
+      if (oBig * 1000n <= cBig * 1003n) return conf;
+      return bestLegacyOrSmart;
+    }
+    if (confOk) return conf;
+    if (bestLegacyOrSmart) return bestLegacyOrSmart;
     return (smart && smart.error && smart.error !== 'same-chain') ? smart : legacy;
   }
   async function quoteCrossChainWithDexRelayLegacy({

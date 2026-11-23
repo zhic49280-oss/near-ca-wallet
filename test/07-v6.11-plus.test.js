@@ -1581,3 +1581,220 @@ test('v6.33: DAPP_CATALOG uses live near.com & updated ecosystem URLs without de
     assert.equal(urls.some((u) => u.includes(legacy)), false, `DAPP_CATALOG must not contain legacy URL: ${legacy}`);
   }
 });
+
+test('v6.34: near.com Confidential Intents (1CS) auth, 0-NEAR-gas PRL->USDC/QTC quote, 0.25% fee closure & /nearcom-proxy', async () => {
+  const near = await cryptoEngine.deriveNearFromSeedAsync(TEST_MNEMONIC);
+  const wallet = {
+    id: 'w_v634_conf',
+    nearAddress: near.nearAddress,
+    nearPublicKey: near.nearPublicKey,
+    nearPrivateSeedHex: near.nearPrivateSeedHex,
+    nearBalance: 0,
+    nativeBalances: { near: 0, prl: 200 }
+  };
+
+  // 1. Verify server.js & sw.js include /nearcom-proxy
+  const serverSrc = fs.readFileSync(path.join(ROOT_DIR, 'server.js'), 'utf8');
+  assert.ok(serverSrc.includes("reqUrlStr.startsWith('/nearcom-proxy')"), 'server.js must handle /nearcom-proxy');
+  assert.ok(serverSrc.includes("'near.com'"), 'server.js /nearcom-proxy must target near.com');
+  const swSrc = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
+  assert.ok(swSrc.includes('/nearcom-proxy'), 'sw.js must bypass cache for /nearcom-proxy');
+
+  // 2. Mock near.com Confidential Intents API & test quote + 0 NEAR gas + 3-stage execution with 0.25% fee
+  const mockJwt = 'eyJhbGciOiJSUzI1NiJ9.' + Buffer.from(JSON.stringify({ account_id: near.nearAddress, exp: Math.floor(Date.now() / 1000) + 900 })).toString('base64url') + '.sig';
+  const nonceArr = Array.from({ length: 32 }, (_, i) => i + 1);
+  const nonceB64 = Buffer.from(nonceArr).toString('base64');
+  const capturedCalls = [];
+
+  await withMockedFetch(async (url, opts) => {
+    const u = String(url);
+    const hdrs = (opts && opts.headers) || {};
+    const body = opts && opts.body ? JSON.parse(opts.body) : null;
+    capturedCalls.push({ url: u, method: opts && opts.method, headers: hdrs, body });
+
+    if (u.endsWith('/api/auth/message')) {
+      return jsonResponse({
+        message: {
+          message: JSON.stringify({
+            signer_id: near.nearAddress,
+            deadline: new Date(Date.now() + 300000).toISOString(),
+            intents: []
+          }),
+          recipient: 'intents.near',
+          nonce: nonceArr
+        }
+      });
+    }
+    if (u.endsWith('/api/auth/authenticate')) {
+      assert.equal(body.authMethod, 'near');
+      assert.equal(body.signedData.standard, 'nep413');
+      return jsonResponse({ accessToken: mockJwt, refreshToken: 'rt_1', expiresAt: Date.now() + 900000 });
+    }
+    if (u.endsWith('/api/account/balances')) {
+      assert.equal(hdrs['Content-Type'] || hdrs['content-type'], undefined, 'GET /api/account/balances must NOT send Content-Type');
+      assert.equal(hdrs['x-nearcom-cli-version'], '0.4.0');
+      return jsonResponse({ balances: [{ tokenId: 'nep141:prl.omft.near', available: '10000000000', source: 'private' }] });
+    }
+    if (u.endsWith('/api/swap/quote')) {
+      if (body.dry === false) {
+        assert.ok(body.idempotencyKey && body.idempotencyKey.length >= 16, 'dry=false swap quote requires idempotencyKey');
+      }
+      return jsonResponse({
+        ok: {
+          correlationId: 'corr_swap_1',
+          timestamp: new Date().toISOString(),
+          signature: 'ed25519:sig',
+          quoteRequest: { ...body, refundTo: near.nearAddress, recipient: near.nearAddress, depositType: 'CONFIDENTIAL_INTENTS', recipientType: 'CONFIDENTIAL_INTENTS', refundType: 'CONFIDENTIAL_INTENTS' },
+          quote: {
+            amountIn: body.amount,
+            amountOut: '200000000',
+            minAmountIn: body.amount,
+            minAmountOut: '198000000',
+            amountInUsd: '200.00',
+            amountOutUsd: '200.00',
+            depositAddress: 'swap_dep_addr_1'
+          },
+          appFee: []
+        }
+      });
+    }
+    if (u.endsWith('/api/swap/intent')) {
+      assert.equal(body.quote.appFee, undefined, 'appFee must be stripped before /api/swap/intent');
+      return jsonResponse({
+        ok: {
+          correlationId: 'corr_intent_1',
+          intent: {
+            standard: 'nep413',
+            payload: {
+              message: JSON.stringify({
+                signer_id: near.nearAddress,
+                deadline: new Date(Date.now() + 300000).toISOString(),
+                intents: [{ intent: 'transfer', receiver_id: 'swap_dep_addr_1', tokens: { 'imt:hash:nep141:prl.omft.near': '10000000000' } }]
+              }),
+              nonce: nonceB64,
+              recipient: 'intents.far'
+            }
+          }
+        }
+      });
+    }
+    if (u.endsWith('/api/swap/submit')) {
+      assert.equal(body.signedIntent.standard, 'nep413');
+      assert.equal(body.signedIntent.payload.recipient, 'intents.far');
+      return jsonResponse({ ok: { intentHash: 'swap_intent_hash_1', correlationId: 'corr_sub_1' } });
+    }
+    if (u.endsWith('/api/swap/status')) {
+      return jsonResponse({ ok: { status: 'SUCCESS', amountOut: '200000000', intentHashes: ['swap_intent_hash_1'] } });
+    }
+    if (u.endsWith('/api/withdraw/quote')) {
+      const depAddr = body.recipientType === 'CONFIDENTIAL_INTENTS' ? 'fee_dep_addr_1' : 'wd_dep_addr_1';
+      return jsonResponse({
+        ok: {
+          correlationId: 'corr_wd_1',
+          timestamp: new Date().toISOString(),
+          signature: 'ed25519:sig',
+          quoteRequest: body,
+          quote: {
+            amountIn: body.amount,
+            amountOut: body.amount,
+            minAmountOut: body.amount,
+            depositAddress: depAddr
+          },
+          appFee: []
+        }
+      });
+    }
+    if (u.endsWith('/api/withdraw/intent')) {
+      return jsonResponse({
+        ok: {
+          correlationId: 'corr_wdi_1',
+          intent: {
+            standard: 'nep413',
+            payload: {
+              message: JSON.stringify({
+                signer_id: near.nearAddress,
+                deadline: new Date(Date.now() + 300000).toISOString(),
+                intents: [{ intent: 'transfer', receiver_id: body.depositAddress, tokens: { 'imt:hash:nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1': '500000' } }]
+              }),
+              nonce: nonceB64,
+              recipient: 'intents.far'
+            }
+          }
+        }
+      });
+    }
+    if (u.endsWith('/api/withdraw/submit')) {
+      return jsonResponse({ ok: { intentHash: 'wd_intent_hash_1', correlationId: 'corr_wds_1' } });
+    }
+    return jsonResponse({ error: 'Not mocked' }, 404);
+  }, async () => {
+    const prlToken = {
+      symbol: 'PRL',
+      blockchain: 'prl',
+      assetId: 'nep141:prl.omft.near',
+      decimals: 8
+    };
+    const nearUsdcToken = {
+      symbol: 'USDC',
+      blockchain: 'near',
+      assetId: 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+      contractAddress: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+      decimals: 6
+    };
+
+    const q = await nearIntents.quoteNearcomConfidentialSwap({
+      fromToken: prlToken,
+      toToken: nearUsdcToken,
+      amountRaw: '10000000000',
+      slippageBps: 100,
+      wallet,
+      appFeeBps: 25,
+      dry: true
+    });
+    assert.equal(q.ok, true, q.error || 'quoteNearcomConfidentialSwap failed');
+    assert.equal(q.compositeType, 'NEARCOM_CONFIDENTIAL_SWAP');
+    assert.equal(q.grossAmountOut, '200000000');
+    assert.equal(q.feeAmountOut, '500000', '0.25% of 200 USDC = 0.50 USDC');
+    assert.equal(q.amountOut, '199500000', 'Net output after 0.25% fee = 199.50 USDC');
+    assert.equal(q.feeRecipient, nearIntents.DEFAULT_REFERRAL_ACCOUNT);
+
+    // 0 NEAR gas requirement & third-party recipient allowed
+    const gasCheck = uiController.validateSwapNearGasRequirement({
+      wallet,
+      fromToken: prlToken,
+      toToken: nearUsdcToken,
+      quoteData: q,
+      amountIn: 100
+    });
+    assert.equal(gasCheck.ok, true);
+    assert.equal(gasCheck.requiredNear, 0, 'Confidential swap must require 0 NEAR gas');
+    assert.equal(uiController.doesSwapRouteRequireSelfRecipient(prlToken, nearUsdcToken, q), false);
+
+    // Full 3-stage execution: Swap -> 0.25% Fee Internal Send -> Withdraw
+    const execRes = await nearIntents.executeNearcomConfidentialSwapAndWithdraw({
+      wallet,
+      originAsset: q.originAsset,
+      destinationAsset: q.destinationAsset,
+      destinationChain: q.destinationChain,
+      amountInRaw: '10000000000',
+      slippageBps: 100,
+      recipient: 'alice.near',
+      feeBps: 25,
+      feeRecipient: nearIntents.DEFAULT_REFERRAL_ACCOUNT
+    });
+    assert.equal(execRes.ok, true);
+    assert.equal(execRes.swapIntentHash, 'swap_intent_hash_1');
+    assert.equal(execRes.withdrawIntentHash, 'wd_intent_hash_1');
+    assert.equal(execRes.feeAmountRaw, '500000');
+    assert.equal(execRes.amountOut, '199500000');
+
+    const wdQuotes = capturedCalls.filter((c) => c.url.endsWith('/api/withdraw/quote'));
+    assert.equal(wdQuotes.length, 2, 'Must fire 1 internal fee send quote + 1 user destination withdraw quote');
+    assert.equal(wdQuotes[0].body.recipientType, 'CONFIDENTIAL_INTENTS');
+    assert.equal(wdQuotes[0].body.recipient, nearIntents.DEFAULT_REFERRAL_ACCOUNT);
+    assert.equal(wdQuotes[0].body.amount, '500000');
+    assert.equal(wdQuotes[1].body.recipientType, 'DESTINATION_CHAIN');
+    assert.equal(wdQuotes[1].body.recipient, 'alice.near');
+    assert.equal(wdQuotes[1].body.amount, '199500000');
+  });
+});

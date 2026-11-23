@@ -1,20 +1,20 @@
-﻿const CACHE_NAME = 'nexus-wallet-v6.33';
+﻿const CACHE_NAME = 'nexus-wallet-v6.34';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './style.css?v=6.33',
-  './assets/favicon.png?v=6.33',
-  './assets/nexus-logo-192.png?v=6.33',
-  './bip39-wordlist.js?v=6.33',
-  './src/crypto-engine.js?v=6.33',
-  './src/token-registry.js?v=6.33',
-  './src/near-intents.js?v=6.33',
-  './src/chain-contracts.js?v=6.33',
-  './src/limit-orders.js?v=6.33',
-  './src/hyperliquid-perps.js?v=6.33',
-  './src/state.js?v=6.33',
-  './src/dapp-browser.js?v=6.33',
-  './src/ui-controller.js?v=6.33'
+  './style.css?v=6.34',
+  './assets/favicon.png?v=6.34',
+  './assets/nexus-logo-192.png?v=6.34',
+  './bip39-wordlist.js?v=6.34',
+  './src/crypto-engine.js?v=6.34',
+  './src/token-registry.js?v=6.34',
+  './src/near-intents.js?v=6.34',
+  './src/chain-contracts.js?v=6.34',
+  './src/limit-orders.js?v=6.34',
+  './src/hyperliquid-perps.js?v=6.34',
+  './src/state.js?v=6.34',
+  './src/dapp-browser.js?v=6.34',
+  './src/ui-controller.js?v=6.34'
 ];
 
 self.addEventListener('install', (event) => {
@@ -43,7 +43,7 @@ self.addEventListener('fetch', (event) => {
   if (reqUrl.origin !== self.location.origin) {
     return;
   }
-  if (reqUrl.pathname.startsWith('/pearl-proxy') || reqUrl.pathname.startsWith('/kryptex-proxy')) {
+  if (reqUrl.pathname.startsWith('/pearl-proxy') || reqUrl.pathname.startsWith('/kryptex-proxy') || reqUrl.pathname.startsWith('/nearcom-proxy')) {
     return;
   }
   const isImmutableStatic = /[?&]v=|\.(?:js|css|svg|png|webp|jpe?g|avif|woff2?)$/i.test(reqUrl.pathname + reqUrl.search);

@@ -295,6 +295,9 @@
           recipient,
           refundTo,
           nearAccountId: nearId,
+          nearImplicitAddress: wallet.nearAddress,
+          nearPrivateSeedHex: wallet.nearPrivateSeedHex,
+          nearPublicKey: wallet.nearPublicKey,
           solAddress: wallet.solAddress,
           evmAddress: wallet.mpcEvmAddress || wallet.evmAddress,
           requireThirdPartyRecipient: isThirdParty
@@ -312,6 +315,67 @@
       // Composite PRL & Smart Hub Multi-Stage Routes
       const originIsPrl = isPrlSwapToken(fromToken);
       const destIsPrl = isPrlSwapToken(toToken);
+
+      if (activeQuote?.compositeType === 'NEARCOM_CONFIDENTIAL_SWAP' && typeof intents.requestNearcomConfidentialDeposit === 'function') {
+        const depRes = await intents.requestNearcomConfidentialDeposit({
+          wallet,
+          fromToken,
+          originAsset: activeQuote.originAsset,
+          originChain: activeQuote.originChain,
+          amountRaw
+        });
+        if (!depRes || !depRes.ok || !depRes.depositAddress) {
+          throw new Error((depRes && depRes.error) || t('创建 near.com 机密入金订单失败', 'Failed to create confidential deposit order'));
+        }
+        const inTx = await broadcastOriginDepositTx({
+          wallet,
+          fromToken,
+          amt,
+          avail,
+          depositAddress: depRes.depositAddress,
+          gasOverride: originGasOverride
+        });
+        if (!inTx || !inTx.txHash) {
+          throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
+        }
+        st.swap.activeOrder = {
+          walletId: wallet.id,
+          depositAddress: depRes.depositAddress,
+          memo: depRes.memo || null,
+          status: 'PENDING_DEPOSIT',
+          fromSymbol: fromToken.symbol,
+          toSymbol: toToken.symbol,
+          originTxHash: inTx.txHash,
+          autoBroadcasted: true,
+          createdAt: Date.now(),
+          followUpConfidentialSwap: {
+            depositProof: depRes.proof,
+            originAsset: activeQuote.originAsset,
+            destinationAsset: activeQuote.destinationAsset,
+            destinationChain: activeQuote.destinationChain,
+            destinationBlockchain: toToken.blockchain,
+            amountInRaw: amountRaw,
+            slippageBps: st.swap.slippageBps,
+            recipient,
+            feeBps: activeQuote.serviceFeeBps !== undefined ? activeQuote.serviceFeeBps : 25,
+            feeRecipient: intents.DEFAULT_REFERRAL_ACCOUNT
+          }
+        };
+        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+        recordWalletActivity(wallet, {
+          type: 'swap',
+          symbol: fromToken.symbol,
+          toSymbol: toToken.symbol,
+          chain: fromToken.blockchain,
+          amount: amt,
+          txHash: inTx.txHash,
+          title: `${fromToken.symbol} ➔ ${toToken.symbol}`
+        });
+        renderSwapOrderCard();
+        startOrderStatusPolling();
+        showToast(`✅ ${t('源链入金已广播，到账后将自动完成 near.com 机密兑换与提现', 'Deposit broadcast; will auto-complete confidential swap & withdraw')}`);
+        return;
+      }
 
       if (activeQuote?.compositeType === 'SMART_HUB_ROUTE' && Array.isArray(activeQuote.stages) && activeQuote.stages.length > 0) {
         let stages = activeQuote.stages.slice();
