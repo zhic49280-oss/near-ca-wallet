@@ -440,13 +440,18 @@
     for (const r of bidRows) if (r.sz > maxBidSz) maxBidSz = r.sz;
     for (const r of askRows) if (r.sz > maxAskSz) maxAskSz = r.sz;
 
+    const szDec = Number(getSelectedPerpMarket()?.szDecimals);
+    const fmtObSz = (v) => {
+      const dec = Number.isFinite(szDec) ? Math.max(0, Math.min(5, szDec)) : 3;
+      return Number(v || 0).toFixed(v >= 1000 ? Math.min(2, dec) : dec);
+    };
     bidsEl.innerHTML = bidRows.map((r) => {
       const pct = maxBidSz > 0 ? Math.max(6, (r.sz / maxBidSz) * 100) : 0;
-      return `<button type="button" class="perp-ob-row bid" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></div><span>${escapeHtml(r.sz.toFixed(3))}</span><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span></button>`;
+      return `<button type="button" class="perp-ob-row bid" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></div><span>${escapeHtml(fmtObSz(r.sz))}</span><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span></button>`;
     }).join('');
     asksEl.innerHTML = askRows.map((r) => {
       const pct = maxAskSz > 0 ? Math.max(6, (r.sz / maxAskSz) * 100) : 0;
-      return `<button type="button" class="perp-ob-row ask" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></div><span>${escapeHtml(r.sz.toFixed(3))}</span><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span></button>`;
+      return `<button type="button" class="perp-ob-row ask" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></div><span>${escapeHtml(fmtObSz(r.sz))}</span><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span></button>`;
     }).join('');
   }
 
@@ -1361,6 +1366,17 @@
     if (typeof st.loadCachedPerpSnapshot === 'function') {
       st.loadCachedPerpSnapshot();
     }
+    const existingPos = st.perp.account && Array.isArray(st.perp.account.positions)
+      ? st.perp.account.positions.find((p) => p.coin === nextCoin)
+      : null;
+    if (existingPos) {
+      if (existingPos.leverageType === 'cross' || existingPos.leverageType === 'isolated') {
+        st.perp.marginMode = existingPos.leverageType;
+      }
+      if (Number(existingPos.leverageValue) >= 1) {
+        st.perp.leverage = Math.round(Number(existingPos.leverageValue));
+      }
+    }
     closeAllSheets();
     renderPerpView();
     refreshPerpOrderbookAndCandlesAsync().catch(() => {});
@@ -1369,6 +1385,7 @@
 
   async function executePerpOrderUI() {
     const st = getState();
+    if (st.perp.submitting) return;
     const hl = getHyperliquid();
     const wallet = st.getActiveWallet();
     if (!hl || !wallet) return;
@@ -1379,16 +1396,34 @@
     }
     const market = getSelectedPerpMarket();
     if (!market) return;
+    const isBuy = st.perp.side === 'long';
+    const refPx = Number(st.perp.limitPriceInput) || Number(market.markPx) || 0;
+    const tpNum = st.perp.tpInput ? Number(st.perp.tpInput) : null;
+    const slNum = st.perp.slInput ? Number(st.perp.slInput) : null;
+    if (!st.perp.reduceOnly && refPx > 0) {
+      if (tpNum && ((isBuy && tpNum <= refPx) || (!isBuy && tpNum >= refPx))) {
+        showToast(t('止盈价方向有误（多单需高于开仓价，空单需低于开仓价）', 'Invalid TP price direction for position side'));
+        return;
+      }
+      if (slNum && ((isBuy && slNum >= refPx) || (!isBuy && slNum <= refPx))) {
+        showToast(t('止损价方向有误（多单需低于开仓价，空单需高于开仓价）', 'Invalid SL price direction for position side'));
+        return;
+      }
+    }
+    const sideLabel = isBuy ? t('做多', 'Long') : t('做空', 'Short');
+    const confirmLabel = `${t('确认合约下单', 'Confirm Perp Order')}: ${sideLabel} ${formatPerpDisplayPair(market.name)} ${st.perp.leverage}x · ${evalRes.sizeNum}`;
+    if (!(await verifySecurityAuthAsync(wallet, confirmLabel))) return;
     st.perp.submitting = true;
     st.perp.errorMsg = '';
     renderPerpView();
     try {
       await ensureEthersLoaded();
-      const isBuy = st.perp.side === 'long';
       const oType = st.perp.orderType || 'market';
       const tif = st.perp.tif || (oType === 'post_only' ? 'Alo' : (oType === 'limit' ? 'Gtc' : 'Ioc'));
       const isLimitLike = oType === 'limit' || oType === 'post_only';
       const avail = st.perp.account ? Number(st.perp.account.availableMargin || 0) : null;
+      const openPos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === market.name);
+      const levUnchanged = openPos && Number(openPos.leverageValue) === Number(st.perp.leverage) && openPos.leverageType === st.perp.marginMode;
       await hl.placeHlPerpOrder({
         wallet,
         market,
@@ -1398,10 +1433,10 @@
         tif,
         limitPrice: isLimitLike ? Number(st.perp.limitPriceInput) : null,
         reduceOnly: Boolean(st.perp.reduceOnly),
-        leverage: st.perp.leverage,
+        leverage: levUnchanged ? null : st.perp.leverage,
         isCross: st.perp.marginMode === 'cross',
-        tpPrice: st.perp.tpInput ? Number(st.perp.tpInput) : null,
-        slPrice: st.perp.slInput ? Number(st.perp.slInput) : null,
+        tpPrice: tpNum,
+        slPrice: slNum,
         availableMargin: avail
       });
       st.perp.marginInput = '';
@@ -1409,7 +1444,10 @@
       showToast(`✅ ${t('合约委托已提交', 'Perp order submitted')}`);
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
-      st.perp.errorMsg = (err && err.message) || t('下单失败', 'Order failed');
+      const rawMsg = (err && err.message) || '';
+      st.perp.errorMsg = /does not exist/i.test(rawMsg)
+        ? t('合约账户尚未激活，请先充值 USDC', 'Perp account not activated; please deposit USDC first')
+        : (rawMsg || t('下单失败', 'Order failed'));
       showToast(st.perp.errorMsg);
     } finally {
       st.perp.submitting = false;
@@ -1425,6 +1463,7 @@
     const pos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === coin);
     let market = (st.perp.markets || []).find((m) => m.name === coin);
     if (!pos) return;
+    if (!(await verifySecurityAuthAsync(wallet, `${t('确认市价平仓', 'Confirm Market Close')}: ${formatPerpDisplayPair(coin)}`))) return;
     try {
       await ensureEthersLoaded();
       if (!market) {
@@ -1507,6 +1546,7 @@
     if (!hl || !wallet || !coin) return;
     const pos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === coin);
     if (!pos) return;
+    if (!(await verifySecurityAuthAsync(wallet, `${t('确认反手开仓', 'Confirm Reverse Position')}: ${formatPerpDisplayPair(coin)}`))) return;
     try {
       await ensureEthersLoaded();
       let market = (st.perp.markets || []).find((m) => m.name === coin);
@@ -1525,13 +1565,21 @@
     }
   }
 
+  let _perpBatchBusy = false;
+
   async function executePerpBatchAction() {
+    if (_perpBatchBusy) return;
     const st = getState();
     const hl = getHyperliquid();
     const wallet = st.getActiveWallet();
     const acct = st.perp && st.perp.account;
     if (!hl || !wallet || !acct) return;
     const tab = st.perp.bottomTab || 'positions';
+    const actionLabel = tab === 'orders' ? t('确认撤销全部委托', 'Confirm Cancel All Orders') : t('确认一键全平所有仓位', 'Confirm Close All Positions');
+    if (!(await verifySecurityAuthAsync(wallet, actionLabel))) return;
+    _perpBatchBusy = true;
+    const batchBtn = $('btn-perp-batch-action');
+    if (batchBtn) batchBtn.disabled = true;
     try {
       await ensureEthersLoaded();
       if ((!st.perp.markets || st.perp.markets.length === 0) && typeof hl.fetchHlMarkets === 'function') {
@@ -1544,17 +1592,31 @@
       } else {
         const positions = acct.positions || [];
         if (positions.length === 0) return;
+        let closedCount = 0;
+        let lastErr = null;
         for (const pos of positions) {
           const market = (st.perp.markets || []).find((m) => m.name === pos.coin);
           if (market) {
-            await hl.closeHlPositionMarket({ wallet, market, position: pos });
+            try {
+              await hl.closeHlPositionMarket({ wallet, market, position: pos });
+              closedCount += 1;
+            } catch (e) {
+              lastErr = e;
+            }
           }
         }
-        showToast(`✅ ${t('已全部市价平仓', 'All positions closed')}`);
+        if (closedCount === positions.length) {
+          showToast(`✅ ${t('已全部市价平仓', 'All positions closed')}`);
+        } else {
+          showToast(t(`已平仓 ${closedCount}/${positions.length} 个仓位`, `Closed ${closedCount}/${positions.length} positions`) + (lastErr?.message ? `: ${lastErr.message}` : ''));
+        }
       }
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
       showToast((err && err.message) || t('批量操作失败', 'Batch action failed'));
+    } finally {
+      _perpBatchBusy = false;
+      if (batchBtn) batchBtn.disabled = false;
     }
   }
 
@@ -1825,14 +1887,16 @@
     const wallet = st.getActiveWallet();
     if (!wallet || !hl || !$('perp-arb-amount')) return;
     const usdc = Number((st.getWalletErc20Balance && st.getWalletErc20Balance(wallet, 'arb', hl.HL_ARB_USDC_ADDRESS)) || 0);
-    $('perp-arb-amount').value = usdc > 0 ? usdc.toFixed(2) : '';
+    const floored = usdc > 0 ? (Math.floor(usdc * 100) / 100) : 0;
+    $('perp-arb-amount').value = floored > 0 ? floored.toFixed(2) : '';
     evaluatePerpArbDepositUI();
   }
 
   function setPerpWithdrawMax() {
     const st = getState();
     const avail = st.perp.account ? Number(st.perp.account.withdrawable || 0) : 0;
-    if ($('perp-withdraw-amount')) $('perp-withdraw-amount').value = avail > 0 ? avail.toFixed(2) : '';
+    const floored = avail > 0 ? (Math.floor(avail * 100) / 100) : 0;
+    if ($('perp-withdraw-amount')) $('perp-withdraw-amount').value = floored > 0 ? floored.toFixed(2) : '';
     evaluatePerpWithdrawUI();
   }
 

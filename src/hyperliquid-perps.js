@@ -945,10 +945,11 @@
     if (!reduceOnly && Number.isFinite(tpNum) && tpNum > 0) {
       grouping = 'normalTpsl';
       const tpStr = formatHlPrice(tpNum, szDec);
+      const tpLimitPx = formatHlPrice(!isBuy ? tpNum * 1.08 : tpNum * 0.92, szDec);
       orders.push({
         a: Number(market.index),
         b: !Boolean(isBuy),
-        p: tpStr,
+        p: tpLimitPx,
         s: sizeStr,
         r: true,
         t: { trigger: { isMarket: true, triggerPx: tpStr, tpsl: 'tp' } }
@@ -957,10 +958,11 @@
     if (!reduceOnly && Number.isFinite(slNum) && slNum > 0) {
       grouping = 'normalTpsl';
       const slStr = formatHlPrice(slNum, szDec);
+      const slLimitPx = formatHlPrice(!isBuy ? slNum * 1.08 : slNum * 0.92, szDec);
       orders.push({
         a: Number(market.index),
         b: !Boolean(isBuy),
-        p: slStr,
+        p: slLimitPx,
         s: sizeStr,
         r: true,
         t: { trigger: { isMarket: true, triggerPx: slStr, tpsl: 'sl' } }
@@ -1032,10 +1034,11 @@
 
     if (Number.isFinite(tpNum) && tpNum > 0) {
       const tpStr = formatHlPrice(tpNum, szDec);
+      const tpLimitPx = formatHlPrice(!position.isLong ? tpNum * 1.08 : tpNum * 0.92, szDec);
       orders.push({
         a: Number(market.index),
         b: !Boolean(position.isLong),
-        p: tpStr,
+        p: tpLimitPx,
         s: sizeStr,
         r: true,
         t: { trigger: { isMarket: true, triggerPx: tpStr, tpsl: 'tp' } }
@@ -1043,10 +1046,11 @@
     }
     if (Number.isFinite(slNum) && slNum > 0) {
       const slStr = formatHlPrice(slNum, szDec);
+      const slLimitPx = formatHlPrice(!position.isLong ? slNum * 1.08 : slNum * 0.92, szDec);
       orders.push({
         a: Number(market.index),
         b: !Boolean(position.isLong),
-        p: slStr,
+        p: slLimitPx,
         s: sizeStr,
         r: true,
         t: { trigger: { isMarket: true, triggerPx: slStr, tpsl: 'sl' } }
@@ -1079,6 +1083,10 @@
   async function reverseHlPositionMarket({ wallet, market, position, slippageBps = 80, availableMargin = null }) {
     if (!position || !position.absSize) throw new Error(t('无效持仓', 'Invalid position'));
     const curLev = Number(position.leverageValue || 5);
+    const freedMargin = Number(position.marginUsed) || ((Number(position.absSize) * (Number(market.markPx) || Number(position.entryPx) || 0)) / Math.max(1, curLev));
+    const effectiveAvail = (availableMargin !== null && availableMargin !== undefined)
+      ? (Number(availableMargin) + Math.max(0, freedMargin))
+      : null;
     return placeHlPerpOrder({
       wallet,
       market,
@@ -1087,9 +1095,9 @@
       orderType: 'market',
       slippageBps,
       reduceOnly: false,
-      leverage: curLev,
+      leverage: null,
       isCross: position.leverageType === 'cross',
-      availableMargin
+      availableMargin: effectiveAvail
     });
   }
 
@@ -1292,7 +1300,7 @@
 
   function resolveBinanceFuturesSymbol(coin) {
     const raw = String(coin || '').trim();
-    if (!raw) return '';
+    if (!raw || raw.includes(':')) return '';
     if (/^k[A-Z0-9]+$/.test(raw)) {
       return `1000${raw.slice(1).toUpperCase()}USDT`;
     }

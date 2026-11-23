@@ -104,7 +104,7 @@
         const pk = String(k.public_key || '');
         const isFull = Boolean(k.access_key && k.access_key.permission === 'FullAccess');
         const isCurrent = pk === creds.publicKeyStr || (creds.publicKeyHandleStr && pk === creds.publicKeyHandleStr);
-        const canDelete = !isFull || fullCount > 1;
+        const canDelete = !isCurrent && (!isFull || fullCount > 1);
         return `
           <div class="ios-glass-card flex items-center justify-between gap-2" style="padding:10px 12px;">
             <div class="min-w-0 flex-1">
@@ -606,6 +606,7 @@
       showToast(t('请输入有效的 .near / .tg 账号', 'Enter a valid .near / .tg account'));
       return;
     }
+    if (!(await verifySecurityAuthAsync(wallet, `${t('绑定 NEAR 命名账号', 'Bind NEAR Named Account')}: ${domain}`))) return;
     const authSecret = ($('hub-near-bind-auth-input')?.value || '').trim();
     try {
       await contracts.ensureWalletSigningKeysAsync(wallet);
@@ -652,6 +653,10 @@
         }
 
         showToast(t('正在授权当前钱包绑定该 .near 账号...', 'Authorizing current wallet on .near account...'));
+        const intents = getIntents();
+        const domainNearBal = (intents && typeof intents.fetchNearNativeBalance === 'function')
+          ? await intents.fetchNearNativeBalance(domain).catch(() => null)
+          : null;
         await contracts.addNearAccessKeyAsync({
           wallet: {
             accountType: 'standard',
@@ -659,7 +664,7 @@
             nearAddress: domain,
             nearPublicKey: authPub,
             nearPrivateKey: authPriv,
-            nearBalance: 1
+            nearBalance: domainNearBal !== null ? domainNearBal : 0
           },
           newPublicKeyStr: targetPub
         });

@@ -1,26 +1,31 @@
-﻿const CACHE_NAME = 'nexus-wallet-v6.35';
+﻿const CACHE_NAME = 'nexus-wallet-v6.36';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './style.css?v=6.35',
-  './assets/favicon.png?v=6.35',
-  './assets/nexus-logo-192.png?v=6.35',
-  './bip39-wordlist.js?v=6.35',
-  './src/crypto-engine.js?v=6.35',
-  './src/token-registry.js?v=6.35',
-  './src/near-intents.js?v=6.35',
-  './src/chain-contracts.js?v=6.35',
-  './src/limit-orders.js?v=6.35',
-  './src/hyperliquid-perps.js?v=6.35',
-  './src/state.js?v=6.35',
-  './src/dapp-browser.js?v=6.35',
-  './src/ui-controller.js?v=6.35'
+  './style.css?v=6.36',
+  './assets/favicon.png?v=6.36',
+  './assets/nexus-logo-192.png?v=6.36',
+  './bip39-wordlist.js?v=6.36',
+  './src/crypto-engine.js?v=6.36',
+  './src/token-registry.js?v=6.36',
+  './src/near-intents.js?v=6.36',
+  './src/chain-contracts.js?v=6.36',
+  './src/limit-orders.js?v=6.36',
+  './src/hyperliquid-perps.js?v=6.36',
+  './src/state.js?v=6.36',
+  './src/dapp-browser.js?v=6.36',
+  './src/ui-controller.js?v=6.36',
+  './src/mining-pro.js?v=6.36',
+  './ethers.umd.min.js?v=6.36',
+  './qrcode.min.js?v=6.36'
 ];
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(CORE_ASSETS).catch(() => {}))
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.allSettled(CORE_ASSETS.map((u) => cache.add(u).catch(() => null)))
+    )
   );
 });
 
@@ -46,7 +51,7 @@ self.addEventListener('fetch', (event) => {
   if (reqUrl.pathname.startsWith('/pearl-proxy') || reqUrl.pathname.startsWith('/kryptex-proxy') || reqUrl.pathname.startsWith('/nearcom-proxy')) {
     return;
   }
-  const isImmutableStatic = /[?&]v=|\.(?:js|css|svg|png|webp|jpe?g|avif|woff2?)$/i.test(reqUrl.pathname + reqUrl.search);
+  const isImmutableStatic = /[?&]v=|\/assets\/icons\/.*\.(?:svg|png|webp|jpe?g|avif)$/i.test(reqUrl.pathname + reqUrl.search);
   if (isImmutableStatic) {
     event.respondWith(
       caches.match(event.request).then((cached) => {

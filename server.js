@@ -252,9 +252,11 @@ const server = http.createServer((req, res) => {
   const rootDir = path.resolve(__dirname);
   const filePath = path.resolve(rootDir, normalizedRel || 'index.html');
   const relSegments = path.relative(rootDir, filePath).split(path.sep);
+  const blockedTop = new Set(['server.js', 'package.json', 'package-lock.json', 'capacitor.config.json', 'scripts', 'test', 'android', 'ios', 'node_modules']);
   if (
     !filePath.startsWith(rootDir + path.sep) ||
-    relSegments.some((seg) => seg.startsWith('.'))
+    relSegments.some((seg) => seg.startsWith('.')) ||
+    blockedTop.has(relSegments[0])
   ) {
     res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('403 Forbidden');
@@ -317,8 +319,9 @@ const server = http.createServer((req, res) => {
 });
 
 if (require.main === module) {
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log(`NEAR Chain Abstraction Wallet Server running at http://localhost:${PORT}`);
+  const HOST = process.env.HOST || '127.0.0.1';
+  server.listen(PORT, HOST, () => {
+    console.log(`NEAR Chain Abstraction Wallet Server running at http://${HOST}:${PORT}`);
   });
 }
 

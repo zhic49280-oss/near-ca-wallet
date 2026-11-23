@@ -48,11 +48,21 @@
 
     let effectiveIsNative = !pool.isTokenStake || Boolean(pool.useNativeOrPrecompile);
     let effectiveTokenBal = resolvedTokenBal;
-    if (pool.isBurrowSupply && pool.isNativeWrapSupply) {
-      const wnearBal = Number(wallet.nearNep141Balances?.[pool.tokenContract]?.formatted || 0);
-      if (wnearBal >= Number(amount)) {
+    if ((pool.isBurrowSupply || pool.isAaveV3) && pool.isNativeWrapSupply) {
+      const wrappedBal = pool.isBurrowSupply
+        ? Number(wallet.nearNep141Balances?.[pool.tokenContract]?.formatted || 0)
+        : Number((wallet.erc20Balances?.[pool.chain]?.[String(pool.tokenContract || '').toLowerCase()]) || 0);
+      if (wrappedBal >= Number(amount)) {
         effectiveIsNative = false;
-        effectiveTokenBal = wnearBal;
+        effectiveTokenBal = wrappedBal;
+      } else if (pool.isAaveV3 && wrappedBal > 0) {
+        const nativeAvail = Number(wallet.nativeBalances?.[pool.chain] || 0);
+        if (wrappedBal + nativeAvail >= Number(amount)) {
+          effectiveIsNative = false;
+          effectiveTokenBal = wrappedBal + nativeAvail;
+        } else {
+          effectiveIsNative = true;
+        }
       } else {
         effectiveIsNative = true;
       }

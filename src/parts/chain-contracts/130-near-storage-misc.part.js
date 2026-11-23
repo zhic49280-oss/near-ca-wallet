@@ -89,10 +89,9 @@
         if (!/^\d+$/.test(totalYoctoStr) || BigInt(totalYoctoStr) <= 0n) continue;
 
         const depositNear = Number(fromBaseUnits(totalYoctoStr, 24));
-        const rawBalStr = ftBal !== null && ftBal !== undefined && /^\d+$/.test(String(ftBal).trim())
-          ? String(ftBal).trim()
-          : '0';
-        const isEmpty = BigInt(rawBalStr) === 0n;
+        const hasValidBal = ftBal !== null && ftBal !== undefined && /^\d+$/.test(String(ftBal).trim());
+        const rawBalStr = hasValidBal ? String(ftBal).trim() : '0';
+        const isEmpty = hasValidBal && BigInt(rawBalStr) === 0n;
         const meta = resolveMeta(cid);
         const uiAmount = Number(fromBaseUnits(rawBalStr, meta.decimals));
 

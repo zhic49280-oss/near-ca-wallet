@@ -945,6 +945,16 @@
       fetchJsonWithTimeout(`${JUPITER_TRIGGER_URL}/getTriggerOrders?user=${encodeURIComponent(addr)}&orderStatus=active`, {}, 8000).catch(() => null),
       fetchJsonWithTimeout(`${JUPITER_TRIGGER_URL}/getTriggerOrders?user=${encodeURIComponent(addr)}&orderStatus=history`, {}, 8000).catch(() => null)
     ]);
+    const actBad = !actRes || (!actRes.ok && [401, 403, 404, 410].includes(actRes.status));
+    const histBad = !histRes || (!histRes.ok && [401, 403, 404, 410].includes(histRes.status));
+    if (actBad && histBad && (actRes?.status || histRes?.status)) {
+      return {
+        active: [],
+        history: [],
+        unavailable: true,
+        error: t('Solana 限价单上游接口已升级，暂不可用', 'Solana limit order upstream API unavailable')
+      };
+    }
     return {
       active: Array.isArray(actRes && actRes.data && actRes.data.orders) ? actRes.data.orders : [],
       history: Array.isArray(histRes && histRes.data && histRes.data.orders) ? histRes.data.orders : []
@@ -1162,6 +1172,8 @@
       ? Math.floor(Number(validTo))
       : Math.floor(Date.now() / 1000) + 7 * 86400;
 
+    const appDataDoc = JSON.stringify({ version: '1.1.0', metadata: {} });
+    const appDataHash = ethers.keccak256(ethers.toUtf8Bytes(appDataDoc));
     const orderMessage = {
       sellToken: checksumSell,
       buyToken: checksumBuy,
@@ -1169,7 +1181,7 @@
       sellAmount: sellStr,
       buyAmount: buyStr,
       validTo: expirySec,
-      appData: ZERO_HASH,
+      appData: appDataHash,
       feeAmount: '0',
       kind: 'sell',
       partiallyFillable: true,
@@ -1191,6 +1203,8 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...orderMessage,
+        appData: appDataDoc,
+        appDataHash,
         from: owner,
         signingScheme: 'eip712',
         signature

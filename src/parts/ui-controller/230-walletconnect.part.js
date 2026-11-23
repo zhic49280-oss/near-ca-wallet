@@ -24,7 +24,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.35');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.36');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -42,16 +42,25 @@
       }
     });
 
+    const _wcRequestQueue = [];
     client.on('session_proposal', (proposal) => {
       st.wc.pendingProposal = proposal;
       renderWcCards();
       openSheet('sheet-walletconnect');
     });
     client.on('session_request', (event) => {
-      st.wc.pendingRequest = event;
+      if (st.wc.pendingRequest) {
+        _wcRequestQueue.push(event);
+      } else {
+        st.wc.pendingRequest = event;
+      }
       renderWcCards();
       openSheet('sheet-walletconnect');
     });
+    client._nexusShiftNextRequest = () => {
+      st.wc.pendingRequest = _wcRequestQueue.shift() || null;
+      renderWcCards();
+    };
     client.on('session_delete', () => {
       renderWcSessions();
       renderHeaderAndHero();
@@ -88,9 +97,37 @@
         rCard.classList.add('hidden');
       } else {
         const req = (ev.params && ev.params.request) || {};
+        const sess = ev.topic && st.wc.client && typeof st.wc.client.session?.get === 'function'
+          ? st.wc.client.session.get(ev.topic)
+          : null;
+        const peerMeta = sess && sess.peer && sess.peer.metadata ? sess.peer.metadata : null;
+        const dappLabel = peerMeta ? `${peerMeta.name || 'DApp'} (${ev.params.chainId || 'eip155:1'})` : (ev.params.chainId || 'eip155:1');
         if ($('wc-request-method')) $('wc-request-method').textContent = req.method || '--';
-        if ($('wc-request-dapp')) $('wc-request-dapp').textContent = ev.params.chainId || 'eip155:1';
-        if ($('wc-request-payload')) $('wc-request-payload').textContent = JSON.stringify(req.params || {}, null, 2);
+        if ($('wc-request-dapp')) $('wc-request-dapp').textContent = dappLabel;
+        if ($('wc-request-payload')) {
+          let preview = '';
+          try {
+            if (req.method === 'personal_sign' && Array.isArray(req.params) && req.params[0]) {
+              const rawHex = String(req.params[0]);
+              if (/^0x[0-9a-fA-F]+$/.test(rawHex)) {
+                const bytes = new Uint8Array(rawHex.slice(2).match(/.{2}/g).map((h) => parseInt(h, 16)));
+                preview = new TextDecoder().decode(bytes);
+              } else {
+                preview = rawHex;
+              }
+            } else if (req.method === 'eth_sendTransaction' && Array.isArray(req.params) && req.params[0]) {
+              const tx = req.params[0];
+              const weiBig = tx.value ? BigInt(tx.value) : 0n;
+              const ethStr = (Number(weiBig) / 1e18).toFixed(6).replace(/\.?0+$/, '') || '0';
+              preview = `${t('收款地址', 'To')}: ${tx.to || '--'}\n${t('金额', 'Value')}: ${ethStr} ETH\n${t('数据', 'Data')}: ${tx.data && tx.data !== '0x' ? `${String(tx.data).slice(0, 42)}...` : t('无', 'None')}`;
+            } else {
+              preview = JSON.stringify(req.params || {}, null, 2);
+            }
+          } catch (_) {
+            preview = JSON.stringify(req.params || {}, null, 2);
+          }
+          $('wc-request-payload').textContent = preview;
+        }
         rCard.classList.remove('hidden');
       }
     }
@@ -209,15 +246,19 @@
     if (!(await verifySecurityAuthAsync(wallet, t('授权 WalletConnect 连接', 'Authorize WalletConnect')))) return;
     try {
       await contracts.ensureWalletSigningKeysAsync(wallet);
-      const chainsSet = new Set(['eip155:1', 'eip155:8453', 'eip155:56', 'eip155:42161', 'eip155:4663', 'eip155:999']);
+      const supportedChainIds = new Set(Object.values(contracts.EVM_CHAINS || {}).map((c) => `eip155:${c.chainId}`));
+      const chainsSet = new Set(['eip155:1', 'eip155:8453', 'eip155:56', 'eip155:42161'].filter((c) => supportedChainIds.size === 0 || supportedChainIds.has(c)));
       const reqNs = (p.params && p.params.requiredNamespaces) || {};
       const optNs = (p.params && p.params.optionalNamespaces) || {};
       [reqNs, optNs].forEach((ns) => {
-        if (ns.eip155 && Array.isArray(ns.eip155.chains)) ns.eip155.chains.forEach((c) => chainsSet.add(c));
+        if (ns.eip155 && Array.isArray(ns.eip155.chains)) {
+          ns.eip155.chains.forEach((c) => {
+            if (supportedChainIds.size === 0 || supportedChainIds.has(c)) chainsSet.add(c);
+          });
+        }
       });
       const chains = Array.from(chainsSet);
-      const contracts = getContracts();
-      const evmSender = (contracts && typeof contracts.resolveWalletEvmSender === 'function' ? contracts.resolveWalletEvmSender(wallet) : '')
+      const evmSender = (typeof contracts.resolveWalletEvmSender === 'function' ? contracts.resolveWalletEvmSender(wallet) : '')
         || wallet.mpcEvmAddress || wallet.evmAddress;
       await client.approveSession({
         id: p.id,
@@ -225,7 +266,7 @@
           eip155: {
             chains,
             accounts: chains.map((c) => `${c}:${evmSender}`),
-            methods: ['eth_sendTransaction', 'personal_sign', 'eth_sign', 'eth_signTypedData', 'eth_signTypedData_v3', 'eth_signTypedData_v4', 'wallet_switchEthereumChain'],
+            methods: ['eth_sendTransaction', 'personal_sign', 'eth_signTypedData', 'eth_signTypedData_v3', 'eth_signTypedData_v4', 'wallet_switchEthereumChain'],
             events: ['chainChanged', 'accountsChanged']
           }
         }
@@ -323,22 +364,34 @@
         const txReq = reqParams[0] || {};
         const cid = Number(String(params.chainId || 'eip155:1').split(':')[1] || 1);
         const cfg = Object.entries(contracts.EVM_CHAINS).find(([, c]) => c.chainId === cid);
-        if (!cfg) throw new Error(`Unsupported chainId: ${cid}`);
-        if (wallet.evmPrivateKey) {
-          const provider = new ethersLib.JsonRpcProvider(cfg[1].rpc, cfg[1].chainId);
-          const tx = await new ethersLib.Wallet(wallet.evmPrivateKey).connect(provider).sendTransaction({
+        if (!cfg) throw new Error(t(`不支持的网络 chainId: ${cid}`, `Unsupported chainId: ${cid}`));
+        const valWei = txReq.value ? BigInt(txReq.value) : 0n;
+        const valNative = Number(valWei) / 1e18;
+        if (typeof contracts.validateSufficientChainBalance === 'function') {
+          contracts.validateSufficientChainBalance({
+            wallet,
+            chain: cfg[0],
+            tokenSymbol: cfg[1].symbol || 'ETH',
+            amount: valNative,
+            isNative: true
+          });
+        }
+        if (wallet.evmPrivateKey && typeof contracts.sendEvmSignedTransaction === 'function') {
+          const txRes = await contracts.sendEvmSignedTransaction({
+            chainKey: cfg[0],
+            privateKey: wallet.evmPrivateKey,
             to: txReq.to || null,
             data: txReq.data || '0x',
-            value: txReq.value ? BigInt(txReq.value) : 0n
+            value: valWei.toString()
           });
-          result = tx.hash;
+          result = txRes.txHash;
         } else {
           const txRes = await contracts.sendEvmMpcSignedTransaction({
             wallet,
             chainKey: cfg[0],
             to: txReq.to || null,
             data: txReq.data || '0x',
-            value: txReq.value ? BigInt(txReq.value).toString() : '0',
+            value: valWei.toString(),
             path: 'ethereum-1'
           });
           result = txRes.txHash;
@@ -350,8 +403,8 @@
       }
 
       await client.respondSessionRequest({ topic, response: { id, jsonrpc: '2.0', result } });
-      st.wc.pendingRequest = null;
-      renderWcCards();
+      if (typeof client._nexusShiftNextRequest === 'function') client._nexusShiftNextRequest();
+      else { st.wc.pendingRequest = null; renderWcCards(); }
       showToast(t('✅ 签名已完成', '✅ Signed'));
     } catch (e) {
       if (client && ev && ev.topic) {
@@ -509,7 +562,7 @@
           } catch (_) {}
         }, 220);
       } else if (statusEl) {
-        statusEl.textContent = t('当前系统内核暂不支持实时流解码，请点击「从相册选图」或复制链接粘贴', 'Live stream QR decoder unsupported; use "Pick from Album" or paste URI.');
+        statusEl.textContent = t('当前系统内核暂不支持摄像头扫码，请返回直接粘贴地址或链接', 'QR camera decoder unsupported on this WebView; please go back and paste the address or URI');
       }
     } catch (_) {
       if (statusEl) {

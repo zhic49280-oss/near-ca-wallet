@@ -122,6 +122,14 @@
     }
     const resolvedTarget = String(targetPublicKeyStr || '').trim();
     if (!skipSafetyCheck) {
+      if (resolvedTarget === creds.publicKeyStr || (creds.publicKeyHandleStr && resolvedTarget === creds.publicKeyHandleStr)) {
+        throw new Error(
+          t(
+            '安全拦截：不能删除当前钱包正在使用的私钥，否则将立即丧失账户控制权',
+            'Safety block: Cannot delete the key currently in use by this wallet'
+          )
+        );
+      }
       const list = await fetchNearAccessKeysAsync(creds.accountId);
       const fullKeys = (list.keys || []).filter((k) => k && k.access_key && k.access_key.permission === 'FullAccess');
       const remainingFull = fullKeys.filter((k) => k.public_key !== resolvedTarget);

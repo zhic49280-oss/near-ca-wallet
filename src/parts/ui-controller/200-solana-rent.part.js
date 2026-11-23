@@ -131,10 +131,12 @@
     if (!wallet || selected.length === 0 || !contracts || typeof contracts.executeSolanaRentReclaim !== 'function') return;
 
     const totalSol = selected.reduce((s, a) => s + Number(a.rentSol || 0), 0);
-    const hasBurn = selected.some((a) => !a.isEmpty);
-    const promptText = hasBurn
-      ? `${t('回收租金并粉碎', 'Reclaim & burn')} ${selected.length} ${t('个账户', 'accounts')} (+${totalSol.toFixed(4)} SOL)`
-      : `${t('回收', 'Reclaim')} ${selected.length} ${t('个空账户租金', 'empty accounts')} (+${totalSol.toFixed(4)} SOL)`;
+    const WSOL_MINT = 'So11111111111111111111111111111111111111112';
+    const burnItems = selected.filter((a) => !a.isEmpty && a.mint !== WSOL_MINT);
+    const burnSummary = burnItems.slice(0, 3).map((a) => `${a.symbol}(${formatBal(a.uiAmount, 4)})`).join(', ') + (burnItems.length > 3 ? ` +${burnItems.length - 3}` : '');
+    const promptText = burnItems.length > 0
+      ? `${t('⚠️ 危险：将永久销毁有余额代币', '⚠️ WARNING: Permanently BURN')} [${burnSummary}] ${t('以回收', 'to reclaim')} +${totalSol.toFixed(4)} SOL`
+      : `${t('回收', 'Reclaim')} ${selected.length} ${t('个空账户/WSOL 租金', 'empty/WSOL accounts')} (+${totalSol.toFixed(4)} SOL)`;
 
     if (!(await verifySecurityAuthAsync(wallet, promptText))) return;
 
@@ -148,6 +150,7 @@
       refreshAllBalancesAsync(false);
     } catch (err) {
       showToast(err && err.message ? err.message : t('租金回收失败', 'Rent reclaim failed'));
+      await scanSolRentReclaimUI().catch(() => {});
     } finally {
       if (btn) btn.disabled = false;
     }
