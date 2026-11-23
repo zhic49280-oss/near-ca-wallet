@@ -2483,15 +2483,6 @@ html.nexus-locked #app-lock-overlay {
   border-bottom: none;
 }
 
-.perp-meta-cell-full {
-  grid-column: 1 / -1;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  padding-top: 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-
 .picker-more-chains-grid {
   display: flex;
   flex-wrap: wrap;

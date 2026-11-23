@@ -965,6 +965,27 @@ test('v6.27 Local Bundled Icons, Multi-Target Sync Verification, Perp SWR Snapsh
   assert.ok(serverJs.includes("'.webp': 'image/webp'"), 'server.js must serve image/webp');
   assert.ok(serverJs.includes("'.jpg': 'image/jpeg'"), 'server.js must serve image/jpeg');
   assert.ok(swJs.includes('webp|jpe?g'), 'sw.js must cache bundled webp/jpg icons');
-  assert.ok(swJs.includes('nexus-wallet-v6.27'), 'sw.js must bump cache version to v6.27');
+  const swVerMatch = swJs.match(/nexus-wallet-v6\.(\d+)/);
+  assert.ok(swVerMatch && Number(swVerMatch[1]) >= 27, 'sw.js cache version must be >= v6.27');
+});
+
+test('v6.28 Perp Order Ticket Cleanup: remove redundant 0 Gas row while keeping Arbitrum ETH gas check', () => {
+  const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'parts', 'index-html', '030-view-perp.part.html'), 'utf8');
+  for (const id of ['perp-meta-notional', 'perp-meta-size', 'perp-meta-liq', 'perp-meta-fee']) {
+    assert.ok(perpHtml.includes(id), `Perp order ticket must retain ${id}`);
+  }
+  for (const removed of ['perp.gasLabel', 'perp.gasZeroVal', '0 Gas', 'perp-meta-cell-full']) {
+    assert.ok(!perpHtml.includes(removed), `Perp order ticket must omit ${removed}`);
+  }
+
+  const sheetsHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'parts', 'index-html', '080-sheets-chain-perp-auth.part.html'), 'utf8');
+  assert.ok(sheetsHtml.includes('perp-arb-eth-avail'), 'Arbitrum deposit sheet must keep perp-arb-eth-avail');
+  assert.ok(sheetsHtml.includes('perp.arbEthBalLabel'), 'Arbitrum deposit sheet must keep perp.arbEthBalLabel');
+
+  const styleCss = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
+  assert.ok(!styleCss.includes('.perp-meta-cell-full'), 'style.css must remove unused .perp-meta-cell-full rule');
+
+  const swJs = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
+  assert.ok(swJs.includes('nexus-wallet-v6.28'), 'sw.js must bump cache version to v6.28');
 });
 
