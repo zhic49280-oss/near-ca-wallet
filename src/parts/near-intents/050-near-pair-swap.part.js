@@ -90,35 +90,63 @@
     if (hit && hit.fetchRef === curFetch && Date.now() - hit.ts < 10_000) return { ...hit.val };
 
     if (requireThirdPartyRecipient) {
-      const ocVal = await quoteRawOneClick({
-        originAsset: fromToken.assetId,
-        destinationAsset: toToken.assetId,
-        amountRaw: amtStr,
-        slippageBps,
-        recipient: recipient || nearAcct,
-        refundTo: nearAcct,
-        nearAccountId: nearAcct,
-        depositType: 'ORIGIN_CHAIN',
-        recipientType: 'DESTINATION_CHAIN',
-        dry: true,
-        signal
-      }).catch(() => null);
+      const hasConfCreds = Boolean(arguments[0] && arguments[0].nearPrivateSeedHex && arguments[0].nearPublicKey);
+      const [ocVal, confVal] = await Promise.all([
+        quoteRawOneClick({
+          originAsset: fromToken.assetId,
+          destinationAsset: toToken.assetId,
+          amountRaw: amtStr,
+          slippageBps,
+          recipient: recipient || nearAcct,
+          refundTo: nearAcct,
+          nearAccountId: nearAcct,
+          depositType: 'ORIGIN_CHAIN',
+          recipientType: 'DESTINATION_CHAIN',
+          dry: true,
+          signal
+        }).catch(() => null),
+        hasConfCreds
+          ? quoteNearcomConfidentialSwap({
+              fromToken,
+              toToken,
+              amountRaw: amtStr,
+              slippageBps,
+              nearPrivateSeedHex: arguments[0].nearPrivateSeedHex,
+              nearPublicKey: arguments[0].nearPublicKey,
+              nearImplicitAddress: arguments[0].nearImplicitAddress,
+              nearAccountId: nearAcct,
+              dry: true,
+              signal
+            }).catch(() => null)
+          : Promise.resolve(null)
+      ]);
+      const cands = [];
       if (ocVal && ocVal.ok && /^\d+$/.test(String(ocVal.amountOut || '0')) && BigInt(ocVal.amountOut) > 0n) {
-        const out = {
-          ...ocVal,
-          ok: true,
-          routeSource: 'NEAR_INTENTS_1CLICK',
-          bestSource: '1Click Solver',
-          comparedRoutesCount: 1,
-          comparedPools: 1,
-          routeLabel: t('1Click 直连 (第三方收款)', '1Click Direct (Custom Recipient)'),
-          serviceFeeBps: ocVal.serviceFeeBps !== undefined ? ocVal.serviceFeeBps : 25,
-          amountOut: String(ocVal.amountOut),
-          amountOutFormatted: ocVal.amountOutFormatted || fromBaseUnits(ocVal.amountOut, outDec)
-        };
-        _quoteCache.set(cacheKey, { ts: Date.now(), fetchRef: curFetch, val: out });
+        cands.push({
+          outBig: BigInt(ocVal.amountOut),
+          payload: {
+            ...ocVal,
+            ok: true,
+            routeSource: 'NEAR_INTENTS_1CLICK',
+            bestSource: '1Click Solver',
+            comparedRoutesCount: 1,
+            comparedPools: 1,
+            routeLabel: t('1Click 直连 (第三方收款)', '1Click Direct (Custom Recipient)'),
+            serviceFeeBps: ocVal.serviceFeeBps !== undefined ? ocVal.serviceFeeBps : 25,
+            amountOut: String(ocVal.amountOut),
+            amountOutFormatted: ocVal.amountOutFormatted || fromBaseUnits(ocVal.amountOut, outDec)
+          }
+        });
+      }
+      if (confVal && confVal.ok && /^\d+$/.test(String(confVal.amountOut || '0')) && BigInt(confVal.amountOut) > 0n) {
+        cands.push({ outBig: BigInt(confVal.amountOut), payload: confVal });
+      }
+      if (cands.length > 0) {
+        cands.sort((a, b) => (b.outBig > a.outBig ? 1 : b.outBig < a.outBig ? -1 : 0));
+        const best = cands[0].payload;
+        _quoteCache.set(cacheKey, { ts: Date.now(), fetchRef: curFetch, val: best });
         if (_quoteCache.size > 60) _quoteCache.delete(_quoteCache.keys().next().value);
-        return out;
+        return best;
       }
       return {
         ok: false,

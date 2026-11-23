@@ -451,6 +451,7 @@
         nearImplicitAddress: wallet.nearAddress,
         nearPrivateSeedHex: wallet.nearPrivateSeedHex,
         nearPublicKey: wallet.nearPublicKey,
+        availNearBalance: Number(wallet.nativeBalances?.near ?? wallet.nearBalance ?? 0),
         solAddress: wallet.solAddress,
         evmAddress: wallet.mpcEvmAddress || wallet.evmAddress,
         requireThirdPartyRecipient: isThirdParty,

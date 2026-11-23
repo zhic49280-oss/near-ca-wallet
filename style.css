@@ -1683,10 +1683,10 @@ body.sheet-scroll-locked {
 
 .home-ptr-indicator {
   position: absolute;
-  top: -38px;
+  top: -40px;
   left: 0;
   right: 0;
-  height: 34px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1706,11 +1706,15 @@ body.sheet-scroll-locked {
 }
 
 .ptr-spinner {
-  width: 14px;
-  height: 14px;
+  display: inline-block;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  border: 2px solid rgba(0, 236, 151, 0.25);
+  border: 2.2px solid rgba(0, 236, 151, 0.22);
   border-top-color: var(--near-emerald);
+  border-right-color: var(--near-emerald);
+  box-sizing: border-box;
+  flex-shrink: 0;
   will-change: transform;
 }
 
@@ -1719,7 +1723,10 @@ body.sheet-scroll-locked {
 }
 
 @keyframes ptr-spin {
-  to {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
     transform: rotate(360deg);
   }
 }

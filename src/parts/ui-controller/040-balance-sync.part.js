@@ -153,6 +153,8 @@
     const ptrInd = $('home-ptr-indicator');
     const ptrTxt = $('home-ptr-text');
     if (showFeedback && ptrInd) {
+      const spinnerEl = ptrInd.querySelector ? ptrInd.querySelector('.ptr-spinner') : null;
+      if (spinnerEl) spinnerEl.style.transform = '';
       ptrInd.classList.remove('pulling');
       ptrInd.classList.add('refreshing');
       if (ptrTxt) ptrTxt.textContent = t('正在同步多链资产...', 'Syncing multi-chain balances...');
@@ -329,6 +331,36 @@
         }).catch(() => {});
       }
 
+      const softCapPromise = (promise, ms) => {
+        if (!showFeedback || typeof setTimeout !== 'function') return promise;
+        return new Promise((resolve) => {
+          let settled = false;
+          const tmr = setTimeout(() => {
+            if (!settled) {
+              settled = true;
+              resolve(null);
+            }
+          }, ms);
+          if (tmr && typeof tmr.unref === 'function') tmr.unref();
+          Promise.resolve(promise).then(
+            (val) => {
+              if (!settled) {
+                settled = true;
+                clearTimeout(tmr);
+                resolve(val);
+              }
+            },
+            () => {
+              if (!settled) {
+                settled = true;
+                clearTimeout(tmr);
+                resolve(null);
+              }
+            }
+          );
+        });
+      };
+
       const [
         pricesRes,
         nearBalRes,
@@ -336,7 +368,7 @@
         solBalRes,
         ...evmBatchResults
       ] = await Promise.all([
-        intents.fetchLiveDefuseTokenPrices({
+        softCapPromise(intents.fetchLiveDefuseTokenPrices({
           useCache: !showFeedback,
           onFastUpdate: (partialRes) => {
             if (!isStaleRefresh() && Array.isArray(partialRes) && partialRes.length > 0) {
@@ -356,24 +388,24 @@
             scheduleProgressiveWalletRender();
           }
           return res;
-        }).catch(() => null),
-        nearAccountId ? intents.fetchNearNativeBalance(nearAccountId).then((v) => {
+        }).catch(() => null), 2200),
+        nearAccountId ? softCapPromise(intents.fetchNearNativeBalance(nearAccountId).then((v) => {
           if (!isStaleRefresh() && (!discoveredNamedAccount || nearAccountId === discoveredNamedAccount) && typeof v === 'number' && Number.isFinite(v)) {
             wallet.nativeBalances.near = v;
             scheduleProgressiveWalletRender();
           }
           return v;
-        }).catch(() => null) : Promise.resolve(null),
+        }).catch(() => null), 3000) : Promise.resolve(null),
         (nearAccountId && typeof intents.fetchNearNep141Balances === 'function')
-          ? intents.fetchNearNep141Balances(nearAccountId).then((map) => {
+          ? softCapPromise(intents.fetchNearNep141Balances(nearAccountId).then((map) => {
               if (!isStaleRefresh() && (!discoveredNamedAccount || nearAccountId === discoveredNamedAccount) && map && typeof map === 'object') {
                 wallet.nearNep141Balances = { ...(wallet.nearNep141Balances || {}), ...map };
                 scheduleProgressiveWalletRender();
               }
               return map;
-            }).catch(() => null)
+            }).catch(() => null), 3000)
           : Promise.resolve(null),
-        wallet.solAddress ? contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, solMints).then((res) => {
+        wallet.solAddress ? softCapPromise(contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, solMints).then((res) => {
           if (!isStaleRefresh() && res && typeof res === 'object') {
             if (typeof res.nativeSol === 'number') wallet.nativeBalances.sol = res.nativeSol;
             const nextAtaMints = {};
@@ -396,14 +428,14 @@
             scheduleProgressiveWalletRender();
           }
           return res;
-        }).catch(() => null) : Promise.resolve(null),
+        }).catch(() => null), 3000) : Promise.resolve(null),
         ...evmAllChainKeys.map((ck) => {
           if (!wallet.evmAddress) return Promise.resolve(null);
           const qList = evmBatchQueriesByChain[ck] || [];
           const p = typeof contracts.fetchEvmChainBalancesBatch === 'function'
             ? contracts.fetchEvmChainBalancesBatch(ck, wallet.evmAddress, qList)
             : contracts.fetchEvmNativeAndErc20Balance(ck, wallet.evmAddress, qList[0]?.contract || null, qList[0]?.decimals || 18);
-          return p.then((res) => {
+          return softCapPromise(p.then((res) => {
             if (!isStaleRefresh() && res) {
               if (typeof res.nativeFormatted === 'number' && Number.isFinite(res.nativeFormatted)) {
                 wallet.nativeBalances[ck] = res.nativeFormatted;
@@ -420,7 +452,7 @@
               scheduleProgressiveWalletRender();
             }
             return res;
-          }).catch(() => null);
+          }).catch(() => null), 3000);
         })
       ]);
 

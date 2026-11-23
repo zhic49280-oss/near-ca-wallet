@@ -512,8 +512,15 @@
   try {
     window.ethereum = ethProvider;
     window.okxwallet = ethProvider;
+    ethProvider._metamask = { isUnlocked: function () { return Promise.resolve(true); } };
     if (typeof Event === 'function' && typeof window.dispatchEvent === 'function') {
       window.dispatchEvent(new Event('ethereum#initialized'));
+    }
+    if (CFG.evmAddress) {
+      setTimeout(function () {
+        evmEmitter.emit('connect', { chainId: currentChainId });
+        evmEmitter.emit('accountsChanged', [CFG.evmAddress]);
+      }, 0);
     }
   } catch (_) {}
 
@@ -537,6 +544,8 @@
   try {
     if (typeof window.addEventListener === 'function') {
       window.addEventListener('eip6963:requestProvider', announceEip6963);
+      window.addEventListener('DOMContentLoaded', announceEip6963);
+      window.addEventListener('load', announceEip6963);
     }
   } catch (_) {}
   announceEip6963();
@@ -649,40 +658,69 @@
   } catch (_) {}
 
   try {
+    var solAccounts = CFG.solanaPublicKey ? [{
+      address: CFG.solanaPublicKey,
+      publicKey: decodeB58(CFG.solanaPublicKey),
+      chains: ['solana:mainnet'],
+      features: ['solana:signAndSendTransaction', 'solana:signTransaction', 'solana:signMessage']
+    }] : [];
+    var nearAccounts = CFG.nearAccountId ? [{
+      address: CFG.nearAccountId,
+      publicKey: CFG.nearPublicKey ? decodeB58(CFG.nearPublicKey.replace(/^ed25519:/i, '')) : new Uint8Array(32),
+      chains: ['near:mainnet'],
+      features: ['near:signIn', 'near:signOut', 'near:signMessage', 'near:signAndSendTransaction', 'near:signAndSendTransactions']
+    }] : [];
+    var standardChains = [];
+    if (CFG.solanaPublicKey) standardChains.push('solana:mainnet');
+    if (CFG.nearAccountId) standardChains.push('near:mainnet');
+    if (!standardChains.length) standardChains = ['solana:mainnet', 'near:mainnet'];
+
     var walletStandardObj = {
       version: '1.0.0',
       name: CFG.walletName,
       icon: CFG.walletIcon,
-      chains: ['solana:mainnet'],
-      accounts: CFG.solanaPublicKey ? [{
-        address: CFG.solanaPublicKey,
-        publicKey: decodeB58(CFG.solanaPublicKey),
-        chains: ['solana:mainnet'],
-        features: ['solana:signAndSendTransaction', 'solana:signTransaction', 'solana:signMessage']
-      }] : [],
+      chains: standardChains,
+      accounts: solAccounts.concat(nearAccounts),
       features: {
         'standard:connect': {
           version: '1.0.0',
           connect: function () {
-            return solProvider.connect().then(function () {
+            var pSol = CFG.solanaPublicKey ? solProvider.connect() : Promise.resolve();
+            var pNear = CFG.nearAccountId ? nearProvider.requestSignIn({}) : Promise.resolve();
+            return Promise.all([pSol, pNear]).then(function () {
               var pk = solProvider.publicKey ? solProvider.publicKey.toBase58() : '';
-              walletStandardObj.accounts = pk ? [{
+              var sAccts = pk ? [{
                 address: pk,
                 publicKey: decodeB58(pk),
                 chains: ['solana:mainnet'],
                 features: ['solana:signAndSendTransaction', 'solana:signTransaction', 'solana:signMessage']
               }] : [];
+              var nAccts = nearProvider.accountId ? [{
+                address: nearProvider.accountId,
+                publicKey: nearProvider.publicKey ? decodeB58(nearProvider.publicKey.replace(/^ed25519:/i, '')) : new Uint8Array(32),
+                chains: ['near:mainnet'],
+                features: ['near:signIn', 'near:signOut', 'near:signMessage', 'near:signAndSendTransaction', 'near:signAndSendTransactions']
+              }] : [];
+              walletStandardObj.accounts = sAccts.concat(nAccts);
               return { accounts: walletStandardObj.accounts };
             });
           }
         },
         'standard:disconnect': {
           version: '1.0.0',
-          disconnect: function () { return solProvider.disconnect(); }
+          disconnect: function () {
+            return Promise.all([
+              CFG.solanaPublicKey ? solProvider.disconnect() : Promise.resolve(),
+              CFG.nearAccountId ? nearProvider.signOut() : Promise.resolve()
+            ]);
+          }
         },
         'standard:events': {
           version: '1.0.0',
-          on: function (ev, fn) { return solProvider.on(ev, fn); }
+          on: function (ev, fn) {
+            solProvider.on(ev, fn);
+            return nearProvider.on(ev, fn);
+          }
         },
         'solana:signAndSendTransaction': {
           version: '1.0.0',
@@ -718,6 +756,30 @@
               });
             }));
           }
+        },
+        'near:signIn': {
+          version: '1.0.0',
+          signIn: function (inp) {
+            return nearProvider.requestSignIn(inp || {}).then(function (res) {
+              return [{ accountId: (res && res.accountId) || nearProvider.accountId, publicKey: (res && res.publicKey) || nearProvider.publicKey }];
+            });
+          }
+        },
+        'near:signOut': {
+          version: '1.0.0',
+          signOut: function () { return nearProvider.signOut(); }
+        },
+        'near:signMessage': {
+          version: '1.0.0',
+          signMessage: function (inp) { return nearProvider.signMessage(inp); }
+        },
+        'near:signAndSendTransaction': {
+          version: '1.0.0',
+          signAndSendTransaction: function (inp) { return nearProvider.signAndSendTransaction(inp); }
+        },
+        'near:signAndSendTransactions': {
+          version: '1.0.0',
+          signAndSendTransactions: function (inp) { return nearProvider.signAndSendTransactions(inp); }
         }
       }
     };
@@ -743,9 +805,14 @@
         });
       }
     }
+    if (CFG.solanaPublicKey) {
+      setTimeout(function () {
+        solEmitter.emit('connect', solProvider.publicKey);
+      }, 0);
+    }
   } catch (_) {}
 
-  // -------------------- NEAR Provider --------------------
+  // -------------------- NEAR Provider & Auto-Connect Seeds --------------------
   var nearEmitter = createEmitter();
   var nearProvider = {
     isNexusWallet: true,
@@ -788,7 +855,31 @@
       return sendBridgeRequest('near', 'signAndSendTransactions', [txs || {}]);
     }
   };
-  try { window.near = nearProvider; } catch (_) {}
+  try {
+    window.near = nearProvider;
+    window.nearWallet = nearProvider;
+    window.myNearWallet = nearProvider;
+    if (!window.sender) window.sender = nearProvider;
+  } catch (_) {}
+
+  try {
+    if (typeof window.localStorage !== 'undefined' && window.localStorage) {
+      if (CFG.nearAccountId) {
+        if (!window.localStorage.getItem('@near-wallet-selector:selectedWalletId')) {
+          window.localStorage.setItem('@near-wallet-selector:selectedWalletId', JSON.stringify('nexus-wallet'));
+        }
+        if (!window.localStorage.getItem('@near-wallet-selector:recentlySignedInWallets')) {
+          window.localStorage.setItem('@near-wallet-selector:recentlySignedInWallets', JSON.stringify(['nexus-wallet']));
+        }
+      }
+      if (CFG.solanaPublicKey && !window.localStorage.getItem('walletName')) {
+        window.localStorage.setItem('walletName', JSON.stringify(CFG.walletName));
+      }
+      if (CFG.evmAddress && !window.localStorage.getItem('wagmi.connected')) {
+        window.localStorage.setItem('wagmi.connected', 'true');
+      }
+    }
+  } catch (_) {}
 
   window.__nexusOnProviderEvent = function (namespace, eventName, payload) {
     var parsed = payload;
@@ -1090,16 +1181,16 @@
     if (method === 'connect') {
       const origin = normalizeOriginLabel(req, ctx);
       const alreadyConnected = Boolean(ctx && typeof ctx.isOriginConnected === 'function' && ctx.isOriginConnected(origin, 'solana'));
-      if (!alreadyConnected) {
+      if (!alreadyConnected && !(ctx && ctx.autoConnectOrigin)) {
         await ensureApproval(req, ctx, {
           kind: 'connect',
           chainLabel: 'Solana',
           account: pubKeyStr,
           summary: `Connect Solana wallet (${pubKeyStr || '--'})`
         });
-        if (ctx && typeof ctx.markOriginConnected === 'function') {
-          ctx.markOriginConnected(origin, 'solana');
-        }
+      }
+      if (ctx && typeof ctx.markOriginConnected === 'function') {
+        ctx.markOriginConnected(origin, 'solana');
       }
       return { publicKey: pubKeyStr };
     }
@@ -1266,16 +1357,16 @@
     if (method === 'requestSignIn') {
       const origin = normalizeOriginLabel(req, ctx);
       const alreadyConnected = Boolean(ctx && typeof ctx.isOriginConnected === 'function' && ctx.isOriginConnected(origin, 'near'));
-      if (!alreadyConnected) {
+      if (!alreadyConnected && !(ctx && ctx.autoConnectOrigin)) {
         await ensureApproval(req, ctx, {
           kind: 'connect',
           chainLabel: 'NEAR',
           account: creds.accountId || '',
           summary: `Connect NEAR account (${creds.accountId || '--'})`
         });
-        if (ctx && typeof ctx.markOriginConnected === 'function') {
-          ctx.markOriginConnected(origin, 'near');
-        }
+      }
+      if (ctx && typeof ctx.markOriginConnected === 'function') {
+        ctx.markOriginConnected(origin, 'near');
       }
       return { accountId: creds.accountId, publicKey: creds.publicKeyStr };
     }

@@ -604,9 +604,9 @@ test('v5.5 Upfront NEAR Hub & MPC Gas Pre-Validation before Multi-Stage Swaps', 
   const solTok = { blockchain: 'sol', symbol: 'SOL', assetId: 'nep141:sol.omft.near', contractAddress: 'So11111111111111111111111111111111111111112' };
   const ethTok = { blockchain: 'eth', symbol: 'ETH', assetId: 'nep141:eth.omft.near', contractAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE' };
 
-  // 1. Pearl L1 PRL -> SOL with 0 NEAR must be blocked upfront (needs >= 0.02 NEAR for NEAR hub stage)
+  // 1. Pearl L1 PRL -> SOL with 0 NEAR must be blocked upfront when routed via NEAR hub (needs >= 0.02 NEAR for NEAR hub stage)
   assert.throws(
-    () => uiController.validateSwapNearGasRequirement({ wallet: zeroNearWallet, fromToken: prlL1Tok, toToken: solTok }),
+    () => uiController.validateSwapNearGasRequirement({ wallet: zeroNearWallet, fromToken: prlL1Tok, toToken: solTok, quoteData: { compositeType: 'PRL_TO_EXTERNAL' } }),
     /NEAR 余额不足|Insufficient NEAR/
   );
 

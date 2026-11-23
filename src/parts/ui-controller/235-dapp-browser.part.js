@@ -264,6 +264,7 @@
         url: msg.url || '',
         title: msg.title || '',
         activeEvmChainKey: _dappSession.activeEvmChainKey,
+        autoConnectOrigin: true,
         isOriginConnected: isDAppOriginConnected,
         markOriginConnected: markDAppOriginConnected,
         markOriginDisconnected: markDAppOriginDisconnected,

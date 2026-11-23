@@ -128,9 +128,11 @@
     const isConfidential = compType === 'NEARCOM_CONFIDENTIAL_SWAP';
 
     const needsNearHub = !isConfidential && Boolean(
-      (compType === 'SMART_HUB_ROUTE' && stages.some((s) => s && (s.type === 'NEAR_SWAP' || s.type === 'BRIDGE_OUT'))) ||
-      ((isPrlSwapToken(fromToken) !== isPrlSwapToken(toToken)) && !isDirectOneClickQuote(quoteData)) ||
-      ['PRL_TO_EXTERNAL', 'EXTERNAL_TO_PRL', 'PRL_TO_NEAR_DCL', 'PRL_TO_NEAR_REF'].includes(compType)
+      quoteData && (
+        (compType === 'SMART_HUB_ROUTE' && stages.some((s) => s && (s.type === 'NEAR_SWAP' || s.type === 'BRIDGE_OUT'))) ||
+        ((isPrlSwapToken(fromToken) !== isPrlSwapToken(toToken)) && !isDirectOneClickQuote(quoteData)) ||
+        ['PRL_TO_EXTERNAL', 'EXTERNAL_TO_PRL', 'PRL_TO_NEAR_DCL', 'PRL_TO_NEAR_REF', 'NEAR_TO_PRL_REF'].includes(compType)
+      )
     );
 
     const originNeedsMpc =
@@ -378,7 +380,7 @@
   function doesSwapRouteRequireSelfRecipient(fromToken, toToken, quoteData = null) {
     if (!fromToken || !toToken) return false;
     if (isSameChainContractSwap(fromToken, toToken)) {
-      if (quoteData && isDirectOneClickQuote(quoteData)) return false;
+      if (quoteData && (isDirectOneClickQuote(quoteData) || quoteData.compositeType === 'NEARCOM_CONFIDENTIAL_SWAP')) return false;
       return true;
     }
 
@@ -395,7 +397,7 @@
         const lastType = stages[stages.length - 1]?.type;
         return lastType === 'DEST_DEX' || lastType === 'NEAR_SWAP';
       }
-      if (['CROSS_CHAIN_TO_SOL_DEX', 'CROSS_CHAIN_TO_EVM_DEX', 'PRL_TO_NEAR_REF', 'PRL_TO_NEAR_DCL'].includes(compType)) {
+      if (['CROSS_CHAIN_TO_SOL_DEX', 'CROSS_CHAIN_TO_EVM_DEX', 'PRL_TO_NEAR_REF', 'PRL_TO_NEAR_DCL', 'NEAR_TO_PRL_REF'].includes(compType)) {
         return true;
       }
       if (['EVM_TO_ARC_MAINNET', 'CROSS_CHAIN_TO_ARC_MAINNET'].includes(compType)) {
@@ -405,9 +407,6 @@
       return false;
     }
 
-    if (isPrlSwapToken(fromToken) && toBc === 'near' && !isPrlSwapToken(toToken)) {
-      return true;
-    }
     if (toBc === 'arc') {
       const arcDestLower = String(toToken.contractAddress || arcUsdcLower).toLowerCase();
       return Boolean(toToken.contractAddress && arcDestLower !== arcUsdcLower && arcDestLower !== evmNativeSentinel);
@@ -960,23 +959,25 @@
           };
         }
       }
-      try {
-        validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData, amountIn: amt });
-      } catch (_) {
-        return {
-          disabled: true,
-          isError: true,
-          isWarning: false,
-          text: t('NEAR Gas 余额不足', 'Insufficient NEAR for gas'),
-          reason: 'insufficient_near_gas'
-        };
+      if (!isQuoting || quoteData) {
+        try {
+          validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData, amountIn: amt });
+        } catch (_) {
+          return {
+            disabled: true,
+            isError: true,
+            isWarning: false,
+            text: t('NEAR Gas 余额不足', 'Insufficient NEAR for gas'),
+            reason: 'insufficient_near_gas'
+          };
+        }
       }
-    }
-    if (quoteError) {
-      return { disabled: true, isError: true, isWarning: false, text: String(quoteError), reason: 'quote_error' };
     }
     if (isQuoting) {
       return { disabled: true, isError: false, isWarning: false, text: t('报价获取中...', 'Fetching quote...'), reason: 'quoting' };
+    }
+    if (quoteError) {
+      return { disabled: true, isError: true, isWarning: false, text: String(quoteError), reason: 'quote_error' };
     }
     if (priceImpact && priceImpact.level === 'critical' && Number.isFinite(priceImpact.pct)) {
       return {

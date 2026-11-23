@@ -1798,3 +1798,83 @@ test('v6.34: near.com Confidential Intents (1CS) auth, 0-NEAR-gas PRL->USDC/QTC 
     assert.equal(wdQuotes[1].body.amount, '199500000');
   });
 });
+
+test('v6.35: DApp auto-connect (EVM/Solana/NEAR), PRL 0-NEAR-gas quoting & recipient unlock, and PTR spinner CSS', async () => {
+  const dappBrowser = require('../src/dapp-browser.js');
+  const keys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+  const zeroNearPrlWallet = state.normalizeWalletRecord({
+    id: 'w_v635_prl',
+    mnemonic: TEST_MNEMONIC,
+    nearAddress: keys.nearAddress,
+    nearPublicKey: keys.nearPublicKey,
+    nearPrivateSeedHex: keys.nearPrivateSeedHex,
+    evmAddress: keys.evmAddress,
+    solAddress: keys.solAddress,
+    address: keys.pearlAddress,
+    nativeBalances: { near: 0, prl: 500 }
+  });
+
+  // 1. DApp auto-connect across Solana (connect), NEAR (requestSignIn), EVM (eth_accounts), and Wallet Standard near:mainnet
+  const solConn = await dappBrowser.handleDAppRpcRequest(
+    { namespace: 'solana', method: 'connect', origin: 'https://jup.ag' },
+    { wallet: zeroNearPrlWallet, contracts: chainContracts, crypto: cryptoEngine, autoConnectOrigin: true }
+  );
+  assert.equal(solConn.publicKey, zeroNearPrlWallet.solAddress);
+
+  const nearConn = await dappBrowser.handleDAppRpcRequest(
+    { namespace: 'near', method: 'requestSignIn', origin: 'https://near.com' },
+    { wallet: zeroNearPrlWallet, contracts: chainContracts, crypto: cryptoEngine, autoConnectOrigin: true }
+  );
+  assert.equal(nearConn.accountId, zeroNearPrlWallet.nearAddress);
+
+  const injectedScript = dappBrowser.buildInjectedProviderScript({
+    evmAddress: zeroNearPrlWallet.evmAddress,
+    solanaPublicKey: zeroNearPrlWallet.solAddress,
+    nearAccountId: zeroNearPrlWallet.nearAddress,
+    nearPublicKey: zeroNearPrlWallet.nearPublicKey
+  });
+  assert.ok(injectedScript.includes('near:mainnet'), 'Wallet Standard must advertise near:mainnet');
+  assert.ok(injectedScript.includes('@near-wallet-selector:selectedWalletId'), 'Must pre-seed NEAR wallet selector key');
+  assert.ok(injectedScript.includes('_metamask'), 'Must expose _metamask.isUnlocked');
+
+  // 2. PRL -> NEAR/SOL with 0 NEAR gas: no premature "NEAR Gas 余额不足" while quoting or pre-quote; recipient unlocked
+  const prlTok = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'PRL' && t.blockchain === 'prl');
+  const nearTok = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'NEAR' && t.blockchain === 'near');
+  assert.ok(prlTok && nearTok);
+
+  assert.equal(
+    uiController.doesSwapRouteRequireSelfRecipient(prlTok, nearTok, null),
+    false,
+    'PRL -> NEAR must allow editing recipient address before quote resolves'
+  );
+  assert.equal(
+    uiController.doesSwapRouteRequireSelfRecipient(prlTok, nearTok, { compositeType: 'NEARCOM_CONFIDENTIAL_SWAP' }),
+    false,
+    'Confidential swap must allow custom recipient address'
+  );
+
+  const quotingState = uiController.evaluateSwapButtonState({
+    wallet: zeroNearPrlWallet,
+    fromToken: prlTok,
+    toToken: nearTok,
+    amountIn: '10',
+    quoteData: null,
+    isQuoting: true
+  });
+  assert.equal(quotingState.reason, 'quoting', 'Must show Fetching quote instead of NEAR gas error while quoting');
+  assert.equal(quotingState.isError, false);
+
+  const preQuoteCheck = uiController.validateSwapNearGasRequirement({
+    wallet: zeroNearPrlWallet,
+    fromToken: prlTok,
+    toToken: nearTok,
+    quoteData: null,
+    amountIn: 10
+  });
+  assert.equal(preQuoteCheck.requiredNear, 0, 'Pre-quote PRL check must not assume NEAR hub gas is required');
+
+  // 3. Style check for complete circular PTR spinner with explicit 0%-100% keyframes
+  const css = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
+  assert.ok(css.includes('border-right-color: var(--near-emerald);'), 'PTR spinner must have dual-arc border for smooth circle');
+  assert.ok(css.includes('0% {') && css.includes('transform: rotate(0deg);'), 'PTR keyframes must define explicit 0% start');
+});

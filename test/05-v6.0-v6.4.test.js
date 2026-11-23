@@ -808,7 +808,8 @@ test('v6.4 Fixes: Official Icons + Fallback, Live Jupiter ASR APY, Swap USD & Bu
         wallet: w,
         fromToken: prlTok,
         toToken: qtcTok,
-        amountIn: '10'
+        amountIn: '10',
+        quoteData: { compositeType: 'PRL_TO_EXTERNAL' }
       });
       assert.equal(nearGasShort.reason, 'insufficient_near_gas');
       assert.equal(nearGasShort.disabled, true);
@@ -821,7 +822,7 @@ test('v6.4 Fixes: Official Icons + Fallback, Live Jupiter ASR APY, Swap USD & Bu
       const arcEurcTok = (tokenRegistry.DEX_CHAIN_TOKENS.arc || []).find((t) => t.symbol === 'EURC');
 
       assert.equal(uiController.doesSwapRouteRequireSelfRecipient(orheaTok, usdtNearTok), true, 'Same-chain DEX requires self');
-      assert.equal(uiController.doesSwapRouteRequireSelfRecipient(prlTok, nearNativeTok), true, 'PRL -> NEAR ends on Ref DEX -> self');
+      assert.equal(uiController.doesSwapRouteRequireSelfRecipient(prlTok, nearNativeTok, { compositeType: 'PRL_TO_NEAR_REF' }), true, 'PRL -> NEAR ends on Ref DEX -> self');
       assert.equal(uiController.doesSwapRouteRequireSelfRecipient(prlTok, jupTok), true, 'PRL -> JUP ends on Jupiter DEX -> self');
       assert.equal(uiController.doesSwapRouteRequireSelfRecipient(baseEthTok, arcEurcTok), true, 'Base ETH -> Arc EURC ends on Arc DEX -> self');
       assert.equal(uiController.doesSwapRouteRequireSelfRecipient(prlTok, qtcTok), false, 'PRL -> QTC ends on 1Click bridge -> editable');

@@ -10,12 +10,20 @@
     const isQtcAsset = (tok) => /qtc\.omft\.near/i.test(String(tok && tok.assetId || '')) || String(tok && tok.blockchain || '').toLowerCase() === 'qtc';
     const qtcInvolved = isQtcAsset(fromToken) || isQtcAsset(toToken);
     const hasConfCreds = Boolean(params.nearPrivateSeedHex && params.nearPublicKey && (params.nearImplicitAddress || params.nearAddress));
-    const tryConfidential = Boolean(hasConfCreds && (prlInvolved || qtcInvolved) && !(isPrlAssetId(fromToken.assetId) && isPrlAssetId(toToken.assetId)));
     const isOneClickDirectAsset = (tok) => /^(nep141:|nep245:|1cs_v1:)/i.test(String(resolveOneClickAssetId(tok, tok.blockchain) || ''));
     const isDexOnlySol = toBc === 'sol' && Boolean(toToken.contractAddress) && toToken.contractAddress !== SOL_NATIVE_WSOL && !isOneClickDirectAsset(toToken);
     const isDexOnlyEvm = ['eth', 'base', 'arb', 'op', 'pol', 'avax', 'bsc', 'hood'].includes(toBc) && Boolean(toToken.contractAddress) && toToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL && !isOneClickDirectAsset(toToken);
     const isOriginDexOnly = (fromBc === 'sol' && Boolean(fromToken.contractAddress) && fromToken.contractAddress !== SOL_NATIVE_WSOL && !isOneClickDirectAsset(fromToken))
       || (['eth', 'base', 'arb', 'op', 'pol', 'avax', 'bsc', 'hood'].includes(fromBc) && Boolean(fromToken.contractAddress) && fromToken.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL && !isOneClickDirectAsset(fromToken));
+    const lowNearGas = params.availNearBalance !== undefined && Number(params.availNearBalance) < 0.02;
+    const tryConfidential = Boolean(
+      hasConfCreds &&
+      !isDexOnlySol &&
+      !isDexOnlyEvm &&
+      !isOriginDexOnly &&
+      !(isPrlAssetId(fromToken.assetId) && isPrlAssetId(toToken.assetId)) &&
+      (prlInvolved || qtcInvolved || params.requireThirdPartyRecipient || lowNearGas)
+    );
 
     // Fast path: direct 1Click-to-1Click pair (e.g. NEAR -> SOL/ETH/USDC) runs in 1 single request (~1s);
     // only falls back to multi-hub Smart Hub Router when direct quote fails.
@@ -76,7 +84,30 @@
       bestLegacyOrSmart = legacy;
     }
 
+    const isSelfOnlyRoute = (r) => {
+      if (!r || !r.compositeType) return false;
+      if (['PRL_TO_NEAR_REF', 'PRL_TO_NEAR_DCL', 'NEAR_TO_PRL_REF', 'CROSS_CHAIN_TO_SOL_DEX', 'CROSS_CHAIN_TO_EVM_DEX'].includes(r.compositeType)) return true;
+      if (r.compositeType === 'SMART_HUB_ROUTE' && Array.isArray(r.stages) && r.stages.length > 0) {
+        const last = r.stages[r.stages.length - 1]?.type;
+        return last === 'DEST_DEX' || last === 'NEAR_SWAP';
+      }
+      return false;
+    };
+    const isNearGasRoute = (r) => {
+      if (!r || !r.compositeType || r.compositeType === 'NEARCOM_CONFIDENTIAL_SWAP') return false;
+      if (['PRL_TO_EXTERNAL', 'EXTERNAL_TO_PRL', 'PRL_TO_NEAR_REF', 'PRL_TO_NEAR_DCL', 'NEAR_TO_PRL_REF'].includes(r.compositeType)) return true;
+      if (r.compositeType === 'SMART_HUB_ROUTE' && Array.isArray(r.stages)) {
+        return r.stages.some((s) => s && (s.type === 'NEAR_SWAP' || s.type === 'BRIDGE_OUT'));
+      }
+      return false;
+    };
+
+    if (params.requireThirdPartyRecipient && bestLegacyOrSmart && isSelfOnlyRoute(bestLegacyOrSmart)) {
+      bestLegacyOrSmart = null;
+    }
+
     if (confOk && bestLegacyOrSmart) {
+      if (lowNearGas && isNearGasRoute(bestLegacyOrSmart)) return conf;
       const cBig = BigInt(conf.amountOut);
       const oBig = BigInt(bestLegacyOrSmart.amountOut);
       // Prefer Confidential 1CS (0 NEAR gas, 1-step solver) unless legacy/smart beats it by > 0.3%
