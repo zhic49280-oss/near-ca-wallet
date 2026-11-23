@@ -295,10 +295,20 @@
     st.activeWalletId = found.id;
     st.expandedSymbol = null;
     st.swap.quoteData = null;
+    if (st.perp) {
+      st.perp.account = null;
+      st.perp.lastAccountSyncTs = 0;
+      if (typeof st.loadCachedPerpSnapshot === 'function') {
+        st.loadCachedPerpSnapshot(found.mpcEvmAddress || found.evmAddress || '');
+      }
+    }
     st.saveWallets();
     closeAllSheets();
     renderAll();
     refreshAllBalancesAsync(true);
+    if (st.activeTab === 'perp') {
+      refreshPerpDataAsync(false).catch(() => {});
+    }
     showToast(`${t('已切换账户', 'Switched to')}: ${found.name}`);
   }
 

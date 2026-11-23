@@ -892,44 +892,85 @@
     if (st.perp.selectedCoin !== coin) return;
     if (ob) st.perp.orderbook = ob;
     if (Array.isArray(candles)) st.perp.candles = candles;
+    if (typeof st.saveCachedPerpSnapshot === 'function') {
+      st.saveCachedPerpSnapshot({
+        candles: Array.isArray(candles) && candles.length > 0 ? candles : undefined,
+        candleCoin: coin,
+        candleInterval: iv,
+        orderbook: ob || undefined,
+        orderbookCoin: coin
+      });
+    }
     renderPerpView();
   }
 
   function setPerpChartInterval(interval) {
     const st = getState();
-    st.perp.chartInterval = ['5m', '15m', '1h', '4h', '1d'].includes(String(interval)) ? String(interval) : '15m';
+    const iv = ['5m', '15m', '1h', '4h', '1d'].includes(String(interval)) ? String(interval) : '15m';
+    st.perp.chartInterval = iv;
     st.perp.showChart = true;
+    const coin = st.perp.selectedCoin || 'BTC';
+    if (typeof st.getCachedPerpCandles === 'function') {
+      st.perp.candles = st.getCachedPerpCandles(coin, iv) || [];
+    }
     renderPerpView();
     refreshPerpOrderbookAndCandlesAsync().catch(() => {});
   }
 
+  let _perpRefreshInFlight = null;
+
   async function refreshPerpDataAsync(force = false) {
-    const st = getState();
-    const hl = getHyperliquid();
-    const contracts = getContracts();
-    const wallet = st.getActiveWallet();
-    if (!hl || !contracts || !wallet) return;
-    await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-    const hlAddr = contracts.resolveWalletEvmSender(wallet);
-    const now = Date.now();
-    const needMarkets = force || !st.perp.markets.length || (now - st.perp.lastMarketSyncTs > 30_000);
-    const [mkts, acct] = await Promise.all([
-      needMarkets ? hl.fetchHlMarkets().catch(() => null) : Promise.resolve(null),
-      hlAddr ? hl.fetchHlAccountState(hlAddr).catch(() => null) : Promise.resolve(null)
-    ]);
-    if (Array.isArray(mkts) && mkts.length > 0) {
-      st.perp.markets = mkts;
-      st.perp.lastMarketSyncTs = Date.now();
+    if (!force && _perpRefreshInFlight) {
+      return _perpRefreshInFlight;
     }
-    if (acct) {
-      st.perp.account = acct;
-      st.perp.lastAccountSyncTs = Date.now();
+    const run = (async () => {
+      const st = getState();
+      const hl = getHyperliquid();
+      const contracts = getContracts();
+      const wallet = st.getActiveWallet();
+      if (!hl || !contracts || !wallet) return;
+      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+      const hlAddr = contracts.resolveWalletEvmSender(wallet);
+      if ((!st.perp.markets.length || !st.perp.account) && typeof st.loadCachedPerpSnapshot === 'function') {
+        st.loadCachedPerpSnapshot(hlAddr);
+        renderPerpView();
+      }
+      const now = Date.now();
+      const needMarkets = force || !st.perp.markets.length || (now - st.perp.lastMarketSyncTs > 30_000);
+      const [mkts, acct] = await Promise.all([
+        needMarkets ? hl.fetchHlMarkets().catch(() => null) : Promise.resolve(null),
+        hlAddr ? hl.fetchHlAccountState(hlAddr).catch(() => null) : Promise.resolve(null)
+      ]);
+      if (Array.isArray(mkts) && mkts.length > 0) {
+        st.perp.markets = mkts;
+        st.perp.lastMarketSyncTs = Date.now();
+      }
+      if (acct) {
+        st.perp.account = acct;
+        st.perp.lastAccountSyncTs = Date.now();
+      }
+      if (typeof st.saveCachedPerpSnapshot === 'function') {
+        st.saveCachedPerpSnapshot({
+          markets: Array.isArray(mkts) && mkts.length > 0 ? mkts : undefined,
+          account: acct || undefined,
+          accountAddr: hlAddr
+        });
+      }
+      await refreshPerpOrderbookAndCandlesAsync();
+      if (force) {
+        refreshPerpLongShortAsync(st.perp.selectedCoin || 'BTC', true).catch(() => {});
+        showToast(t('合约数据已刷新', 'Perps synced'));
+      }
+    })();
+
+    if (!force) {
+      _perpRefreshInFlight = run.finally(() => {
+        if (_perpRefreshInFlight === wrapped) _perpRefreshInFlight = null;
+      });
+      var wrapped = _perpRefreshInFlight;
+      return wrapped;
     }
-    await refreshPerpOrderbookAndCandlesAsync();
-    if (force) {
-      refreshPerpLongShortAsync(st.perp.selectedCoin || 'BTC', true).catch(() => {});
-      showToast(t('合约数据已刷新', 'Perps synced'));
-    }
+    return run;
   }
 
   function setPerpSide(side) {
@@ -971,11 +1012,22 @@
 
   function openPerpTradeScreen(coin) {
     const st = getState();
-    if (coin) st.perp.selectedCoin = String(coin);
+    const nextCoin = coin ? String(coin) : (st.perp.selectedCoin || 'BTC');
+    const changedCoin = nextCoin !== st.perp.selectedCoin;
+    st.perp.selectedCoin = nextCoin;
     st.perp.subView = 'trade';
     st.perp.limitPriceInput = '';
     st.perp.errorMsg = '';
     st.perp.lsRatio = null;
+    if (changedCoin) st.perp.orderbook = null;
+    if (typeof st.getCachedPerpCandles === 'function') {
+      st.perp.candles = st.getCachedPerpCandles(nextCoin, st.perp.chartInterval || '15m') || [];
+    } else if (changedCoin) {
+      st.perp.candles = [];
+    }
+    if (typeof st.loadCachedPerpSnapshot === 'function') {
+      st.loadCachedPerpSnapshot();
+    }
     renderPerpView();
     refreshPerpOrderbookAndCandlesAsync().catch(() => {});
     refreshPerpLongShortAsync(st.perp.selectedCoin, false).catch(() => {});
@@ -1178,11 +1230,22 @@
 
   function selectPerpMarket(coin) {
     const st = getState();
-    st.perp.selectedCoin = String(coin || 'BTC');
+    const nextCoin = String(coin || 'BTC');
+    const changedCoin = nextCoin !== st.perp.selectedCoin;
+    st.perp.selectedCoin = nextCoin;
     st.perp.subView = 'trade';
     st.perp.limitPriceInput = '';
     st.perp.errorMsg = '';
     st.perp.lsRatio = null;
+    if (changedCoin) st.perp.orderbook = null;
+    if (typeof st.getCachedPerpCandles === 'function') {
+      st.perp.candles = st.getCachedPerpCandles(nextCoin, st.perp.chartInterval || '15m') || [];
+    } else if (changedCoin) {
+      st.perp.candles = [];
+    }
+    if (typeof st.loadCachedPerpSnapshot === 'function') {
+      st.loadCachedPerpSnapshot();
+    }
     closeAllSheets();
     renderPerpView();
     refreshPerpOrderbookAndCandlesAsync().catch(() => {});

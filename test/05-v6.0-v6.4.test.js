@@ -654,7 +654,10 @@ test('v6.4 Fixes: Official Icons + Fallback, Live Jupiter ASR APY, Swap USD & Bu
   // 1. Official remote icons take primaryUrl while local makeLocalIcon SVG acts as offline fallbackUrl
   for (const sym of ['PONS', 'QTC', 'SOL', 'BTC', 'EURC']) {
     const icon = tokenRegistry.resolveTokenIcon({ symbol: sym, blockchain: sym === 'SOL' ? 'sol' : (sym === 'BTC' ? 'btc' : 'near') });
-    assert.ok(icon.primaryUrl.startsWith('https://'), `${sym} primaryUrl must use official remote HTTPS icon`);
+    assert.ok(
+      icon.primaryUrl.startsWith('assets/icons/') || icon.primaryUrl.startsWith('https://'),
+      `${sym} primaryUrl must use bundled local or official remote icon`
+    );
     assert.ok(icon.fallbackUrl.startsWith('data:image/svg+xml;base64,'), `${sym} fallbackUrl must use local SVG data URI`);
   }
   const arcusTok = (tokenRegistry.DEX_CHAIN_TOKENS.arc || []).find((t) => t.symbol === 'ARCUS');
@@ -1091,7 +1094,10 @@ test('v6.4 Fixes: Official Icons + Fallback, Live Jupiter ASR APY, Swap USD & Bu
       blockchain: 'hood',
       logoURI: stalePonsSvg
     });
-    assert.ok(resolvedPons.primaryUrl.startsWith('https://'), 'resolveTokenIcon must prioritize official remote URL over stale generated SVG');
+    assert.ok(
+      resolvedPons.primaryUrl.startsWith('assets/icons/') || resolvedPons.primaryUrl.startsWith('https://'),
+      'resolveTokenIcon must prioritize bundled/official icon over stale generated SVG'
+    );
     assert.equal(resolvedPons.fallbackUrl, stalePonsSvg);
   });
 

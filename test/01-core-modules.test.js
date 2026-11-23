@@ -1306,7 +1306,7 @@ test('Module 2 & 3: PRL -> QTC composite fallthrough + 1Click DEPRECATED filteri
   }
   assert.equal(tokenRegistry.sanitizeImageUrl('data:image/svg+xml;utf8,<svg onload=alert(1)>'), '');
   const qtcResolved = tokenRegistry.resolveTokenIcon({ symbol: 'QTC', blockchain: 'qtc' });
-  assert.ok(qtcResolved.primaryUrl.startsWith('https://'));
+  assert.ok(qtcResolved.primaryUrl.startsWith('assets/icons/') || qtcResolved.primaryUrl.startsWith('https://'));
   assert.ok(qtcResolved.fallbackUrl.startsWith('data:image/svg+xml;base64,'));
 
   // 2. DEPRECATED / TESTNEBULA filtering + Ref & CoinGecko icon hydration + PRL -> QTC fallthrough

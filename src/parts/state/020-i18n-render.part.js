@@ -498,12 +498,158 @@
     } catch (_) {}
   }
 
+  function saveCachedPerpSnapshot({
+    markets,
+    account,
+    accountAddr,
+    candles,
+    candleCoin,
+    candleInterval,
+    orderbook,
+    orderbookCoin
+  } = {}) {
+    try {
+      let existing = {};
+      const raw = safeStorageGet(PERP_SNAPSHOT_STORAGE_KEY);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') existing = parsed;
+        } catch (_) {}
+      }
+
+      if (Array.isArray(markets) && markets.length > 0) {
+        existing.marketsUpdatedAt = Date.now();
+        existing.markets = markets.slice(0, 350).map((m) => ({
+          index: Number(m.index),
+          name: String(m.name || ''),
+          baseSymbol: String(m.baseSymbol || ''),
+          pairLabel: String(m.pairLabel || ''),
+          dex: String(m.dex || ''),
+          category: String(m.category || 'crypto'),
+          szDecimals: Number(m.szDecimals) || 0,
+          maxLeverage: Number(m.maxLeverage) || 20,
+          onlyIsolated: Boolean(m.onlyIsolated),
+          markPx: Number.isFinite(Number(m.markPx)) ? Number(m.markPx) : null,
+          midPx: Number.isFinite(Number(m.midPx)) ? Number(m.midPx) : null,
+          prevDayPx: Number.isFinite(Number(m.prevDayPx)) ? Number(m.prevDayPx) : null,
+          priceChange24h: Number.isFinite(Number(m.priceChange24h)) ? Number(m.priceChange24h) : null,
+          change24hPct: Number.isFinite(Number(m.change24hPct)) ? Number(m.change24hPct) : null,
+          fundingRate: Number.isFinite(Number(m.fundingRate)) ? Number(m.fundingRate) : null,
+          openInterest: Number.isFinite(Number(m.openInterest)) ? Number(m.openInterest) : null,
+          dayNtlVlm: Number.isFinite(Number(m.dayNtlVlm)) ? Number(m.dayNtlVlm) : 0
+        }));
+      }
+
+      const addrKey = String(accountAddr || (account && account.user) || '').trim().toLowerCase();
+      if (account && typeof account === 'object' && addrKey) {
+        const byAddr = (existing.accountsByAddr && typeof existing.accountsByAddr === 'object') ? { ...existing.accountsByAddr } : {};
+        byAddr[addrKey] = {
+          updatedAt: Date.now(),
+          account: {
+            ...account,
+            fills: Array.isArray(account.fills) ? account.fills.slice(0, 20) : []
+          }
+        };
+        const sortedAddrs = Object.entries(byAddr)
+          .sort((a, b) => Number(b[1] && b[1].updatedAt || 0) - Number(a[1] && a[1].updatedAt || 0))
+          .slice(0, 3);
+        existing.accountsByAddr = Object.fromEntries(sortedAddrs);
+      }
+
+      if (Array.isArray(candles) && candles.length > 0 && candleCoin) {
+        const cIv = String(candleInterval || state.perp.chartInterval || '15m');
+        const cKey = `${String(candleCoin)}|${cIv}`;
+        const cMap = (existing.candlesCache && typeof existing.candlesCache === 'object') ? { ...existing.candlesCache } : {};
+        cMap[cKey] = { updatedAt: Date.now(), candles: candles.slice(-64) };
+        const sortedCandles = Object.entries(cMap)
+          .sort((a, b) => Number(b[1] && b[1].updatedAt || 0) - Number(a[1] && a[1].updatedAt || 0))
+          .slice(0, 6);
+        existing.candlesCache = Object.fromEntries(sortedCandles);
+      }
+
+      if (orderbook && typeof orderbook === 'object' && orderbookCoin) {
+        existing.orderbook = {
+          updatedAt: Date.now(),
+          coin: String(orderbookCoin),
+          ob: orderbook
+        };
+      }
+
+      return safeStorageSet(PERP_SNAPSHOT_STORAGE_KEY, JSON.stringify(existing));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function loadCachedPerpSnapshot(walletAddr = '') {
+    try {
+      const raw = safeStorageGet(PERP_SNAPSHOT_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+
+      const now = Date.now();
+      if (
+        (!Array.isArray(state.perp.markets) || state.perp.markets.length === 0) &&
+        Array.isArray(parsed.markets) &&
+        parsed.markets.length > 0 &&
+        (!parsed.marketsUpdatedAt || (now - Number(parsed.marketsUpdatedAt) <= 7 * 86400_000))
+      ) {
+        state.perp.markets = parsed.markets;
+      }
+
+      const activeW = getActiveWallet();
+      const targetAddr = String(walletAddr || (activeW && (activeW.mpcEvmAddress || activeW.evmAddress)) || '').trim().toLowerCase();
+      if (!state.perp.account && targetAddr && parsed.accountsByAddr && typeof parsed.accountsByAddr === 'object') {
+        const entry = parsed.accountsByAddr[targetAddr];
+        if (entry && entry.account && (!entry.updatedAt || (now - Number(entry.updatedAt) <= 24 * 3600_000))) {
+          state.perp.account = entry.account;
+        }
+      }
+
+      const curCoin = String(state.perp.selectedCoin || 'BTC');
+      const curIv = String(state.perp.chartInterval || '15m');
+      if ((!Array.isArray(state.perp.candles) || state.perp.candles.length === 0) && parsed.candlesCache && typeof parsed.candlesCache === 'object') {
+        const cEntry = parsed.candlesCache[`${curCoin}|${curIv}`];
+        if (cEntry && Array.isArray(cEntry.candles) && (!cEntry.updatedAt || (now - Number(cEntry.updatedAt) <= 24 * 3600_000))) {
+          state.perp.candles = cEntry.candles;
+        }
+      }
+
+      if (!state.perp.orderbook && parsed.orderbook && parsed.orderbook.coin === curCoin && parsed.orderbook.ob) {
+        if (!parsed.orderbook.updatedAt || (now - Number(parsed.orderbook.updatedAt) <= 24 * 3600_000)) {
+          state.perp.orderbook = parsed.orderbook.ob;
+        }
+      }
+
+      return parsed;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function getCachedPerpCandles(coin, interval = '15m') {
+    try {
+      const raw = safeStorageGet(PERP_SNAPSHOT_STORAGE_KEY);
+      if (!raw || !coin) return null;
+      const parsed = JSON.parse(raw);
+      const entry = parsed && parsed.candlesCache && parsed.candlesCache[`${String(coin)}|${String(interval || '15m')}`];
+      if (!entry || !Array.isArray(entry.candles) || entry.candles.length === 0) return null;
+      if (entry.updatedAt && (Date.now() - Number(entry.updatedAt) > 24 * 3600_000)) return null;
+      return entry.candles;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function initState() {
     loadWallets();
     loadContacts();
     loadFavoriteTokens();
     loadCachedLiveTokens();
     loadCachedStakingMetrics();
+    loadCachedPerpSnapshot();
     loadSwapPair();
     loadActiveSwapOrder();
     applyLanguage(state.lang);
@@ -517,6 +663,7 @@
   state.FAV_TOKENS_STORAGE_KEY = FAV_TOKENS_STORAGE_KEY;
   state.LIVE_TOKENS_STORAGE_KEY = LIVE_TOKENS_STORAGE_KEY;
   state.STAKING_METRICS_STORAGE_KEY = STAKING_METRICS_STORAGE_KEY;
+  state.PERP_SNAPSHOT_STORAGE_KEY = PERP_SNAPSHOT_STORAGE_KEY;
   state.DEFAULT_FAVORITE_TOKEN_IDS = DEFAULT_FAVORITE_TOKEN_IDS;
   state.i18nDict = i18nDict;
   state.t = t;
@@ -543,6 +690,9 @@
   state.saveCachedLiveTokens = saveCachedLiveTokens;
   state.loadCachedStakingMetrics = loadCachedStakingMetrics;
   state.saveCachedStakingMetrics = saveCachedStakingMetrics;
+  state.saveCachedPerpSnapshot = saveCachedPerpSnapshot;
+  state.loadCachedPerpSnapshot = loadCachedPerpSnapshot;
+  state.getCachedPerpCandles = getCachedPerpCandles;
   state.toggleFavoriteTokenId = toggleFavoriteTokenId;
   state.normalizeWalletRecord = normalizeWalletRecord;
   state.recomputeWalletMpcAddresses = recomputeWalletMpcAddresses;

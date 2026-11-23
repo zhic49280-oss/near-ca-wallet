@@ -6,6 +6,7 @@ const {
   assert,
   fs,
   path,
+  nodeCrypto,
   ROOT_DIR,
   cryptoEngine,
   tokenRegistry,
@@ -80,7 +81,10 @@ test('v6.24 UI & UX Fixes: global sheet scroll lock, keyboard-safe picker/perp h
 
 test('v6.24 UI & UX Fixes: kPEPE/kBONK/kSHIB perp icon normalization preserves kHYPE & collapsible TP/SL', () => {
   const kpepeIcon = tokenRegistry.resolveTokenIcon({ symbol: 'kPEPE', blockchain: 'arb' });
-  assert.ok(kpepeIcon.primaryUrl && kpepeIcon.primaryUrl.startsWith('https://') && !kpepeIcon.primaryUrl.includes('mitte.gg'), `kPEPE should resolve valid non-mitte PEPE icon, got ${kpepeIcon.primaryUrl}`);
+  assert.ok(
+    kpepeIcon.primaryUrl && (kpepeIcon.primaryUrl.startsWith('assets/icons/') || kpepeIcon.primaryUrl.startsWith('https://')) && !kpepeIcon.primaryUrl.includes('mitte.gg'),
+    `kPEPE should resolve valid non-mitte PEPE icon, got ${kpepeIcon.primaryUrl}`
+  );
   assert.equal(kpepeIcon.primaryUrl, tokenRegistry.resolveTokenIcon({ symbol: 'PEPE' }).primaryUrl);
 
   const kbonkIcon = tokenRegistry.resolveTokenIcon({ symbol: 'kBONK' });
@@ -491,7 +495,10 @@ test('v6.25 Token & Perp Icons + Sheet Scroll Lock Fix: zero dead mitte.gg URLs,
 
   for (const sym of ['PEPE', 'kPEPE', 'SHIB', 'xyz:CRCL', 'CRCL', 'NVDA', 'TSLA']) {
     const res = tokenRegistry.resolveTokenIcon({ symbol: sym, blockchain: sym.includes(':') ? 'eth' : 'hype' });
-    assert.ok(res && res.primaryUrl && res.primaryUrl.startsWith('https://'), `${sym} should resolve a valid HTTPS icon`);
+    assert.ok(
+      res && res.primaryUrl && (res.primaryUrl.startsWith('assets/icons/') || res.primaryUrl.startsWith('https://')),
+      `${sym} should resolve a valid bundled or HTTPS icon`
+    );
     assert.equal(res.primaryUrl.includes('mitte.gg'), false, `${sym} icon must not use dead mitte.gg host`);
   }
   const pearlPerpIcon = tokenRegistry.resolveTokenIcon({ symbol: 'io:PEARL', blockchain: 'eth' });
@@ -827,7 +834,10 @@ test('v6.26 OKX Default-On K-Line Chart, Full HIP-3 Icon Resolution & Scrollabil
     'xyz:QCOM', 'xyz:AVGO', 'xyz:UNKNOWN'
   ]) {
     const icon = tokenRegistry.resolveTokenIcon({ symbol: sym, blockchain: 'hype' });
-    assert.ok(icon.primaryUrl && icon.primaryUrl.startsWith('https://'), `${sym} should resolve a valid HTTPS icon`);
+    assert.ok(
+      icon.primaryUrl && (icon.primaryUrl.startsWith('assets/icons/') || icon.primaryUrl.startsWith('https://')),
+      `${sym} should resolve a valid bundled or HTTPS icon`
+    );
     assert.equal(icon.primaryUrl.includes('cryptocurrency-icons'), false, `${sym} must not resolve dead spothq crypto icon URL`);
     if (icon.fallbackUrl) {
       assert.equal(icon.fallbackUrl.includes('cryptocurrency-icons'), false, `${sym} fallback must not use dead spothq URL`);
@@ -841,3 +851,120 @@ test('v6.26 OKX Default-On K-Line Chart, Full HIP-3 Icon Resolution & Scrollabil
   const styleCss = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
   assert.ok(styleCss.includes('overflow-x: clip;'), 'body must use overflow-x: clip so Chromium does not create a secondary scroll blocker');
 });
+
+test('v6.27 Local Bundled Icons, Multi-Target Sync Verification, Perp SWR Snapshot Cache & Server/SW Config', async () => {
+  // 1. sanitizeImageUrl accepts bundled local assets/icons/* & rejects traversal / html
+  assert.equal(tokenRegistry.sanitizeImageUrl('assets/icons/BTC.png'), 'assets/icons/BTC.png');
+  assert.equal(tokenRegistry.sanitizeImageUrl('assets/icons/../sw.js'), '');
+  assert.equal(tokenRegistry.sanitizeImageUrl('assets/icons/evil.html'), '');
+
+  // 2. LOCAL_TOKEN_ICON_MAP coverage, valid image headers, and SHA-256 sync across root/dist/android/ios
+  const localMap = tokenRegistry.LOCAL_TOKEN_ICON_MAP || {};
+  const entries = Object.entries(localMap);
+  assert.ok(entries.length >= 120, `Expected >= 120 bundled local icon entries, got ${entries.length}`);
+
+  const checkedFiles = new Set();
+  const targets = [
+    path.join(ROOT_DIR, 'dist'),
+    path.join(ROOT_DIR, 'android', 'app', 'src', 'main', 'assets', 'public'),
+    path.join(ROOT_DIR, 'ios', 'App', 'App', 'public')
+  ];
+  for (const [sym, relPath] of entries) {
+    assert.ok(relPath.startsWith('assets/icons/'), `Invalid relPath for ${sym}: ${relPath}`);
+    if (checkedFiles.has(relPath)) continue;
+    checkedFiles.add(relPath);
+    const rootFile = path.join(ROOT_DIR, relPath);
+    assert.ok(fs.existsSync(rootFile), `Missing bundled icon file: ${relPath}`);
+    const buf = fs.readFileSync(rootFile);
+    assert.ok(buf.length >= 60, `Icon too small: ${relPath}`);
+    const headText = buf.subarray(0, 128).toString('utf8').toLowerCase();
+    assert.equal(headText.includes('<!doctype html') || headText.includes('<html'), false, `Icon ${relPath} must not be HTML`);
+    const rootHash = nodeCrypto.createHash('sha256').update(buf).digest('hex');
+    for (const dir of targets) {
+      const targetFile = path.join(dir, relPath);
+      assert.ok(fs.existsSync(targetFile), `Missing synced icon ${targetFile}`);
+      const targetHash = nodeCrypto.createHash('sha256').update(fs.readFileSync(targetFile)).digest('hex');
+      assert.equal(targetHash, rootHash, `Checksum mismatch for synced icon ${targetFile}`);
+    }
+  }
+
+  // 3. resolveTokenIcon prioritizes bundled local assets while preserving inline data URIs and explicit custom URLs
+  for (const sym of ['BTC', 'SOL', 'PEPE', 'kPEPE', 'xyz:SP500', 'xyz:SKHX', 'xyz:CRCL', 'NVDA', 'QTC', 'PONS']) {
+    const res = tokenRegistry.resolveTokenIcon({ symbol: sym, blockchain: sym === 'SOL' ? 'sol' : (sym === 'QTC' ? 'qtc' : 'hype') });
+    assert.ok(res.primaryUrl.startsWith('assets/icons/'), `${sym} must resolve to bundled assets/icons/*, got ${res.primaryUrl}`);
+  }
+  for (const sym of ['NEAR', 'ETH', 'USDC', 'RHEA', 'KHYPE']) {
+    const res = tokenRegistry.resolveTokenIcon({ symbol: sym, blockchain: sym === 'KHYPE' ? 'hype' : 'near' });
+    assert.ok(res.primaryUrl.startsWith('data:image/'), `${sym} must keep zero-latency inline data URI, got ${res.primaryUrl}`);
+  }
+  const customSol = tokenRegistry.resolveTokenIcon({
+    symbol: 'SOL',
+    blockchain: 'sol',
+    logoURI: 'https://example.com/custom-sol.png'
+  });
+  assert.equal(customSol.primaryUrl, 'https://example.com/custom-sol.png', 'Explicit custom logoURI must take precedence');
+
+  // 4. Perp SWR Snapshot Cache: persists markets, address-scoped account, candles, orderbook
+  const prevPerp = { ...state.perp };
+  try {
+    await withMockedStorage({}, async () => {
+      const sampleMkts = [
+        { index: 0, name: 'BTC', baseSymbol: 'BTC', pairLabel: 'BTC-USDC', dex: '', category: 'crypto', szDecimals: 4, maxLeverage: 40, markPx: 62000, prevDayPx: 60000, priceChange24h: 2000, change24hPct: 3.33, dayNtlVlm: 3_000_000_000 }
+      ];
+      const addrA = '0x1111111111111111111111111111111111111111';
+      const addrB = '0x2222222222222222222222222222222222222222';
+      const sampleAcctA = { user: addrA, accountValue: 123.45, availableMargin: 100.25, positions: [{ coin: 'BTC', isLong: true, absSize: 0.01 }], openOrders: [], fills: [] };
+      const sampleCandles = [
+        { t: 1700000000000, o: 61000, h: 62500, l: 60500, c: 62000, v: 500 },
+        { t: 1700000900000, o: 62000, h: 62200, l: 61800, c: 62100, v: 300 }
+      ];
+      const sampleOb = { bids: [{ px: '62090', sz: '1.0', n: 1 }], asks: [{ px: '62100', sz: '1.2', n: 1 }] };
+
+      const saved = state.saveCachedPerpSnapshot({
+        markets: sampleMkts,
+        account: sampleAcctA,
+        accountAddr: addrA,
+        candles: sampleCandles,
+        candleCoin: 'BTC',
+        candleInterval: '15m',
+        orderbook: sampleOb,
+        orderbookCoin: 'BTC'
+      });
+      assert.equal(saved, true);
+
+      state.perp.markets = [];
+      state.perp.account = null;
+      state.perp.candles = [];
+      state.perp.orderbook = null;
+      state.perp.selectedCoin = 'BTC';
+      state.perp.chartInterval = '15m';
+
+      state.loadCachedPerpSnapshot(addrA);
+      assert.equal(state.perp.markets.length, 1);
+      assert.equal(state.perp.markets[0].name, 'BTC');
+      assert.equal(state.perp.account.accountValue, 123.45);
+      assert.equal(state.perp.account.positions.length, 1);
+      assert.equal(state.perp.candles.length, 2);
+      assert.equal(state.perp.orderbook.bids[0].px, '62090');
+
+      // Address isolation check: Wallet B must not inherit Wallet A positions/equity
+      state.perp.account = null;
+      state.loadCachedPerpSnapshot(addrB);
+      assert.equal(state.perp.account, null, 'Wallet B must not load Wallet A perp account snapshot');
+
+      assert.equal(state.getCachedPerpCandles('BTC', '15m').length, 2);
+      assert.equal(state.getCachedPerpCandles('ETH', '15m'), null);
+    });
+  } finally {
+    Object.assign(state.perp, prevPerp);
+  }
+
+  // 5. server.js MIME types & sw.js cache rule for .webp / .jpg
+  const serverJs = fs.readFileSync(path.join(ROOT_DIR, 'server.js'), 'utf8');
+  const swJs = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
+  assert.ok(serverJs.includes("'.webp': 'image/webp'"), 'server.js must serve image/webp');
+  assert.ok(serverJs.includes("'.jpg': 'image/jpeg'"), 'server.js must serve image/jpeg');
+  assert.ok(swJs.includes('webp|jpe?g'), 'sw.js must cache bundled webp/jpg icons');
+  assert.ok(swJs.includes('nexus-wallet-v6.27'), 'sw.js must bump cache version to v6.27');
+});
+

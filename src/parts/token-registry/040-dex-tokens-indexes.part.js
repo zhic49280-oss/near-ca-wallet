@@ -330,6 +330,7 @@
 
   const NearCATokens = {
     TOKEN_ICON_MAP,
+    LOCAL_TOKEN_ICON_MAP: typeof LOCAL_TOKEN_ICON_MAP !== 'undefined' ? LOCAL_TOKEN_ICON_MAP : {},
     CHAIN_META,
     UNIFIED_CORE_TOKENS,
     DEX_CHAIN_TOKENS,

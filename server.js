@@ -17,6 +17,10 @@ const MIME_TYPES = {
   '.js': 'application/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.avif': 'image/avif',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon'
 };
@@ -200,10 +204,11 @@ const server = http.createServer((req, res) => {
     const ext = path.extname(filePath).toLowerCase();
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
     const hasVersionQuery = parsedStatic.searchParams.has('v');
+    const isBundledIcon = normalizedRel.startsWith('assets/icons/');
     const isEntryHtmlOrSw = ext === '.html' || path.basename(filePath) === 'sw.js';
     const cacheControl = !isEntryHtmlOrSw && hasVersionQuery
       ? 'public, max-age=31536000, immutable'
-      : 'no-store, no-cache, must-revalidate';
+      : (isBundledIcon ? 'public, max-age=604800' : 'no-store, no-cache, must-revalidate');
     const baseHeaders = {
       'Content-Type': contentType,
       'Cache-Control': cacheControl,

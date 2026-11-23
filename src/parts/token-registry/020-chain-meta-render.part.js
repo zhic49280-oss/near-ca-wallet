@@ -441,11 +441,26 @@
     }
 
     const explicitUrl = sanitizeImageUrl(logoURI);
-    const mappedUrl = TOKEN_ICON_MAP[symUpper]
+    const exactMappedUrl = TOKEN_ICON_MAP[symUpper]
       || TOKEN_ICON_MAP[symClean]
       || (contractLower ? DYNAMIC_ICON_BY_CONTRACT[contractLower] : '')
       || DYNAMIC_ICON_BY_SYMBOL[symUpper]
       || DYNAMIC_ICON_BY_SYMBOL[symClean]
+      || '';
+    const hasExactInline = Boolean(exactMappedUrl && exactMappedUrl.startsWith('data:image/'));
+    const localMap = typeof LOCAL_TOKEN_ICON_MAP !== 'undefined' ? LOCAL_TOKEN_ICON_MAP : null;
+    const dexSymKey = dexPrefix && symBase ? `${dexPrefix.toUpperCase()}:${symBase}` : '';
+    const localBundledUrl = localMap
+      ? (
+        localMap[symUpper]
+        || localMap[symClean]
+        || (dexSymKey ? localMap[dexSymKey] : '')
+        || (!hasExactInline && symBase ? (localMap[symBase] || localMap[`${symBase}X`]) : '')
+        || (!hasExactInline ? (localMap[`${symClean}X`] || '') : '')
+        || ''
+      )
+      : '';
+    const mappedUrl = exactMappedUrl
       || (symBase && symBase !== symClean ? (TOKEN_ICON_MAP[symBase] || TOKEN_ICON_MAP[`${symBase}X`] || DYNAMIC_ICON_BY_SYMBOL[symBase] || '') : '')
       || (!symBase || symBase === symClean ? (TOKEN_ICON_MAP[`${symClean}X`] || '') : '')
       || '';
@@ -456,13 +471,15 @@
     const isStaleGeneratedSvg = Boolean(
       explicitUrl &&
       explicitUrl.startsWith('data:image/svg+xml') &&
-      mappedUrl &&
-      /^https?:\/\//i.test(mappedUrl) &&
+      (localBundledUrl || (mappedUrl && /^https?:\/\//i.test(mappedUrl))) &&
       (explicitUrl === localFallback || explicitUrl.includes('dmlld0JveD0iMCAwIDMyIDMyIg') || explicitUrl.includes('viewBox="0 0 32 32"'))
     );
-    const preferredOrder = isStaleGeneratedSvg
-      ? [mappedUrl, explicitUrl]
-      : [explicitUrl, mappedUrl];
+    const hasPreferredBundled = Boolean(
+      localBundledUrl && (!explicitUrl || isStaleGeneratedSvg || explicitUrl === mappedUrl)
+    );
+    const preferredOrder = hasPreferredBundled
+      ? [localBundledUrl, mappedUrl, explicitUrl]
+      : (isStaleGeneratedSvg ? [mappedUrl, explicitUrl] : [explicitUrl, localBundledUrl, mappedUrl]);
 
     const unique = [];
     for (const u of preferredOrder) {

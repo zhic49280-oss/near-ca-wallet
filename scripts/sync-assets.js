@@ -27,6 +27,10 @@ const FILES_TO_SYNC = [
   'src/ui-controller.js'
 ];
 
+const DIRS_TO_SYNC = [
+  'assets/icons'
+];
+
 const TARGET_DIRS = [
   path.join(ROOT_DIR, 'dist'),
   path.join(ROOT_DIR, 'android', 'app', 'src', 'main', 'assets', 'public'),
@@ -35,6 +39,36 @@ const TARGET_DIRS = [
 
 function sha256(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function syncDirectory(relDir, targetRoots) {
+  const srcDir = path.join(ROOT_DIR, relDir);
+  if (!fs.existsSync(srcDir)) return 0;
+  const srcFiles = fs.readdirSync(srcDir).filter((name) => {
+    const full = path.join(srcDir, name);
+    return fs.statSync(full).isFile();
+  });
+  const srcSet = new Set(srcFiles);
+  for (const targetRoot of targetRoots) {
+    const dstDir = path.join(targetRoot, relDir);
+    fs.mkdirSync(dstDir, { recursive: true });
+    for (const existing of fs.readdirSync(dstDir)) {
+      if (!srcSet.has(existing)) {
+        const rmPath = path.join(dstDir, existing);
+        if (fs.statSync(rmPath).isFile()) fs.unlinkSync(rmPath);
+      }
+    }
+    for (const name of srcFiles) {
+      const src = path.join(srcDir, name);
+      const dst = path.join(dstDir, name);
+      fs.copyFileSync(src, dst);
+      if (sha256(src) !== sha256(dst)) {
+        console.error(`Checksum mismatch for ${relDir}/${name}`);
+        process.exit(1);
+      }
+    }
+  }
+  return srcFiles.length;
 }
 
 function syncAll() {
@@ -57,7 +91,11 @@ function syncAll() {
       }
     }
   }
-  console.log(`Successfully synchronized ${FILES_TO_SYNC.length} modular assets to dist/, android/, and ios/.`);
+  let dirFileTotal = 0;
+  for (const relDir of DIRS_TO_SYNC) {
+    dirFileTotal += syncDirectory(relDir, TARGET_DIRS);
+  }
+  console.log(`Successfully synchronized ${FILES_TO_SYNC.length} modular assets and ${dirFileTotal} bundled icons to dist/, android/, and ios/.`);
 }
 
 syncAll();

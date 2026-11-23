@@ -24,6 +24,9 @@
     const clean = String(url || '').trim();
     if (!clean) return '';
     if (/^https?:\/\/[^\s"'<>]+$/i.test(clean)) return clean;
+    if (/^(?:\.\/)?assets\/icons\/[A-Za-z0-9._-]+\.(?:svg|png|webp|jpg|jpeg|avif)(?:\?v=[A-Za-z0-9._-]+)?$/i.test(clean) && !clean.includes('..')) {
+      return clean;
+    }
 
     if (/^data:image\/(?:png|jpeg|jpg|gif|webp|svg\+xml);base64,/i.test(clean)) {
       const compact = clean.replace(/\s+/g, '');
