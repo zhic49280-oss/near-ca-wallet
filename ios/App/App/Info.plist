@@ -24,6 +24,8 @@
   <true/>
   <key>NSFaceIDUsageDescription</key>
   <string>需要使用 Face ID / Touch ID 验证交易签名与保护助记词安全</string>
+  <key>NSCameraUsageDescription</key>
+  <string>需要使用相机扫描 WalletConnect 连接二维码与区块链收款地址二维码</string>
   <key>UILaunchStoryboardName</key>
   <string>LaunchScreen</string>
   <key>UIMainStoryboardFile</key>

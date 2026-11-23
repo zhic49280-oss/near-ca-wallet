@@ -129,6 +129,7 @@
     <div class="sheet-body">
       <div class="flex gap-2">
         <input id="wc-uri-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="sheet.wcUriPlaceholder" placeholder="粘贴 wc: 配对链接" />
+        <button type="button" class="btn-ghost-sm" onclick="openQrScannerSheet('wc')" data-i18n="common.scan">扫码</button>
         <button type="button" class="btn-ghost-sm" onclick="pasteToWcUri()" data-i18n="common.paste">粘贴</button>
         <button type="button" class="btn-primary" style="width: auto; padding: 10px 14px;" onclick="pairWalletConnectUri()" data-i18n="sheet.wcPairBtn">配对连接</button>
       </div>
@@ -242,6 +243,27 @@
           <button type="button" class="btn-primary flex-1" onclick="bindOrReplacePrlMnemonicUI()" data-i18n="sheet.prlBindConfirmBtn">绑定 / 更换 PRL 账户</button>
           <button type="button" id="btn-prl-restore-default" class="btn-secondary hidden" onclick="restoreDefaultPrlAccountUI()" data-i18n="sheet.prlRestoreDefaultBtn">恢复默认派生</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== Sheet: QR Code Scanner ==================== -->
+  <div id="sheet-qr-scanner" class="bottom-sheet" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h3 class="sheet-title" data-i18n="sheet.qrScanTitle">扫描二维码</h3>
+      <button type="button" class="btn-ghost-sm" onclick="closeQrScannerSheet()" data-i18n="common.close">关闭</button>
+    </div>
+    <div class="sheet-body flex flex-col gap-3" style="text-align: center;">
+      <div id="qr-scanner-viewport" class="ios-glass-card" style="position: relative; width: 100%; max-width: 320px; aspect-ratio: 1 / 1; margin: 0 auto; overflow: hidden; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.65); border-color: rgba(0,236,151,0.4);">
+        <video id="qr-scanner-video" playsinline muted style="width: 100%; height: 100%; object-fit: cover;"></video>
+        <div style="position: absolute; inset: 18%; border: 2px solid rgba(0,236,151,0.75); border-radius: 16px; pointer-events: none; box-shadow: 0 0 0 9999px rgba(0,0,0,0.32);"></div>
+      </div>
+      <div id="qr-scanner-status" style="font-size: 12px; color: var(--text-secondary);" data-i18n="sheet.qrScanHint">将二维码对准取景框，或从相册选择二维码截图</div>
+      <input id="qr-scanner-file-input" type="file" accept="image/*" class="hidden" onchange="handleQrScannerFileSelect(event)" />
+      <div class="flex gap-2">
+        <button type="button" class="btn-secondary flex-1" onclick="triggerQrScannerFileInput()" data-i18n="sheet.qrScanAlbumBtn">从相册选图</button>
+        <button type="button" class="btn-ghost-sm" onclick="closeQrScannerSheet()" data-i18n="common.cancel">取消</button>
       </div>
     </div>
   </div>

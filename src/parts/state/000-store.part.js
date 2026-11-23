@@ -21,6 +21,7 @@
   const ACTIVE_SWAP_ORDER_STORAGE_KEY = 'near_ca_active_swap_order_v1';
   const WC_PROJECT_ID_STORAGE_KEY = 'near_ca_wc_project_id';
   const LEGACY_WC_PROJECT_ID_KEY = 'pearl_wc_project_id';
+  const DEFAULT_WC_PROJECT_ID = 'a1e691683a26f67375ef31ee654a1f49';
 
   const DEFAULT_FAVORITE_TOKEN_IDS = [
     'nep141:wrap.near',

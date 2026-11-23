@@ -94,6 +94,7 @@
   }
 
   function closeAllSheets() {
+    if (typeof stopQrScannerStream === 'function') stopQrScannerStream();
     const st = getState();
     if (st && st.limit) st.limit.pickerSide = null;
     if (typeof _secAuthState.resolve === 'function') {

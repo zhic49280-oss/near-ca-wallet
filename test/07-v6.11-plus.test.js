@@ -1514,3 +1514,58 @@ test('v6.31: independent PRL mining mnemonic bind/switch/restore, wallet mining 
     globalThis.window = prevWin;
   }
 });
+
+test('v6.32: built-in WalletConnect Project ID & QR scanner URI/address parsing', async () => {
+  const prevDoc = globalThis.document;
+  const prevClient = state.wc.client;
+  const prevPid = state.wc.projectId;
+  const domMap = new Map();
+  const getOrMake = (id) => {
+    if (!domMap.has(id)) domMap.set(id, createMockDomElement(id));
+    return domMap.get(id);
+  };
+  globalThis.document = {
+    activeElement: null,
+    documentElement: { lang: 'zh-CN', classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } } },
+    getElementById: (id) => getOrMake(id),
+    querySelector: () => null,
+    querySelectorAll: () => []
+  };
+  try {
+    state.initState();
+    assert.ok(state.wc.projectId && state.wc.projectId.length >= 16, 'WalletConnect must have built-in default Project ID');
+
+    assert.deepEqual(
+      uiController.parseScannedAddressPayload('wc:abc123@2?relay-protocol=irn&symKey=xyz'),
+      { type: 'wc', value: 'wc:abc123@2?relay-protocol=irn&symKey=xyz' }
+    );
+    assert.deepEqual(
+      uiController.parseScannedAddressPayload('ethereum:0x742d35Cc6634C0532925a3b844Bc454e4438f44e@1?value=100'),
+      { type: 'address', value: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e' }
+    );
+    assert.deepEqual(
+      uiController.parseScannedAddressPayload('bitcoin:bc1p5d7rjq7g6rdk2yhzks9smlaqtedr4dekq08ge8ztwac72sfr9rusxg3297?amount=0.05'),
+      { type: 'address', value: 'bc1p5d7rjq7g6rdk2yhzks9smlaqtedr4dekq08ge8ztwac72sfr9rusxg3297' }
+    );
+
+    let pairedUri = '';
+    state.wc.initProjectId = state.wc.projectId;
+    state.wc.client = {
+      core: { pairing: { pair: async ({ uri }) => { pairedUri = uri; } } },
+      getActiveSessions: () => ({})
+    };
+    const okWc = await uiController.handleQrScanResultAsync('wc:testpair999@2?relay-protocol=irn');
+    assert.equal(okWc, true);
+    assert.equal(pairedUri, 'wc:testpair999@2?relay-protocol=irn');
+    assert.equal(getOrMake('wc-uri-input').value, 'wc:testpair999@2?relay-protocol=irn');
+
+    await uiController.openQrScannerSheet('send');
+    const okSend = await uiController.handleQrScanResultAsync('solana:So11111111111111111111111111111111111111112?amount=1.2');
+    assert.equal(okSend, true);
+    assert.equal(getOrMake('send-recipient-input').value, 'So11111111111111111111111111111111111111112');
+  } finally {
+    state.wc.client = prevClient;
+    state.wc.projectId = prevPid;
+    globalThis.document = prevDoc;
+  }
+});

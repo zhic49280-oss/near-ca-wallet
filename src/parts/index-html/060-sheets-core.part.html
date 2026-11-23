@@ -23,6 +23,7 @@
         <div class="flex items-center justify-between">
           <span style="font-size: 12px; color: var(--text-secondary);" data-i18n="sheet.sendToLabel">收款地址（自动识别链类型）</span>
           <div class="flex gap-1">
+            <button type="button" class="btn-ghost-sm" onclick="openQrScannerSheet('send')" data-i18n="common.scan">扫码</button>
             <button type="button" class="btn-ghost-sm" onclick="pasteToSendAddress()" data-i18n="common.paste">粘贴</button>
             <button type="button" class="btn-ghost-sm" onclick="openContactsPicker('send')" data-i18n="common.contacts">地址簿</button>
           </div>
