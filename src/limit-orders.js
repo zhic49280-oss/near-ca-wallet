@@ -549,9 +549,11 @@
     }
 
     const humanSell = Number(fromBaseUnits(amtStr, sellDecimals));
+    const currentWrapped = Number(wallet.nearNep141Balances?.[sellId]?.formatted || 0);
+    const nativeNearBal = Number(contracts.resolveWalletChainBalance(wallet, 'near') || 0);
     const effectiveSellBal = tokenBalance !== null && tokenBalance !== undefined
       ? Number(tokenBalance)
-      : Number(wallet.nearNep141Balances?.[sellId]?.formatted || 0);
+      : (sellId === 'wrap.near' ? (currentWrapped + Math.max(0, nativeNearBal - 0.05)) : currentWrapped);
     if (!Number.isFinite(effectiveSellBal) || effectiveSellBal < humanSell) {
       throw new Error(
         t(
@@ -565,6 +567,20 @@
     const sender = resolvedWallet.nearNamedAccount || resolvedWallet.nearAddress;
     if (!sender || !resolvedWallet.nearPublicKey || !resolvedWallet.nearPrivateKey) {
       throw new Error(t('缺少 NEAR 签名凭据', 'Missing NEAR signing credentials'));
+    }
+
+    if (sellId === 'wrap.near') {
+      const liveWrapStr = typeof contracts.viewNearContractCall === 'function'
+        ? await contracts.viewNearContractCall('wrap.near', 'ft_balance_of', { account_id: sender }).catch(() => null)
+        : null;
+      const liveWrapBig = liveWrapStr && /^\d+$/.test(String(liveWrapStr).trim())
+        ? BigInt(String(liveWrapStr).trim())
+        : BigInt(toBaseUnits(String(currentWrapped), 24));
+      const neededBig = BigInt(amtStr);
+      if (liveWrapBig < neededBig) {
+        const shortfallBig = neededBig - liveWrapBig;
+        await wrapNearForLimit({ wallet: resolvedWallet, amountRaw: shortfallBig.toString() });
+      }
     }
 
     const storageState = await checkNearDclStorage(sender);
@@ -686,7 +702,14 @@
           gas: '150000000000000',
           depositYocto: '0'
         });
-        withdrawn.push({ tokenId: tid, txHash });
+        withdrawn.push({ tokenId: tid, amount: balStr, txHash });
+        if (tid === 'wrap.near' && typeof contracts.unwrapNearToNativeAsync === 'function') {
+          await contracts.unwrapNearToNativeAsync({
+            resolvedWallet,
+            accountId: sender,
+            amountYocto: balStr
+          }).catch(() => {});
+        }
       }
     }
     return withdrawn;

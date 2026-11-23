@@ -1,20 +1,20 @@
-﻿const CACHE_NAME = 'nexus-wallet-v6.29';
+﻿const CACHE_NAME = 'nexus-wallet-v6.30';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './style.css?v=6.29',
-  './assets/favicon.png?v=6.29',
-  './assets/nexus-logo-192.png?v=6.29',
-  './bip39-wordlist.js?v=6.29',
-  './src/crypto-engine.js?v=6.29',
-  './src/token-registry.js?v=6.29',
-  './src/near-intents.js?v=6.29',
-  './src/chain-contracts.js?v=6.29',
-  './src/limit-orders.js?v=6.29',
-  './src/hyperliquid-perps.js?v=6.29',
-  './src/state.js?v=6.29',
-  './src/dapp-browser.js?v=6.29',
-  './src/ui-controller.js?v=6.29'
+  './style.css?v=6.30',
+  './assets/favicon.png?v=6.30',
+  './assets/nexus-logo-192.png?v=6.30',
+  './bip39-wordlist.js?v=6.30',
+  './src/crypto-engine.js?v=6.30',
+  './src/token-registry.js?v=6.30',
+  './src/near-intents.js?v=6.30',
+  './src/chain-contracts.js?v=6.30',
+  './src/limit-orders.js?v=6.30',
+  './src/hyperliquid-perps.js?v=6.30',
+  './src/state.js?v=6.30',
+  './src/dapp-browser.js?v=6.30',
+  './src/ui-controller.js?v=6.30'
 ];
 
 self.addEventListener('install', (event) => {

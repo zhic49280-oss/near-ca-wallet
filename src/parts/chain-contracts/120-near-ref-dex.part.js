@@ -494,12 +494,29 @@
     return true;
   }
 
+  async function unwrapNearToNativeAsync({ resolvedWallet, accountId, amountYocto } = {}) {
+    const acct = String(accountId || '').trim();
+    const amt = String(amountYocto || '0').trim();
+    if (!resolvedWallet || !acct || !/^\d+$/.test(amt) || BigInt(amt) <= 0n) return null;
+    return api.signAndSendNearFunctionCall({
+      accountId: acct,
+      publicKeyStr: resolvedWallet.nearPublicKey,
+      privateKeyStr: resolvedWallet.nearPrivateKey,
+      receiverId: WRAP_NEAR_CONTRACT,
+      methodName: 'near_withdraw',
+      argsJson: JSON.stringify({ amount: amt }),
+      gas: '30000000000000',
+      depositYocto: '1'
+    });
+  }
+
   async function prepareNearSwapFundingAndStorage({ resolvedWallet, sender, inId, outId, amtStr }) {
+    let wrappedShortfallYocto = '0';
     if (inId === WRAP_NEAR_CONTRACT) {
       let wrappedBal = 0n;
       try {
         const wStr = await viewNearContractCall(WRAP_NEAR_CONTRACT, 'ft_balance_of', { account_id: sender });
-        if (wStr) wrappedBal = BigInt(String(wStr));
+        if (wStr && /^\d+$/.test(String(wStr).trim())) wrappedBal = BigInt(String(wStr).trim());
       } catch (_) {}
       const needed = BigInt(amtStr);
       if (wrappedBal < needed) {
@@ -508,7 +525,7 @@
           resolvedWallet,
           accountId: sender,
           tokenContract: WRAP_NEAR_CONTRACT
-        }).catch(() => {});
+        });
         await api.signAndSendNearFunctionCall({
           accountId: sender,
           publicKeyStr: resolvedWallet.nearPublicKey,
@@ -519,13 +536,24 @@
           gas: '30000000000000',
           depositYocto: shortfall.toString()
         });
+        wrappedShortfallYocto = shortfall.toString();
       }
     }
 
-    await ensureNearNep141StorageRegistered({
-      resolvedWallet,
-      accountId: sender,
-      tokenContract: outId
-    }).catch(() => {});
+    if (outId && outId !== WRAP_NEAR_CONTRACT) {
+      await ensureNearNep141StorageRegistered({
+        resolvedWallet,
+        accountId: sender,
+        tokenContract: outId
+      });
+    } else if (outId === WRAP_NEAR_CONTRACT) {
+      await ensureNearNep141StorageRegistered({
+        resolvedWallet,
+        accountId: sender,
+        tokenContract: WRAP_NEAR_CONTRACT
+      }).catch(() => {});
+    }
+
+    return { wrappedShortfallYocto };
   }
 

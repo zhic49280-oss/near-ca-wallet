@@ -1,9 +1,32 @@
   // ==================== Native In-App DApp Browser ====================
 
+  const DAPP_CONN_STORAGE_KEY = 'near_ca_dapp_connections_v1';
+
+  function loadPersistedDAppConnections() {
+    try {
+      if (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function') {
+        const raw = localStorage.getItem(DAPP_CONN_STORAGE_KEY);
+        if (raw) {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr)) return new Set(arr.map((x) => String(x)));
+        }
+      }
+    } catch (_) {}
+    return new Set();
+  }
+
+  function savePersistedDAppConnections(setObj) {
+    try {
+      if (typeof localStorage !== 'undefined' && typeof localStorage.setItem === 'function') {
+        localStorage.setItem(DAPP_CONN_STORAGE_KEY, JSON.stringify(Array.from(setObj || [])));
+      }
+    } catch (_) {}
+  }
+
   const _dappSession = {
     chainFilter: 'ALL',
     activeEvmChainKey: 'eth',
-    connectedOrigins: new Set(),
+    connectedOrigins: loadPersistedDAppConnections(),
     pendingApproval: null,
     listenersBound: false,
     nativeOpen: false
@@ -29,14 +52,75 @@
   }
 
   function markDAppOriginConnected(origin, namespace) {
+    if (!origin) return;
     _dappSession.connectedOrigins.add(`${namespace}:${origin}`);
+    savePersistedDAppConnections(_dappSession.connectedOrigins);
   }
 
   function markDAppOriginDisconnected(origin, namespace) {
     _dappSession.connectedOrigins.delete(`${namespace}:${origin}`);
+    savePersistedDAppConnections(_dappSession.connectedOrigins);
+  }
+
+  function disconnectDAppOrigin(origin) {
+    const clean = String(origin || '').trim();
+    if (!clean) return;
+    ['evm', 'solana', 'near'].forEach((ns) => _dappSession.connectedOrigins.delete(`${ns}:${clean}`));
+    savePersistedDAppConnections(_dappSession.connectedOrigins);
+    renderDAppCatalog();
+    showToast(t('已断开 DApp 授权', 'DApp disconnected'));
+  }
+
+  function disconnectAllDAppOrigins() {
+    _dappSession.connectedOrigins.clear();
+    savePersistedDAppConnections(_dappSession.connectedOrigins);
+    renderDAppCatalog();
+    showToast(t('已断开全部 DApp 授权', 'All DApps disconnected'));
+  }
+
+  function renderDAppConnectedSection() {
+    const sec = $('dapp-connected-section');
+    if (!sec) return;
+    const byOrigin = new Map();
+    for (const entry of _dappSession.connectedOrigins) {
+      const idx = entry.indexOf(':');
+      if (idx <= 0) continue;
+      const ns = entry.slice(0, idx).toUpperCase();
+      const origin = entry.slice(idx + 1);
+      if (!byOrigin.has(origin)) byOrigin.set(origin, new Set());
+      byOrigin.get(origin).add(ns === 'SOLANA' ? 'SOL' : ns);
+    }
+    if (byOrigin.size === 0) {
+      sec.classList.add('hidden');
+      sec.innerHTML = '';
+      return;
+    }
+    sec.classList.remove('hidden');
+    const rows = Array.from(byOrigin.entries()).map(([origin, nsSet]) => {
+      let host = origin;
+      try { host = new URL(origin).hostname || origin; } catch (_) {}
+      const badges = Array.from(nsSet).join(' · ');
+      return `
+        <div class="dapp-connected-row">
+          <div style="min-width:0;flex:1;">
+            <div class="mono truncate" style="font-size:12px;font-weight:700;color:#fff;">${escapeHtml(host)}</div>
+            <div style="font-size:10px;color:var(--near-emerald);">${escapeHtml(badges)}</div>
+          </div>
+          <button type="button" class="btn-danger" style="padding:4px 8px;font-size:10.5px;" data-action="disconnect-dapp-origin" data-origin="${escapeHtml(origin)}">${escapeHtml(t('断开', 'Disconnect'))}</button>
+        </div>
+      `;
+    }).join('');
+    sec.innerHTML = `
+      <div class="flex items-center justify-between gap-2">
+        <span style="font-size:12px;font-weight:700;color:#fff;">${escapeHtml(t('已连接应用', 'Connected DApps'))} (${byOrigin.size})</span>
+        <button type="button" class="btn-ghost-sm" data-action="disconnect-all-dapp-origins" style="font-size:10.5px;">${escapeHtml(t('全部断开', 'Disconnect All'))}</button>
+      </div>
+      ${rows}
+    `;
   }
 
   function renderDAppCatalog() {
+    renderDAppConnectedSection();
     const browserMod = getDAppBrowser();
     const filterEl = $('dapp-filter-bar');
     const listEl = $('dapp-catalog-list');
@@ -247,6 +331,15 @@
       showToast(t('仅支持安全的 https:// DApp 网址', 'Only valid https:// DApp URLs are allowed'));
       return;
     }
+
+    try {
+      const originUrl = new URL(safeUrl).origin;
+      if (originUrl) {
+        markDAppOriginConnected(originUrl, 'evm');
+        markDAppOriginConnected(originUrl, 'solana');
+        markDAppOriginConnected(originUrl, 'near');
+      }
+    } catch (_) {}
 
     ensureDAppBridgeListeners();
     if (wallet && contracts && typeof contracts.ensureWalletSigningKeysAsync === 'function') {

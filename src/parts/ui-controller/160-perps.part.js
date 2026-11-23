@@ -167,7 +167,66 @@
     return `$${n.toFixed(0)}`;
   }
 
-  function renderPerpCandleSvg(candles, market = null) {
+  function getVisiblePerpCandles(candles) {
+    const fullList = Array.isArray(candles) ? candles : [];
+    const maxVisible = 42;
+    const offset = Math.max(0, fullList.length - maxVisible);
+    return fullList.slice(offset);
+  }
+
+  function formatPerpCandleTime(ts) {
+    if (!Number.isFinite(ts) || ts <= 1e9) return '';
+    const d = new Date(ts);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `${mm}/${dd} ${hh}:${mi}`;
+  }
+
+  function renderPerpCandleDetailBar(candles, selectedIdx = null) {
+    const el = $('perp-candle-detail');
+    if (!el) return;
+    const list = getVisiblePerpCandles(candles);
+    if (!Number.isInteger(selectedIdx) || selectedIdx < 0 || selectedIdx >= list.length) {
+      el.classList.add('hidden');
+      el.innerHTML = '';
+      return;
+    }
+    const c = list[selectedIdx];
+    const open = Number(c.o || 0);
+    const close = Number(c.c || 0);
+    const pct = open > 0 ? ((close - open) / open) * 100 : 0;
+    const cls = close >= open ? 'text-emerald' : 'text-rose';
+    const timeStr = formatPerpCandleTime(c.t) || `#${selectedIdx + 1}`;
+    const volUsd = Number.isFinite(c.v) && c.v > 0 ? formatCompactUsd(c.v * (close || 1)) : '--';
+    const volQty = Number.isFinite(c.v) && c.v > 0 ? formatBal(c.v, 2) : '--';
+    el.classList.remove('hidden');
+    el.innerHTML =
+      `<span style="color:#fff;font-weight:700;">${escapeHtml(timeStr)}</span>` +
+      `<span>O:${escapeHtml(formatPerpPx(c.o))} H:${escapeHtml(formatPerpPx(c.h))} L:${escapeHtml(formatPerpPx(c.l))} C:${escapeHtml(formatPerpPx(c.c))}</span>` +
+      `<span class="${cls}" style="font-weight:700;">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span>` +
+      `<span>${escapeHtml(t('量', 'Vol'))}:${escapeHtml(volQty)} (${escapeHtml(volUsd)})</span>`;
+  }
+
+  function inspectPerpCandle(idx) {
+    const st = getState();
+    const list = getVisiblePerpCandles(st.perp && st.perp.candles);
+    const n = Number(idx);
+    if (!Number.isInteger(n) || n < 0 || n >= list.length) {
+      st.perp.inspectedCandleIdx = null;
+    } else {
+      st.perp.inspectedCandleIdx = st.perp.inspectedCandleIdx === n ? null : n;
+    }
+    const market = getSelectedPerpMarket();
+    const chartSvgEl = $('perp-chart-svg');
+    if (chartSvgEl) {
+      chartSvgEl.innerHTML = renderPerpCandleSvg(st.perp.candles, market, st.perp.inspectedCandleIdx);
+    }
+    renderPerpCandleDetailBar(st.perp.candles, st.perp.inspectedCandleIdx);
+  }
+
+  function renderPerpCandleSvg(candles, market = null, selectedIdx = null) {
     const fullList = Array.isArray(candles) ? candles : [];
     if (fullList.length < 2) {
       return `<div style="text-align:center; padding: 36px 0; font-size: 11.5px; color: var(--text-muted);">--</div>`;
@@ -208,7 +267,9 @@
       const c = list[i];
       if (c.l < minLow) { minLow = c.l; minLowIdx = i; }
       if (c.h > maxHigh) { maxHigh = c.h; maxHighIdx = i; }
-      if (Number.isFinite(c.v) && c.v > maxVol) maxVol = c.v;
+      if (Number.isFinite(c.v) && c.v > 0) {
+        if (c.v > maxVol) maxVol = c.v;
+      }
     }
     const span = maxHigh - minLow || 1;
     const step = plotW / list.length;
@@ -233,22 +294,13 @@
     }).join('');
 
     // 3 Vertical Dashed Time Grid Lines + Bottom Time Labels
-    const formatCandleTime = (ts) => {
-      if (!Number.isFinite(ts) || ts <= 1e9) return '';
-      const d = new Date(ts);
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
-      const hh = String(d.getHours()).padStart(2, '0');
-      const mi = String(d.getMinutes()).padStart(2, '0');
-      return `${mm}/${dd} ${hh}:${mi}`;
-    };
     const timeIndices = [Math.floor(list.length * 0.16), Math.floor(list.length * 0.5), Math.max(0, list.length - 1)];
     const seenT = new Set();
     const timeGridSvg = timeIndices.map((idx) => {
       if (seenT.has(idx) || !list[idx]) return '';
       seenT.add(idx);
       const x = plotL + idx * step + step / 2;
-      const lbl = formatCandleTime(list[idx].t);
+      const lbl = formatPerpCandleTime(list[idx].t);
       const anchor = idx >= list.length - 2 ? 'end' : (idx <= 2 ? 'start' : 'middle');
       const labelEl = lbl
         ? `<text x="${x.toFixed(1)}" y="204" text-anchor="${anchor}" fill="rgba(148,163,184,0.72)" font-size="8" font-family="ui-monospace, monospace">${escapeHtml(lbl)}</text>`
@@ -313,7 +365,25 @@
         `<text x="300" y="${(pillY + 9.5).toFixed(1)}" fill="#00ec97" font-size="8.2" font-weight="700" font-family="ui-monospace, monospace">${escapeHtml(formatPerpPx(livePx))}</text>`;
     }
 
-    return `<svg viewBox="0 0 ${W} ${H}" class="perp-chart-svg" preserveAspectRatio="xMidYMid meet">${legendSvg}${gridSvg}${timeGridSvg}${candleSvg}${maSvg}${hiPin}${loPin}${markSvg}</svg>`;
+    // Active Crosshair Overlay
+    let crosshairSvg = '';
+    if (Number.isInteger(selectedIdx) && selectedIdx >= 0 && selectedIdx < list.length) {
+      const selC = list[selectedIdx];
+      const cx = plotL + selectedIdx * step + step / 2;
+      const cy = yOf(selC.c);
+      crosshairSvg =
+        `<line x1="${cx.toFixed(1)}" y1="${candleTop}" x2="${cx.toFixed(1)}" y2="${volBottom}" stroke="#38bdf8" stroke-dasharray="2.5 2.5" stroke-width="1" stroke-opacity="0.9" />` +
+        `<line x1="${plotL}" y1="${cy.toFixed(1)}" x2="${plotR}" y2="${cy.toFixed(1)}" stroke="#38bdf8" stroke-dasharray="2.5 2.5" stroke-width="0.85" stroke-opacity="0.75" />` +
+        `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="2.8" fill="#38bdf8" stroke="#06080f" stroke-width="1" />`;
+    }
+
+    // Transparent Interactive Hit Targets per Candle
+    const hitTargetsSvg = list.map((_, idx) => {
+      const hx = plotL + idx * step;
+      return `<rect x="${hx.toFixed(1)}" y="${candleTop}" width="${step.toFixed(1)}" height="${(volBottom - candleTop).toFixed(1)}" fill="transparent" class="perp-candle-hit" data-action="inspect-perp-candle" data-candle-idx="${idx}" />`;
+    }).join('');
+
+    return `<svg viewBox="0 0 ${W} ${H}" class="perp-chart-svg" preserveAspectRatio="xMidYMid meet">${legendSvg}${gridSvg}${timeGridSvg}${candleSvg}${maSvg}${hiPin}${loPin}${markSvg}${crosshairSvg}${hitTargetsSvg}</svg>`;
   }
 
   function renderPerpOrderbook() {
@@ -630,6 +700,8 @@
 
     const q = String($('perp-overview-search')?.value || st.perp.overviewSearch || '').trim().toUpperCase();
     st.perp.overviewSearch = q;
+    const clearBtn = $('perp-overview-search-clear');
+    if (clearBtn) clearBtn.classList.toggle('hidden', q.length === 0);
 
     let filtered = mkts.filter((m) => {
       if (q) {
@@ -794,7 +866,9 @@
     if (chartWrap) chartWrap.classList.toggle('hidden', !st.perp.showChart);
     $('btn-perp-chart-toggle')?.classList.toggle('active', Boolean(st.perp.showChart));
     if (chartSvgEl && st.perp.showChart) {
-      chartSvgEl.innerHTML = renderPerpCandleSvg(st.perp.candles, market);
+      const selIdx = Number.isInteger(st.perp.inspectedCandleIdx) ? st.perp.inspectedCandleIdx : null;
+      chartSvgEl.innerHTML = renderPerpCandleSvg(st.perp.candles, market, selIdx);
+      renderPerpCandleDetailBar(st.perp.candles, selIdx);
       if (chartHlEl) {
         if (Array.isArray(st.perp.candles) && st.perp.candles.length >= 2) {
           let lo = Infinity;
@@ -909,6 +983,7 @@
     const iv = ['5m', '15m', '1h', '4h', '1d'].includes(String(interval)) ? String(interval) : '15m';
     st.perp.chartInterval = iv;
     st.perp.showChart = true;
+    st.perp.inspectedCandleIdx = null;
     const coin = st.perp.selectedCoin || 'BTC';
     if (typeof st.getCachedPerpCandles === 'function') {
       st.perp.candles = st.getCachedPerpCandles(coin, iv) || [];
@@ -1019,6 +1094,10 @@
     st.perp.limitPriceInput = '';
     st.perp.errorMsg = '';
     st.perp.lsRatio = null;
+    st.perp.inspectedCandleIdx = null;
+    st.perp.overviewSearch = '';
+    if ($('perp-overview-search')) $('perp-overview-search').value = '';
+    if ($('perp-overview-search-clear')) $('perp-overview-search-clear').classList.add('hidden');
     if (changedCoin) st.perp.orderbook = null;
     if (typeof st.getCachedPerpCandles === 'function') {
       st.perp.candles = st.getCachedPerpCandles(nextCoin, st.perp.chartInterval || '15m') || [];
@@ -1037,6 +1116,32 @@
     const st = getState();
     st.perp.overviewSearch = String(val || '');
     renderPerpOverviewPanel();
+  }
+
+  function clearPerpOverviewSearch() {
+    const st = getState();
+    st.perp.overviewSearch = '';
+    const inp = $('perp-overview-search');
+    if (inp) {
+      inp.value = '';
+      if (typeof inp.focus === 'function') inp.focus();
+    }
+    const clr = $('perp-overview-search-clear');
+    if (clr) clr.classList.add('hidden');
+    renderPerpOverviewPanel();
+  }
+
+  function clearPerpMarketSearch() {
+    const st = getState();
+    st.perp.marketSearch = '';
+    const inp = $('perp-market-search');
+    if (inp) {
+      inp.value = '';
+      if (typeof inp.focus === 'function') inp.focus();
+    }
+    const clr = $('perp-market-search-clear');
+    if (clr) clr.classList.add('hidden');
+    renderPerpMarketsSheet();
   }
 
   function setPerpOverviewCategory(cat) {
@@ -1160,6 +1265,8 @@
     if (!listEl) return;
     const q = String($('perp-market-search')?.value || st.perp.marketSearch || '').trim().toUpperCase();
     st.perp.marketSearch = q;
+    const mktClr = $('perp-market-search-clear');
+    if (mktClr) mktClr.classList.toggle('hidden', q.length === 0);
     const activeFilter = st.perp.marketFilter || 'hot';
     if (typeof document !== 'undefined') {
       document.querySelectorAll('#perp-market-filters [data-mkt-filter]').forEach((btn) => {
@@ -1223,6 +1330,10 @@
   }
 
   function openPerpMarketsSheet() {
+    const st = getState();
+    st.perp.marketSearch = '';
+    if ($('perp-market-search')) $('perp-market-search').value = '';
+    if ($('perp-market-search-clear')) $('perp-market-search-clear').classList.add('hidden');
     renderPerpMarketsSheet();
     openSheet('sheet-perp-markets');
     if (!getState().perp.markets.length) refreshPerpDataAsync(false).then(() => renderPerpMarketsSheet()).catch(() => {});
@@ -1237,6 +1348,10 @@
     st.perp.limitPriceInput = '';
     st.perp.errorMsg = '';
     st.perp.lsRatio = null;
+    st.perp.inspectedCandleIdx = null;
+    st.perp.marketSearch = '';
+    if ($('perp-market-search')) $('perp-market-search').value = '';
+    if ($('perp-market-search-clear')) $('perp-market-search-clear').classList.add('hidden');
     if (changedCoin) st.perp.orderbook = null;
     if (typeof st.getCachedPerpCandles === 'function') {
       st.perp.candles = st.getCachedPerpCandles(nextCoin, st.perp.chartInterval || '15m') || [];

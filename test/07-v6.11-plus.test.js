@@ -778,6 +778,7 @@ test('v6.23 Limit Order: NEAR DCL prioritizes pool currentPoint over Ref V2, dis
     return domMap.get(id);
   };
   globalThis.document = {
+    documentElement: { lang: 'zh-CN', classList: createMockClassList() },
     getElementById: (id) => getOrMake(id),
     querySelectorAll: () => [],
     querySelector: () => null,
@@ -1161,4 +1162,195 @@ test('v6.23 PRL Route Adaptation: concurrent direct 1Click vs 3-stage composite 
       `Expected 3-stage fallback compositeType, got: ${compRes.compositeType}`
     );
   });
+});
+
+test('v6.30 Perps Search Clear & K-Line Inspect, wNEAR Auto-Unwrap/Rollback, and DApp Auto-Connect Manager', async () => {
+  const prevWallets = state.wallets;
+  const prevActiveId = state.activeWalletId;
+  const prevPerp = { ...state.perp };
+  const prevDoc = globalThis.document;
+  const dappBrowser = require('../src/dapp-browser.js');
+
+  const domMap = new Map();
+  const getOrMake = (id) => {
+    if (!domMap.has(id)) domMap.set(id, createMockDomElement(id));
+    return domMap.get(id);
+  };
+  globalThis.document = {
+    documentElement: { lang: 'zh-CN', classList: createMockClassList() },
+    getElementById: (id) => getOrMake(id),
+    querySelectorAll: () => [],
+    querySelector: () => null,
+    activeElement: null
+  };
+
+  try {
+    await withMockedStorage({}, async () => {
+      state.initState();
+      const keys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+      const w = state.normalizeWalletRecord({
+        id: 'w_v630',
+        mnemonic: TEST_MNEMONIC,
+        nearAddress: keys.nearAddress,
+        nearPublicKey: keys.nearPublicKey,
+        nearPrivateKey: keys.nearPrivateKey,
+        evmAddress: keys.evmAddress,
+        solAddress: keys.solAddress,
+        nativeBalances: { near: 5, sol: 1, eth: 0.5 }
+      });
+      state.wallets = [w];
+      state.activeWalletId = w.id;
+
+      // 1. Perps search clear & auto-reset on entering trade screen + K-line candle click inspect
+      state.perp.markets = [
+        { name: 'BTC', baseSymbol: 'BTC', pairLabel: 'BTC-USDC', markPx: 80000, dayNtlVlm: 1e9, maxLeverage: 50 },
+        { name: 'xyz:CRCL', baseSymbol: 'CRCL', pairLabel: 'CRCL-USDC', dex: 'xyz', category: 'stocks', markPx: 50.5, dayNtlVlm: 1e7, maxLeverage: 10 }
+      ];
+      state.perp.overviewSearch = 'crcl';
+      getOrMake('perp-overview-search').value = 'crcl';
+      uiController.renderPerpOverviewPanel();
+      assert.equal(getOrMake('perp-overview-search-clear').classList.contains('hidden'), false);
+
+      uiController.clearPerpOverviewSearch();
+      assert.equal(state.perp.overviewSearch, '');
+      assert.equal(getOrMake('perp-overview-search').value, '');
+      assert.equal(getOrMake('perp-overview-search-clear').classList.contains('hidden'), true);
+
+      state.perp.overviewSearch = 'crcl';
+      getOrMake('perp-overview-search').value = 'crcl';
+      uiController.openPerpTradeScreen('xyz:CRCL');
+      assert.equal(state.perp.overviewSearch, '', 'Entering trade screen must auto-clear search query');
+      assert.equal(getOrMake('perp-overview-search').value, '');
+
+      state.perp.candles = [
+        { t: 1795400000000, o: 50.0, h: 51.2, l: 49.8, c: 51.0, v: 1200 },
+        { t: 1795400900000, o: 51.0, h: 52.0, l: 50.5, c: 50.5, v: 950 }
+      ];
+      state.perp.showChart = true;
+      uiController.inspectPerpCandle(0);
+      assert.equal(state.perp.inspectedCandleIdx, 0);
+      assert.equal(getOrMake('perp-candle-detail').classList.contains('hidden'), false);
+      assert.ok(getOrMake('perp-candle-detail').innerHTML.includes('51.2'));
+      assert.ok(getOrMake('perp-chart-svg').innerHTML.includes('data-action="inspect-perp-candle"'));
+      uiController.inspectPerpCandle(0);
+      assert.equal(state.perp.inspectedCandleIdx, null);
+      assert.equal(getOrMake('perp-candle-detail').classList.contains('hidden'), true);
+
+      // 2. NEAR Ref Swap: Buying NEAR auto-unwraps wNEAR -> NEAR
+      let wrapBalanceReads = 0;
+      const nearMethodsCalled = [];
+      await withMockedFetch(async (_url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'query' && body.params?.request_type === 'view_access_key') {
+          return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { nonce: 1, block_hash: '11111111111111111111111111111111' } });
+        }
+        if (body.method === 'query' && body.params?.request_type === 'call_function') {
+          const { account_id, method_name } = body.params;
+          if (method_name === 'storage_balance_of') {
+            return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { result: Array.from(Buffer.from(JSON.stringify({ total: '1250000000000000000000' }))) } });
+          }
+          if (account_id === 'wrap.near' && method_name === 'ft_balance_of') {
+            wrapBalanceReads += 1;
+            const bal = wrapBalanceReads === 1 ? '0' : '1500000000000000000000000';
+            return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { result: Array.from(Buffer.from(JSON.stringify(bal))) } });
+          }
+        }
+        if (body.method === 'broadcast_tx_commit') {
+          const rawBytes = Buffer.from(body.params[0], 'base64');
+          const txt = rawBytes.toString('utf8');
+          if (txt.includes('near_withdraw')) nearMethodsCalled.push('near_withdraw');
+          else if (txt.includes('ft_transfer_call')) nearMethodsCalled.push('ft_transfer_call');
+          else if (txt.includes('near_deposit')) nearMethodsCalled.push('near_deposit');
+          return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { status: { SuccessValue: '' }, transaction: { hash: `tx_${nearMethodsCalled.length}` } } });
+        }
+        return jsonResponse({}, 404);
+      }, async () => {
+        await chainContracts.executeNearRefFinanceSwap({
+          wallet: w,
+          actions: [{ pool_id: 4512, token_in: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', token_out: 'wrap.near', amount_in: '1000000', min_amount_out: '1000000000000000000000000' }],
+          tokenIn: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+          tokenOut: 'wrap.near',
+          amountRaw: '1000000',
+          tokenBalance: 10,
+          inputDecimals: 6,
+          tokenSymbol: 'USDC'
+        });
+        assert.deepEqual(nearMethodsCalled, ['ft_transfer_call', 'near_withdraw'], 'Buying NEAR must automatically unwrap wNEAR back to native NEAR');
+      });
+
+      // 3. NEAR Ref Swap: Selling NEAR rollback auto-unwraps wNEAR if ft_transfer_call fails
+      const rollbackMethods = [];
+      let rollbackWrapReads = 0;
+      await withMockedFetch(async (_url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'query' && body.params?.request_type === 'view_access_key') {
+          return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { nonce: 1, block_hash: '11111111111111111111111111111111' } });
+        }
+        if (body.method === 'query' && body.params?.request_type === 'call_function') {
+          const { account_id, method_name } = body.params;
+          if (method_name === 'storage_balance_of') {
+            return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { result: Array.from(Buffer.from(JSON.stringify({ total: '1250000000000000000000' }))) } });
+          }
+          if (account_id === 'wrap.near' && method_name === 'ft_balance_of') {
+            rollbackWrapReads += 1;
+            const bal = rollbackWrapReads === 1 ? '0' : '1000000000000000000000000';
+            return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { result: Array.from(Buffer.from(JSON.stringify(bal))) } });
+          }
+        }
+        if (body.method === 'broadcast_tx_commit') {
+          const txt = Buffer.from(body.params[0], 'base64').toString('utf8');
+          if (txt.includes('ft_transfer_call')) {
+            rollbackMethods.push('ft_transfer_call_failed');
+            return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { status: { Failure: { ActionError: 'ERR_MIN_AMOUNT' } }, transaction: { hash: 'tx_fail' } } });
+          }
+          if (txt.includes('near_deposit')) rollbackMethods.push('near_deposit');
+          if (txt.includes('near_withdraw')) rollbackMethods.push('near_withdraw');
+          return jsonResponse({ jsonrpc: '2.0', id: body.id, result: { status: { SuccessValue: '' }, transaction: { hash: 'tx_ok' } } });
+        }
+        return jsonResponse({}, 404);
+      }, async () => {
+        await assert.rejects(
+          () => chainContracts.executeNearRefFinanceSwap({
+            wallet: w,
+            actions: [{ pool_id: 4512, token_in: 'wrap.near', token_out: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', amount_in: '1000000000000000000000000', min_amount_out: '1000000' }],
+            tokenIn: 'wrap.near',
+            tokenOut: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+            amountRaw: '1000000000000000000000000',
+            tokenBalance: 5,
+            inputDecimals: 24,
+            tokenSymbol: 'NEAR'
+          }),
+          /ERR_MIN_AMOUNT/
+        );
+        assert.deepEqual(rollbackMethods, ['near_deposit', 'ft_transfer_call_failed', 'near_withdraw'], 'Failed NEAR swap must auto-unwrap wrapped NEAR back to native NEAR');
+      });
+
+      // 4. DApp Browser auto-connect & connected DApps management
+      const injected = dappBrowser.buildInjectedProviderScript({
+        evmAddress: w.evmAddress,
+        solanaPublicKey: w.solAddress,
+        nearAccountId: w.nearAddress
+      });
+      assert.ok(injected.includes('window.okxwallet = ethProvider'), 'Injected provider should expose okxwallet alias');
+      assert.ok(injected.includes('isConnected: Boolean(CFG.solanaPublicKey)'), 'Solana provider should auto-connect when key is present');
+
+      const autoConnected = await dappBrowser.handleDAppRpcRequest(
+        { namespace: 'evm', method: 'eth_accounts', origin: 'https://app.uniswap.org' },
+        { wallet: w, contracts: chainContracts, autoConnectOrigin: true }
+      );
+      assert.deepEqual(autoConnected, [w.evmAddress], 'Built-in DApp browser eth_accounts must auto-connect active wallet');
+
+      await uiController.launchDAppUrl('https://app.uniswap.org');
+      uiController.openDAppBrowserSheet();
+      assert.equal(getOrMake('dapp-connected-section').classList.contains('hidden'), false);
+      assert.ok(getOrMake('dapp-connected-section').innerHTML.includes('app.uniswap.org'));
+      uiController.disconnectDAppOrigin('https://app.uniswap.org');
+      assert.equal(getOrMake('dapp-connected-section').classList.contains('hidden'), true);
+    });
+  } finally {
+    state.wallets = prevWallets;
+    state.activeWalletId = prevActiveId;
+    Object.assign(state.perp, prevPerp);
+    globalThis.document = prevDoc;
+  }
 });

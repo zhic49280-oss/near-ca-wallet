@@ -113,7 +113,10 @@
       <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
     </div>
     <div class="sheet-body">
-      <input id="perp-market-search" type="text" class="input-field" data-i18n-placeholder="perp.marketSearchPlaceholder" placeholder="搜索币种，如 BTC, ETH, SOL, HYPE..." oninput="renderPerpMarketsSheet()" />
+      <div class="search-input-wrap">
+        <input id="perp-market-search" type="text" class="input-field" data-i18n-placeholder="perp.marketSearchPlaceholder" placeholder="搜索币种，如 BTC, ETH, SOL, HYPE..." oninput="renderPerpMarketsSheet()" />
+        <button type="button" id="perp-market-search-clear" class="search-clear-btn hidden" onclick="clearPerpMarketSearch()" aria-label="Clear">✕</button>
+      </div>
       <div id="perp-market-filters" class="pill-scroll">
         <button type="button" class="filter-pill active" data-mkt-filter="hot" onclick="setPerpMarketFilter('hot')" data-i18n="perp.mktFilterHot">热门</button>
         <button type="button" class="filter-pill" data-mkt-filter="all" onclick="setPerpMarketFilter('all')" data-i18n="perp.mktFilterAll">全部</button>
@@ -361,6 +364,7 @@
         <input id="dapp-url-input" type="url" class="input-field flex-1" data-i18n-placeholder="dapp.urlPlaceholder" placeholder="输入 DApp 网址 (https://...)" />
         <button type="button" id="btn-dapp-open" class="mini-action-btn primary" onclick="openDAppFromInput()" data-i18n="dapp.openBtn">访问</button>
       </div>
+      <div id="dapp-connected-section" class="dapp-connected-section hidden"></div>
       <div id="dapp-filter-bar" class="pill-scroll"></div>
       <div id="dapp-catalog-list" class="dapp-catalog-grid"></div>
     </div>

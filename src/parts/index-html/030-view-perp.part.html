@@ -37,7 +37,10 @@
 
           <!-- Market Overview List: Watchlist / Crypto / Stocks (HIP-3) / All -->
           <div class="ios-glass-card flex flex-col gap-2">
-            <input id="perp-overview-search" type="text" class="input-field" data-i18n-placeholder="perp.overviewSearchPlaceholder" placeholder="搜索合约 (如 BTC, PEPE, CRCL, NVDA...)" oninput="handlePerpOverviewSearch(this.value)" />
+            <div class="search-input-wrap">
+              <input id="perp-overview-search" type="text" class="input-field" data-i18n-placeholder="perp.overviewSearchPlaceholder" placeholder="搜索合约 (如 BTC, PEPE, CRCL, NVDA...)" oninput="handlePerpOverviewSearch(this.value)" />
+              <button type="button" id="perp-overview-search-clear" class="search-clear-btn hidden" onclick="clearPerpOverviewSearch()" aria-label="Clear">✕</button>
+            </div>
 
             <div id="perp-overview-cats" class="pill-scroll">
               <button type="button" class="filter-pill" data-action="set-perp-overview-cat" data-cat="favorites" data-i18n="perp.catFavorites">⭐ 自选</button>
@@ -67,22 +70,22 @@
         <!-- 2. OKX-Style Trade View (Hidden until market clicked) -->
         <div id="perp-trade-panel" class="flex flex-col gap-2 hidden">
           <div class="ios-glass-card flex flex-col gap-2" style="padding: 12px;">
-            <div class="flex items-center justify-between gap-2">
-              <div class="flex items-center gap-2 min-w-0">
-                <button type="button" class="btn-ghost-sm" onclick="backToPerpOverview()" data-i18n="perp.backToMarkets">← 行情</button>
+            <div class="perp-trade-top-bar">
+              <div class="perp-trade-top-left">
+                <button type="button" id="btn-perp-back" class="btn-ghost-sm perp-back-btn" onclick="backToPerpOverview()" data-i18n="perp.backToMarkets">← 行情</button>
                 <button type="button" id="perp-coin-btn" class="token-select-btn" onclick="openPerpMarketsSheet()">
                   <span id="perp-coin-icon" class="perp-coin-icon-slot"></span>
-                  <span id="perp-coin-name">BTC-USDC</span>
-                  <span>▾</span>
+                  <span id="perp-coin-name" class="perp-coin-name-text">BTC-USDC</span>
+                  <span style="flex-shrink: 0;">▾</span>
                 </button>
               </div>
-              <div class="flex items-center gap-2">
+              <div class="perp-trade-top-right">
                 <div class="flex flex-col" style="text-align: right;">
-                  <span id="perp-mark-px" class="mono" style="font-size: 15px; font-weight: 800; color: #ffffff;">--</span>
-                  <span id="perp-change-24h" class="mono" style="font-size: 10.5px; color: var(--text-secondary);">--</span>
+                  <span id="perp-mark-px" class="mono" style="font-size: 14.5px; font-weight: 800; color: #ffffff;">--</span>
+                  <span id="perp-change-24h" class="mono" style="font-size: 10px; color: var(--text-secondary);">--</span>
                 </div>
-                <button type="button" id="btn-perp-fav-current" class="btn-ghost-sm" onclick="toggleCurrentPerpFavorite()" style="padding: 4px 8px;">☆</button>
-                <button type="button" id="btn-perp-chart-toggle" class="btn-ghost-sm" onclick="togglePerpChart()" data-i18n="perp.chartBtn">K线</button>
+                <button type="button" id="btn-perp-fav-current" class="btn-ghost-sm" onclick="toggleCurrentPerpFavorite()" style="padding: 4px 7px;">☆</button>
+                <button type="button" id="btn-perp-chart-toggle" class="btn-ghost-sm" onclick="togglePerpChart()" data-i18n="perp.chartBtn" style="padding: 4px 8px;">K线</button>
               </div>
             </div>
 
@@ -112,6 +115,7 @@
                 </div>
                 <span id="perp-chart-hl" class="mono" style="font-size: 10.5px; color: var(--text-muted);">--</span>
               </div>
+              <div id="perp-candle-detail" class="perp-candle-inspect-bar mono hidden"></div>
               <div id="perp-chart-svg"></div>
             </div>
           </div>

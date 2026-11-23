@@ -489,7 +489,13 @@
       return ethProvider.request({ method: methodOrPayload && methodOrPayload.method, params: methodOrPayload && methodOrPayload.params });
     }
   };
-  try { window.ethereum = ethProvider; } catch (_) {}
+  try {
+    window.ethereum = ethProvider;
+    window.okxwallet = ethProvider;
+    if (typeof Event === 'function' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new Event('ethereum#initialized'));
+    }
+  } catch (_) {}
 
   var eip6963Info = Object.freeze({
     uuid: CFG.walletUuid,
@@ -561,8 +567,9 @@
   var solEmitter = createEmitter();
   var solProvider = {
     isPhantom: true,
+    isOkxWallet: true,
     isNexusWallet: true,
-    isConnected: false,
+    isConnected: Boolean(CFG.solanaPublicKey),
     publicKey: makeSolPublicKey(CFG.solanaPublicKey),
     on: function (ev, fn) { solEmitter.on(ev, fn); return this; },
     removeListener: function (ev, fn) { solEmitter.removeListener(ev, fn); return this; },
@@ -615,7 +622,11 @@
       });
     }
   };
-  try { window.solana = solProvider; } catch (_) {}
+  try {
+    window.solana = solProvider;
+    window.phantom = { solana: solProvider };
+    if (window.okxwallet) window.okxwallet.solana = solProvider;
+  } catch (_) {}
 
   try {
     var walletStandardObj = {
@@ -867,8 +878,12 @@
 
     if (method === 'eth_accounts') {
       const origin = normalizeOriginLabel(req, ctx);
-      if (ctx && typeof ctx.isOriginConnected === 'function' && !ctx.isOriginConnected(origin, 'evm')) {
+      const isConn = Boolean(ctx && typeof ctx.isOriginConnected === 'function' && ctx.isOriginConnected(origin, 'evm'));
+      if (!isConn && !(ctx && ctx.autoConnectOrigin)) {
         return [];
+      }
+      if (!isConn && ctx && typeof ctx.markOriginConnected === 'function') {
+        ctx.markOriginConnected(origin, 'evm');
       }
       const addr = contracts.resolveWalletEvmSender ? contracts.resolveWalletEvmSender(wallet) : wallet.evmAddress;
       return addr ? [addr] : [];
@@ -878,16 +893,16 @@
       const addr = contracts.resolveWalletEvmSender ? contracts.resolveWalletEvmSender(wallet) : wallet.evmAddress;
       const origin = normalizeOriginLabel(req, ctx);
       const alreadyConnected = Boolean(ctx && typeof ctx.isOriginConnected === 'function' && ctx.isOriginConnected(origin, 'evm'));
-      if (!alreadyConnected) {
+      if (!alreadyConnected && !(ctx && ctx.autoConnectOrigin)) {
         await ensureApproval(req, ctx, {
           kind: 'connect',
           chainLabel: activeChain.cfg.name || activeChain.key.toUpperCase(),
           account: addr || '',
           summary: `Connect EVM wallet (${addr || '--'})`
         });
-        if (ctx && typeof ctx.markOriginConnected === 'function') {
-          ctx.markOriginConnected(origin, 'evm');
-        }
+      }
+      if (ctx && typeof ctx.markOriginConnected === 'function') {
+        ctx.markOriginConnected(origin, 'evm');
       }
       if (method === 'eth_coinbase') return addr || null;
       return addr ? [addr] : [];

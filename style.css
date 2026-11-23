@@ -74,23 +74,22 @@ body {
     radial-gradient(circle at 50% 96%, rgba(0, 236, 151, 0.06) 0%, rgba(6, 8, 15, 0) 48%);
 }
 
-/* Custom Scrollbars */
+/* Clean Native-Style Hidden Scrollbars */
+html,
+body,
+.sheet-body,
+#token-picker-list,
+#perp-market-list,
+.rig-table-wrap,
+.pill-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.22);
-  border-radius: 999px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.38);
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
 }
 
 /* App Shell */
@@ -2678,4 +2677,128 @@ html.nexus-locked #app-lock-overlay {
   border-radius: 5px;
   background: rgba(56, 189, 248, 0.16);
   color: #38bdf8;
+}
+
+/* Search Input Clear Button */
+.search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.search-input-wrap .input-field {
+  padding-right: 34px;
+}
+
+.search-clear-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: none;
+  background: rgba(148, 163, 184, 0.22);
+  color: #e2e8f0;
+  font-size: 11px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.search-clear-btn:hover {
+  background: rgba(148, 163, 184, 0.36);
+  color: #ffffff;
+}
+
+/* Perps Trade Top Bar (Scheme A: Zero Overlap on Narrow Mobile) */
+.perp-trade-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.perp-trade-top-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.perp-trade-top-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.perp-back-btn {
+  padding: 5px 8px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+#perp-coin-btn {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
+  gap: 6px;
+  padding: 5px 9px 5px 6px;
+  font-size: 12.5px;
+}
+
+.perp-coin-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* Interactive K-Line Candle Inspector Bar */
+.perp-candle-inspect-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 10px;
+  padding: 5px 8px;
+  margin-bottom: 5px;
+  border-radius: 8px;
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.24);
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+
+.perp-candle-hit {
+  cursor: crosshair;
+}
+
+/* Connected DApps Section */
+.dapp-connected-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(0, 236, 151, 0.05);
+  border: 1px solid rgba(0, 236, 151, 0.2);
+}
+
+.dapp-connected-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.035);
 }

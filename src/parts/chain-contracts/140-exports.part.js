@@ -72,6 +72,7 @@
     executeNearRefFinanceSwap,
     quoteNearDclPoolSwap,
     executeNearDclPoolSwap,
+    unwrapNearToNativeAsync,
     ensureNearNep141StorageRegistered,
     scanNearReclaimableStorageAsync,
     executeNearStorageReclaim,

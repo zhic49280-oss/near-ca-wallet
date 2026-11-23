@@ -53,6 +53,7 @@
         case 'sort-perp-overview': togglePerpOverviewSort(ds.sort || 'vol'); break;
         case 'toggle-perp-fav': togglePerpFavorite(ds.coin || ''); break;
         case 'open-perp-trade': openPerpTradeScreen(ds.coin || ''); break;
+        case 'inspect-perp-candle': inspectPerpCandle(Number(ds.candleIdx)); break;
         case 'reverse-perp-pos': reversePerpPositionUI(ds.coin || ''); break;
         case 'open-perp-pos-tpsl': openPerpPositionTpSlSheet(ds.coin || ''); break;
         case 'earn-pos-action': executeEarnPositionAction(ds.type || '', ds.target || ''); break;
@@ -66,6 +67,8 @@
         case 'disconnect-wc': disconnectWcSession(ds.topic || ''); break;
         case 'set-dapp-filter': setDAppCatalogFilter(ds.chain || 'ALL'); break;
         case 'launch-dapp': launchDAppUrl(ds.url || ''); break;
+        case 'disconnect-dapp-origin': disconnectDAppOrigin(ds.origin || ''); break;
+        case 'disconnect-all-dapp-origins': disconnectAllDAppOrigins(); break;
         default: break;
       }
     });
@@ -391,6 +394,9 @@
     renderPerpLongShortBar,
     refreshPerpLongShortAsync,
     renderPerpCandleSvg,
+    inspectPerpCandle,
+    clearPerpOverviewSearch,
+    clearPerpMarketSearch,
     renderPerpMarketsSheet,
     handlePerpMarginInput,
     handlePerpLimitPriceInput,
@@ -483,6 +489,8 @@
     openDAppFromInput,
     launchDAppUrl,
     setDAppCatalogFilter,
+    disconnectDAppOrigin,
+    disconnectAllDAppOrigins,
     confirmDAppApproval,
     rejectDAppApproval,
     setTokenPickerChain,
@@ -654,6 +662,9 @@
     renderPerpLongShortBar,
     refreshPerpLongShortAsync,
     renderPerpCandleSvg,
+    inspectPerpCandle,
+    clearPerpOverviewSearch,
+    clearPerpMarketSearch,
     renderPerpMarketsSheet,
     handlePerpMarginInput,
     handlePerpLimitPriceInput,
@@ -752,6 +763,8 @@
     openDAppFromInput,
     launchDAppUrl,
     setDAppCatalogFilter,
+    disconnectDAppOrigin,
+    disconnectAllDAppOrigins,
     confirmDAppApproval,
     rejectDAppApproval,
     renderNearAccountSummary,

@@ -1185,6 +1185,6 @@ test('v6.29 Full-Precision MAX, Live Gas Estimator, Auto-Fix Banners & Home Dust
   }
 
   const swLatest = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
-  assert.ok(swLatest.includes('nexus-wallet-v6.29'), 'sw.js must bump cache version to v6.29');
+  assert.ok(/nexus-wallet-v6\.(?:29|3\d)/.test(swLatest), 'sw.js must bump cache version to v6.29+');
 });
 

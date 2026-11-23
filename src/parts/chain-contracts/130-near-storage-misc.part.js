@@ -247,28 +247,60 @@
       expectedOut = q.amountOut;
     }
 
-    await prepareNearSwapFundingAndStorage({ resolvedWallet, sender, inId, outId, amtStr });
+    let preWrapBal = null;
+    if (outId === WRAP_NEAR_CONTRACT) {
+      const preStr = await viewNearContractCall(WRAP_NEAR_CONTRACT, 'ft_balance_of', { account_id: sender }).catch(() => null);
+      if (preStr !== null && preStr !== undefined && /^\d+$/.test(String(preStr).trim())) {
+        preWrapBal = BigInt(String(preStr).trim());
+      }
+    }
 
-    const txHash = await api.signAndSendNearFunctionCall({
-      accountId: sender,
-      publicKeyStr: resolvedWallet.nearPublicKey,
-      privateKeyStr: resolvedWallet.nearPrivateKey,
-      receiverId: inId,
-      methodName: 'ft_transfer_call',
-      argsJson: JSON.stringify({
-        receiver_id: DCL_CONTRACT_ID,
-        amount: amtStr,
-        msg: JSON.stringify({
-          Swap: {
-            pool_ids: targetPoolIds,
-            output_token: outId,
-            min_output_amount: String(resolvedMinOut || '0')
-          }
-        })
-      }),
-      gas: '180000000000000',
-      depositYocto: '1'
-    });
+    const prep = await prepareNearSwapFundingAndStorage({ resolvedWallet, sender, inId, outId, amtStr });
+
+    let txHash;
+    try {
+      txHash = await api.signAndSendNearFunctionCall({
+        accountId: sender,
+        publicKeyStr: resolvedWallet.nearPublicKey,
+        privateKeyStr: resolvedWallet.nearPrivateKey,
+        receiverId: inId,
+        methodName: 'ft_transfer_call',
+        argsJson: JSON.stringify({
+          receiver_id: DCL_CONTRACT_ID,
+          amount: amtStr,
+          msg: JSON.stringify({
+            Swap: {
+              pool_ids: targetPoolIds,
+              output_token: outId,
+              min_output_amount: String(resolvedMinOut || '0')
+            }
+          })
+        }),
+        gas: '180000000000000',
+        depositYocto: '1'
+      });
+    } catch (swapErr) {
+      if (prep && prep.wrappedShortfallYocto && BigInt(prep.wrappedShortfallYocto) > 0n) {
+        const curWrapStr = await viewNearContractCall(WRAP_NEAR_CONTRACT, 'ft_balance_of', { account_id: sender }).catch(() => null);
+        const curWrapBig = curWrapStr && /^\d+$/.test(String(curWrapStr).trim()) ? BigInt(String(curWrapStr).trim()) : 0n;
+        const rollbackAmt = curWrapBig >= BigInt(prep.wrappedShortfallYocto) ? BigInt(prep.wrappedShortfallYocto) : curWrapBig;
+        if (rollbackAmt > 0n) {
+          await unwrapNearToNativeAsync({ resolvedWallet, accountId: sender, amountYocto: rollbackAmt.toString() }).catch(() => {});
+        }
+      }
+      throw swapErr;
+    }
+
+    if (outId === WRAP_NEAR_CONTRACT && preWrapBal !== null) {
+      const postStr = await viewNearContractCall(WRAP_NEAR_CONTRACT, 'ft_balance_of', { account_id: sender }).catch(() => null);
+      if (postStr !== null && postStr !== undefined && /^\d+$/.test(String(postStr).trim())) {
+        const postWrapBal = BigInt(String(postStr).trim());
+        const gained = postWrapBal > preWrapBal ? (postWrapBal - preWrapBal) : 0n;
+        if (gained > 0n) {
+          await unwrapNearToNativeAsync({ resolvedWallet, accountId: sender, amountYocto: gained.toString() }).catch(() => {});
+        }
+      }
+    }
 
     return {
       txHash,
@@ -394,25 +426,57 @@
       expectedOut = q.amountOut;
     }
 
-    await prepareNearSwapFundingAndStorage({ resolvedWallet, sender, inId, outId, amtStr });
+    let preWrapBal = null;
+    if (outId === WRAP_NEAR_CONTRACT) {
+      const preStr = await viewNearContractCall(WRAP_NEAR_CONTRACT, 'ft_balance_of', { account_id: sender }).catch(() => null);
+      if (preStr !== null && preStr !== undefined && /^\d+$/.test(String(preStr).trim())) {
+        preWrapBal = BigInt(String(preStr).trim());
+      }
+    }
 
-    const txHash = await api.signAndSendNearFunctionCall({
-      accountId: sender,
-      publicKeyStr: resolvedWallet.nearPublicKey,
-      privateKeyStr: resolvedWallet.nearPrivateKey,
-      receiverId: inId,
-      methodName: 'ft_transfer_call',
-      argsJson: JSON.stringify({
-        receiver_id: REF_FINANCE_CONTRACT,
-        amount: amtStr,
-        msg: JSON.stringify({
-          force: 0,
-          actions: swapActions
-        })
-      }),
-      gas: '180000000000000',
-      depositYocto: '1'
-    });
+    const prep = await prepareNearSwapFundingAndStorage({ resolvedWallet, sender, inId, outId, amtStr });
+
+    let txHash;
+    try {
+      txHash = await api.signAndSendNearFunctionCall({
+        accountId: sender,
+        publicKeyStr: resolvedWallet.nearPublicKey,
+        privateKeyStr: resolvedWallet.nearPrivateKey,
+        receiverId: inId,
+        methodName: 'ft_transfer_call',
+        argsJson: JSON.stringify({
+          receiver_id: REF_FINANCE_CONTRACT,
+          amount: amtStr,
+          msg: JSON.stringify({
+            force: 0,
+            actions: swapActions
+          })
+        }),
+        gas: '180000000000000',
+        depositYocto: '1'
+      });
+    } catch (swapErr) {
+      if (prep && prep.wrappedShortfallYocto && BigInt(prep.wrappedShortfallYocto) > 0n) {
+        const curWrapStr = await viewNearContractCall(WRAP_NEAR_CONTRACT, 'ft_balance_of', { account_id: sender }).catch(() => null);
+        const curWrapBig = curWrapStr && /^\d+$/.test(String(curWrapStr).trim()) ? BigInt(String(curWrapStr).trim()) : 0n;
+        const rollbackAmt = curWrapBig >= BigInt(prep.wrappedShortfallYocto) ? BigInt(prep.wrappedShortfallYocto) : curWrapBig;
+        if (rollbackAmt > 0n) {
+          await unwrapNearToNativeAsync({ resolvedWallet, accountId: sender, amountYocto: rollbackAmt.toString() }).catch(() => {});
+        }
+      }
+      throw swapErr;
+    }
+
+    if (outId === WRAP_NEAR_CONTRACT && preWrapBal !== null) {
+      const postStr = await viewNearContractCall(WRAP_NEAR_CONTRACT, 'ft_balance_of', { account_id: sender }).catch(() => null);
+      if (postStr !== null && postStr !== undefined && /^\d+$/.test(String(postStr).trim())) {
+        const postWrapBal = BigInt(String(postStr).trim());
+        const gained = postWrapBal > preWrapBal ? (postWrapBal - preWrapBal) : 0n;
+        if (gained > 0n) {
+          await unwrapNearToNativeAsync({ resolvedWallet, accountId: sender, amountYocto: gained.toString() }).catch(() => {});
+        }
+      }
+    }
 
     return {
       txHash,

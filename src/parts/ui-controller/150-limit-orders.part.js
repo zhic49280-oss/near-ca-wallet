@@ -60,7 +60,12 @@
     if (bc === 'near') {
       const cid = String(token.contractAddress || '').trim();
       const entry = wallet.nearNep141Balances && wallet.nearNep141Balances[cid];
-      return entry && typeof entry.formatted === 'number' && Number.isFinite(entry.formatted) ? entry.formatted : 0;
+      const ftBal = entry && typeof entry.formatted === 'number' && Number.isFinite(entry.formatted) ? entry.formatted : 0;
+      if (cid === 'wrap.near') {
+        const nativeNear = Number(getContracts()?.resolveWalletChainBalance(wallet, 'near') || 0);
+        return ftBal + Math.max(0, nativeNear - 0.05);
+      }
+      return ftBal;
     }
     return getWalletNativeBalanceForToken(wallet, bc, token.symbol, token.contractAddress);
   }
