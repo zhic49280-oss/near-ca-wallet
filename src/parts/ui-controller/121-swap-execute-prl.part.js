@@ -115,7 +115,7 @@
         if (!bridgeLive.ok || !bridgeLive.depositAddress) {
           throw new Error(bridgeLive.error || t('创建 PRL 跨链订单失败', 'Failed to create PRL bridge order'));
         }
-        const bridgeTx = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: bridgeLive.depositAddress });
+        const bridgeTx = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: bridgeLive.depositAddress, gasOverride: originGasOverride });
         if (!bridgeTx || !bridgeTx.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
@@ -350,7 +350,8 @@
           fromToken,
           amt,
           avail,
-          depositAddress: liveQuote.depositAddress
+          depositAddress: liveQuote.depositAddress,
+          gasOverride: originGasOverride
         });
         if (!txRes || !txRes.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));

@@ -106,7 +106,7 @@
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建第一阶段跨链订单失败', 'Failed to create Stage 1 SOL order'));
         }
-        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress });
+        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress, gasOverride: originGasOverride });
         if (!txRes || !txRes.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
@@ -173,7 +173,7 @@
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建 EVM 第一阶段跨链订单失败', 'Failed to create Stage 1 EVM order'));
         }
-        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress });
+        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress, gasOverride: originGasOverride });
         if (!txRes || !txRes.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
@@ -245,7 +245,8 @@
             amountRaw,
             srcDecimals: fromToken.decimals,
             slippageBps: st.swap.slippageBps,
-            tokenBalance: avail
+            tokenBalance: avail,
+            gasBuffer: isNative ? gasBuf : null
           });
           bridgeResTx = lRes;
         } else {
@@ -321,7 +322,7 @@
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建 Base USDC 中转订单失败', 'Failed to create Base USDC stage 1 order'));
         }
-        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress });
+        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress, gasOverride: originGasOverride });
         if (!txRes || !txRes.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
@@ -408,7 +409,8 @@
             amountRaw,
             srcDecimals: fromToken.decimals,
             slippageBps: st.swap.slippageBps,
-            tokenBalance: avail
+            tokenBalance: avail,
+            gasBuffer: isNative ? gasBuf : null
           });
           arcUsdcRaw = s1Q.amountOut;
           showToast(`✅ ${t('Arc 第一步已换出 USDC，正在跨链至 Base', 'Arc USDC swapped; bridging to Base')}: ${shortenAddr(s1Tx.txHash)}`);
@@ -534,7 +536,8 @@
         fromToken,
         amt,
         avail,
-        depositAddress: liveQuote.depositAddress
+        depositAddress: liveQuote.depositAddress,
+        gasOverride: originGasOverride
       });
       if (!txRes || !txRes.txHash) {
         throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));

@@ -298,7 +298,7 @@
     }
   }
 
-  async function executeBitcoinTransfer({ wallet, toAddress, amountBtc, feeDeductMode = 'extra', feeRateSatVb = null } = {}) {
+  async function executeBitcoinTransfer({ wallet, toAddress, amountBtc, feeDeductMode = 'extra', feeRateSatVb = null, gasBuffer = null } = {}) {
     if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
     const destAddr = String(toAddress || '').trim();
     const cryptoEngine = getCryptoEngine();
@@ -323,7 +323,8 @@
         tokenSymbol: 'BTC',
         amount: reqAmt,
         isNative: feeDeductMode !== 'internal',
-        tokenBalance: cachedBtc
+        tokenBalance: cachedBtc,
+        gasBuffer
       });
     }
 

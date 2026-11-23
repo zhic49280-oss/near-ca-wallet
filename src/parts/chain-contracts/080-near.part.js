@@ -256,7 +256,8 @@
     receiverId,
     amountNear,
     wallet = null,
-    availableBalanceNear = null
+    availableBalanceNear = null,
+    gasBuffer = null
   } = {}) {
     if (!receiverId) {
       throw new Error(t('缺少 NEAR 转账账户或收款方参数', 'Missing NEAR transfer account or receiverId'));
@@ -268,7 +269,8 @@
         chain: 'near',
         tokenSymbol: 'NEAR',
         amount: amountNear,
-        isNative: true
+        isNative: true,
+        gasBuffer
       });
     } else {
       const amt = Number(amountNear);

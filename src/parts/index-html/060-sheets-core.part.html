@@ -45,7 +45,11 @@
             <button type="button" class="mini-action-btn primary" onclick="setSendMaxAmount()" data-i18n="swap.maxBtn">全部</button>
           </div>
         </div>
-        <input id="send-amount-input" type="number" step="any" min="0" class="input-field mono" placeholder="0.00" />
+        <input id="send-amount-input" type="number" step="any" min="0" class="input-field mono" placeholder="0.00" oninput="handleSendAmountInput()" />
+        <div id="send-gas-fix-banner" class="gas-fix-banner hidden">
+          <span id="send-gas-fix-text" class="gas-fix-text"></span>
+          <button type="button" id="btn-send-gas-fix" class="mini-action-btn primary" onclick="applySendMaxSpendableFix()" data-i18n="swap.useMaxBtn">设为最大可用</button>
+        </div>
       </div>
 
       <div id="send-route-preview" class="meta-list hidden"></div>

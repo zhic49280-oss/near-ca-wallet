@@ -744,7 +744,7 @@ test('v6.25 Two-Stage Perp Overview, Search+Sort Filter Fix, Real Maker/Taker Fe
   }
 });
 
-test('v6.25 Native Gas Internal vs External Mode: 10/12 PRL stays extra, 12/12 or UI-rounded full PRL goes internal, partial SOL stays insufficient_gas', async () => {
+test('v6.25->v6.29 Unified Pure-External Gas Model: exact input matches quote/broadcast and exposes maxSpendable fix', async () => {
   assert.equal(uiController.floorToDecimals(15.7791468, 6), 15.779146);
 
   const prlBuf = Number(chainContracts.DEFAULT_GAS_BUFFERS.prl || 0);
@@ -753,15 +753,22 @@ test('v6.25 Native Gas Internal vs External Mode: 10/12 PRL stays extra, 12/12 o
   assert.equal(partialPrl.effectiveAmount, 10);
 
   const fullPrlExact = uiController.resolveNativeFeeDeductPlan({ chain: 'prl', amount: 12, avail: 12, isNative: true, decimals: 8 });
-  assert.equal(fullPrlExact.mode, 'internal');
-  assert.equal(fullPrlExact.totalInputAmount, 12);
-  assert.ok(fullPrlExact.effectiveAmount < 12 && fullPrlExact.effectiveAmount <= 12 - prlBuf);
+  assert.equal(fullPrlExact.mode, 'insufficient_gas');
+  assert.ok(fullPrlExact.maxSpendable > 0 && fullPrlExact.maxSpendable <= 12 - prlBuf);
 
   const fullPrlFloored = uiController.resolveNativeFeeDeductPlan({ chain: 'prl', amount: 15.779146, avail: 15.7791468, isNative: true, decimals: 8 });
-  assert.equal(fullPrlFloored.mode, 'internal');
+  assert.equal(fullPrlFloored.mode, 'insufficient_gas');
+  assert.equal(fullPrlFloored.maxSpendableStr, '15.7761468');
 
-  const fullPrlRoundedUp = uiController.resolveNativeFeeDeductPlan({ chain: 'prl', amount: 15.779147, avail: 15.7791468, isNative: true, decimals: 8 });
-  assert.equal(fullPrlRoundedUp.mode, 'internal');
+  const exactMaxPrl = uiController.resolveNativeFeeDeductPlan({
+    chain: 'prl',
+    amount: fullPrlFloored.maxSpendable,
+    avail: 15.7791468,
+    isNative: true,
+    decimals: 8
+  });
+  assert.equal(exactMaxPrl.mode, 'extra');
+  assert.equal(exactMaxPrl.effectiveAmount, 15.7761468);
 
   const solShortfall = uiController.resolveNativeFeeDeductPlan({ chain: 'sol', amount: 0.002, avail: 0.0025, isNative: true, decimals: 9 });
   assert.equal(solShortfall.mode, 'insufficient_gas');
@@ -785,23 +792,34 @@ test('v6.25 Native Gas Internal vs External Mode: 10/12 PRL stays extra, 12/12 o
   const usdcNear = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'USDC' && t.blockchain === 'near')
     || { assetId: 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', symbol: 'USDC', blockchain: 'near', decimals: 6 };
 
-  const btnRoundedFull = uiController.evaluateSwapButtonState({
+  const btnFullPrl = uiController.evaluateSwapButtonState({
     wallet: prlWallet,
     fromToken: prlToken,
     toToken: usdcNear,
-    amountIn: '15.779147'
+    amountIn: '15.779146'
   });
-  assert.equal(btnRoundedFull.disabled, false, 'Full UI-rounded PRL input must use internal gas mode cleanly');
-  assert.equal(btnRoundedFull.reason, 'ready');
+  assert.equal(btnFullPrl.disabled, true, 'Entering raw full balance must trigger gentle insufficient_gas fix rather than hidden internal deduction');
+  assert.equal(btnFullPrl.reason, 'insufficient_gas');
+  assert.equal(btnFullPrl.maxSpendableStr, '15.7761468');
+
+  const btnExactMaxPrl = uiController.evaluateSwapButtonState({
+    wallet: prlWallet,
+    fromToken: prlToken,
+    toToken: usdcNear,
+    amountIn: btnFullPrl.maxSpendableStr
+  });
+  assert.equal(btnExactMaxPrl.disabled, false);
+  assert.equal(btnExactMaxPrl.reason, 'ready');
 
   const btnSolShortfall = uiController.evaluateSwapButtonState({
     wallet: prlWallet,
     fromToken: solToken,
     toToken: usdcNear,
-    amountIn: '0.002'
+    amountIn: '0.002498'
   });
   assert.equal(btnSolShortfall.disabled, true);
   assert.equal(btnSolShortfall.reason, 'insufficient_gas');
+  assert.equal(btnSolShortfall.maxSpendableStr, '0.002495');
 });
 
 test('v6.26 OKX Default-On K-Line Chart, Full HIP-3 Icon Resolution & Scrollability Fixes', () => {
@@ -986,6 +1004,187 @@ test('v6.28 Perp Order Ticket Cleanup: remove redundant 0 Gas row while keeping 
   assert.ok(!styleCss.includes('.perp-meta-cell-full'), 'style.css must remove unused .perp-meta-cell-full rule');
 
   const swJs = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
-  assert.ok(swJs.includes('nexus-wallet-v6.28'), 'sw.js must bump cache version to v6.28');
+  const swVer28 = swJs.match(/nexus-wallet-v6\.(\d+)/);
+  assert.ok(swVer28 && Number(swVer28[1]) >= 28, 'sw.js cache version must be >= v6.28');
+});
+
+test('v6.29 Full-Precision MAX, Live Gas Estimator, Auto-Fix Banners & Home Dust Folding', async () => {
+  // 1. Full-precision decimal formatting (no 6-decimal dust truncation)
+  assert.equal(uiController.formatMaxDecimalString(15.7791468, 8), '15.7791468');
+  assert.equal(uiController.formatMaxDecimalString(0.00000042, 8), '0.00000042');
+  assert.equal(uiController.formatMaxDecimalString(0.5, 18, '500000000000000001'), '0.500000000000000001');
+
+  // 2. Exact zero-dust native spendable sweeps (BigInt exact subtraction)
+  const solSweep = uiController.computeExactMaxSpendable({
+    balance: 0.5,
+    decimals: 9,
+    isNative: true,
+    gasReserve: 0.000005,
+    exactFeeBaseUnits: '5000'
+  });
+  assert.equal(solSweep.maxAmountStr, '0.499995');
+
+  const btcSweep = uiController.computeExactMaxSpendable({
+    balance: 0.001,
+    rawBaseUnits: '100000',
+    decimals: 8,
+    isNative: true,
+    gasReserve: 0.0000018,
+    exactFeeBaseUnits: '180'
+  });
+  assert.equal(btcSweep.maxAmountStr, '0.0009982');
+
+  const evmSweep = uiController.computeExactMaxSpendable({
+    balance: 1,
+    rawBaseUnits: '1000000000000000000',
+    decimals: 18,
+    isNative: true,
+    gasReserve: 0.000021,
+    exactFeeBaseUnits: '21000000000000'
+  });
+  assert.equal(evmSweep.maxAmountStr, '0.999979');
+
+  // 3. Live Gas Estimator (SOL, EVM, BTC, PRL + offline fallback)
+  const derived = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+  const testWallet = state.normalizeWalletRecord({
+    id: 'w_v629_gas',
+    name: 'v629 Gas Wallet',
+    mnemonic: TEST_MNEMONIC,
+    ...derived,
+    nativeBalances: { near: 5, sol: 0.5, eth: 1, base: 0.1, prl: 12, btc: 0.005 },
+    erc20Balances: {},
+    splBalances: {},
+    nearNep141Balances: {},
+    intentsBalances: {}
+  });
+
+  const solTransferGas = await chainContracts.estimateLiveNativeGasAsync({ wallet: testWallet, chain: 'sol', kind: 'transfer' });
+  assert.equal(solTransferGas.isLive, true);
+  assert.equal(solTransferGas.gasReserve, 0.000005);
+  assert.equal(solTransferGas.exactFeeBaseUnits, '5000');
+
+  const solDexGas = await chainContracts.estimateLiveNativeGasAsync({ wallet: testWallet, chain: 'sol', kind: 'dex_swap' });
+  assert.equal(solDexGas.isLive, true);
+  assert.equal(solDexGas.gasReserve, 0.0015);
+
+  await withMockedFetch(async (url, opts) => {
+    const bodyStr = opts && opts.body ? String(opts.body) : '';
+    if (bodyStr.includes('eth_gasPrice')) {
+      return jsonResponse({ jsonrpc: '2.0', id: 1, result: '0x3b9aca00' }); // 1 gwei
+    }
+    if (bodyStr.includes('eth_getBalance')) {
+      return jsonResponse({ jsonrpc: '2.0', id: 2, result: '0xde0b6b3a7640000' }); // 1 ETH
+    }
+    if (bodyStr.includes('eth_estimateGas')) {
+      return jsonResponse({ jsonrpc: '2.0', id: 3, result: '0x5208' }); // 21000
+    }
+    if (url.includes('mempool.space/api/v1/fees/recommended')) {
+      return jsonResponse({ fastestFee: 5, halfHourFee: 3 });
+    }
+    if (url.includes('/utxo')) {
+      return jsonResponse([{ txid: 'a'.repeat(64), vout: 0, value: 500000, confirmations: 120 }]);
+    }
+    if (url.includes('/estimatefee/2')) {
+      return jsonResponse({ result: '0.002' });
+    }
+    throw new Error('Unexpected URL in mock: ' + url);
+  }, async () => {
+    const ethGas = await chainContracts.estimateLiveNativeGasAsync({ wallet: testWallet, chain: 'eth', kind: 'transfer' });
+    assert.equal(ethGas.isLive, true);
+    assert.ok(ethGas.gasReserve > 0 && ethGas.gasReserve < chainContracts.DEFAULT_GAS_BUFFERS.eth);
+    assert.equal(ethGas.liveBalanceBaseUnits, '1000000000000000000');
+    assert.ok(ethGas.meta.gasPriceWei && ethGas.meta.gasLimit === '21000');
+
+    const btcGas = await chainContracts.estimateLiveNativeGasAsync({ wallet: testWallet, chain: 'btc', kind: 'transfer' });
+    assert.equal(btcGas.isLive, true);
+    assert.equal(btcGas.meta.feeRateSatVb, 3);
+    assert.equal(btcGas.exactFeeBaseUnits, String((12 + 58 + 43) * 3));
+    assert.equal(btcGas.liveBalanceBaseUnits, '500000');
+
+    const prlGas = await chainContracts.estimateLiveNativeGasAsync({ wallet: testWallet, chain: 'prl', kind: 'transfer' });
+    assert.equal(prlGas.isLive, true);
+    assert.equal(prlGas.meta.feePerKbPrl, 0.002);
+    assert.equal(prlGas.liveBalanceBaseUnits, '500000');
+  });
+
+  // Fallback on RPC error
+  await withMockedFetch(async () => { throw new Error('network down'); }, async () => {
+    const fbEth = await chainContracts.estimateLiveNativeGasAsync({ wallet: testWallet, chain: 'eth', kind: 'transfer' });
+    assert.equal(fbEth.isLive, false);
+    assert.equal(fbEth.gasReserve, chainContracts.DEFAULT_GAS_BUFFERS.eth);
+  });
+
+  // 4. Home Dust Folding (< $0.05) + Core Symbol & Unknown-Price Protection
+  const fakeGroups = [
+    { symbolKey: 'NEAR', symbol: 'NEAR', totalBalance: 0, totalUsd: 0, price: 2, primaryToken: { blockchain: 'near' }, entries: [{ blockchain: 'near', assetId: 'nep141:wrap.near', balance: 0, token: { symbol: 'NEAR', blockchain: 'near' } }] },
+    { symbolKey: 'ETH', symbol: 'ETH', totalBalance: 0.00001, totalUsd: 0.02, price: 2000, primaryToken: { blockchain: 'eth' }, entries: [{ blockchain: 'eth', assetId: 'nep141:eth.omft.near', balance: 0.00001, token: { symbol: 'ETH', blockchain: 'eth' } }] },
+    { symbolKey: 'USDC', symbol: 'USDC', totalBalance: 10, totalUsd: 10, price: 1, primaryToken: { blockchain: 'near' }, entries: [] },
+    { symbolKey: 'BONK', symbol: 'BONK', totalBalance: 1000, totalUsd: 0.02, price: 0.00002, primaryToken: { blockchain: 'sol' }, entries: [] },
+    { symbolKey: 'UNKNOWN', symbol: 'UNKNOWN', totalBalance: 5, totalUsd: null, price: null, primaryToken: { blockchain: 'near' }, entries: [] }
+  ];
+  const part = uiController.partitionDustAssetGroups(fakeGroups, 0.05);
+  assert.deepEqual(part.mainGroups.map((g) => g.symbolKey), ['NEAR', 'ETH', 'USDC', 'UNKNOWN']);
+  assert.deepEqual(part.dustGroups.map((g) => g.symbolKey), ['BONK']);
+  assert.ok(Math.abs(part.dustTotalUsd - 0.02) < 1e-12);
+
+  // Full renderUnifiedAssetList toggle check
+  const prevWallets = state.wallets;
+  const prevActiveId = state.activeWalletId;
+  const prevDust = state.showDustAssets;
+  const prevLiveTokens = state.liveTokens;
+  const prevDoc = globalThis.document;
+  try {
+    const dustWallet = state.normalizeWalletRecord({
+      id: 'w_dust_render',
+      name: 'Dust Render',
+      mnemonic: TEST_MNEMONIC,
+      ...derived,
+      nativeBalances: { near: 0, prl: 0, sol: 0, eth: 0, bsc: 0, btc: 0 },
+      splBalances: { DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263: 1000 }, // BONK
+      nearNep141Balances: {},
+      erc20Balances: {}
+    });
+    state.wallets = [dustWallet];
+    state.activeWalletId = dustWallet.id;
+    state.showDustAssets = false;
+    state.liveTokens = [{ symbol: 'BONK', blockchain: 'sol', contractAddress: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', price: 0.00002 }];
+    const homeListEl = createMockDomElement('home-unified-asset-list');
+    const heroUsdEl = createMockDomElement('hero-total-usd');
+    globalThis.document = {
+      documentElement: { lang: 'zh-CN' },
+      getElementById: (id) => (id === 'home-unified-asset-list' ? homeListEl : (id === 'hero-total-usd' ? heroUsdEl : null)),
+      querySelectorAll: () => []
+    };
+
+    uiController.renderUnifiedAssetList();
+    assert.ok(homeListEl.innerHTML.includes('dust-drawer-toggle'), 'Small < $0.05 non-core balance must fold into dust drawer');
+    assert.ok(!homeListEl.innerHTML.includes('data-symbol="BONK"'), 'Collapsed dust drawer must hide BONK card initially');
+    assert.equal(heroUsdEl.textContent, '$0.02', 'Portfolio USD total must still include folded dust');
+
+    uiController.toggleHomeDustAssets();
+    assert.equal(state.showDustAssets, true);
+    assert.ok(homeListEl.innerHTML.includes('data-symbol="BONK"'), 'Expanding dust drawer must reveal BONK card');
+  } finally {
+    state.wallets = prevWallets;
+    state.activeWalletId = prevActiveId;
+    state.showDustAssets = prevDust;
+    state.liveTokens = prevLiveTokens;
+    globalThis.document = prevDoc;
+  }
+
+  // 5. HTML Gas-Fix Banners, Zero Inline Events in ui-controller & SW v6.29
+  const swapHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'parts', 'index-html', '020-view-swap-limit.part.html'), 'utf8');
+  const sendHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'parts', 'index-html', '060-sheets-core.part.html'), 'utf8');
+  assert.ok(swapHtml.includes('id="swap-gas-fix-banner"') && swapHtml.includes('applySwapMaxSpendableFix()'));
+  assert.ok(sendHtml.includes('id="send-gas-fix-banner"') && sendHtml.includes('applySendMaxSpendableFix()'));
+
+  const uiPartsDir = path.join(ROOT_DIR, 'src', 'parts', 'ui-controller');
+  for (const f of fs.readdirSync(uiPartsDir).filter((n) => n.endsWith('.part.js'))) {
+    const src = fs.readFileSync(path.join(uiPartsDir, f), 'utf8');
+    assert.equal(/\son(click|change|input)=/i.test(src), false, `ui-controller/${f} must have zero inline HTML events`);
+  }
+
+  const swLatest = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
+  assert.ok(swLatest.includes('nexus-wallet-v6.29'), 'sw.js must bump cache version to v6.29');
 });
 

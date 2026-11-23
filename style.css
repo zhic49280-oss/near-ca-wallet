@@ -1904,6 +1904,53 @@ body.sheet-scroll-locked {
   color: #fda4af;
 }
 
+.gas-fix-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.11);
+  border: 1px solid rgba(245, 158, 11, 0.34);
+}
+
+.gas-fix-text {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #fcd34d;
+  flex: 1;
+  min-width: 0;
+}
+
+.dust-drawer-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.dust-drawer-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dust-drawer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 /* Zero-Flash App Lock & Background Privacy Blur */
 html.nexus-locked .app-shell,
 html.nexus-privacy-blur .app-shell {

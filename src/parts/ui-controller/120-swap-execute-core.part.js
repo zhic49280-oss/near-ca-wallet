@@ -1,8 +1,10 @@
-  async function broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress }) {
+  async function broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress, gasOverride = null }) {
     const contracts = getContracts();
     const bc = String(fromToken.blockchain || '').toLowerCase();
+    const gasBuffer = gasOverride && gasOverride.gasBuffer !== undefined ? gasOverride.gasBuffer : null;
+    const gasMeta = (gasOverride && gasOverride.meta) || {};
     if (bc === 'near' && fromToken.symbol === 'NEAR') {
-      return contracts.signAndSendNearTransfer({ wallet, receiverId: depositAddress, amountNear: amt });
+      return contracts.signAndSendNearTransfer({ wallet, receiverId: depositAddress, amountNear: amt, gasBuffer });
     }
     if (bc === 'near' && fromToken.contractAddress && typeof contracts.executeNearNep141Transfer === 'function') {
       return contracts.executeNearNep141Transfer({
@@ -20,7 +22,7 @@
         fromToken.contractAddress === 'So11111111111111111111111111111111111111112' ||
         fromToken.symbol === 'SOL';
       if (isNativeSol) {
-        return contracts.executeSolanaNativeTransfer({ wallet, toAddress: depositAddress, amountSol: amt });
+        return contracts.executeSolanaNativeTransfer({ wallet, toAddress: depositAddress, amountSol: amt, gasBuffer });
       }
       return contracts.executeSolanaSplTransfer({
         wallet,
@@ -32,12 +34,26 @@
       });
     }
     if (bc === 'prl') {
-      const res = await contracts.executePearlTransfer({ wallet, toAddress: depositAddress, amountPrl: amt, feeDeductMode: 'extra' });
+      const res = await contracts.executePearlTransfer({
+        wallet,
+        toAddress: depositAddress,
+        amountPrl: amt,
+        feeDeductMode: 'extra',
+        feePerKbPrl: gasMeta.feePerKbPrl ?? null,
+        gasBuffer
+      });
       applyOptimisticChainSpend(wallet, 'prl', amt, Number(res && res.feePrl) || 0, res && res.txHash);
       return res;
     }
     if (bc === 'btc') {
-      const res = await contracts.executeBitcoinTransfer({ wallet, toAddress: depositAddress, amountBtc: amt, feeDeductMode: 'extra' });
+      const res = await contracts.executeBitcoinTransfer({
+        wallet,
+        toAddress: depositAddress,
+        amountBtc: amt,
+        feeDeductMode: 'extra',
+        feeRateSatVb: gasMeta.feeRateSatVb ?? null,
+        gasBuffer
+      });
       applyOptimisticChainSpend(wallet, 'btc', amt, Number(res && res.feeBtc) || 0, res && res.txHash);
       return res;
     }
@@ -50,7 +66,10 @@
         amount: amt,
         tokenContract: fromToken.contractAddress,
         decimals: fromToken.decimals,
-        tokenBalance: avail
+        tokenBalance: avail,
+        gasBuffer,
+        gasPriceWei: gasMeta.gasPriceWei ?? null,
+        gasLimit: gasMeta.gasLimit ?? null
       });
     }
     throw new Error(t(`暂不支持从 ${bc.toUpperCase()} 自动发送源链交易`, `Auto origin deposit from ${bc.toUpperCase()} is unavailable`));
@@ -83,21 +102,20 @@
 
     const avail = getSwapTokenAvailableBalance(fromToken);
     const isNative = isSwapTokenNative(fromToken);
-    const gasReserveInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
-    const gasBuf = isNative && fromToken.blockchain === 'sol' && gasReserveInfo.selectedReserve > 0
-      ? gasReserveInfo.selectedReserve
+    const gasPlan = resolveEffectiveSwapGasPlan(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
+    const gasBuf = isNative ? gasPlan.gasBuffer : null;
+    const originGasOverride = isNative
+      ? { gasBuffer: gasPlan.gasBuffer, meta: (gasPlan.liveGas && gasPlan.liveGas.meta) || {} }
       : null;
-    const feePlan = resolveNativeFeeDeductPlan({
-      wallet,
-      chain: fromToken.blockchain,
-      amount: rawAmt,
-      avail,
-      isNative,
-      gasBuffer: gasBuf,
-      decimals: fromToken.decimals || 6
-    });
-    const amt = feePlan.mode === 'internal' ? feePlan.effectiveAmount : rawAmt;
-    const amtStr = feePlan.mode === 'internal' ? String(feePlan.effectiveAmount) : String(st.swap.amountIn);
+    let effectiveAvail = avail !== null ? avail : 0;
+    if (isNative && gasPlan.liveGas && gasPlan.liveGas.liveBalanceBaseUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
+      const liveNum = Number(contracts.fromBaseUnits(gasPlan.liveGas.liveBalanceBaseUnits, fromToken.decimals || 18));
+      if (Number.isFinite(liveNum) && liveNum > 0 && liveNum <= effectiveAvail + 1e-12) {
+        effectiveAvail = liveNum;
+      }
+    }
+    const amt = rawAmt;
+    const amtStr = String(st.swap.amountIn);
 
     // Strict Local Balance Pre-Validation BEFORE firing RPC / quotes
     try {
@@ -107,7 +125,7 @@
         tokenSymbol: fromToken.symbol,
         amount: amt,
         isNative,
-        tokenBalance: avail !== null ? avail : 0,
+        tokenBalance: effectiveAvail,
         gasBuffer: gasBuf
       });
       validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData: st.swap.quoteData, amountIn: amt });
@@ -123,8 +141,7 @@
       : '';
     const isThirdParty = isCustomThirdPartySwapRecipient(wallet, toToken);
     const thirdPartySuffix = isThirdParty ? ` → ${shortenAddr(st.swap.recipientAddress)}` : '';
-    const authLabelAmt = feePlan.mode === 'internal' ? `${amtStr} (${t('全额内扣Gas', 'Internal Gas')})` : amtStr;
-    if (!(await verifySecurityAuthAsync(wallet, `${t('确认兑换', 'Confirm swap')} ${authLabelAmt} ${fromToken.symbol} → ${toToken.symbol}${impactPromptSuffix}${thirdPartySuffix}`))) return;
+    if (!(await verifySecurityAuthAsync(wallet, `${t('确认兑换', 'Confirm swap')} ${amtStr} ${fromToken.symbol} → ${toToken.symbol}${impactPromptSuffix}${thirdPartySuffix}`))) return;
 
     st.swap._executing = true;
     setSwapError('');
@@ -198,7 +215,8 @@
             quoteResponse: quoteResp,
             wrapAndUnwrapSol: true,
             tokenBalance: avail,
-            inputDecimals: fromToken.decimals
+            inputDecimals: fromToken.decimals,
+            gasBuffer: isNative ? gasBuf : null
           });
           recordWalletActivity(wallet, {
             type: 'swap',
@@ -242,7 +260,8 @@
             amountRaw,
             srcDecimals: fromToken.decimals,
             slippageBps: st.swap.slippageBps,
-            tokenBalance: avail
+            tokenBalance: avail,
+            gasBuffer: isNative ? gasBuf : null
           });
           recordWalletActivity(wallet, {
             type: 'swap',
@@ -426,7 +445,14 @@
           const bridgeAmtNum = stages.length < activeQuote.stages.length
             ? Number(intents.fromBaseUnits(stageAmtRaw, bridgeToken.decimals))
             : amt;
-          const inTx = await broadcastOriginDepositTx({ wallet, fromToken: bridgeToken, amt: bridgeAmtNum, avail: bridgeAmtNum, depositAddress: liveIn.depositAddress });
+          const inTx = await broadcastOriginDepositTx({
+            wallet,
+            fromToken: bridgeToken,
+            amt: bridgeAmtNum,
+            avail: bridgeAmtNum,
+            depositAddress: liveIn.depositAddress,
+            gasOverride: stages.length < activeQuote.stages.length ? null : originGasOverride
+          });
           if (!inTx || !inTx.txHash) {
             throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
           }

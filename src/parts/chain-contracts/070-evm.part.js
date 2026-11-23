@@ -709,7 +709,9 @@
     approvalToken = null,
     spender = null,
     amountRaw = null,
-    path = 'ethereum-1'
+    path = 'ethereum-1',
+    gasPriceWei = null,
+    gasLimit = null
   }) {
     const ethersLib = getEthersLib();
     if (!ethersLib) throw new Error(t('EVM 签名库 ethers 不可用', 'EVM signer library ethers unavailable'));
@@ -718,41 +720,55 @@
     const fromAddr = wallet && (wallet.mpcEvmAddress || wallet.evmAddress);
     if (!fromAddr) throw new Error(t('MPC EVM 地址不可用', 'MPC EVM address unavailable'));
 
-    const signAndBroadcastOne = async (txTo, txData, txVal) => {
+    const signAndBroadcastOne = async (txTo, txData, txVal, useOverrideFee = false) => {
       const valBig = BigInt(txVal || '0');
       const { unsignedTx, serialized } = await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
-        const [nonce, feeData, est] = await Promise.all([
-          provider.getTransactionCount(fromAddr, 'pending'),
-          provider.getFeeData(),
-          provider.estimateGas({ from: fromAddr, to: txTo, data: txData, value: valBig }).catch(() => null)
-        ]);
-        const gasLimit = est !== null ? ((est * 125n) / 100n) : (txData && txData !== '0x' ? 350000n : 21000n);
-        const useEip1559 = Boolean(feeData.maxFeePerGas);
-        const maxFee = feeData.maxFeePerGas || 1000000000n;
-        const prioFeeRaw = feeData.maxPriorityFeePerGas || (maxFee / 4n) || 1000000n;
-        const prioFee = prioFeeRaw > maxFee ? maxFee : prioFeeRaw;
-        const txFields = useEip1559
-          ? {
-              type: 2,
-              chainId: cfg.chainId,
-              nonce,
-              to: txTo,
-              data: txData || '0x',
-              value: valBig,
-              gasLimit,
-              maxFeePerGas: maxFee,
-              maxPriorityFeePerGas: prioFee
-            }
-          : {
-              type: 0,
-              chainId: cfg.chainId,
-              nonce,
-              to: txTo,
-              data: txData || '0x',
-              value: valBig,
-              gasLimit,
-              gasPrice: feeData.gasPrice || 1000000000n
-            };
+        let txFields;
+        const nonce = await provider.getTransactionCount(fromAddr, 'pending');
+        if (useOverrideFee && gasPriceWei !== null && gasPriceWei !== undefined) {
+          txFields = {
+            type: 0,
+            chainId: cfg.chainId,
+            nonce,
+            to: txTo,
+            data: txData || '0x',
+            value: valBig,
+            gasLimit: BigInt(gasLimit || 21000),
+            gasPrice: BigInt(gasPriceWei)
+          };
+        } else {
+          const [feeData, est] = await Promise.all([
+            provider.getFeeData(),
+            provider.estimateGas({ from: fromAddr, to: txTo, data: txData, value: valBig }).catch(() => null)
+          ]);
+          const resolvedGasLimit = est !== null ? ((est * 125n) / 100n) : (txData && txData !== '0x' ? 350000n : 21000n);
+          const useEip1559 = Boolean(feeData.maxFeePerGas);
+          const maxFee = feeData.maxFeePerGas || 1000000000n;
+          const prioFeeRaw = feeData.maxPriorityFeePerGas || (maxFee / 4n) || 1000000n;
+          const prioFee = prioFeeRaw > maxFee ? maxFee : prioFeeRaw;
+          txFields = useEip1559
+            ? {
+                type: 2,
+                chainId: cfg.chainId,
+                nonce,
+                to: txTo,
+                data: txData || '0x',
+                value: valBig,
+                gasLimit: resolvedGasLimit,
+                maxFeePerGas: maxFee,
+                maxPriorityFeePerGas: prioFee
+              }
+            : {
+                type: 0,
+                chainId: cfg.chainId,
+                nonce,
+                to: txTo,
+                data: txData || '0x',
+                value: valBig,
+                gasLimit: resolvedGasLimit,
+                gasPrice: feeData.gasPrice || 1000000000n
+              };
+        }
         const uTx = ethersLib.Transaction.from(txFields);
         const digestBytes = hexToBytes(uTx.unsignedHash.replace(/^0x/i, ''));
         const mpcRes = await api.requestNearMpcChainSignature({
@@ -799,7 +815,7 @@
       }
     }
 
-    const txResp = await signAndBroadcastOne(to, data, value);
+    const txResp = await signAndBroadcastOne(to, data, value, !approvalToken);
     return {
       txHash: txResp.hash,
       explorerUrl: `${cfg.explorer}${txResp.hash}`
@@ -869,7 +885,7 @@
     };
   }
 
-  async function sendEvmSignedTransaction({ chainKey, privateKey, to, data = '0x', value = '0', approvalToken = null, spender = null, amountRaw = null }) {
+  async function sendEvmSignedTransaction({ chainKey, privateKey, to, data = '0x', value = '0', approvalToken = null, spender = null, amountRaw = null, gasPriceWei = null, gasLimit = null }) {
     const ethersLib = getEthersLib();
     if (!ethersLib) throw new Error(t('EVM 签名库 ethers 不可用', 'EVM signer library ethers unavailable'));
     const cfg = EVM_CHAINS[String(chainKey || '').toLowerCase()];
@@ -898,11 +914,17 @@
         }
       }
 
-      const txResp = await signer.sendTransaction({
+      const txReq = {
         to,
         data,
         value: BigInt(value || '0')
-      });
+      };
+      if (!approvalToken && gasPriceWei !== null && gasPriceWei !== undefined) {
+        txReq.type = 0;
+        txReq.gasPrice = BigInt(gasPriceWei);
+        txReq.gasLimit = BigInt(gasLimit || 21000);
+      }
+      const txResp = await signer.sendTransaction(txReq);
       return {
         txHash: txResp.hash,
         explorerUrl: `${cfg.explorer}${txResp.hash}`
@@ -922,7 +944,8 @@
     slippageBps = 100,
     tokenBalance = null,
     feeBps = 0,
-    feeReceiver = DEFAULT_EVM_FEE_RECEIVER
+    feeReceiver = DEFAULT_EVM_FEE_RECEIVER,
+    gasBuffer = null
   } = {}) {
     if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
     const key = String(chainKey || '').toLowerCase();
@@ -944,7 +967,8 @@
         chain: key,
         tokenSymbol: cfg.symbol,
         amount: humanAmt,
-        isNative: true
+        isNative: true,
+        gasBuffer
       });
     } else {
       const cachedErc20 =
@@ -1165,7 +1189,10 @@
     amount,
     tokenContract = null,
     decimals = 18,
-    tokenBalance = null
+    tokenBalance = null,
+    gasBuffer = null,
+    gasPriceWei = null,
+    gasLimit = null
   } = {}) {
     if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
     const key = String(chainKey || '').toLowerCase();
@@ -1187,7 +1214,8 @@
         chain: key,
         tokenSymbol: cfg.symbol,
         amount,
-        isNative: true
+        isNative: true,
+        gasBuffer
       });
       if (!wallet.evmAddress || (!wallet.evmPrivateKey && !hasNearMpc)) {
         throw new Error(t('NEAR 主账户或 MPC EVM 地址不可用', 'NEAR Master Account or MPC EVM address unavailable'));
@@ -1199,7 +1227,9 @@
           privateKey: wallet.evmPrivateKey,
           to: dest,
           data: '0x',
-          value: weiStr
+          value: weiStr,
+          gasPriceWei,
+          gasLimit
         });
       }
       return sendEvmMpcSignedTransaction({
@@ -1208,7 +1238,9 @@
         to: dest,
         data: '0x',
         value: weiStr,
-        path: 'ethereum-1'
+        path: 'ethereum-1',
+        gasPriceWei,
+        gasLimit
       });
     }
 

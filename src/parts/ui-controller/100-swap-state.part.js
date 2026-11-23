@@ -547,11 +547,127 @@
     return Number((Math.floor(n * factor + 1e-9) / factor).toFixed(dp));
   }
 
+  function plainDecimalFromNumber(num) {
+    const s = String(num);
+    if (!/[eE]/.test(s)) return s;
+    const m = s.match(/^([+-]?)(\d+)(?:\.(\d*))?[eE]([+-]?\d+)$/);
+    if (!m) return s;
+    const sign = m[1] === '-' ? '-' : '';
+    const intPart = m[2];
+    const fracPart = m[3] || '';
+    const exp = parseInt(m[4], 10);
+    const digits = intPart + fracPart;
+    const pointPos = intPart.length + exp;
+    if (pointPos <= 0) return sign + '0.' + '0'.repeat(-pointPos) + digits;
+    if (pointPos >= digits.length) return sign + digits + '0'.repeat(pointPos - digits.length);
+    return sign + digits.slice(0, pointPos) + '.' + digits.slice(pointPos);
+  }
+
+  function trimPlainDecimalZeros(str) {
+    const s = String(str || '').trim();
+    if (!s) return '0';
+    const out = s.includes('.') ? s.replace(/\.?0+$/, '') : s;
+    return out || '0';
+  }
+
+  function formatMaxDecimalString(amountNum, decimals = 6, rawBaseUnits = null) {
+    const dec = Math.max(0, Math.min(24, Math.floor(Number(decimals) || 6)));
+    const contracts = getContracts();
+    if (
+      rawBaseUnits !== null &&
+      rawBaseUnits !== undefined &&
+      /^\d+$/.test(String(rawBaseUnits).trim()) &&
+      contracts &&
+      typeof contracts.fromBaseUnits === 'function'
+    ) {
+      const exactStr = trimPlainDecimalZeros(contracts.fromBaseUnits(String(rawBaseUnits).trim(), dec));
+      if (Number(exactStr) > 0) return exactStr;
+      return '0';
+    }
+    const n = Number(amountNum);
+    if (!Number.isFinite(n) || n <= 0) return '0';
+    let dp = Math.min(dec, 12);
+    if (n >= 1) {
+      const intDigits = Math.floor(Math.log10(n)) + 1;
+      dp = Math.min(dp, Math.max(0, 14 - intDigits));
+    }
+    const plain = plainDecimalFromNumber(n);
+    const parts = plain.split('.');
+    const intStr = parts[0] || '0';
+    const fracStr = parts[1] || '';
+    const truncFrac = dp > 0 ? fracStr.slice(0, dp).replace(/0+$/, '') : '';
+    const out = truncFrac ? `${intStr}.${truncFrac}` : intStr;
+    return out || '0';
+  }
+
+  function getWalletTokenRawBaseUnits(wallet, chain, contractAddress) {
+    if (!wallet || !chain || !contractAddress) return null;
+    if (String(chain).toLowerCase() === 'near' && wallet.nearNep141Balances) {
+      const entry = wallet.nearNep141Balances[String(contractAddress)];
+      if (entry && entry.raw !== undefined && /^\d+$/.test(String(entry.raw))) {
+        return String(entry.raw);
+      }
+    }
+    return null;
+  }
+
+  function computeExactMaxSpendable({
+    balance,
+    rawBaseUnits = null,
+    decimals = 6,
+    isNative = false,
+    gasReserve = 0,
+    exactFeeBaseUnits = null
+  } = {}) {
+    const dec = Math.max(0, Math.min(24, Math.floor(Number(decimals) || 6)));
+    const balNum = Number(balance);
+    if (!isNative) {
+      const maxAmountStr = formatMaxDecimalString(balNum, dec, rawBaseUnits);
+      return { maxAmountStr, maxAmountNum: Number(maxAmountStr) || 0, gasReserve: 0 };
+    }
+    const reserve = Math.max(0, Number(gasReserve) || 0);
+    const contracts = getContracts();
+    const hasExactRaw = Boolean(rawBaseUnits !== null && rawBaseUnits !== undefined && /^\d+$/.test(String(rawBaseUnits).trim()));
+    const hasExactFee = Boolean(exactFeeBaseUnits !== null && exactFeeBaseUnits !== undefined && /^\d+$/.test(String(exactFeeBaseUnits).trim()));
+
+    if (contracts && typeof contracts.toBaseUnits === 'function' && typeof contracts.fromBaseUnits === 'function') {
+      try {
+        const balStr = hasExactRaw
+          ? contracts.fromBaseUnits(String(rawBaseUnits).trim(), dec)
+          : formatMaxDecimalString(balNum, dec, null);
+        const balBase = hasExactRaw
+          ? BigInt(String(rawBaseUnits).trim())
+          : BigInt(contracts.toBaseUnits(balStr, dec));
+        const feeBase = hasExactFee
+          ? BigInt(String(exactFeeBaseUnits).trim())
+          : BigInt(contracts.toBaseUnits(plainDecimalFromNumber(reserve), dec));
+        if (balBase <= feeBase) {
+          return { maxAmountStr: '0', maxAmountNum: 0, gasReserve: reserve };
+        }
+        const netBase = balBase - feeBase;
+        let maxAmountStr = trimPlainDecimalZeros(contracts.fromBaseUnits(netBase.toString(), dec));
+        if (!hasExactRaw) {
+          maxAmountStr = formatMaxDecimalString(Number(maxAmountStr), dec, null);
+        }
+        let maxAmountNum = Number(maxAmountStr) || 0;
+        if (Number.isFinite(balNum) && balNum > 0 && maxAmountNum + reserve > balNum + 1e-12) {
+          const safeFloat = Math.max(0, balNum - reserve);
+          maxAmountStr = formatMaxDecimalString(safeFloat, dec, null);
+          maxAmountNum = Number(maxAmountStr) || 0;
+        }
+        return { maxAmountStr, maxAmountNum, gasReserve: reserve };
+      } catch (_) {}
+    }
+
+    const diff = Number.isFinite(balNum) ? balNum - reserve : 0;
+    if (!(diff > 0)) return { maxAmountStr: '0', maxAmountNum: 0, gasReserve: reserve };
+    const maxAmountStr = formatMaxDecimalString(diff, dec, null);
+    return { maxAmountStr, maxAmountNum: Number(maxAmountStr) || 0, gasReserve: reserve };
+  }
+
   /**
-   * Resolve external ("extra") vs internal ("internal") gas deduction plan.
-   * Partial amounts use external gas (send/swap full entered amount + extra gas).
-   * Full-balance / Max inputs use internal gas deduction so users never hit
-   * false Gas insufficient errors or leave unspendable native dust.
+   * Resolve single pure-external ("extra") gas validation & exact max-spendable plan.
+   * Entered / quoted / broadcasted amount always match 1:1 (1Click EXACT_INPUT safe).
    */
   function resolveNativeFeeDeductPlan({
     wallet,
@@ -560,7 +676,9 @@
     avail,
     isNative = false,
     gasBuffer = null,
-    decimals = 6
+    decimals = 6,
+    rawBaseUnits = null,
+    exactFeeBaseUnits = null
   } = {}) {
     const amt = Number(amount);
     const bal = avail !== null && avail !== undefined
@@ -569,63 +687,154 @@
     const contracts = getContracts();
     const buffers = (contracts && contracts.DEFAULT_GAS_BUFFERS) || {};
     const chainLower = String(chain || '').toLowerCase();
-    const buf = (gasBuffer !== null && gasBuffer !== undefined && Number.isFinite(Number(gasBuffer)) && Number(gasBuffer) > 0)
+    const buf = (gasBuffer !== null && gasBuffer !== undefined && Number.isFinite(Number(gasBuffer)) && Number(gasBuffer) >= 0)
       ? Number(gasBuffer)
       : Number(buffers[chainLower] || 0);
-    const fullTol = Math.max(2e-6, bal * 1e-6);
+    const maxInfo = computeExactMaxSpendable({
+      balance: bal,
+      rawBaseUnits,
+      decimals,
+      isNative,
+      gasReserve: buf,
+      exactFeeBaseUnits
+    });
 
     if (!Number.isFinite(amt) || amt <= 0) {
-      return { mode: 'extra', effectiveAmount: 0, totalInputAmount: 0, gasReserve: buf, avail: bal };
+      return {
+        mode: 'extra',
+        effectiveAmount: 0,
+        totalInputAmount: 0,
+        gasReserve: isNative ? buf : 0,
+        maxSpendable: maxInfo.maxAmountNum,
+        maxSpendableStr: maxInfo.maxAmountStr,
+        avail: bal
+      };
     }
     if (!isNative) {
-      if (amt > bal + fullTol) {
-        return { mode: 'insufficient_balance', effectiveAmount: 0, totalInputAmount: amt, gasReserve: buf, avail: bal };
+      if (amt > bal + 1e-12) {
+        return {
+          mode: 'insufficient_balance',
+          effectiveAmount: 0,
+          totalInputAmount: amt,
+          gasReserve: 0,
+          maxSpendable: maxInfo.maxAmountNum,
+          maxSpendableStr: maxInfo.maxAmountStr,
+          avail: bal
+        };
       }
       return {
         mode: 'extra',
         effectiveAmount: amt > bal ? bal : amt,
         totalInputAmount: amt,
-        gasReserve: buf,
+        gasReserve: 0,
+        maxSpendable: maxInfo.maxAmountNum,
+        maxSpendableStr: maxInfo.maxAmountStr,
         avail: bal
       };
     }
 
-    const flooredBal = floorToDecimals(bal, decimals);
-    const isFullBalance = bal > 0 && (
-      (amt >= bal - fullTol && amt <= bal + fullTol) ||
-      (flooredBal > 0 && amt >= flooredBal - 1e-9 && amt <= bal + fullTol)
-    );
-
-    if (amt > bal + fullTol) {
-      return { mode: 'insufficient_balance', effectiveAmount: 0, totalInputAmount: amt, gasReserve: buf, avail: bal };
-    }
-
-    if (isFullBalance) {
-      const effectiveRaw = bal - buf;
-      if (!Number.isFinite(effectiveRaw) || effectiveRaw <= 0) {
-        return { mode: 'insufficient_gas', effectiveAmount: 0, totalInputAmount: bal, gasReserve: buf, avail: bal };
-      }
-      const dp = Math.min(8, Math.max(4, Number(decimals) || 6));
-      let effectiveAmount = floorToDecimals(effectiveRaw, dp);
-      if (effectiveAmount + buf > bal + 1e-12) {
-        effectiveAmount = floorToDecimals(Math.max(0, bal - buf - Math.pow(10, -dp)), dp);
-      }
-      if (!Number.isFinite(effectiveAmount) || effectiveAmount <= 0) {
-        return { mode: 'insufficient_gas', effectiveAmount: 0, totalInputAmount: bal, gasReserve: buf, avail: bal };
-      }
+    if (amt > bal + 1e-12) {
       return {
-        mode: 'internal',
-        effectiveAmount,
-        totalInputAmount: bal,
+        mode: 'insufficient_balance',
+        effectiveAmount: 0,
+        totalInputAmount: amt,
         gasReserve: buf,
+        maxSpendable: maxInfo.maxAmountNum,
+        maxSpendableStr: maxInfo.maxAmountStr,
         avail: bal
       };
     }
 
     if (amt + buf > bal + 1e-12) {
-      return { mode: 'insufficient_gas', effectiveAmount: amt, totalInputAmount: amt, gasReserve: buf, avail: bal };
+      return {
+        mode: 'insufficient_gas',
+        effectiveAmount: amt,
+        totalInputAmount: amt,
+        gasReserve: buf,
+        maxSpendable: maxInfo.maxAmountNum,
+        maxSpendableStr: maxInfo.maxAmountStr,
+        avail: bal
+      };
     }
-    return { mode: 'extra', effectiveAmount: amt, totalInputAmount: amt, gasReserve: buf, avail: bal };
+
+    return {
+      mode: 'extra',
+      effectiveAmount: amt,
+      totalInputAmount: amt,
+      gasReserve: buf,
+      maxSpendable: maxInfo.maxAmountNum,
+      maxSpendableStr: maxInfo.maxAmountStr,
+      avail: bal
+    };
+  }
+
+  function resolveEffectiveSwapGasPlan(wallet, fromToken, toToken, gasReserveMode = 'auto', quoteData = null) {
+    const st = getState();
+    const contracts = getContracts();
+    const chain = String((fromToken && fromToken.blockchain) || '').toLowerCase();
+    const isNative = Boolean(fromToken && isSwapTokenNative(fromToken));
+    const kind = isSameChainContractSwap(fromToken, toToken) ? 'dex_swap' : 'transfer';
+    const gasReserveInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, gasReserveMode || 'auto', quoteData);
+    if (!isNative || !chain) {
+      return { kind, gasBuffer: null, exactFeeBaseUnits: null, liveGas: null, gasReserveInfo };
+    }
+
+    const buffers = (contracts && contracts.DEFAULT_GAS_BUFFERS) || {};
+    const walletKey = wallet ? (wallet.id || wallet.nearNamedAccount || wallet.nearAddress || 'default') : 'none';
+    const cacheKey = `${walletKey}:${chain}:${kind}`;
+    const cached = st.swap && st.swap._liveGas;
+    const isFresh = Boolean(cached && cached.key === cacheKey && (Date.now() - cached.ts) < 60_000 && cached.data);
+    const liveGas = isFresh ? cached.data : null;
+
+    let gasBuffer = null;
+    let exactFeeBaseUnits = null;
+    if (liveGas && Number.isFinite(Number(liveGas.gasReserve)) && Number(liveGas.gasReserve) >= 0) {
+      gasBuffer = Number(liveGas.gasReserve);
+      exactFeeBaseUnits = liveGas.exactFeeBaseUnits || null;
+    } else if (chain === 'sol' && kind === 'transfer') {
+      gasBuffer = 0.000005;
+      exactFeeBaseUnits = '5000';
+    } else if (chain === 'sol' && kind === 'dex_swap') {
+      gasBuffer = 0.0015;
+      exactFeeBaseUnits = '1500000';
+    } else {
+      gasBuffer = Number(buffers[chain] || 0);
+    }
+
+    if (chain === 'sol' && gasReserveInfo && gasReserveInfo.selectedReserve > 0) {
+      if (gasReserveInfo.selectedReserve > gasBuffer) {
+        gasBuffer = gasReserveInfo.selectedReserve;
+        exactFeeBaseUnits = null;
+      }
+    }
+
+    return { kind, gasBuffer, exactFeeBaseUnits, liveGas, gasReserveInfo };
+  }
+
+  async function prefetchSwapLiveGasAsync(force = false) {
+    const st = getState();
+    const contracts = getContracts();
+    const wallet = st.getActiveWallet();
+    const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
+    const toToken = resolveSwapToken(st.swap.toAssetId, 1);
+    if (!wallet || !fromToken || !contracts || typeof contracts.estimateLiveNativeGasAsync !== 'function') return null;
+    if (!isSwapTokenNative(fromToken)) return null;
+
+    const chain = String(fromToken.blockchain || '').toLowerCase();
+    const kind = isSameChainContractSwap(fromToken, toToken) ? 'dex_swap' : 'transfer';
+    const walletKey = wallet.id || wallet.nearNamedAccount || wallet.nearAddress || 'default';
+    const cacheKey = `${walletKey}:${chain}:${kind}`;
+    const cached = st.swap._liveGas;
+    if (!force && cached && cached.key === cacheKey && (Date.now() - cached.ts) < 60_000 && cached.data) {
+      return cached.data;
+    }
+
+    const res = await contracts.estimateLiveNativeGasAsync({ wallet, chain, kind }).catch(() => null);
+    if (res) {
+      st.swap._liveGas = { key: cacheKey, ts: Date.now(), data: res };
+      updateSwapPrimaryButtonState();
+    }
+    return res;
   }
 
   function evaluateSwapButtonState({
@@ -659,24 +868,38 @@
     if (!Number.isFinite(amt) || amt <= 0) {
       return { disabled: false, isError: false, isWarning: false, text: t('确认闪兑', 'Execute Swap'), reason: 'empty' };
     }
-    let activeFeePlan = null;
     if (wallet && fromToken && toToken) {
       const contracts = getContracts();
       const avail = getWalletNativeBalanceForToken(wallet, fromToken.blockchain, fromToken.symbol, fromToken.contractAddress);
       const isNative = isSwapTokenNative(fromToken);
-      const gasReserveInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, gasReserveMode || 'auto', quoteData);
-      const customGasBuf = isNative && fromToken.blockchain === 'sol' && gasReserveInfo.selectedReserve > 0
-        ? gasReserveInfo.selectedReserve
-        : null;
-      activeFeePlan = resolveNativeFeeDeductPlan({
+      const gasPlan = resolveEffectiveSwapGasPlan(wallet, fromToken, toToken, gasReserveMode || 'auto', quoteData);
+      const customGasBuf = isNative ? gasPlan.gasBuffer : null;
+      const rawUnits = isNative
+        ? (gasPlan.liveGas && gasPlan.liveGas.liveBalanceBaseUnits ? gasPlan.liveGas.liveBalanceBaseUnits : null)
+        : getWalletTokenRawBaseUnits(wallet, fromToken.blockchain, fromToken.contractAddress);
+      let effectiveAvail = avail !== null ? avail : 0;
+      let checkedRawUnits = rawUnits;
+      if (isNative && rawUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
+        const liveNum = Number(contracts.fromBaseUnits(rawUnits, fromToken.decimals || 18));
+        if (Number.isFinite(liveNum) && liveNum > 0 && liveNum <= effectiveAvail + 1e-12) {
+          effectiveAvail = liveNum;
+        } else {
+          checkedRawUnits = null;
+        }
+      }
+      const activeFeePlan = resolveNativeFeeDeductPlan({
         wallet,
         chain: fromToken.blockchain,
         amount: amt,
-        avail: avail !== null ? avail : 0,
+        avail: effectiveAvail,
         isNative,
         gasBuffer: customGasBuf,
-        decimals: fromToken.decimals || 6
+        decimals: fromToken.decimals || 6,
+        rawBaseUnits: checkedRawUnits,
+        exactFeeBaseUnits: isNative ? gasPlan.exactFeeBaseUnits : null
       });
+      const gasMap = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' };
+      const gasSym = gasMap[String(fromToken.blockchain || '').toLowerCase()] || 'ETH';
       if (activeFeePlan.mode === 'insufficient_balance') {
         return {
           disabled: true,
@@ -687,31 +910,32 @@
         };
       }
       if (activeFeePlan.mode === 'insufficient_gas') {
-        const gasMap = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' };
-        const gasSym = gasMap[String(fromToken.blockchain || '').toLowerCase()] || 'ETH';
         return {
           disabled: true,
           isError: true,
           isWarning: false,
           text: t(`${gasSym} Gas 余额不足`, `Insufficient ${gasSym} for gas`),
-          reason: 'insufficient_gas'
+          reason: 'insufficient_gas',
+          maxSpendable: activeFeePlan.maxSpendable,
+          maxSpendableStr: activeFeePlan.maxSpendableStr,
+          gasReserve: activeFeePlan.gasReserve,
+          gasSymbol: gasSym,
+          tokenSymbol: fromToken.symbol
         };
       }
-      const effectiveAmt = activeFeePlan.mode === 'internal' ? activeFeePlan.effectiveAmount : amt;
       if (contracts && typeof contracts.validateSufficientChainBalance === 'function') {
         try {
           contracts.validateSufficientChainBalance({
             wallet,
             chain: fromToken.blockchain,
             tokenSymbol: fromToken.symbol,
-            amount: effectiveAmt,
+            amount: amt,
             isNative,
-            tokenBalance: avail !== null ? avail : 0,
+            tokenBalance: effectiveAvail,
             gasBuffer: customGasBuf
           });
         } catch (_) {
-          const effectiveAvail = avail !== null ? avail : 0;
-          if (effectiveAmt > effectiveAvail) {
+          if (amt > effectiveAvail) {
             return {
               disabled: true,
               isError: true,
@@ -720,19 +944,22 @@
               reason: 'insufficient_balance'
             };
           }
-          const gasMap = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' };
-          const gasSym = gasMap[String(fromToken.blockchain || '').toLowerCase()] || 'ETH';
           return {
             disabled: true,
             isError: true,
             isWarning: false,
             text: t(`${gasSym} Gas 余额不足`, `Insufficient ${gasSym} for gas`),
-            reason: 'insufficient_gas'
+            reason: 'insufficient_gas',
+            maxSpendable: activeFeePlan.maxSpendable,
+            maxSpendableStr: activeFeePlan.maxSpendableStr,
+            gasReserve: activeFeePlan.gasReserve,
+            gasSymbol: gasSym,
+            tokenSymbol: fromToken.symbol
           };
         }
       }
       try {
-        validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData, amountIn: effectiveAmt });
+        validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData, amountIn: amt });
       } catch (_) {
         return {
           disabled: true,
@@ -758,15 +985,6 @@
         reason: 'ready_high_impact'
       };
     }
-    if (activeFeePlan && activeFeePlan.mode === 'internal') {
-      return {
-        disabled: false,
-        isError: false,
-        isWarning: false,
-        text: t('确认闪兑 (内扣Gas)', 'Execute Swap (Internal Gas)'),
-        reason: 'ready'
-      };
-    }
     return { disabled: false, isError: false, isWarning: false, text: t('确认闪兑', 'Execute Swap'), reason: 'ready' };
   }
 
@@ -774,7 +992,6 @@
     const st = getState();
     const btn = $('btn-execute-swap');
     const impact = updateSwapPriceImpactUI();
-    if (!btn) return null;
     const wallet = st.getActiveWallet();
     const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
     const toToken = resolveSwapToken(st.swap.toAssetId, 1);
@@ -790,6 +1007,29 @@
       gasReserveMode: st.swap.gasReserveMode || 'auto',
       priceImpact: impact
     });
+
+    const fixBanner = $('swap-gas-fix-banner');
+    const fixText = $('swap-gas-fix-text');
+    if (fixBanner) {
+      const canFix = Boolean(
+        view &&
+        view.reason === 'insufficient_gas' &&
+        view.maxSpendable > 0 &&
+        view.maxSpendableStr &&
+        view.maxSpendableStr !== '0'
+      );
+      fixBanner.classList.toggle('hidden', !canFix);
+      if (canFix && fixText) {
+        fixText.textContent = t(
+          `需预留约 ${formatBal(view.gasReserve, 6)} ${view.gasSymbol} Gas，最大可换 ${view.maxSpendableStr} ${view.tokenSymbol}`,
+          `Reserve ~${formatBal(view.gasReserve, 6)} ${view.gasSymbol} for gas. Max: ${view.maxSpendableStr} ${view.tokenSymbol}`
+        );
+      } else if (fixText) {
+        fixText.textContent = '';
+      }
+    }
+
+    if (!btn) return view;
     btn.disabled = Boolean(view.disabled);
     if (btn.classList) {
       btn.classList.toggle('is-error', Boolean(view.isError));
@@ -797,6 +1037,32 @@
     }
     btn.textContent = view.text;
     return view;
+  }
+
+  function applySwapMaxSpendableFix() {
+    const st = getState();
+    const wallet = st.getActiveWallet();
+    const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
+    const toToken = resolveSwapToken(st.swap.toAssetId, 1);
+    if (!wallet || !fromToken) return;
+    const view = evaluateSwapButtonState({
+      wallet,
+      fromToken,
+      toToken,
+      amountIn: st.swap.amountIn,
+      quoteData: st.swap.quoteData || null,
+      quoteError: '',
+      isQuoting: false,
+      isExecuting: false,
+      gasReserveMode: st.swap.gasReserveMode || 'auto',
+      priceImpact: null
+    });
+    if (view && view.maxSpendableStr && view.maxSpendableStr !== '0') {
+      st.swap.amountIn = view.maxSpendableStr;
+      if ($('swap-amount-in')) $('swap-amount-in').value = view.maxSpendableStr;
+      $('swap-gas-fix-banner')?.classList.add('hidden');
+      handleSwapAmountInput();
+    }
   }
 
   const STABLECOIN_SYMBOLS = new Set([

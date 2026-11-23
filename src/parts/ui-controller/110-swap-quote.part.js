@@ -90,6 +90,9 @@
     }
 
     renderSwapOrderCard();
+    if (isSwapTokenNative(fromToken)) {
+      prefetchSwapLiveGasAsync(false).catch(() => {});
+    }
     if (st.swap.panelMode === 'limit') {
       renderLimitOrderView();
     }
@@ -140,14 +143,48 @@
     scheduleSwapQuote();
   }
 
-  function setSwapMaxAmount() {
+  async function setSwapMaxAmount() {
     const st = getState();
+    const contracts = getContracts();
+    const wallet = st.getActiveWallet();
     const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
+    const toToken = resolveSwapToken(st.swap.toAssetId, 1);
     const bal = getSwapTokenAvailableBalance(fromToken);
     if (!fromToken || bal === null || bal <= 0) return;
 
-    const maxVal = floorToDecimals(bal, 6);
-    st.swap.amountIn = maxVal > 0 ? String(maxVal) : '0';
+    const isNative = isSwapTokenNative(fromToken);
+    if (!isNative) {
+      const rawUnits = getWalletTokenRawBaseUnits(wallet, fromToken.blockchain, fromToken.contractAddress);
+      st.swap.amountIn = formatMaxDecimalString(bal, fromToken.decimals || 6, rawUnits);
+      if ($('swap-amount-in')) $('swap-amount-in').value = st.swap.amountIn;
+      handleSwapAmountInput();
+      return;
+    }
+
+    const tokenIdAtStart = fromToken.assetId;
+    const liveGas = await prefetchSwapLiveGasAsync(false).catch(() => null);
+    const curFrom = resolveSwapToken(st.swap.fromAssetId, 0);
+    if (!curFrom || curFrom.assetId !== tokenIdAtStart) return;
+
+    const plan = resolveEffectiveSwapGasPlan(wallet, curFrom, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
+    let effectiveBal = bal;
+    let rawUnits = null;
+    if (liveGas && liveGas.liveBalanceBaseUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
+      const liveNum = Number(contracts.fromBaseUnits(liveGas.liveBalanceBaseUnits, curFrom.decimals || 18));
+      if (Number.isFinite(liveNum) && liveNum > 0 && liveNum <= bal + 1e-12) {
+        effectiveBal = liveNum;
+        rawUnits = liveGas.liveBalanceBaseUnits;
+      }
+    }
+    const maxInfo = computeExactMaxSpendable({
+      balance: effectiveBal,
+      rawBaseUnits: rawUnits,
+      decimals: curFrom.decimals || 6,
+      isNative: true,
+      gasReserve: plan.gasBuffer || 0,
+      exactFeeBaseUnits: plan.exactFeeBaseUnits
+    });
+    st.swap.amountIn = maxInfo.maxAmountStr || '0';
     if ($('swap-amount-in')) $('swap-amount-in').value = st.swap.amountIn;
     handleSwapAmountInput();
   }
@@ -162,6 +199,7 @@
     st.swap._quoteRateOutPerIn = null;
     st.swap._quoting = false;
     st.swap._lastError = '';
+    st.swap._liveGas = null;
     if (typeof st.saveSwapPair === 'function') st.saveSwapPair();
     setSwapError('');
     resetSwapQuoteDisplay();
@@ -228,21 +266,8 @@
       return;
     }
 
-    const avail = getSwapTokenAvailableBalance(fromToken);
-    const isNative = isSwapTokenNative(fromToken);
-    const preGasInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
-    const preGasBuf = isNative && fromToken.blockchain === 'sol' && preGasInfo.selectedReserve > 0 ? preGasInfo.selectedReserve : null;
-    const feePlan = resolveNativeFeeDeductPlan({
-      wallet,
-      chain: fromToken.blockchain,
-      amount: amtRaw,
-      avail,
-      isNative,
-      gasBuffer: preGasBuf,
-      decimals: fromToken.decimals || 6
-    });
-    const amt = feePlan.mode === 'internal' ? feePlan.effectiveAmount : amtRaw;
-    const amtInputStr = feePlan.mode === 'internal' ? String(feePlan.effectiveAmount) : String(st.swap.amountIn);
+    const amt = amtRaw;
+    const amtInputStr = String(st.swap.amountIn);
 
     const sameChainDex = isSameChainContractSwap(fromToken, toToken);
     const amountRaw = intents.toBaseUnits(amtInputStr, fromToken.decimals);

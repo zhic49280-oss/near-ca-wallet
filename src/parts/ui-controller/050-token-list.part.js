@@ -358,9 +358,104 @@
     return visibleGroups;
   }
 
-  function renderUnifiedAssetList() {
+  const HOME_DUST_USD_THRESHOLD = 0.05;
+
+  function partitionDustAssetGroups(groups, threshold = HOME_DUST_USD_THRESHOLD) {
+    const list = Array.isArray(groups) ? groups : [];
+    const mainGroups = [];
+    const dustGroups = [];
+    let dustTotalUsd = 0;
+    for (const g of list) {
+      if (!g) continue;
+      const isDust = Boolean(
+        !DEFAULT_VISIBLE_SET.has(g.symbolKey) &&
+        typeof g.totalBalance === 'number' &&
+        Number.isFinite(g.totalBalance) &&
+        g.totalBalance > 0 &&
+        typeof g.totalUsd === 'number' &&
+        Number.isFinite(g.totalUsd) &&
+        g.totalUsd < threshold
+      );
+      if (isDust) {
+        dustGroups.push(g);
+        dustTotalUsd += g.totalUsd;
+      } else {
+        mainGroups.push(g);
+      }
+    }
+    return { mainGroups, dustGroups, dustTotalUsd };
+  }
+
+  function renderAssetGroupCard(g) {
     const st = getState();
     const tokens = getTokens();
+    const isExpanded = st.expandedSymbol === g.symbolKey;
+    const parentIconHtml = tokens.renderTokenIconWithBadge(
+      { symbol: g.symbol, blockchain: g.primaryToken ? g.primaryToken.blockchain : '' },
+      38,
+      false
+    );
+
+    const pillsHtml = '';
+    const priceText = g.price !== null ? formatTokenPrice(g.price) : '--';
+    const totalAmtText = formatBal(g.totalBalance, 5);
+    const totalUsdText = g.totalUsd !== null ? formatUsd(g.totalUsd) : '--';
+
+    let drawerHtml = '';
+    if (isExpanded) {
+      drawerHtml = `
+        <div class="asset-drawer">
+          ${g.entries.map((e) => {
+            const iconHtml = tokens.renderTokenIconWithBadge(e.token, 28, true);
+            const cleanNetName = e.blockchain ? (tokens.getChainMeta(e.blockchain)?.name || e.networkName) : e.networkName;
+            const balStr = formatBal(e.balance, 6);
+            return `
+              <div class="asset-sub-row">
+                <div class="asset-sub-info">
+                  ${iconHtml}
+                  <div class="asset-sub-meta">
+                    <span class="asset-sub-name">${escapeHtml(cleanNetName)}</span>
+                  </div>
+                </div>
+                <div class="asset-sub-right">
+                  <span class="asset-sub-bal">${escapeHtml(balStr)} ${escapeHtml(g.symbol)}</span>
+                  <div class="asset-sub-actions">
+                    <button type="button" class="mini-action-btn primary" data-action="quick-swap" data-stop="1" data-asset-id="${escapeHtml(e.assetId)}" data-chain="${escapeHtml(e.blockchain)}" data-contract="${escapeHtml(e.contractAddress || '')}">${t('闪兑', 'Swap')}</button>
+                    <button type="button" class="mini-action-btn" data-action="quick-send" data-stop="1" data-symbol="${escapeHtml(g.symbol)}" data-chain="${escapeHtml(e.blockchain)}" data-asset-id="${escapeHtml(e.assetId)}" data-contract="${escapeHtml(e.contractAddress || '')}">${t('转账', 'Send')}</button>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    return `
+      <div class="asset-group-card ${isExpanded ? 'expanded' : ''}">
+        <button type="button" class="asset-parent-row" data-action="open-token-detail" data-symbol="${escapeHtml(g.symbolKey)}">
+          <div class="asset-left">
+            ${parentIconHtml}
+            <div class="asset-title-block">
+              <div class="asset-sym-row">
+                <span class="asset-symbol">${escapeHtml(g.symbol)}</span>
+                <span class="asset-price">${escapeHtml(priceText)}</span>
+              </div>
+              <div class="network-pills-row">${pillsHtml}</div>
+            </div>
+          </div>
+          <div class="asset-right">
+            <span class="asset-total-amt">${escapeHtml(totalAmtText)}</span>
+            <span class="asset-total-usd">${escapeHtml(totalUsdText)}</span>
+          </div>
+        </button>
+        ${drawerHtml}
+      </div>
+    `;
+  }
+
+  function renderUnifiedAssetList() {
+    const st = getState();
     const wallet = st.getActiveWallet();
     const listEl = $('home-unified-asset-list');
     const heroUsdEl = $('hero-total-usd');
@@ -368,7 +463,7 @@
 
     const groups = buildAggregatedAssetGroups(wallet);
 
-    // Compute Total Portfolio USD (strictly '--' if no prices/balances loaded)
+    // Compute Total Portfolio USD over ALL groups (including dust)
     let anyUsd = false;
     let totalPortfolioUsd = 0;
     for (const g of groups) {
@@ -381,73 +476,36 @@
       heroUsdEl.textContent = anyUsd ? formatUsd(totalPortfolioUsd) : '--';
     }
 
-    listEl.innerHTML = groups.map((g) => {
-      const isExpanded = st.expandedSymbol === g.symbolKey;
-      const parentIconHtml = tokens.renderTokenIconWithBadge(
-        { symbol: g.symbol, blockchain: g.primaryToken ? g.primaryToken.blockchain : '' },
-        38,
-        false
+    const { mainGroups, dustGroups, dustTotalUsd } = partitionDustAssetGroups(groups, HOME_DUST_USD_THRESHOLD);
+    let html = mainGroups.map(renderAssetGroupCard).join('');
+
+    if (dustGroups.length > 0) {
+      const dustOpen = Boolean(st.showDustAssets);
+      const toggleLabel = t(
+        `小额资产 (${dustGroups.length} · < $0.05)`,
+        `Small Balances (${dustGroups.length} · < $0.05)`
       );
-
-      // OKX-style home list: pure aggregated token balance without chain mini-pills
-      const pillsHtml = '';
-
-      const priceText = g.price !== null ? formatTokenPrice(g.price) : '--';
-      const totalAmtText = formatBal(g.totalBalance, 5);
-      const totalUsdText = g.totalUsd !== null ? formatUsd(g.totalUsd) : '--';
-
-      let drawerHtml = '';
-      if (isExpanded) {
-        drawerHtml = `
-          <div class="asset-drawer">
-            ${g.entries.map((e) => {
-              const iconHtml = tokens.renderTokenIconWithBadge(e.token, 28, true);
-              const cleanNetName = e.blockchain ? (tokens.getChainMeta(e.blockchain)?.name || e.networkName) : e.networkName;
-              const balStr = formatBal(e.balance, 6);
-              return `
-                <div class="asset-sub-row">
-                  <div class="asset-sub-info">
-                    ${iconHtml}
-                    <div class="asset-sub-meta">
-                      <span class="asset-sub-name">${escapeHtml(cleanNetName)}</span>
-                    </div>
-                  </div>
-                  <div class="asset-sub-right">
-                    <span class="asset-sub-bal">${escapeHtml(balStr)} ${escapeHtml(g.symbol)}</span>
-                    <div class="asset-sub-actions">
-                      <button type="button" class="mini-action-btn primary" data-action="quick-swap" data-stop="1" data-asset-id="${escapeHtml(e.assetId)}" data-chain="${escapeHtml(e.blockchain)}" data-contract="${escapeHtml(e.contractAddress || '')}">${t('闪兑', 'Swap')}</button>
-                      <button type="button" class="mini-action-btn" data-action="quick-send" data-stop="1" data-symbol="${escapeHtml(g.symbol)}" data-chain="${escapeHtml(e.blockchain)}" data-asset-id="${escapeHtml(e.assetId)}" data-contract="${escapeHtml(e.contractAddress || '')}">${t('转账', 'Send')}</button>
-                    </div>
-                  </div>
-                </div>
-              `;
-            }).join('')}
-          </div>
-        `;
-      }
-
-      return `
-        <div class="asset-group-card ${isExpanded ? 'expanded' : ''}">
-          <button type="button" class="asset-parent-row" data-action="open-token-detail" data-symbol="${escapeHtml(g.symbolKey)}">
-            <div class="asset-left">
-              ${parentIconHtml}
-              <div class="asset-title-block">
-                <div class="asset-sym-row">
-                  <span class="asset-symbol">${escapeHtml(g.symbol)}</span>
-                  <span class="asset-price">${escapeHtml(priceText)}</span>
-                </div>
-                <div class="network-pills-row">${pillsHtml}</div>
-              </div>
-            </div>
-            <div class="asset-right">
-              <span class="asset-total-amt">${escapeHtml(totalAmtText)}</span>
-              <span class="asset-total-usd">${escapeHtml(totalUsdText)}</span>
-            </div>
+      html += `
+        <div class="dust-drawer-wrap">
+          <button type="button" class="dust-drawer-toggle" data-action="toggle-home-dust" aria-expanded="${dustOpen ? 'true' : 'false'}">
+            <span>${escapeHtml(toggleLabel)}</span>
+            <span class="flex items-center gap-2 mono">
+              <span>${escapeHtml(formatUsd(dustTotalUsd))}</span>
+              <span>${dustOpen ? '▴' : '▾'}</span>
+            </span>
           </button>
-          ${drawerHtml}
+          ${dustOpen ? `<div class="dust-drawer-list">${dustGroups.map(renderAssetGroupCard).join('')}</div>` : ''}
         </div>
       `;
-    }).join('');
+    }
+
+    listEl.innerHTML = html;
+  }
+
+  function toggleHomeDustAssets() {
+    const st = getState();
+    st.showDustAssets = !Boolean(st.showDustAssets);
+    renderUnifiedAssetList();
   }
 
   function toggleAssetExpand(symbolKey) {

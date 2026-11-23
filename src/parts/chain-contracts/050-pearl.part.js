@@ -232,7 +232,7 @@
     return { rawHex, feeGrains: actualFee.toString(), changeGrains: hasChange ? changeAmt.toString() : '0', inputCount: selected.length, outputCount: outputs.length };
   }
 
-  async function executePearlTransfer({ wallet, toAddress, amountPrl, feeDeductMode = 'extra' } = {}) {
+  async function executePearlTransfer({ wallet, toAddress, amountPrl, feeDeductMode = 'extra', feePerKbPrl = null, gasBuffer = null } = {}) {
     if (!wallet || !wallet.address) {
       throw new Error(t('Pearl 地址不可用', 'Pearl address unavailable'));
     }
@@ -257,7 +257,8 @@
         tokenSymbol: 'PRL',
         amount: reqAmt,
         isNative: feeDeductMode !== 'internal',
-        tokenBalance: cachedPrl
+        tokenBalance: cachedPrl,
+        gasBuffer
       });
     }
 
@@ -266,9 +267,13 @@
       throw new Error(t('缺少 Pearl Taproot 签名私钥', 'Pearl Taproot signing key unavailable'));
     }
 
+    const overrideFeePerKb = Number(feePerKbPrl);
+    const hasFeeOverride = Number.isFinite(overrideFeePerKb) && overrideFeePerKb > 0;
     const [utxos, feeEst] = await Promise.all([
       pearlBlockbookRequest(`/api/v2/utxo/${encodeURIComponent(wallet.address)}?confirmed=false`),
-      pearlBlockbookRequest('/api/v2/estimatefee/2').catch(() => null)
+      hasFeeOverride
+        ? Promise.resolve({ result: overrideFeePerKb })
+        : pearlBlockbookRequest('/api/v2/estimatefee/2').catch(() => null)
     ]);
 
     if (!Array.isArray(utxos) || utxos.length === 0) {
@@ -294,9 +299,9 @@
     const sortedUtxos = [...spendableUtxos]
       .sort((a, b) => (BigInt(String(b.value)) > BigInt(String(a.value)) ? 1 : -1));
 
-    const feePerKbPrl = feeEst && feeEst.result && Number(feeEst.result) > 0 ? Number(feeEst.result) : 0.0066;
+    const resolvedFeePerKb = feeEst && feeEst.result && Number(feeEst.result) > 0 ? Number(feeEst.result) : 0.0066;
     const reqGrainsBig = BigInt(toBaseUnits(String(reqAmt), 8));
-    let feeGrainsBig = BigInt(Math.max(10000, Math.ceil((feePerKbPrl * 1e8 * (12 + 58 + 2 * 43)) / 1000)));
+    let feeGrainsBig = BigInt(Math.max(10000, Math.ceil((resolvedFeePerKb * 1e8 * (12 + 58 + 2 * 43)) / 1000)));
     for (let pass = 0; pass < 3; pass++) {
       const targetSend = feeDeductMode === 'internal'
         ? (reqGrainsBig > feeGrainsBig ? reqGrainsBig - feeGrainsBig : 0n)
@@ -310,7 +315,7 @@
       }
       const hasChange = acc > targetSend + feeGrainsBig && (acc - targetSend - feeGrainsBig) >= 546n;
       const vbytes = 12 + Math.max(1, count) * 58 + (hasChange ? 2 : 1) * 43;
-      const nextFee = BigInt(Math.max(10000, Math.ceil((feePerKbPrl * 1e8 * vbytes) / 1000)));
+      const nextFee = BigInt(Math.max(10000, Math.ceil((resolvedFeePerKb * 1e8 * vbytes) / 1000)));
       if (nextFee === feeGrainsBig) break;
       feeGrainsBig = nextFee;
     }

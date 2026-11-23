@@ -73,6 +73,7 @@
       'swap.toLabel': '获得',
       'swap.balanceLabel': '可用',
       'swap.maxBtn': '全部',
+      'swap.useMaxBtn': '设为最大可用',
       'swap.recipientLabel': '目标链收款地址',
       'swap.recipientPlaceholder': '自动匹配当前主账户对应链地址',
       'swap.rateLabel': '参考汇率',
@@ -432,6 +433,7 @@
       'swap.toLabel': 'Receive',
       'swap.balanceLabel': 'Available',
       'swap.maxBtn': 'Max',
+      'swap.useMaxBtn': 'Use Max',
       'swap.recipientLabel': 'Destination Address',
       'swap.recipientPlaceholder': 'Auto-filled for destination chain',
       'swap.rateLabel': 'Rate',
@@ -731,6 +733,7 @@
     activeWalletId: null,
     activeTab: 'wallet',
     expandedSymbol: null,
+    showDustAssets: false,
     lang: savedLang,
     currentLang: savedLang,
     pricesUpdatedAt: null,
@@ -752,6 +755,7 @@
       recipientAddress: '',
       quoteData: null,
       quoteSource: null,
+      _liveGas: null,
       rateInverted: false,
       activeOrder: null,
       pickerSide: 'from',
@@ -866,7 +870,8 @@
       recipient: '',
       amount: '',
       detectedNetwork: null,
-      quote: null
+      quote: null,
+      _liveGas: null
     },
 
     receive: {

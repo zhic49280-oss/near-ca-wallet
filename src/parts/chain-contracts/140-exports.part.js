@@ -21,6 +21,7 @@
     deriveMpcEvmAddressAsync,
     resolveWalletChainBalance,
     validateSufficientChainBalance,
+    estimateLiveNativeGasAsync,
     raceWithGraceWindow,
     callSolanaRpc,
     signSolanaBase64Tx,

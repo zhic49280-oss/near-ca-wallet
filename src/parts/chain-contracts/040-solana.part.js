@@ -511,7 +511,8 @@
     wrapAndUnwrapSol = true,
     feeAccount = null,
     tokenBalance = null,
-    inputDecimals = null
+    inputDecimals = null,
+    gasBuffer = null
   } = {}) {
     if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
     if (!quoteResponse || !quoteResponse.inputMint || !quoteResponse.inAmount) {
@@ -526,7 +527,8 @@
         chain: 'sol',
         tokenSymbol: 'SOL',
         amount: amtSol,
-        isNative: true
+        isNative: true,
+        gasBuffer
       });
     } else {
       const dec = typeof inputDecimals === 'number' ? inputDecimals : resolveSolanaTokenDecimals(inputMint, 6);
@@ -653,7 +655,7 @@
     return signAndBroadcastSolanaBase64Tx(swapRes.swapTransaction, wallet.solPrivateSeedHex || null, wallet, 'solana-1');
   }
 
-  async function executeSolanaNativeTransfer({ wallet, toAddress, amountSol } = {}) {
+  async function executeSolanaNativeTransfer({ wallet, toAddress, amountSol, gasBuffer = null } = {}) {
     if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
     const dest = String(toAddress || '').trim();
     const toPubkey = base58Decode(dest);
@@ -666,7 +668,8 @@
       chain: 'sol',
       tokenSymbol: 'SOL',
       amount: amountSol,
-      isNative: true
+      isNative: true,
+      gasBuffer
     });
 
     await ensureWalletSigningKeysAsync(wallet);

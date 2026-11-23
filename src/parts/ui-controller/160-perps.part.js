@@ -1654,13 +1654,53 @@
     return res;
   }
 
-  function setPerpOneClickMax() {
-    const wallet = getState().getActiveWallet();
+  async function setPerpOneClickMax() {
+    const st = getState();
+    const contracts = getContracts();
+    const wallet = st.getActiveWallet();
     const entries = wallet ? getEligiblePerpOneClickEntries(wallet) : [];
     const selKey = $('perp-oc-origin-select')?.value || '';
     const entry = entries.find((e) => e.key === selKey) || entries[0];
-    if (!entry || !$('perp-oc-amount')) return;
-    $('perp-oc-amount').value = String(entry.balance || 0);
+    if (!entry || !$('perp-oc-amount') || !(Number(entry.balance) > 0)) return;
+
+    const isNative = isNativeSendAsset(entry);
+    if (!isNative) {
+      const rawUnits = getWalletTokenRawBaseUnits(wallet, entry.blockchain, entry.contractAddress);
+      $('perp-oc-amount').value = formatMaxDecimalString(entry.balance, entry.decimals || 6, rawUnits);
+      schedulePerpOneClickQuote();
+      return;
+    }
+
+    const bc = String(entry.blockchain || '').toLowerCase();
+    const liveGas = contracts && typeof contracts.estimateLiveNativeGasAsync === 'function'
+      ? await contracts.estimateLiveNativeGasAsync({ wallet, chain: bc, kind: 'transfer' }).catch(() => null)
+      : null;
+    if (liveGas) {
+      const walletKey = wallet.id || wallet.nearNamedAccount || wallet.nearAddress || 'default';
+      st.perp._ocLiveGas = { key: `${walletKey}:${bc}:transfer`, ts: Date.now(), data: liveGas };
+    }
+    const buffers = (contracts && contracts.DEFAULT_GAS_BUFFERS) || {};
+    const gasReserve = (liveGas && Number.isFinite(Number(liveGas.gasReserve)) && Number(liveGas.gasReserve) >= 0)
+      ? Number(liveGas.gasReserve)
+      : (bc === 'sol' ? 0.000005 : Number(buffers[bc] || 0));
+    let effectiveBal = Number(entry.balance || 0);
+    let rawUnits = null;
+    if (liveGas && liveGas.liveBalanceBaseUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
+      const liveNum = Number(contracts.fromBaseUnits(liveGas.liveBalanceBaseUnits, entry.decimals || 18));
+      if (Number.isFinite(liveNum) && liveNum > 0 && liveNum <= effectiveBal + 1e-12) {
+        effectiveBal = liveNum;
+        rawUnits = liveGas.liveBalanceBaseUnits;
+      }
+    }
+    const maxInfo = computeExactMaxSpendable({
+      balance: effectiveBal,
+      rawBaseUnits: rawUnits,
+      decimals: entry.decimals || 6,
+      isNative: true,
+      gasReserve,
+      exactFeeBaseUnits: (liveGas && liveGas.exactFeeBaseUnits) || (bc === 'sol' ? '5000' : null)
+    });
+    $('perp-oc-amount').value = maxInfo.maxAmountStr || '0';
     schedulePerpOneClickQuote();
   }
 
@@ -1843,21 +1883,43 @@
       const q = await hl.quoteOneClickDepositToHlSpot({ wallet, originToken: entry, amount: amt, dry: false });
       if (!q || !q.ok || !q.depositAddress) throw new Error((q && q.error) || t('获取跨链充值路由失败', 'Failed to get deposit route'));
 
+      const walletKey = wallet.id || wallet.nearNamedAccount || wallet.nearAddress || 'default';
+      const ocBc = String(entry.blockchain || '').toLowerCase();
+      const ocCacheKey = `${walletKey}:${ocBc}:transfer`;
+      const ocCached = st.perp && st.perp._ocLiveGas;
+      const ocLive = (ocCached && ocCached.key === ocCacheKey && (Date.now() - ocCached.ts) < 60_000) ? ocCached.data : null;
+      const ocIsNative = isNativeSendAsset(entry);
+      const ocGasBuf = ocIsNative
+        ? (ocLive && Number.isFinite(Number(ocLive.gasReserve)) ? Number(ocLive.gasReserve) : (ocBc === 'sol' ? 0.000005 : null))
+        : null;
+      const ocMeta = (ocLive && ocLive.meta) || {};
+
       let txHash = '';
       if (entry.blockchain === 'near' && entry.kind !== 'nep141' && entry.symbol === 'NEAR') {
-        txHash = (await contracts.signAndSendNearTransfer({ wallet, receiverId: q.depositAddress, amountNear: amt })).txHash;
+        txHash = (await contracts.signAndSendNearTransfer({ wallet, receiverId: q.depositAddress, amountNear: amt, gasBuffer: ocGasBuf })).txHash;
       } else if (entry.blockchain === 'near' && entry.contractAddress) {
         txHash = (await contracts.executeNearNep141Transfer({ wallet, tokenContract: entry.contractAddress, receiverId: q.depositAddress, amount: amt, decimals: entry.decimals || 8, tokenSymbol: entry.symbol, tokenBalance: avail })).txHash;
       } else if (entry.blockchain === 'sol') {
         txHash = !entry.contractAddress || entry.contractAddress === 'So11111111111111111111111111111111111111112'
-          ? (await contracts.executeSolanaNativeTransfer({ wallet, toAddress: q.depositAddress, amountSol: amt })).txHash
+          ? (await contracts.executeSolanaNativeTransfer({ wallet, toAddress: q.depositAddress, amountSol: amt, gasBuffer: ocGasBuf })).txHash
           : (await contracts.executeSolanaSplTransfer({ wallet, mintAddress: entry.contractAddress, toAddress: q.depositAddress, amount: amt, decimals: entry.decimals || 6, tokenBalance: avail })).txHash;
       } else if (entry.blockchain === 'btc') {
-        const res = await contracts.executeBitcoinTransfer({ wallet, toAddress: q.depositAddress, amountBtc: amt, feeDeductMode: 'extra' });
+        const res = await contracts.executeBitcoinTransfer({ wallet, toAddress: q.depositAddress, amountBtc: amt, feeDeductMode: 'extra', feeRateSatVb: ocMeta.feeRateSatVb ?? null, gasBuffer: ocGasBuf });
         txHash = res.txHash;
         applyOptimisticChainSpend(wallet, 'btc', amt, Number(res.feeBtc) || 0, txHash);
       } else {
-        txHash = (await contracts.executeEvmTransfer({ wallet, chainKey: entry.blockchain, toAddress: q.depositAddress, amount: amt, tokenContract: entry.contractAddress, decimals: entry.decimals || 18, tokenBalance: avail })).txHash;
+        txHash = (await contracts.executeEvmTransfer({
+          wallet,
+          chainKey: entry.blockchain,
+          toAddress: q.depositAddress,
+          amount: amt,
+          tokenContract: entry.contractAddress,
+          decimals: entry.decimals || 18,
+          tokenBalance: avail,
+          gasBuffer: ocGasBuf,
+          gasPriceWei: ocIsNative ? (ocMeta.gasPriceWei ?? null) : null,
+          gasLimit: ocIsNative ? (ocMeta.gasLimit ?? null) : null
+        })).txHash;
       }
 
       if (txHash) {

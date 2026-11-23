@@ -108,6 +108,11 @@
 
           <div id="swap-price-impact-banner" class="swap-impact-banner hidden" role="alert"></div>
 
+          <div id="swap-gas-fix-banner" class="gas-fix-banner hidden">
+            <span id="swap-gas-fix-text" class="gas-fix-text"></span>
+            <button type="button" id="btn-swap-gas-fix" class="mini-action-btn primary" onclick="applySwapMaxSpendableFix()" data-i18n="swap.useMaxBtn">设为最大可用</button>
+          </div>
+
           <div id="swap-error-banner" class="swap-error-banner hidden"></div>
 
           <button type="button" id="btn-execute-swap" class="btn-primary" onclick="executeActiveSwap()" data-i18n="swap.executeBtn">确认闪兑</button>

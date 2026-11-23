@@ -239,10 +239,12 @@
     if (!wallet || !sellToken) return;
     const bal = getLimitTokenBalance(wallet, sellToken) || 0;
     let maxAmt = bal;
-    if (st.limit.chain === 'sol' && sellToken.contractAddress === getLimitOrders()?.SOL_NATIVE_MINT) {
+    const isSolNative = st.limit.chain === 'sol' && sellToken.contractAddress === getLimitOrders()?.SOL_NATIVE_MINT;
+    if (isSolNative) {
       maxAmt = Math.max(0, bal - (getLimitOrders()?.SOL_LIMIT_GAS_RESERVE || 0.005));
     }
-    st.limit.amountIn = maxAmt > 0 ? String(Number(maxAmt.toFixed(6))) : '0';
+    const rawUnits = isSolNative ? null : getWalletTokenRawBaseUnits(wallet, st.limit.chain, sellToken.contractAddress);
+    st.limit.amountIn = maxAmt > 0 ? formatMaxDecimalString(maxAmt, sellToken.decimals || 6, rawUnits) : '0';
     if ($('limit-amount-in')) $('limit-amount-in').value = st.limit.amountIn;
     renderLimitOrderCalculations();
   }
