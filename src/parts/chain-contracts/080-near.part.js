@@ -396,6 +396,11 @@
                 minStorageYocto = String(bounds.min);
               }
             } catch (_) {}
+            const minNearNeeded = Number(fromBaseUnits(minStorageYocto, 24)) + 0.003;
+            const curNearBal = resolveWalletChainBalance(wallet, 'near');
+            if (curNearBal !== null && curNearBal < minNearNeeded) {
+              throw new Error(t(`NEAR 余额不足以支付收款方代币存储押金 (需约 ${minNearNeeded.toFixed(4)} NEAR)`, `Insufficient NEAR for recipient token storage deposit (~${minNearNeeded.toFixed(4)} NEAR)`));
+            }
             const creds = getWalletNearSignerCredentials(resolvedWallet);
             await api.signAndSendNearFunctionCall({
               accountId: sender,
@@ -409,7 +414,11 @@
             });
           }
         }
-      } catch (_) {}
+      } catch (storageErr) {
+        if (storageErr && /Insufficient NEAR|storage/i.test(String(storageErr.message || ''))) {
+          throw storageErr;
+        }
+      }
     }
 
     const creds = getWalletNearSignerCredentials(resolvedWallet);

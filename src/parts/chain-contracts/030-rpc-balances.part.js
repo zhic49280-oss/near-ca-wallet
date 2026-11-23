@@ -321,23 +321,10 @@
 
       const [escrowRes, stakeAccountsRes] = await Promise.all([
         callSolanaRpc('getAccountInfo', [escrowPda.address, { encoding: 'base64' }]).catch(() => null),
-        fetchJsonWithTimeout(
-          'https://api.mainnet-beta.solana.com',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              jsonrpc: '2.0',
-              id: 'sol_native_stake',
-              method: 'getProgramAccounts',
-              params: [
-                'Stake11111111111111111111111111111111111111',
-                { encoding: 'jsonParsed', filters: [{ memcmp: { offset: 12, bytes: addr } }] }
-              ]
-            })
-          },
-          6000
-        ).catch(() => null)
+        callSolanaRpc('getProgramAccounts', [
+          'Stake11111111111111111111111111111111111111',
+          { encoding: 'jsonParsed', filters: [{ memcmp: { offset: 12, bytes: addr } }] }
+        ], 6000).catch(() => null)
       ]);
 
       if (escrowRes && escrowRes.value && escrowRes.value.data && escrowRes.value.data[0]) {
@@ -371,7 +358,9 @@
         } catch (_) {}
       }
 
-      const stakeList = stakeAccountsRes && Array.isArray(stakeAccountsRes.result) ? stakeAccountsRes.result : [];
+      const stakeList = Array.isArray(stakeAccountsRes)
+        ? stakeAccountsRes
+        : (stakeAccountsRes && Array.isArray(stakeAccountsRes.result) ? stakeAccountsRes.result : []);
       for (const item of stakeList) {
         if (!item || !item.account) continue;
         try {

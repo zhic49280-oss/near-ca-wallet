@@ -6,8 +6,12 @@
     st.receive.selectedNetwork = ['arc', 'eth', 'base', 'arb', 'op', 'pol', 'bsc', 'hype', 'hood', 'avax'].includes(rawKey)
       ? 'evm'
       : rawKey;
+    const wallet = st.getActiveWallet();
     renderReceiveSheet();
     openSheet('sheet-receive');
+    if (st.receive.selectedNetwork === 'qtc' && wallet && !wallet.qtcDepositAddress) {
+      ensureQtcReceiveDepositAddressAsync(wallet);
+    }
   }
 
   let _qtcDepositPromiseKey = '';
@@ -56,9 +60,12 @@
       st.recomputeWalletMpcAddresses(wallet);
     }
 
+    const evmAddr = wallet.evmPrivateKey
+      ? (wallet.evmAddress || wallet.mpcEvmAddress)
+      : (wallet.mpcEvmAddress || wallet.evmAddress);
     const options = [
       { key: 'near', label: 'NEAR (.near)', addr: wallet.nearNamedAccount || wallet.nearAddress },
-      { key: 'evm', label: 'EVM (ETH / Base / ARB / OP / POL / BSC / Arc)', addr: wallet.mpcEvmAddress || wallet.evmAddress },
+      { key: 'evm', label: 'EVM (ETH / Base / ARB / OP / POL / BSC / Arc)', addr: evmAddr },
       { key: 'sol', label: 'Solana (SOL)', addr: wallet.solAddress },
       { key: 'btc', label: t('Bitcoin (BTC 主网)', 'Bitcoin (BTC Mainnet)'), addr: wallet.btcAddress },
       { key: 'prl', label: t('Pearl (PRL 主网)', 'Pearl (PRL Mainnet)'), addr: wallet.address },
@@ -81,6 +88,7 @@
       const nearId = wallet.nearNamedAccount || wallet.nearAddress;
       const isFetching = Boolean(nearId && _qtcDepositPromiseKey === `${wallet.id}:${nearId}`);
       if (valEl) {
+        if (valEl.dataset) valEl.dataset.loading = isFetching ? '1' : '';
         valEl.textContent = isFetching
           ? t('正在获取 Quantus 跨链充值地址...', 'Fetching Quantus deposit address...')
           : '--';
@@ -89,7 +97,10 @@
       return;
     }
 
-    if (valEl) valEl.textContent = active.addr || '--';
+    if (valEl) {
+      if (valEl.dataset) valEl.dataset.loading = '';
+      valEl.textContent = active.addr || '--';
+    }
     renderQrInto('receive-qr-container', active.addr || '', 172);
   }
 
@@ -104,7 +115,9 @@
   }
 
   function copyReceiveAddress() {
-    const addr = $('receive-addr-value')?.textContent || '';
-    if (addr && addr !== '--') copyText(addr, $('receive-addr-label')?.textContent || '');
+    const valEl = $('receive-addr-value');
+    const addr = (valEl?.textContent || '').trim();
+    if (!addr || addr === '--' || valEl?.dataset?.loading === '1') return;
+    copyText(addr, $('receive-addr-label')?.textContent || '');
   }
 

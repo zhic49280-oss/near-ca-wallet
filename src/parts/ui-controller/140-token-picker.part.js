@@ -161,8 +161,13 @@
       }
     }
 
-    const activeChain = st.swap.pickerChainFilter || 'all';
     const availableChainSet = new Set(orderedChains);
+    if (st.swap.pickerChainFilter && st.swap.pickerChainFilter !== 'all') {
+      const cf = st.swap.pickerChainFilter;
+      const validForSide = availableChainSet.has(cf) && (!isFromPicker || isSwapOriginSupported({ blockchain: cf }));
+      if (!validForSide) st.swap.pickerChainFilter = 'all';
+    }
+    const activeChain = st.swap.pickerChainFilter || 'all';
     const pinnedVisible = PINNED_PICKER_CHAINS.filter((ck) => (!isFromPicker || isSwapOriginSupported({ blockchain: ck })) && (ck === 'arc' || availableChainSet.has(ck)));
     const tempExtraChain = (activeChain !== 'all' && !PINNED_PICKER_CHAINS.includes(activeChain) && availableChainSet.has(activeChain))
       ? activeChain
@@ -203,7 +208,7 @@
       }
     }
 
-    if (search.length >= 2 && search !== _lastJupSearchQuery && intents && typeof intents.searchJupiterTokensV2 === 'function') {
+    if ((activeChain === 'all' || activeChain === 'sol') && search.length >= 2 && search !== _lastJupSearchQuery && intents && typeof intents.searchJupiterTokensV2 === 'function') {
       if (_jupSearchTimer) clearTimeout(_jupSearchTimer);
       const querySnapshot = search;
       _jupSearchTimer = setTimeout(async () => {
@@ -257,6 +262,10 @@
 
     const listEl = $('token-picker-list');
     if (!listEl) return;
+    if (filteredWithMeta.length === 0) {
+      listEl.innerHTML = `<div class="text-muted" style="text-align:center;padding:24px 12px;">${escapeHtml(t('未找到匹配的代币', 'No matching tokens found'))}</div>`;
+      return;
+    }
     listEl.innerHTML = filteredWithMeta.map(({ tok, bal }) => {
       const liveP = (typeof tok.price === 'number' && tok.price > 0) ? tok.price : getSymbolPrice(tok.symbol);
       const priceText = formatTokenPrice(liveP);

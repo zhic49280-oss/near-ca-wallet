@@ -32,7 +32,10 @@
     listEl.innerHTML = st.contacts.map((c) => `
       <div class="meta-list">
         <div class="meta-row">
-          <span style="font-weight:700;color:#fff;">${escapeHtml(c.name)}</span>
+          <div class="flex items-center gap-2">
+            <span style="font-weight:700;color:#fff;">${escapeHtml(c.name)}</span>
+            ${c.network ? `<span class="ca-badge">${escapeHtml(String(c.network).toUpperCase())}</span>` : ''}
+          </div>
           <div class="flex gap-1">
             ${_contactsPickerTarget
               ? `<button type="button" class="mini-action-btn primary" data-action="pick-contact" data-addr="${escapeHtml(c.address)}">${t('选用', 'Use')}</button>`
@@ -55,12 +58,16 @@
       return;
     }
     const net = crypto.detectAddressNetwork(address);
-    if (!net) {
-      showToast(t('地址格式无效', 'Invalid wallet address'));
+    if (!net || (typeof crypto.validateChainAddress === 'function' && !crypto.validateChainAddress(net, address))) {
+      showToast(t('地址格式或校验和无效', 'Invalid wallet address or checksum'));
+      return;
+    }
+    if (st.contacts.some((c) => String(c.address || '').toLowerCase() === address.toLowerCase())) {
+      showToast(t('该地址已在联系人列表中', 'Address already in contacts'));
       return;
     }
     st.contacts.unshift({
-      id: `c_${Date.now()}`,
+      id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       name,
       address,
       network: net,
@@ -94,9 +101,17 @@
       if ($('send-recipient-input')) $('send-recipient-input').value = address;
       handleSendRecipientInput();
     } else if (target === 'swap') {
-      closeAllSheets();
+      const crypto = getCrypto();
       const ft = resolveSwapToken(st.swap.fromAssetId, 0);
       const tt = resolveSwapToken(st.swap.toAssetId, 1);
+      const addrNet = crypto.detectAddressNetwork(address);
+      const destBc = String(tt?.blockchain || '').toLowerCase();
+      const isCompatible = addrNet === destBc || (addrNet === 'evm' && EVM_CHAIN_KEYS.includes(destBc));
+      if (!isCompatible) {
+        showToast(t(`该联系人地址不属于目标网络 (${destBc.toUpperCase()})`, `Contact address does not match destination network (${destBc.toUpperCase()})`));
+        return;
+      }
+      closeAllSheets();
       if (!doesSwapRouteRequireSelfRecipient(ft, tt, st.swap.quoteData || null)) {
         st.swap.recipientAddress = address;
         if ($('swap-recipient-input')) $('swap-recipient-input').value = address;

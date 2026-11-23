@@ -727,6 +727,8 @@
         let txFields;
         const nonce = await provider.getTransactionCount(fromAddr, 'pending');
         if (useOverrideFee && gasPriceWei !== null && gasPriceWei !== undefined) {
+          const estOverride = await provider.estimateGas({ from: fromAddr, to: normalizedTxTo, data: txData || '0x', value: valBig }).catch(() => null);
+          const safeGasLimit = estOverride !== null ? ((estOverride * 120n) / 100n) : BigInt(gasLimit || 21000);
           txFields = {
             type: 0,
             chainId: cfg.chainId,
@@ -734,7 +736,7 @@
             to: normalizedTxTo,
             data: txData || '0x',
             value: valBig,
-            gasLimit: BigInt(gasLimit || 21000),
+            gasLimit: safeGasLimit > BigInt(gasLimit || 21000) ? safeGasLimit : BigInt(gasLimit || 21000),
             gasPrice: BigInt(gasPriceWei)
           };
         } else {
@@ -892,10 +894,9 @@
     const cfg = EVM_CHAINS[String(chainKey || '').toLowerCase()];
     if (!cfg) throw new Error(t(`不支持的 EVM 链: ${chainKey}`, `Unsupported EVM chain: ${chainKey}`));
 
-    return withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
-      const signer = new ethersLib.Wallet(privateKey, provider);
-
-      if (approvalToken && approvalToken.toLowerCase() !== NATIVE_EVM_SENTINEL && spender && amountRaw) {
+    if (approvalToken && approvalToken.toLowerCase() !== NATIVE_EVM_SENTINEL && spender && amountRaw) {
+      await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
+        const signer = new ethersLib.Wallet(privateKey, provider);
         const erc20 = new ethersLib.Contract(
           approvalToken,
           [
@@ -913,24 +914,51 @@
           const approveTx = await erc20.approve(spender, amountRaw);
           await approveTx.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, approveTx.hash, 45000));
         }
-      }
+      });
+    }
+
+    const signedRaw = await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
+      const signer = new ethersLib.Wallet(privateKey, provider);
+      const valBig = BigInt(value || '0');
+      const normTo = to ? String(to).trim() : null;
+      const [nonce, feeData, est] = await Promise.all([
+        provider.getTransactionCount(signer.address, 'pending'),
+        provider.getFeeData(),
+        provider.estimateGas({ from: signer.address, to: normTo, data, value: valBig }).catch(() => null)
+      ]);
+      const baseGasLimit = (!approvalToken && gasLimit) ? BigInt(gasLimit) : (data && data !== '0x' ? 350000n : 21000n);
+      const estLimit = est !== null ? ((est * 120n) / 100n) : baseGasLimit;
+      const resolvedGasLimit = estLimit > baseGasLimit ? estLimit : baseGasLimit;
 
       const txReq = {
-        to: to ? String(to).trim() : null,
+        chainId: cfg.chainId,
+        nonce,
+        to: normTo,
         data,
-        value: BigInt(value || '0')
+        value: valBig,
+        gasLimit: resolvedGasLimit
       };
       if (!approvalToken && gasPriceWei !== null && gasPriceWei !== undefined) {
         txReq.type = 0;
         txReq.gasPrice = BigInt(gasPriceWei);
-        txReq.gasLimit = BigInt(gasLimit || 21000);
+      } else if (feeData.maxFeePerGas) {
+        const maxFee = feeData.maxFeePerGas;
+        const prioRaw = feeData.maxPriorityFeePerGas || (maxFee / 4n) || 1000000n;
+        txReq.type = 2;
+        txReq.maxFeePerGas = maxFee;
+        txReq.maxPriorityFeePerGas = prioRaw > maxFee ? maxFee : prioRaw;
+      } else {
+        txReq.type = 0;
+        txReq.gasPrice = feeData.gasPrice || 1000000000n;
       }
-      const txResp = await signer.sendTransaction(txReq);
-      return {
-        txHash: txResp.hash,
-        explorerUrl: `${cfg.explorer}${txResp.hash}`
-      };
+      return signer.signTransaction(txReq);
     });
+
+    const txResp = await withEvmProviderFailover(chainKey, ethersLib, (provider) => provider.broadcastTransaction(signedRaw));
+    return {
+      txHash: txResp.hash,
+      explorerUrl: `${cfg.explorer}${txResp.hash}`
+    };
   }
 
   async function executeEvmDexSwap({

@@ -152,6 +152,7 @@
     const sendAmt = BigInt(String(amountGrains || '0'));
     const feeAmt = BigInt(String(feeGrains || '0'));
     if (sendAmt <= 0n) throw new Error(t('转账金额必须大于 0', 'Transfer amount must be positive'));
+    if (sendAmt < 546n) throw new Error(t('Pearl 转账金额过小（低于粉尘限制 546 grains）', 'Pearl transfer amount below dust limit (546 grains)'));
 
     const sortedUtxos = [...utxos]
       .filter((u) => u && u.txid && u.vout !== undefined && BigInt(String(u.value || '0')) > 0n)

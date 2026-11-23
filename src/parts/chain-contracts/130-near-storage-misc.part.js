@@ -635,7 +635,7 @@
    * 批量读取用户在 EVM / Arc / HyperEVM 上的活跃理财与质押持仓（Aave V3、Ethena sUSDe 含冷却、Steakhouse ERC-4626、stETH、kHYPE）
    */
   async function fetchEvmAccountStakingPositionsAsync(wallet) {
-    const evmAddr = wallet && (wallet.mpcEvmAddress || wallet.evmAddress);
+    const evmAddr = wallet && (wallet.evmPrivateKey ? (wallet.evmAddress || wallet.mpcEvmAddress) : (wallet.mpcEvmAddress || wallet.evmAddress));
     if (!evmAddr || !/^0x[0-9a-fA-F]{40}$/.test(String(evmAddr))) return [];
     const addrLower = String(evmAddr).toLowerCase();
     const paddedAddr = addrLower.replace(/^0x/, '').padStart(64, '0');

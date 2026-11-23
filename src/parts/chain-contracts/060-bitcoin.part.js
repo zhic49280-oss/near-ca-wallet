@@ -335,7 +335,7 @@
 
     const [utxos, mempoolFees, blockstreamFees] = await Promise.all([
       btcApiRequestJson(`/address/${encodeURIComponent(wallet.btcAddress)}/utxo`, {}, 8000),
-      feeRateSatVb ? Promise.resolve(null) : fetchJsonWithTimeout('https://mempool.space/api/v1/fees/recommended', {}, 5000).catch(() => null),
+      feeRateSatVb ? Promise.resolve(null) : btcApiRequestJson('/v1/fees/recommended', {}, 5000).catch(() => fetchJsonWithTimeout('https://mempool.space/api/v1/fees/recommended', {}, 5000).catch(() => null)),
       feeRateSatVb ? Promise.resolve(null) : fetchJsonWithTimeout('https://blockstream.info/api/fee-estimates', {}, 5000).catch(() => null)
     ]);
 

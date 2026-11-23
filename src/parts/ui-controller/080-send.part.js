@@ -415,6 +415,13 @@
       return;
     }
     const net = crypto.detectAddressNetwork(addr);
+    const addrValid = net && (typeof crypto.validateChainAddress !== 'function' || crypto.validateChainAddress(net, addr));
+    if (net && !addrValid) {
+      if (evmRow) evmRow.classList.add('hidden');
+      labelEl.style.color = 'var(--rose-alert)';
+      labelEl.textContent = t('地址校验和无效，请仔细核对大小写或字符', 'Address checksum invalid, please verify');
+      return;
+    }
     if (net === 'evm') {
       if (evmRow) evmRow.classList.remove('hidden');
       renderSendEvmChainPills();
@@ -455,17 +462,13 @@
     const catalog = getSwapTokenCatalog();
     const exactCat = catalog.find((c) => c.blockchain === targetChain && String(c.symbol).toUpperCase() === symUpper);
     if (exactCat) return exactCat;
-    if (detectedNet === 'evm') {
-      const anyEvm = core.find((c) => EVM_CHAIN_KEYS.includes(c.blockchain) && String(c.symbol).toUpperCase() === symUpper)
-        || catalog.find((c) => EVM_CHAIN_KEYS.includes(c.blockchain) && String(c.symbol).toUpperCase() === symUpper);
-      if (anyEvm) return anyEvm;
-    }
-    return core.find((c) => c.assetId === fallbackAssetId)
-      || catalog.find((c) => c.assetId === fallbackAssetId)
-      || { assetId: fallbackAssetId, blockchain: targetChain, symbol };
+    return null;
   }
 
+  let _sendExecuting = false;
+
   async function executeUnifiedSend() {
+    if (_sendExecuting) return;
     const st = getState();
     const crypto = getCrypto();
     const intents = getIntents();
@@ -475,7 +478,8 @@
 
     const asset = getSelectedSendAsset();
     const recipient = ($('send-recipient-input')?.value || '').trim();
-    const amountNum = Number($('send-amount-input')?.value || 0);
+    const rawAmtStr = String($('send-amount-input')?.value || '').trim();
+    const amountNum = Number(rawAmtStr || 0);
 
     if (!asset) return;
     if (!recipient) {
@@ -483,8 +487,8 @@
       return;
     }
     const detectedNet = crypto.detectAddressNetwork(recipient);
-    if (!detectedNet) {
-      showToast(t('收款地址格式无效', 'Invalid recipient address'));
+    if (!detectedNet || (typeof crypto.validateChainAddress === 'function' && !crypto.validateChainAddress(detectedNet, recipient))) {
+      showToast(t('收款地址格式或校验和无效', 'Invalid recipient address or checksum'));
       return;
     }
     if (!Number.isFinite(amountNum) || amountNum <= 0) {
@@ -539,17 +543,35 @@
         tokenBalance: effectiveAvail,
         gasBuffer: gasBuf
       });
+      if (!isNativeGas && typeof contracts.getNativeGasReserve === 'function') {
+        const minNative = contracts.getNativeGasReserve(asset.blockchain);
+        const nativeBal = Number((wallet.nativeBalances && wallet.nativeBalances[asset.blockchain]) ?? 0);
+        if (nativeBal + 1e-12 < minNative) {
+          throw new Error(`${String(asset.blockchain || '').toUpperCase()} ${t('主链 Gas 余额不足', 'native gas insufficient')} (${nativeBal.toFixed(5)} < ${minNative})`);
+        }
+      }
+      if (asset.blockchain === 'sol' && isNativeGas) {
+        const feeSol = typeof gasBuf === 'number' ? gasBuf : 0.00001;
+        const remainingSol = effectiveAvail - amountNum - feeSol;
+        if (remainingSol > 1e-9 && remainingSol < 0.00089088) {
+          throw new Error(t('Solana 账户剩余 SOL 低于免租阈值 (0.000891 SOL)，请点击 MAX 全部发送或减少发送金额', 'Remaining SOL would fall below rent-exempt minimum (0.000891 SOL). Use MAX or send less.'));
+        }
+      }
     } catch (err) {
       showToast(err.message);
       return;
     }
 
-    if (!(await verifySecurityAuthAsync(wallet, `${t('确认发送', 'Confirm send')} ${amountNum} ${asset.symbol}`))) return;
-
+    _sendExecuting = true;
     const btn = $('btn-confirm-send');
-    if (btn) btn.disabled = true;
+    const prevBtnText = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = t('发送中...', 'Sending...');
+    }
 
     try {
+      if (!(await verifySecurityAuthAsync(wallet, `${t('确认发送', 'Confirm send')} ${amountNum} ${asset.symbol}`))) return;
       const isEvmOrigin = EVM_CHAIN_KEYS.includes(asset.blockchain);
       if (isEvmOrigin) await ensureEthersLoaded();
       await contracts.ensureWalletSigningKeysAsync(wallet);
@@ -712,7 +734,10 @@
       }
 
       const destAsset = resolveDestinationAssetForNetwork(asset.symbol, detectedNet, asset.assetId, targetEvmChain);
-      const amountRaw = intents.toBaseUnits(amountNum, asset.decimals || 8);
+      if (!destAsset) {
+        throw new Error(t('该代币暂不支持跨链直转到目标网络，请使用闪兑', 'This token cannot be sent directly to the target network; please use Swap'));
+      }
+      const amountRaw = intents.toBaseUnits(rawAmtStr || amountNum, asset.decimals || 8);
       const refundTo = getWalletDefaultRecipientForChain(wallet, asset.blockchain) || (wallet.nearNamedAccount || wallet.nearAddress);
 
       const quote = await intents.quoteIntentSwapOrWithdraw({
@@ -724,6 +749,7 @@
         refundTo,
         depositType: 'ORIGIN_CHAIN',
         recipientType: 'DESTINATION_CHAIN',
+        appFeeBps: 0,
         dry: false
       });
 
@@ -845,7 +871,11 @@
     } catch (err) {
       showToast(err && err.message ? err.message : t('转账失败', 'Transfer failed'));
     } finally {
-      if (btn) btn.disabled = false;
+      _sendExecuting = false;
+      if (btn) {
+        btn.disabled = false;
+        if (prevBtnText) btn.textContent = prevBtnText;
+      }
     }
   }
 
