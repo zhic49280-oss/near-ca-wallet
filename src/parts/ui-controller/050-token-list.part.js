@@ -88,7 +88,7 @@
         sym: 'PRL',
         contract: 'prl.omft.near',
         assetId: '1cs_v1:near:nep141:prl.omft.near',
-        name: 'NEAR Protocol (NEP-141 prl.omft.near)',
+        name: 'NEAR Protocol',
         decimals: 8
       },
       {
@@ -102,35 +102,35 @@
         sym: 'USDT',
         contract: 'usdt.tether-token.near',
         assetId: 'nep141:usdt.tether-token.near',
-        name: 'NEAR Protocol (NEP-141)',
+        name: 'NEAR Protocol',
         decimals: 6
       },
       {
         sym: 'USDC',
         contract: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
         assetId: 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
-        name: 'NEAR Protocol (NEP-141)',
+        name: 'NEAR Protocol',
         decimals: 6
       },
       {
         sym: 'ETH',
         contract: 'eth.omft.near',
         assetId: '1cs_v1:near:nep141:eth.omft.near',
-        name: 'NEAR Protocol (NEP-141 eth.omft.near)',
+        name: 'NEAR Protocol',
         decimals: 18
       },
       {
         sym: 'SOL',
         contract: 'sol.omft.near',
         assetId: '1cs_v1:near:nep141:sol.omft.near',
-        name: 'NEAR Protocol (NEP-141 sol.omft.near)',
+        name: 'NEAR Protocol',
         decimals: 9
       },
       {
         sym: 'BTC',
         contract: 'btc.omft.near',
         assetId: '1cs_v1:near:nep141:btc.omft.near',
-        name: 'NEAR Protocol (NEP-141 btc.omft.near)',
+        name: 'NEAR Protocol',
         decimals: 8
       }
     ];

@@ -276,10 +276,10 @@
   async function registerOrVerifyWebAuthnPasskeyAsync(reason, wallet, overrides = {}) {
     const nav = getNavigatorObj(overrides);
     if (!nav || !nav.credentials || typeof nav.credentials.create !== 'function') {
-      return { ok: false, error: t('当前浏览器不支持 WebAuthn 通行密钥', 'WebAuthn unsupported') };
+      return { ok: false, error: t('当前浏览器不支持设备通行密钥', 'Biometric passkey unsupported') };
     }
     if (typeof location !== 'undefined' && location.protocol === 'file:' && !overrides.navigator) {
-      return { ok: false, error: t('本地文件协议不支持 WebAuthn', 'WebAuthn requires HTTPS or localhost') };
+      return { ok: false, error: t('本地文件协议不支持设备通行密钥', 'Passkey requires HTTPS or localhost') };
     }
     const PubKeyCred = getPublicKeyCredCtor(overrides);
     if (PubKeyCred && typeof PubKeyCred.isUserVerifyingPlatformAuthenticatorAvailable === 'function') {
@@ -309,7 +309,7 @@
           }
         });
         if (!assertion) {
-          return { ok: false, cancelled: true, error: 'No assertion returned' };
+          return { ok: false, cancelled: true, error: t('未返回验证凭据', 'No assertion returned') };
         }
         return {
           ok: true,
@@ -318,12 +318,12 @@
         };
       }
 
-      const userLabel = (activeWallet && (activeWallet.nearNamedAccount || activeWallet.name)) || 'Pearl Wallet';
+      const userLabel = (activeWallet && (activeWallet.nearNamedAccount || activeWallet.name)) || 'Nexus Wallet';
       const userId = getRandomBytesCompat(16);
       const cred = await nav.credentials.create({
         publicKey: {
           challenge,
-          rp: { name: 'NEAR CA Wallet', id: rpId },
+          rp: { name: 'Nexus Wallet', id: rpId },
           user: {
             id: userId,
             name: String(userLabel),
@@ -343,7 +343,7 @@
         }
       });
       if (!cred) {
-        return { ok: false, cancelled: true, error: 'No credential created' };
+        return { ok: false, cancelled: true, error: t('未创建验证凭据', 'No credential created') };
       }
       const credId = bytesToBase64Url(cred.rawId || cred.id);
       if (activeWallet && credId) {
@@ -353,7 +353,7 @@
       return { ok: true, method: 'webauthn', registered: true, credentialId: credId };
     } catch (err) {
       const name = err && err.name ? String(err.name) : '';
-      const msg = err && err.message ? String(err.message) : 'WebAuthn failed';
+      const msg = err && err.message ? String(err.message) : t('生物识别验证失败', 'Biometric verification failed');
       const cancelled = name === 'NotAllowedError' || name === 'AbortError' || /cancel/i.test(msg);
       return { ok: false, cancelled, error: msg };
     }
@@ -454,6 +454,11 @@
         if (bioUnavailable && hasConfiguredWalletPin(wallet)) {
           return unlockAppLockWithPin();
         }
+        if (bioUnavailable && !hasConfiguredWalletPin(wallet)) {
+          clearAppLock();
+          showToast(t('设备锁屏或生物识别不可用，建议设置安全 PIN 密码', 'Device lock unavailable; please set a wallet PIN in Settings'));
+          return true;
+        }
         if (statusEl) {
           statusEl.textContent = (res && res.cancelled)
             ? t('已取消验证，请点击下方按钮重试', 'Verification cancelled. Tap below to retry.')
@@ -525,12 +530,6 @@
     });
 
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-      window.addEventListener('blur', () => {
-        if (!_appLockState.authenticating && getState().getActiveWallet()) {
-          if (!_appLockState.backgroundedAt) _appLockState.backgroundedAt = Date.now();
-          setBackgroundPrivacyBlur(true);
-        }
-      });
       window.addEventListener('focus', () => {
         handleAppVisibilityChange(false, Date.now());
       });
@@ -576,7 +575,7 @@
           };
         } catch (err) {
           const errCode = (err && err.code) ? String(err.code) : '';
-          const msg = err && err.message ? String(err.message) : 'Native biometric error';
+          const msg = err && err.message ? String(err.message) : t('生物识别验证异常', 'Native biometric error');
           return {
             ok: false,
             code: errCode,
@@ -605,14 +604,21 @@
 
   function renderSecurityPinDots() {
     const dotsWrap = $('security-pin-dots');
-    if (!dotsWrap) return;
-    const dots = dotsWrap.querySelectorAll('.bio-pin-dot');
-    const targetLen = _secAuthState.expectedLen || 6;
-    const enteredLen = (_secAuthState.pinBuffer || '').length;
-    dots.forEach((dot, idx) => {
-      dot.style.display = idx < targetLen ? '' : 'none';
-      dot.classList.toggle('filled', idx < enteredLen);
-    });
+    if (dotsWrap) {
+      const dots = dotsWrap.querySelectorAll('.bio-pin-dot');
+      const targetLen = _secAuthState.expectedLen || 6;
+      const enteredLen = (_secAuthState.pinBuffer || '').length;
+      dots.forEach((dot, idx) => {
+        dot.style.display = idx < targetLen ? '' : 'none';
+        dot.classList.toggle('filled', idx < enteredLen);
+      });
+    }
+    const confirmBtn = $('btn-security-pin-confirm');
+    if (confirmBtn) {
+      const enteredLen = (_secAuthState.pinBuffer || '').length;
+      const showConfirm = Boolean(_secAuthState.allowShortSubmit && enteredLen >= 4 && enteredLen < (_secAuthState.expectedLen || 6));
+      confirmBtn.classList.toggle('hidden', !showConfirm);
+    }
   }
 
   function finishSecurityAuthModal(accepted) {
@@ -665,6 +671,33 @@
     }
   }
 
+  async function submitSecurityPin() {
+    const st = getState();
+    const w = _secAuthState.wallet;
+    if (!w || !(typeof st.hasWalletPin === 'function' ? st.hasWalletPin(w) : Boolean(w.pin)) || _secAuthState.verifying) return;
+    const candidate = String(_secAuthState.pinBuffer || '');
+    if (candidate.length < 4) return;
+    _secAuthState.verifying = true;
+    try {
+      const ok = typeof st.verifyWalletPinAsync === 'function'
+        ? await st.verifyWalletPinAsync(w, candidate)
+        : candidate === String(w.pin);
+      if (ok) {
+        if (!w.pinLen || w.pinLen !== candidate.length) {
+          w.pinLen = candidate.length;
+          if (typeof st.saveWallets === 'function') st.saveWallets();
+        }
+        finishSecurityAuthModal(true);
+      } else {
+        showToast(t('交易密码错误', 'Incorrect PIN'));
+        _secAuthState.pinBuffer = '';
+        renderSecurityPinDots();
+      }
+    } finally {
+      _secAuthState.verifying = false;
+    }
+  }
+
   async function pressSecurityPinDigit(digit) {
     const st = getState();
     const w = _secAuthState.wallet;
@@ -675,22 +708,7 @@
     _secAuthState.pinBuffer += clean;
     renderSecurityPinDots();
     if (_secAuthState.pinBuffer.length >= _secAuthState.expectedLen) {
-      const candidate = _secAuthState.pinBuffer;
-      _secAuthState.verifying = true;
-      try {
-        const ok = typeof st.verifyWalletPinAsync === 'function'
-          ? await st.verifyWalletPinAsync(w, candidate)
-          : candidate === String(w.pin);
-        if (ok) {
-          finishSecurityAuthModal(true);
-        } else {
-          showToast(t('交易密码错误', 'Incorrect PIN'));
-          _secAuthState.pinBuffer = '';
-          renderSecurityPinDots();
-        }
-      } finally {
-        _secAuthState.verifying = false;
-      }
+      await submitSecurityPin();
     }
   }
 
@@ -711,18 +729,7 @@
     if (!w) return false;
     const modalEl = $('sheet-security-auth');
     if (!modalEl || typeof document === 'undefined') {
-      if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
-        const entered = window.prompt(t('请输入安全 PIN', 'Enter PIN'));
-        if (entered === null) return false;
-        const ok = typeof st.verifyWalletPinAsync === 'function'
-          ? await st.verifyWalletPinAsync(w, entered)
-          : String(entered).trim() === String(w.pin);
-        if (!ok) {
-          showToast(t('PIN 错误', 'Incorrect PIN'));
-          return false;
-        }
-        return true;
-      }
+      showToast(t('安全验证窗口不可用', 'Security verification dialog unavailable'));
       return false;
     }
 
@@ -730,13 +737,15 @@
       _secAuthState.resolve(false);
     }
 
-    const expectedLen = w.pinLen >= 4 ? Math.min(6, w.pinLen) : (w.pin && String(w.pin).length >= 4 ? Math.min(6, String(w.pin).length) : 6);
+    const knownLen = w.pinLen >= 4 ? Math.min(6, w.pinLen) : (w.pin && String(w.pin).length >= 4 ? Math.min(6, String(w.pin).length) : 0);
+    const expectedLen = knownLen || 6;
     _secAuthState = {
       resolve: null,
       wallet: w,
       reason: String(reason || ''),
       pinBuffer: '',
       expectedLen,
+      allowShortSubmit: knownLen === 0,
       verifying: false
     };
 

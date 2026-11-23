@@ -14,8 +14,9 @@
       try {
         var raw = localStorage.getItem('near_ca_wallets_v1') || localStorage.getItem('pearl_user_wallets_v4');
         if (!raw) return;
-        var list = JSON.parse(raw);
-        if (!Array.isArray(list) || list.length === 0) return;
+        var parsed = JSON.parse(raw);
+        var list = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.wallets) ? parsed.wallets : []);
+        if (list.length === 0) return;
         var cap = window.Capacitor;
         var isNative = Boolean(
           (typeof location !== 'undefined' && location.protocol === 'capacitor:') ||

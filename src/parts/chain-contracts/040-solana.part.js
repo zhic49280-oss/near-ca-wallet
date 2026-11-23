@@ -162,10 +162,11 @@
         }
       };
 
+      const splFetchOk = splRes !== null || t22Res !== null;
       parseSplAccounts(splRes);
       parseSplAccounts(t22Res);
 
-      if (Array.isArray(mintAddresses)) {
+      if (splFetchOk && Array.isArray(mintAddresses)) {
         for (const m of mintAddresses) {
           if (m && !tokens[m]) {
             tokens[m] = { raw: '0', decimals: 0, formatted: 0, hasAta: false };
@@ -178,7 +179,8 @@
         nativeLamports: String(lamports),
         nativeSol,
         tokens,
-        ataMints
+        ataMints,
+        splFetchFailed: !splFetchOk
       };
     } catch (_) {
       return null;

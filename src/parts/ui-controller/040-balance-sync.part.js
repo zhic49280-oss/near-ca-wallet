@@ -164,6 +164,8 @@
       await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
       if (isStaleRefresh()) return;
       const nearAccountId = wallet.nearNamedAccount || wallet.nearAddress;
+      const initialSolAddr = String(wallet.solAddress || '');
+      const initialEvmAddr = String(wallet.evmAddress || '');
 
       // Non-blocking .near named-account discovery in parallel
       let discoveredNamedAccount = null;
@@ -174,7 +176,11 @@
           discoveredNamedAccount = discovered[0];
           wallet.nearNamedAccount = discovered[0];
           wallet.discoveredNearAccounts = discovered;
-          contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+          contracts.ensureWalletSigningKeysAsync(wallet).then(() => {
+            if (!isStaleRefresh() && (String(wallet.solAddress || '') !== initialSolAddr || String(wallet.evmAddress || '') !== initialEvmAddr)) {
+              refreshAllBalancesAsync(false).catch(() => {});
+            }
+          }).catch(() => {});
           if (typeof st.saveWalletsDebounced === 'function') st.saveWalletsDebounced();
           renderHeaderAndHero();
           intents.fetchNearNativeBalance(wallet.nearNamedAccount).then((v) => {
@@ -186,7 +192,7 @@
           if (typeof intents.fetchNearNep141Balances === 'function') {
             intents.fetchNearNep141Balances(wallet.nearNamedAccount).then((map) => {
               if (!isStaleRefresh() && map && typeof map === 'object') {
-                wallet.nearNep141Balances = { ...(wallet.nearNep141Balances || {}), ...map };
+                wallet.nearNep141Balances = { ...map };
                 scheduleProgressiveWalletRender();
               }
             }).catch(() => {});
@@ -399,32 +405,36 @@
         (nearAccountId && typeof intents.fetchNearNep141Balances === 'function')
           ? softCapPromise(intents.fetchNearNep141Balances(nearAccountId).then((map) => {
               if (!isStaleRefresh() && (!discoveredNamedAccount || nearAccountId === discoveredNamedAccount) && map && typeof map === 'object') {
-                wallet.nearNep141Balances = { ...(wallet.nearNep141Balances || {}), ...map };
+                wallet.nearNep141Balances = { ...map };
                 scheduleProgressiveWalletRender();
               }
               return map;
             }).catch(() => null), 3000)
           : Promise.resolve(null),
         wallet.solAddress ? softCapPromise(contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, solMints).then((res) => {
-          if (!isStaleRefresh() && res && typeof res === 'object') {
+          if (!isStaleRefresh() && String(wallet.solAddress || '') === initialSolAddr && res && typeof res === 'object') {
             if (typeof res.nativeSol === 'number') wallet.nativeBalances.sol = res.nativeSol;
-            const nextAtaMints = {};
-            if (res.ataMints && typeof res.ataMints === 'object') {
-              for (const [m, exists] of Object.entries(res.ataMints)) {
-                if (exists) nextAtaMints[m] = true;
+            if (!res.splFetchFailed) {
+              const nextAtaMints = {};
+              if (res.ataMints && typeof res.ataMints === 'object') {
+                for (const [m, exists] of Object.entries(res.ataMints)) {
+                  if (exists) nextAtaMints[m] = true;
+                }
               }
-            }
-            if (res.tokens && typeof res.tokens === 'object') {
-              for (const [mint, info] of Object.entries(res.tokens)) {
-                if (info && typeof info.formatted === 'number' && Number.isFinite(info.formatted)) {
-                  wallet.splBalances[mint] = info.formatted;
-                  if (info.hasAta === true || (info.hasAta !== false && info.formatted > 0)) {
-                    nextAtaMints[mint] = true;
+              const nextSpl = {};
+              if (res.tokens && typeof res.tokens === 'object') {
+                for (const [mint, info] of Object.entries(res.tokens)) {
+                  if (info && typeof info.formatted === 'number' && Number.isFinite(info.formatted)) {
+                    nextSpl[mint] = info.formatted;
+                    if (info.hasAta === true || (info.hasAta !== false && info.formatted > 0)) {
+                      nextAtaMints[mint] = true;
+                    }
                   }
                 }
               }
+              wallet.splBalances = nextSpl;
+              wallet.solAtaMints = nextAtaMints;
             }
-            wallet.solAtaMints = nextAtaMints;
             scheduleProgressiveWalletRender();
           }
           return res;
@@ -436,7 +446,7 @@
             ? contracts.fetchEvmChainBalancesBatch(ck, wallet.evmAddress, qList)
             : contracts.fetchEvmNativeAndErc20Balance(ck, wallet.evmAddress, qList[0]?.contract || null, qList[0]?.decimals || 18);
           return softCapPromise(p.then((res) => {
-            if (!isStaleRefresh() && res) {
+            if (!isStaleRefresh() && String(wallet.evmAddress || '') === initialEvmAddr && res) {
               if (typeof res.nativeFormatted === 'number' && Number.isFinite(res.nativeFormatted)) {
                 wallet.nativeBalances[ck] = res.nativeFormatted;
               }
@@ -474,46 +484,52 @@
       }
 
       if ((!discoveredNamedAccount || nearAccountId === discoveredNamedAccount) && nep141BalRes && typeof nep141BalRes === 'object') {
-        wallet.nearNep141Balances = { ...(wallet.nearNep141Balances || {}), ...nep141BalRes };
+        wallet.nearNep141Balances = { ...nep141BalRes };
       }
 
-      if (solBalRes && typeof solBalRes === 'object') {
+      if (String(wallet.solAddress || '') === initialSolAddr && solBalRes && typeof solBalRes === 'object') {
         if (typeof solBalRes.nativeSol === 'number') {
           wallet.nativeBalances.sol = solBalRes.nativeSol;
         }
-        const nextAtaMints = {};
-        if (solBalRes.ataMints && typeof solBalRes.ataMints === 'object') {
-          for (const [m, exists] of Object.entries(solBalRes.ataMints)) {
-            if (exists) nextAtaMints[m] = true;
+        if (!solBalRes.splFetchFailed) {
+          const nextAtaMints = {};
+          if (solBalRes.ataMints && typeof solBalRes.ataMints === 'object') {
+            for (const [m, exists] of Object.entries(solBalRes.ataMints)) {
+              if (exists) nextAtaMints[m] = true;
+            }
           }
-        }
-        if (solBalRes.tokens && typeof solBalRes.tokens === 'object') {
-          for (const [mint, info] of Object.entries(solBalRes.tokens)) {
-            if (info && typeof info.formatted === 'number' && Number.isFinite(info.formatted)) {
-              wallet.splBalances[mint] = info.formatted;
-              if (info.hasAta === true || (info.hasAta !== false && info.formatted > 0)) {
-                nextAtaMints[mint] = true;
+          const nextSpl = {};
+          if (solBalRes.tokens && typeof solBalRes.tokens === 'object') {
+            for (const [mint, info] of Object.entries(solBalRes.tokens)) {
+              if (info && typeof info.formatted === 'number' && Number.isFinite(info.formatted)) {
+                nextSpl[mint] = info.formatted;
+                if (info.hasAta === true || (info.hasAta !== false && info.formatted > 0)) {
+                  nextAtaMints[mint] = true;
+                }
               }
             }
           }
+          wallet.splBalances = nextSpl;
+          wallet.solAtaMints = nextAtaMints;
         }
-        wallet.solAtaMints = nextAtaMints;
       }
 
-      evmAllChainKeys.forEach((ck, i) => {
-        const res = evmBatchResults[i];
-        if (!res) return;
-        if (typeof res.nativeFormatted === 'number' && Number.isFinite(res.nativeFormatted)) {
-          wallet.nativeBalances[ck] = res.nativeFormatted;
-        }
-        if (res.tokens && typeof res.tokens === 'object') {
-          for (const info of Object.values(res.tokens)) {
-            if (info && info.contract && typeof info.formatted === 'number' && Number.isFinite(info.formatted)) {
-              st.setWalletErc20Balance(wallet, ck, info.contract, info.formatted);
+      if (String(wallet.evmAddress || '') === initialEvmAddr) {
+        evmAllChainKeys.forEach((ck, i) => {
+          const res = evmBatchResults[i];
+          if (!res) return;
+          if (typeof res.nativeFormatted === 'number' && Number.isFinite(res.nativeFormatted)) {
+            wallet.nativeBalances[ck] = res.nativeFormatted;
+          }
+          if (res.tokens && typeof res.tokens === 'object') {
+            for (const info of Object.values(res.tokens)) {
+              if (info && info.contract && typeof info.formatted === 'number' && Number.isFinite(info.formatted)) {
+                st.setWalletErc20Balance(wallet, ck, info.contract, info.formatted);
+              }
             }
           }
-        }
-      });
+        });
+      }
 
       st.syncWalletCompatBalances(wallet);
       st.saveWallets();
@@ -523,7 +539,10 @@
         renderTokenDetailSheet();
       }
 
-      if (showFeedback) showToast(t('多链资产已同步', 'Balances synced'));
+      const anyTimedOut = (nearAccountId && nearBalRes === null) || (wallet.solAddress && solBalRes === null) || (wallet.evmAddress && evmBatchResults.some((r) => r === null));
+      if (showFeedback) {
+        showToast(anyTimedOut ? t('部分链仍在后台同步中...', 'Syncing remaining chains...') : t('多链资产已同步', 'Balances synced'));
+      }
     } catch (e) {
       if (showFeedback) showToast(e && e.message ? e.message : t('余额同步失败', 'Sync failed'));
     } finally {

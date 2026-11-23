@@ -302,6 +302,7 @@
       pinHash: String(raw.pinHash || ''),
       pinSalt: String(raw.pinSalt || ''),
       pinIterations,
+      pinLen: (typeof raw.pinLen === 'number' && raw.pinLen >= 4 && raw.pinLen <= 6) ? raw.pinLen : undefined,
       biometricEnabled: raw.biometricEnabled !== undefined ? Boolean(raw.biometricEnabled) : true,
       biometricLocked: Boolean(raw.biometricLocked),
       webauthnCredentialId: String(raw.webauthnCredentialId || '').trim(),

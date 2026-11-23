@@ -771,7 +771,9 @@
     const explorerEl = $('token-detail-explorer-link');
     if (explorerEl) {
       const url = getExplorerAddressUrl(activeChain, recvAddr);
-      explorerEl.href = isValidHttpsUrl(url) ? url : '#';
+      const valid = isValidHttpsUrl(url);
+      explorerEl.href = valid ? url : 'javascript:void(0)';
+      explorerEl.classList.toggle('hidden', !valid);
     }
 
     // Per-chain breakdown card
@@ -1108,7 +1110,7 @@
       })());
     }
 
-    if (targetChains.includes('sol') && wallet.solAddress) {
+    if (targetChains.includes('sol') && wallet.solAddress && symKey === 'SOL') {
       tasks.push((async () => {
         const data = await fetchJsonWithTimeout('https://solana-rpc.publicnode.com', {
           method: 'POST',
@@ -1124,7 +1126,7 @@
         return sigs.map((s) => ({
           id: `sol_${s.signature}`,
           type: s.err ? 'failed' : 'tx',
-          symbol: symKey,
+          symbol: 'SOL',
           chain: 'sol',
           amount: null,
           txHash: s.signature || '',

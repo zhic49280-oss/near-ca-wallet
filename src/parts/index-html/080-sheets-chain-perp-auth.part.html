@@ -287,6 +287,7 @@
           <button type="button" class="bio-key" onclick="pressSecurityPinDigit('0')">0</button>
           <button type="button" class="bio-key bio-key-muted" onclick="backspaceSecurityPin()">⌫</button>
         </div>
+        <button type="button" id="btn-security-pin-confirm" class="btn-secondary hidden" onclick="submitSecurityPin()" data-i18n="sheet.authConfirmPinBtn">确认 PIN</button>
       </div>
       <button type="button" class="btn-ghost-sm" onclick="cancelSecurityAuthModal()" data-i18n="sheet.authCancelBtn">取消验证</button>
     </div>

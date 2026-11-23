@@ -124,8 +124,10 @@
     });
     if (pin && typeof st.setWalletPinAsync === 'function') {
       await st.setWalletPinAsync(wallet, pin);
+      wallet.pinLen = String(pin).trim().length;
     } else if (pin) {
       wallet.pin = String(pin).trim();
+      wallet.pinLen = wallet.pin.length;
     }
     // Non-blocking background discovery of linked .near domain
     if (contracts && typeof contracts.discoverNearAccountsByPublicKeyAsync === 'function' && derived.nearPublicKey) {
@@ -143,7 +145,10 @@
     return wallet;
   }
 
+  let _onboardingBusy = false;
+
   async function confirmCreateWallet() {
+    if (_onboardingBusy) return;
     const st = getState();
     const phrase = st.pendingMnemonic;
     if (!phrase) return;
@@ -153,11 +158,17 @@
       showToast(t('PIN 密码需为 4-6 位数字', 'PIN must be 4-6 digits'));
       return;
     }
+    _onboardingBusy = true;
+    const btn = $('btn-confirm-create-wallet');
+    if (btn) btn.disabled = true;
     try {
       const wallet = await buildWalletFromMnemonic(phrase, name, pin);
       st.wallets.push(wallet);
       st.activeWalletId = wallet.id;
       st.pendingMnemonic = '';
+      if ($('onboard-create-name')) $('onboard-create-name').value = '';
+      if ($('onboard-create-pin')) $('onboard-create-pin').value = '';
+      resetPerWalletTransientState(wallet);
       _isAddingAdditionalWallet = false;
       st.activeTab = 'wallet';
       st.saveWallets();
@@ -166,6 +177,9 @@
       refreshAllBalancesAsync(true);
     } catch (e) {
       showToast(e && e.message ? e.message : t('创建失败', 'Create failed'));
+    } finally {
+      _onboardingBusy = false;
+      if (btn) btn.disabled = false;
     }
   }
 
@@ -205,6 +219,7 @@
   }
 
   async function confirmImportWallet() {
+    if (_onboardingBusy) return;
     const crypto = getCrypto();
     const st = getState();
     const raw = ($('onboard-import-phrase')?.value || '').trim();
@@ -215,18 +230,30 @@
       showToast(check.error || t('无效助记词', 'Invalid recovery phrase'));
       return;
     }
+    if (!check.checksumValid) {
+      showToast(t('助记词校验和异常，请仔细核对每个单词拼写', 'Mnemonic checksum mismatch. Please double-check every word.'));
+      return;
+    }
     const normalizedPhrase = check.words.join(' ');
+    _onboardingBusy = true;
+    const btn = $('btn-confirm-import-wallet');
+    if (btn) btn.disabled = true;
     try {
       const wallet = await buildWalletFromMnemonic(normalizedPhrase, name, '');
       const existing = st.wallets.find((w) => w.nearAddress && w.nearAddress === wallet.nearAddress);
+      let activeTarget = wallet;
       if (existing) {
         st.activeWalletId = existing.id;
+        activeTarget = existing;
         showToast(t('已切换至该助记词对应钱包', 'Switched to existing wallet'));
       } else {
         st.wallets.push(wallet);
         st.activeWalletId = wallet.id;
         showToast(t('全链钱包导入成功', 'Multi-chain wallet imported'));
       }
+      if ($('onboard-import-phrase')) $('onboard-import-phrase').value = '';
+      if ($('onboard-import-name')) $('onboard-import-name').value = '';
+      resetPerWalletTransientState(activeTarget);
       st.saveWallets();
       _isAddingAdditionalWallet = false;
       st.activeTab = 'wallet';
@@ -234,6 +261,9 @@
       refreshAllBalancesAsync(true);
     } catch (e) {
       showToast(e && e.message ? e.message : t('导入失败', 'Import failed'));
+    } finally {
+      _onboardingBusy = false;
+      if (btn) btn.disabled = false;
     }
   }
 
@@ -288,21 +318,26 @@
     }).join('');
   }
 
-  function switchActiveWallet(walletId) {
+  function resetPerWalletTransientState(nextWallet) {
     const st = getState();
-    const found = st.wallets.find((w) => w.id === walletId);
-    if (!found) return;
-    st.activeWalletId = found.id;
     st.expandedSymbol = null;
-    st.swap.quoteData = null;
+    if (st.swap) {
+      st.swap.quoteData = null;
+      st.swap.recipientAddress = '';
+      if (typeof stopOrderStatusPolling === 'function') stopOrderStatusPolling();
+      st.swap.activeOrder = null;
+    }
     if (st.mining) {
-      st.mining.minerAddress = found.address || '';
+      st.mining.minerAddress = (nextWallet && nextWallet.address) || '';
       st.mining.telemetry = null;
       st.mining.sweepQuote = null;
-      st.mining._boundWalletId = found.id;
+      st.mining._boundWalletId = nextWallet ? nextWallet.id : '';
     }
     if ($('mining-address-input')) {
-      $('mining-address-input').value = found.address || '';
+      $('mining-address-input').value = (nextWallet && nextWallet.address) || '';
+    }
+    if ($('swap-recipient-input')) {
+      $('swap-recipient-input').value = '';
     }
     if (st.limit) {
       st.limit.ordersActive = [];
@@ -313,10 +348,23 @@
     if (st.perp) {
       st.perp.account = null;
       st.perp.lastAccountSyncTs = 0;
-      if (typeof st.loadCachedPerpSnapshot === 'function') {
-        st.loadCachedPerpSnapshot(found.mpcEvmAddress || found.evmAddress || '');
+      if (nextWallet && typeof st.loadCachedPerpSnapshot === 'function') {
+        st.loadCachedPerpSnapshot(nextWallet.mpcEvmAddress || nextWallet.evmAddress || '');
       }
     }
+    if (st.txModal) st.txModal.currentItem = null;
+    if (typeof _tokenDetailState !== 'undefined' && _tokenDetailState) {
+      _tokenDetailState.historyItems = [];
+      _tokenDetailState.mergedItems = [];
+    }
+  }
+
+  function switchActiveWallet(walletId) {
+    const st = getState();
+    const found = st.wallets.find((w) => w.id === walletId);
+    if (!found) return;
+    st.activeWalletId = found.id;
+    resetPerWalletTransientState(found);
     st.saveWallets();
     closeAllSheets();
     renderAll();
@@ -335,20 +383,33 @@
     }
     const target = st.wallets.find((w) => w.id === walletId);
     if (target && !(await verifySecurityAuthAsync(target, t('删除钱包账户', 'Delete wallet account')))) return;
+    const deletedActive = st.activeWalletId === walletId;
     st.wallets = st.wallets.filter((w) => w.id !== walletId);
-    if (st.activeWalletId === walletId) {
+    if (deletedActive) {
       st.activeWalletId = st.wallets[0] ? st.wallets[0].id : null;
+      resetPerWalletTransientState(st.wallets[0] || null);
     }
     st.saveWallets();
     renderWalletSwitcherList();
     renderAll();
+    if (deletedActive) refreshAllBalancesAsync(true);
     showToast(t('已移除钱包', 'Wallet removed'));
   }
 
   let _backupRevealActive = false;
+  let _backupAutoHideTimer = null;
 
   function setBackupRevealState(revealed) {
     _backupRevealActive = Boolean(revealed);
+    if (_backupAutoHideTimer) {
+      clearTimeout(_backupAutoHideTimer);
+      _backupAutoHideTimer = null;
+    }
+    if (_backupRevealActive && typeof setTimeout === 'function') {
+      _backupAutoHideTimer = setTimeout(() => {
+        setBackupRevealState(false);
+      }, 30000);
+    }
     const btn = $('btn-backup-reveal-toggle');
     if (btn) {
       btn.textContent = _backupRevealActive ? t('隐藏助记词与私钥', 'Hide Phrase & Keys') : t('显示助记词与私钥', 'Reveal Phrase & Keys');
@@ -455,6 +516,10 @@
       return;
     }
     const hadPin = typeof st.hasWalletPin === 'function' ? st.hasWalletPin(wallet) : Boolean(wallet.pin);
+    if (!hadPin && !nextPin) {
+      showToast(t('请输入 4-6 位数字密码', 'Enter a 4-6 digit PIN'));
+      return;
+    }
     if (hadPin && !(await verifySecurityAuthAsync(wallet, t('修改钱包安全密码', 'Update wallet PIN')))) return;
     if (typeof st.setWalletPinAsync === 'function') {
       await st.setWalletPinAsync(wallet, nextPin);
