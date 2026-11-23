@@ -8,7 +8,7 @@
     const pills = $('send-evm-chain-pills');
     if (!row || !pills) return;
     const tokens = getTokens();
-    const choices = ['eth', 'base', 'arb', 'bsc', 'op', 'pol', 'avax', 'arc'];
+    const choices = EVM_CHAIN_KEYS;
     pills.innerHTML = choices.map((ck) => {
       const meta = tokens.getChainMeta(ck);
       return `<button type="button" class="filter-pill ${_sendTargetEvmChain === ck ? 'active' : ''}" data-action="set-send-evm-chain" data-chain="${ck}">${escapeHtml(meta.shortName)}</button>`;

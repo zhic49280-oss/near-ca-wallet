@@ -1991,6 +1991,8 @@
       return;
     }
     const avail = Number(entry.balance || 0);
+    const authed = await verifySecurityAuthAsync(wallet, `${t('跨链充值至 Hyperliquid', 'Cross-chain deposit to Hyperliquid')} (${amt} ${entry.symbol})`);
+    if (!authed) return;
     const btn = $('btn-perp-oc-deposit');
     if (btn) btn.disabled = true;
     try {
@@ -2038,6 +2040,15 @@
       }
 
       if (txHash) {
+        recordWalletActivity(wallet, {
+          type: 'send',
+          symbol: entry.symbol,
+          chain: entry.blockchain,
+          amount: amt,
+          to: q.depositAddress,
+          txHash,
+          title: t('Hyperliquid 跨链充值', 'Hyperliquid Cross-Chain Deposit')
+        });
         await intents.submitExternalDepositTxHash({ depositAddress: q.depositAddress, txHash, nearSenderAccount: wallet.nearNamedAccount || wallet.nearAddress }).catch(() => {});
       }
       showToast(`✅ ${t('跨链充值已发送，到账后点击「一键转入合约」即可下单', 'Deposit sent; click Move to Trading after confirmation')}`);
@@ -2063,11 +2074,23 @@
       return;
     }
     const amt = Number($('perp-arb-amount')?.value || 0);
+    const authed = await verifySecurityAuthAsync(wallet, `${t('Arbitrum 充值 USDC 至 Hyperliquid', 'Deposit Arbitrum USDC to Hyperliquid')} (${amt} USDC)`);
+    if (!authed) return;
     const btn = $('btn-perp-arb-deposit');
     if (btn) btn.disabled = true;
     try {
       await ensureEthersLoaded();
       const res = await hl.depositArbUsdcToHlBridge({ wallet, amount: amt });
+      if (res && res.txHash) {
+        recordWalletActivity(wallet, {
+          type: 'send',
+          symbol: 'USDC',
+          chain: 'arb',
+          amount: amt,
+          txHash: res.txHash,
+          title: t('Hyperliquid Arbitrum 充值', 'Hyperliquid Arbitrum Deposit')
+        });
+      }
       showToast(`✅ ${t('Arbitrum 充值已提交', 'Arbitrum deposit sent')}: ${shortenAddr(res.txHash)}`);
       closeAllSheets();
       refreshAllBalancesAsync(false);

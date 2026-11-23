@@ -21,7 +21,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.30');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.31');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -200,12 +200,15 @@
         if (ns.eip155 && Array.isArray(ns.eip155.chains)) ns.eip155.chains.forEach((c) => chainsSet.add(c));
       });
       const chains = Array.from(chainsSet);
+      const contracts = getContracts();
+      const evmSender = (contracts && typeof contracts.resolveWalletEvmSender === 'function' ? contracts.resolveWalletEvmSender(wallet) : '')
+        || wallet.mpcEvmAddress || wallet.evmAddress;
       await client.approveSession({
         id: p.id,
         namespaces: {
           eip155: {
             chains,
-            accounts: chains.map((c) => `${c}:${wallet.evmAddress}`),
+            accounts: chains.map((c) => `${c}:${evmSender}`),
             methods: ['eth_sendTransaction', 'personal_sign', 'eth_sign', 'eth_signTypedData', 'eth_signTypedData_v3', 'eth_signTypedData_v4', 'wallet_switchEthereumChain'],
             events: ['chainChanged', 'accountsChanged']
           }
@@ -269,7 +272,11 @@
       };
 
       if (method === 'personal_sign' || method === 'eth_sign') {
-        const msgRaw = method === 'personal_sign' ? reqParams[0] : reqParams[1];
+        const isEvmAddr = (v) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v.trim());
+        let msgRaw = method === 'personal_sign' ? reqParams[0] : reqParams[1];
+        if (method === 'personal_sign' && isEvmAddr(reqParams[0]) && reqParams[1] !== undefined && !isEvmAddr(reqParams[1])) {
+          msgRaw = reqParams[1];
+        }
         const msgBytes = (typeof msgRaw === 'string' && msgRaw.startsWith('0x')) ? ethersLib.getBytes(msgRaw) : String(msgRaw);
         if (wallet.evmPrivateKey) {
           result = await new ethersLib.Wallet(wallet.evmPrivateKey).signMessage(msgBytes);
@@ -277,10 +284,21 @@
           result = await signDigestViaMpc(ethersLib.hashMessage(msgBytes));
         }
       } else if (method.startsWith('eth_signTypedData')) {
-        const rawTyped = typeof reqParams[1] === 'string' ? JSON.parse(reqParams[1]) : reqParams[1];
+        const isEvmAddr = (v) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v.trim());
+        const typedArg = (reqParams[1] !== undefined && !isEvmAddr(reqParams[1])) ? reqParams[1] : reqParams[0];
+        const rawTyped = typeof typedArg === 'string' ? JSON.parse(typedArg) : (typedArg || {});
         const cleanTypes = { ...(rawTyped.types || {}) };
         delete cleanTypes.EIP712Domain;
-        if (wallet.evmPrivateKey) {
+        if (typeof contracts.signEvmTypedDataUnified === 'function') {
+          const signed = await contracts.signEvmTypedDataUnified({
+            wallet,
+            domain: rawTyped.domain || {},
+            types: cleanTypes,
+            value: rawTyped.message || {},
+            path: 'ethereum-1'
+          });
+          result = signed.signature;
+        } else if (wallet.evmPrivateKey) {
           result = await new ethersLib.Wallet(wallet.evmPrivateKey).signTypedData(rawTyped.domain || {}, cleanTypes, rawTyped.message || {});
         } else {
           result = await signDigestViaMpc(ethersLib.TypedDataEncoder.hash(rawTyped.domain || {}, cleanTypes, rawTyped.message || {}));
@@ -293,7 +311,7 @@
         if (wallet.evmPrivateKey) {
           const provider = new ethersLib.JsonRpcProvider(cfg[1].rpc, cfg[1].chainId);
           const tx = await new ethersLib.Wallet(wallet.evmPrivateKey).connect(provider).sendTransaction({
-            to: txReq.to,
+            to: txReq.to || null,
             data: txReq.data || '0x',
             value: txReq.value ? BigInt(txReq.value) : 0n
           });
@@ -302,7 +320,7 @@
           const txRes = await contracts.sendEvmMpcSignedTransaction({
             wallet,
             chainKey: cfg[0],
-            to: txReq.to,
+            to: txReq.to || null,
             data: txReq.data || '0x',
             value: txReq.value ? BigInt(txReq.value).toString() : '0',
             path: 'ethereum-1'

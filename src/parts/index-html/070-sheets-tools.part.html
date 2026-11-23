@@ -231,6 +231,18 @@
     </div>
     <div class="sheet-body" style="max-height: 76vh; overflow-y: auto;">
       <div id="hub-addresses-list" class="flex flex-col gap-2"></div>
+      <div class="ios-glass-card flex flex-col gap-2" style="padding: 12px; margin-top: 4px;">
+        <div class="flex items-center justify-between gap-2">
+          <span style="font-size: 12.5px; font-weight: 700;" data-i18n="sheet.prlBindTitle">PRL 专用助记词绑定 / 更换</span>
+          <span id="prl-bind-mode-badge" class="badge badge-cyan">--</span>
+        </div>
+        <div style="font-size: 11.5px; color: var(--text-secondary); line-height: 1.45;" data-i18n="sheet.prlBindNote">可单独绑定或随时更换您的 PRL 挖矿助记词以替换默认推演的 PRL 账户，不影响当前 .near 主账户与 EVM / Solana 资产。</div>
+        <textarea id="prl-bind-mnemonic-input" class="input-field mono" style="min-height: 58px;" data-i18n-placeholder="sheet.prlBindPlaceholder" placeholder="输入 PRL 挖矿账户的 12 或 24 词助记词"></textarea>
+        <div class="flex gap-2">
+          <button type="button" class="btn-primary flex-1" onclick="bindOrReplacePrlMnemonicUI()" data-i18n="sheet.prlBindConfirmBtn">绑定 / 更换 PRL 账户</button>
+          <button type="button" id="btn-prl-restore-default" class="btn-secondary hidden" onclick="restoreDefaultPrlAccountUI()" data-i18n="sheet.prlRestoreDefaultBtn">恢复默认派生</button>
+        </div>
+      </div>
     </div>
   </div>
 

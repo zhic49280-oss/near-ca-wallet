@@ -1354,3 +1354,163 @@ test('v6.30 Perps Search Clear & K-Line Inspect, wNEAR Auto-Unwrap/Rollback, and
     globalThis.document = prevDoc;
   }
 });
+
+test('v6.31: independent PRL mining mnemonic bind/switch/restore, wallet mining isolation, limit quote contract & explorer URLs', async () => {
+  const prevWallets = state.wallets;
+  const prevActiveId = state.activeWalletId;
+  const prevDoc = globalThis.document;
+  const prevWin = globalThis.window;
+  const prevMining = { ...state.mining };
+  const prevLimit = { ...state.limit };
+
+  const ALT_MNEMONIC_1 = 'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong';
+  const ALT_MNEMONIC_2 = 'legal winner thank year wave sausage worth useful legal winner thank yellow';
+
+  const domMap = new Map();
+  const getOrMake = (id) => {
+    if (!domMap.has(id)) domMap.set(id, createMockDomElement(id));
+    return domMap.get(id);
+  };
+  globalThis.document = {
+    activeElement: null,
+    documentElement: { lang: 'zh-CN', classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } } },
+    getElementById: (id) => getOrMake(id),
+    querySelector: () => null,
+    querySelectorAll: () => []
+  };
+  globalThis.window = {
+    confirm: () => true,
+    Capacitor: {
+      isNativePlatform: () => true,
+      Plugins: {
+        NativeSecurity: {
+          getBiometricStatus: async () => ({ available: true, biometryType: 'faceID', platform: 'ios', deviceModel: 'iPhone' }),
+          authenticateWithBiometrics: async () => ({ authenticated: true, biometryType: 'faceID' })
+        }
+      }
+    }
+  };
+
+  try {
+    state.initState();
+    const w1 = state.normalizeWalletRecord({
+      id: 'w_v631_1',
+      name: 'Main NEAR',
+      mnemonic: TEST_MNEMONIC,
+      nativeBalances: { prl: 0, near: 5 }
+    });
+    const w2 = state.normalizeWalletRecord({
+      id: 'w_v631_2',
+      name: 'Alt Account',
+      mnemonic: ALT_MNEMONIC_2,
+      nativeBalances: { prl: 12.5, near: 1 }
+    });
+    const defaultW1Prl = w1.address;
+    const expectedAltPrl1 = (await cryptoEngine.derivePearlFromSeedAsync(ALT_MNEMONIC_1, "m/86'/808276'/0'/0/0", true)).address;
+    const expectedAltPrl2 = (await cryptoEngine.derivePearlFromSeedAsync(ALT_MNEMONIC_2, "m/86'/808276'/0'/0/0", true)).address;
+
+    state.wallets = [w1, w2];
+    state.activeWalletId = w1.id;
+    await state.setWalletPinAsync(w1, '123456');
+
+    const withPinAuth = async (fn) => {
+      const p = fn();
+      for (let i = 0; i < 50; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        if (getOrMake('sheet-security-auth').classList.contains('open')) break;
+      }
+      for (const d of ['1', '2', '3', '4', '5', '6']) {
+        await uiController.pressSecurityPinDigit(d);
+      }
+      return p;
+    };
+
+    await withMockedFetch(async () => jsonResponse({}), async () => {
+      // 1. Bind custom PRL mining mnemonic on w1 without touching NEAR or MPC EVM
+      const origNearAddr = w1.nearAddress;
+      const origEvmAddr = w1.mpcEvmAddress;
+      getOrMake('prl-bind-mnemonic-input').value = ALT_MNEMONIC_1;
+      await withPinAuth(() => uiController.bindOrReplacePrlMnemonicUI());
+      assert.equal(w1.address, expectedAltPrl1, 'PRL address must update to custom mining seed');
+      assert.equal(w1.prlMnemonic, ALT_MNEMONIC_1);
+      assert.equal(w1.nearAddress, origNearAddr, 'NEAR master address must remain unchanged');
+      assert.equal(w1.mpcEvmAddress, origEvmAddr, 'MPC EVM address must remain unchanged');
+      assert.equal(getOrMake('mining-address-input').value, expectedAltPrl1);
+
+      // Ensure normalizeWalletRecord preserves custom prlMnemonic on reload
+      const reloadedW1 = state.normalizeWalletRecord({ ...w1, privateKeyHex: '', tweakedPrivateKeyHex: '' });
+      assert.equal(reloadedW1.address, expectedAltPrl1, 'normalizeWalletRecord must self-heal PRL from prlMnemonic');
+
+      // 2. Switch to another PRL mnemonic
+      getOrMake('prl-bind-mnemonic-input').value = ALT_MNEMONIC_2;
+      await withPinAuth(() => uiController.bindOrReplacePrlMnemonicUI());
+      assert.equal(w1.address, expectedAltPrl2);
+      assert.equal(w1.prlMnemonic, ALT_MNEMONIC_2);
+
+      // 3. Restore default derived PRL account
+      await withPinAuth(() => uiController.restoreDefaultPrlAccountUI());
+      assert.equal(w1.address, defaultW1Prl);
+      assert.equal(w1.prlMnemonic, '');
+
+      // 4. Switch active wallet isolates mining-address-input
+      uiController.switchActiveWallet(w2.id);
+      assert.equal(getOrMake('mining-address-input').value, w2.address);
+      assert.equal(state.mining.minerAddress, w2.address);
+      uiController.switchActiveWallet(w1.id);
+      assert.equal(getOrMake('mining-address-input').value, w1.address);
+    });
+
+    // 5. Explorer URLs for op, pol, avax
+    assert.ok(uiController.getExplorerAddressUrl('op', '0xabc').includes('optimistic.etherscan.io/address/0xabc'));
+    assert.ok(uiController.getExplorerTxUrl('op', '0x123').includes('optimistic.etherscan.io/tx/0x123'));
+    assert.ok(uiController.getExplorerAddressUrl('pol', '0xabc').includes('polygonscan.com/address/0xabc'));
+    assert.ok(uiController.getExplorerTxUrl('pol', '0x123').includes('polygonscan.com/tx/0x123'));
+    assert.ok(uiController.getExplorerAddressUrl('avax', '0xabc').includes('snowtrace.io/address/0xabc'));
+    assert.ok(uiController.getExplorerTxUrl('avax', '0x123').includes('snowtrace.io/tx/0x123'));
+
+    // 6. Limit order DEX market rate quote contracts (Solana without ok:true & EVM srcToken/destToken)
+    const origQuoteSol = chainContracts.quoteSolanaJupiterSwap;
+    const origQuoteEvm = chainContracts.quoteEvmDexSwap;
+    let capturedEvmQuoteArgs = null;
+    try {
+      chainContracts.quoteSolanaJupiterSwap = async () => ({
+        outAmount: '142500000',
+        bestSource: 'Jupiter'
+      });
+      state.liveTokens = [
+        { assetId: 'nep141:sol.omft.near', symbol: 'SOL', blockchain: 'sol', contractAddress: 'So11111111111111111111111111111111111111112', decimals: 9, price: 70 },
+        { assetId: 'nep141:sol-usdc', symbol: 'USDC', blockchain: 'sol', contractAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6, price: 1 },
+        { assetId: 'nep141:eth-weth', symbol: 'WETH', blockchain: 'eth', contractAddress: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', decimals: 18, price: 2500 },
+        { assetId: 'nep141:eth-usdc', symbol: 'USDC', blockchain: 'eth', contractAddress: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', decimals: 6, price: 1 }
+      ];
+      state.limit.chain = 'sol';
+      state.limit.sellContract = 'So11111111111111111111111111111111111111112';
+      state.limit.buyContract = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+      await uiController.refreshLimitMarketContextAsync();
+      assert.equal(state.limit.liveMarketRate, 142.5, 'Solana limit order must accept quoteSolanaJupiterSwap outAmount without ok:true');
+
+      chainContracts.quoteEvmDexSwap = async (args) => {
+        capturedEvmQuoteArgs = args;
+        const dec = Number(args.destDecimals ?? 6);
+        const raw = (2650n * (10n ** BigInt(dec))).toString();
+        return { destAmountRaw: raw, bestSource: 'ParaSwap' };
+      };
+      state.limit.chain = 'eth';
+      state.limit.sellContract = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+      state.limit.buyContract = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+      await uiController.refreshLimitMarketContextAsync();
+      assert.ok(capturedEvmQuoteArgs && capturedEvmQuoteArgs.srcToken && capturedEvmQuoteArgs.destToken, 'EVM limit quote must pass srcToken & destToken');
+      assert.equal(state.limit.liveMarketRate, 2650, 'EVM limit order must parse destAmountRaw from quoteEvmDexSwap');
+    } finally {
+      chainContracts.quoteSolanaJupiterSwap = origQuoteSol;
+      chainContracts.quoteEvmDexSwap = origQuoteEvm;
+    }
+  } finally {
+    state.wallets = prevWallets;
+    state.activeWalletId = prevActiveId;
+    Object.assign(state.mining, prevMining);
+    Object.assign(state.limit, prevLimit);
+    globalThis.document = prevDoc;
+    globalThis.window = prevWin;
+  }
+});

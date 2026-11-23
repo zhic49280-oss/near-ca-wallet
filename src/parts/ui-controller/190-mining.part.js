@@ -4,7 +4,13 @@
     const st = getState();
     const wallet = st.getActiveWallet();
     const inp = $('mining-address-input');
-    if (inp && !inp.value && wallet && wallet.address) {
+    const activeId = wallet ? wallet.id : null;
+    const walletChanged = Boolean(wallet && st.mining._boundWalletId !== activeId);
+    if (walletChanged) {
+      st.mining.telemetry = null;
+      st.mining._boundWalletId = activeId;
+    }
+    if (inp && wallet && wallet.address && (!inp.value || walletChanged)) {
       inp.value = wallet.address;
       st.mining.minerAddress = wallet.address;
     }

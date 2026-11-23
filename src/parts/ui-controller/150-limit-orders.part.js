@@ -837,26 +837,29 @@
         amountRaw: oneUnit,
         slippageBps: 100
       }).catch(() => null);
-      if (q && q.ok && q.outAmount) {
-        const outNum = Number(contracts.fromBaseUnits(q.outAmount, buyToken.decimals));
+      if (q && q.outAmount) {
+        const outNum = Number(contracts.fromBaseUnits(String(q.outAmount), buyToken.decimals));
         if (Number.isFinite(outNum) && outNum > 0) liveRate = outNum;
       }
     } else if (lo.isEvmChainLimitSupported(chain)) {
-      const owner = wallet.evmAddress || wallet.mpcEvmAddress;
+      const owner = (contracts.resolveWalletEvmSender && contracts.resolveWalletEvmSender(wallet)) || wallet.mpcEvmAddress || wallet.evmAddress;
       const oneUnit = contracts.toBaseUnits('1', sellToken.decimals);
       const [allowance, q] = await Promise.all([
         owner ? lo.checkEvmCowAllowance({ chainKey: chain, owner, tokenAddress: sellToken.contractAddress }).catch(() => null) : Promise.resolve(null),
         contracts.quoteEvmDexSwap({
           chainKey: chain,
-          tokenIn: sellToken.contractAddress,
-          tokenOut: buyToken.contractAddress,
+          srcToken: sellToken.contractAddress,
+          destToken: buyToken.contractAddress,
+          srcDecimals: sellToken.decimals,
+          destDecimals: buyToken.decimals,
           amountRaw: oneUnit,
-          userAddress: owner
+          fromAddress: owner
         }).catch(() => null)
       ]);
       if (allowance !== null) st.limit.evmAllowanceRaw = allowance.toString();
-      if (q && q.ok && q.amountOut) {
-        const outNum = Number(contracts.fromBaseUnits(q.amountOut, buyToken.decimals));
+      const evmOutRaw = q && (q.destAmountRaw || q.amountOut);
+      if (evmOutRaw) {
+        const outNum = Number(contracts.fromBaseUnits(String(evmOutRaw), buyToken.decimals));
         if (Number.isFinite(outNum) && outNum > 0) liveRate = outNum;
       }
     }

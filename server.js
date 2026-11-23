@@ -216,11 +216,10 @@ const server = http.createServer((req, res) => {
     };
     const acceptsGzip = COMPRESSIBLE_EXTS.has(ext) && /\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''));
     if (acceptsGzip) {
-      const cacheKey = `${filePath}:${stats.mtimeMs}`;
-      const cachedGz = _gzipCache.get(cacheKey);
-      if (cachedGz) {
+      const cachedEntry = _gzipCache.get(filePath);
+      if (cachedEntry && cachedEntry.mtimeMs === stats.mtimeMs && cachedEntry.buf) {
         res.writeHead(200, { ...baseHeaders, 'Content-Encoding': 'gzip', 'Vary': 'Accept-Encoding' });
-        res.end(cachedGz);
+        res.end(cachedEntry.buf);
         return;
       }
       fs.readFile(filePath, (readErr, rawBuf) => {
@@ -236,7 +235,7 @@ const server = http.createServer((req, res) => {
             return;
           }
           if (_gzipCache.size > 64) _gzipCache.clear();
-          _gzipCache.set(cacheKey, gzBuf);
+          _gzipCache.set(filePath, { mtimeMs: stats.mtimeMs, buf: gzBuf });
           res.writeHead(200, { ...baseHeaders, 'Content-Encoding': 'gzip', 'Vary': 'Accept-Encoding' });
           res.end(gzBuf);
         });

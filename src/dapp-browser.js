@@ -1029,18 +1029,18 @@
         const res = await contracts.sendEvmMpcSignedTransaction({
           wallet,
           chainKey: txChain.key,
-          to: txReq.to,
+          to: txReq.to || null,
           data: dataHex,
           value: valBig.toString(),
           path: 'ethereum-1'
         });
-        return res.txHash;
+        return res.txHash || res.hash;
       }
       const ethersLib = getEthersLib(ctx);
       if (ethersLib && wallet.evmPrivateKey) {
         const provider = new ethersLib.JsonRpcProvider(txChain.cfg.rpc, txChain.cfg.chainId);
         const sent = await new ethersLib.Wallet(wallet.evmPrivateKey).connect(provider).sendTransaction({
-          to: txReq.to,
+          to: txReq.to || null,
           data: dataHex,
           value: valBig
         });

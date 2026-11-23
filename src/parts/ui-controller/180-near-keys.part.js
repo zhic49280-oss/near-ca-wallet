@@ -174,6 +174,145 @@
     }
   }
 
+  async function checkWalletPrlBalanceBeforeOverwriteAsync(wallet) {
+    if (!wallet) return 0;
+    const contracts = getContracts();
+    const cached = wallet.nativeBalances && typeof wallet.nativeBalances.prl === 'number'
+      ? wallet.nativeBalances.prl
+      : (typeof wallet.balance === 'number' ? wallet.balance : null);
+    if (cached !== null && Number.isFinite(cached)) return Math.max(0, cached);
+    if (wallet.address && contracts && typeof contracts.fetchPearlNativeBalance === 'function') {
+      const live = await contracts.fetchPearlNativeBalance(wallet.address).catch(() => null);
+      if (live && Number.isFinite(Number(live.formatted))) return Math.max(0, Number(live.formatted));
+    }
+    return 0;
+  }
+
+  async function checkWalletBtcBalanceBeforeOverwriteAsync(wallet) {
+    if (!wallet) return 0;
+    const contracts = getContracts();
+    const cached = wallet.nativeBalances && typeof wallet.nativeBalances.btc === 'number'
+      ? wallet.nativeBalances.btc
+      : (typeof wallet.btcBalance === 'number' ? wallet.btcBalance : null);
+    if (cached !== null && Number.isFinite(cached)) return Math.max(0, cached);
+    if (wallet.btcAddress && contracts && typeof contracts.fetchBitcoinNativeBalance === 'function') {
+      const live = await contracts.fetchBitcoinNativeBalance(wallet.btcAddress).catch(() => null);
+      if (live && Number.isFinite(Number(live.formatted))) return Math.max(0, Number(live.formatted));
+    }
+    return 0;
+  }
+
+  function confirmWithUserIfSupported(message) {
+    if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      return window.confirm(message);
+    }
+    return true;
+  }
+
+  async function bindOrReplacePrlMnemonicUI() {
+    const st = getState();
+    const crypto = getCrypto();
+    const wallet = st.getActiveWallet();
+    if (!wallet || !crypto) return;
+    const rawPhrase = ($('prl-bind-mnemonic-input')?.value || '').trim();
+    const check = crypto.validateMnemonic(rawPhrase);
+    if (!check.valid) {
+      showToast(check.error || t('请输入有效的 12 或 24 词助记词', 'Enter a valid 12 or 24-word mnemonic'));
+      return;
+    }
+    const cleanPhrase = check.words.join(' ');
+    try {
+      const derivedPrl = await crypto.derivePearlFromSeedAsync(cleanPhrase, "m/86'/808276'/0'/0/0", true);
+      if (!derivedPrl || !derivedPrl.address) {
+        throw new Error(t('PRL 地址派生失败', 'Failed to derive PRL address'));
+      }
+      if (derivedPrl.address === wallet.address) {
+        showToast(t('当前已是该 PRL 账户', 'Already using this PRL account'));
+        return;
+      }
+      if (!(await verifySecurityAuthAsync(wallet, t('绑定 / 更换 PRL 挖矿账户', 'Bind / Switch PRL Mining Account')))) return;
+      const oldPrlBal = await checkWalletPrlBalanceBeforeOverwriteAsync(wallet);
+      if (oldPrlBal > 0) {
+        const msg = t(
+          `当前 PRL 账户 (${shortenAddr(wallet.address)}) 仍有 ${formatBal(oldPrlBal, 4)} PRL 余额，更换前请确认已备份原助记词。是否继续更换？`,
+          `Current PRL account (${shortenAddr(wallet.address)}) holds ${formatBal(oldPrlBal, 4)} PRL. Ensure you have backed up its recovery phrase before switching. Continue?`
+        );
+        if (!confirmWithUserIfSupported(msg)) return;
+      }
+
+      const mainMnemonic = String(wallet.mnemonic || '').trim();
+      wallet.prlMnemonic = cleanPhrase === mainMnemonic ? '' : cleanPhrase;
+      wallet.address = derivedPrl.address;
+      wallet.privateKeyHex = derivedPrl.privateKeyHex;
+      wallet.tweakedPrivateKeyHex = derivedPrl.tweakedPrivateKeyHex;
+      if (wallet.nativeBalances && typeof wallet.nativeBalances === 'object') {
+        wallet.nativeBalances.prl = null;
+      }
+      wallet.balance = null;
+      if (st.mining) {
+        st.mining.minerAddress = derivedPrl.address;
+        st.mining.telemetry = null;
+        st.mining._boundWalletId = wallet.id;
+      }
+      if ($('mining-address-input')) $('mining-address-input').value = derivedPrl.address;
+      if ($('prl-bind-mnemonic-input')) $('prl-bind-mnemonic-input').value = '';
+      st.saveWallets();
+      renderAll();
+      showToast(`✅ ${t('已绑定 PRL 账户', 'PRL account bound')}: ${shortenAddr(derivedPrl.address, 8, 6)}`);
+      refreshAllBalancesAsync(true);
+    } catch (e) {
+      showToast(e && e.message ? e.message : t('PRL 账户绑定失败', 'Failed to bind PRL account'));
+    }
+  }
+
+  async function restoreDefaultPrlAccountUI() {
+    const st = getState();
+    const crypto = getCrypto();
+    const wallet = st.getActiveWallet();
+    if (!wallet || !crypto) return;
+    const mainMnemonic = String(wallet.mnemonic || '').trim();
+    if (!mainMnemonic) {
+      showToast(t('当前钱包缺少主助记词，无法恢复默认派生', 'Master phrase unavailable to restore default PRL account'));
+      return;
+    }
+    if (!wallet.prlMnemonic) {
+      showToast(t('当前已是默认派生 PRL 账户', 'Already using default derived PRL account'));
+      return;
+    }
+    if (!(await verifySecurityAuthAsync(wallet, t('恢复默认派生 PRL 账户', 'Restore Default PRL Account')))) return;
+    try {
+      const oldPrlBal = await checkWalletPrlBalanceBeforeOverwriteAsync(wallet);
+      if (oldPrlBal > 0) {
+        const msg = t(
+          `当前独立绑定的 PRL 账户 (${shortenAddr(wallet.address)}) 仍有 ${formatBal(oldPrlBal, 4)} PRL 余额，恢复默认前请确认已备份该 PRL 助记词。是否继续？`,
+          `Current custom PRL account (${shortenAddr(wallet.address)}) holds ${formatBal(oldPrlBal, 4)} PRL. Ensure you have backed up its phrase before restoring default. Continue?`
+        );
+        if (!confirmWithUserIfSupported(msg)) return;
+      }
+      const derivedPrl = await crypto.derivePearlFromSeedAsync(mainMnemonic, "m/86'/808276'/0'/0/0", true);
+      wallet.prlMnemonic = '';
+      wallet.address = derivedPrl.address;
+      wallet.privateKeyHex = derivedPrl.privateKeyHex;
+      wallet.tweakedPrivateKeyHex = derivedPrl.tweakedPrivateKeyHex;
+      if (wallet.nativeBalances && typeof wallet.nativeBalances === 'object') {
+        wallet.nativeBalances.prl = null;
+      }
+      wallet.balance = null;
+      if (st.mining) {
+        st.mining.minerAddress = derivedPrl.address;
+        st.mining.telemetry = null;
+        st.mining._boundWalletId = wallet.id;
+      }
+      if ($('mining-address-input')) $('mining-address-input').value = derivedPrl.address;
+      st.saveWallets();
+      renderAll();
+      showToast(`✅ ${t('已恢复默认派生 PRL 账户', 'Restored default PRL account')}: ${shortenAddr(derivedPrl.address, 8, 6)}`);
+      refreshAllBalancesAsync(true);
+    } catch (e) {
+      showToast(e && e.message ? e.message : t('恢复默认 PRL 账户失败', 'Failed to restore default PRL account'));
+    }
+  }
+
   async function confirmRotateNearAccountKey() {
     const st = getState();
     const crypto = getCrypto();
@@ -189,18 +328,68 @@
     if (!(await verifySecurityAuthAsync(wallet, t('更换 NEAR 控制助记词', 'Rotate NEAR Control Mnemonic')))) return;
 
     try {
+      const oldMnemonic = String(wallet.mnemonic || '').trim();
+      const hasCustomPrl = Boolean(wallet.prlMnemonic && wallet.prlMnemonic !== oldMnemonic);
+      const hasCustomBtc = Boolean(wallet.btcMnemonic && wallet.btcMnemonic !== oldMnemonic);
+      const [prlBal, btcBal] = await Promise.all([
+        hasCustomPrl ? Promise.resolve(0) : checkWalletPrlBalanceBeforeOverwriteAsync(wallet),
+        hasCustomBtc ? Promise.resolve(0) : checkWalletBtcBalanceBeforeOverwriteAsync(wallet)
+      ]);
+      if ((prlBal > 0 || btcBal > 0) && oldMnemonic) {
+        const assetNotes = [];
+        if (prlBal > 0) assetNotes.push(`PRL (${formatBal(prlBal, 4)})`);
+        if (btcBal > 0) assetNotes.push(`BTC (${formatBal(btcBal, 6)})`);
+        const warnMsg = t(
+          `检测到原助记词下的 ${assetNotes.join('、')} 账户仍有资产。更换 NEAR 助记词后，系统将自动保留原助记词用于继续管理这些资产，请务必备份原助记词。是否继续更换？`,
+          `Detected balance in ${assetNotes.join(', ')} under your current phrase. Your old phrase will be preserved for those assets; please ensure it is backed up. Continue?`
+        );
+        if (!confirmWithUserIfSupported(warnMsg)) return;
+      }
+
       showToast(t('正在执行 AddKey + DeleteKey...', 'Rotating key on-chain...'));
+      const newPhrase = check.words.join(' ');
       const res = await contracts.rotateNearAccountKeyAsync({
         wallet,
-        newMnemonic: check.words.join(' '),
+        newMnemonic: newPhrase,
         upgradeToMlDsa65: false,
         deleteOldKey: true
       });
-      wallet.mnemonic = res.newDerived.mnemonic;
+      wallet.mnemonic = res.newDerived.mnemonic || newPhrase;
       wallet.accountType = 'standard';
       wallet.nearPublicKey = res.newDerived.nearPublicKey;
       wallet.nearPrivateKey = res.newDerived.nearPrivateKey;
       wallet.nearPrivateSeedHex = res.newDerived.nearPrivateSeedHex;
+
+      if (!hasCustomPrl) {
+        if (prlBal > 0 && oldMnemonic && oldMnemonic !== wallet.mnemonic) {
+          wallet.prlMnemonic = oldMnemonic;
+        } else {
+          const newPrl = await crypto.derivePearlFromSeedAsync(wallet.mnemonic, "m/86'/808276'/0'/0/0", true);
+          wallet.address = newPrl.address;
+          wallet.privateKeyHex = newPrl.privateKeyHex;
+          wallet.tweakedPrivateKeyHex = newPrl.tweakedPrivateKeyHex;
+          if (wallet.nativeBalances && typeof wallet.nativeBalances === 'object') wallet.nativeBalances.prl = null;
+          wallet.balance = null;
+          if (st.mining) {
+            st.mining.minerAddress = newPrl.address;
+            st.mining.telemetry = null;
+          }
+          if ($('mining-address-input')) $('mining-address-input').value = newPrl.address;
+        }
+      }
+
+      if (!hasCustomBtc) {
+        if (btcBal > 0 && oldMnemonic && oldMnemonic !== wallet.mnemonic) {
+          wallet.btcMnemonic = oldMnemonic;
+        } else {
+          const newBtc = await crypto.deriveBitcoinFromSeedAsync(wallet.mnemonic, "m/86'/0'/0'/0/0", true);
+          wallet.btcAddress = newBtc.address;
+          wallet.btcPrivateKeyHex = newBtc.privateKeyHex;
+          wallet.btcTweakedPrivateKeyHex = newBtc.tweakedPrivateKeyHex;
+          if (wallet.nativeBalances && typeof wallet.nativeBalances === 'object') wallet.nativeBalances.btc = null;
+        }
+      }
+
       st.saveWallets();
       showToast(`✅ ${t('助记词与链上密钥已更换', 'Mnemonic & on-chain key rotated')}: ${shortenAddr(res.deleteTxHash || res.addTxHash, 8, 6)}`);
       if ($('near-keys-rotate-mnemonic')) $('near-keys-rotate-mnemonic').value = '';
@@ -305,6 +494,16 @@
           </div>
         </div>
       `).join('');
+    }
+    const isCustomPrl = Boolean(wallet.prlMnemonic && wallet.prlMnemonic !== wallet.mnemonic);
+    const prlModeBadge = $('prl-bind-mode-badge');
+    if (prlModeBadge) {
+      prlModeBadge.textContent = isCustomPrl ? t('独立绑定', 'Custom Seed') : t('默认派生', 'Default');
+      prlModeBadge.className = isCustomPrl ? 'badge badge-emerald' : 'badge badge-cyan';
+    }
+    const restorePrlBtn = $('btn-prl-restore-default');
+    if (restorePrlBtn) {
+      restorePrlBtn.classList.toggle('hidden', !isCustomPrl);
     }
     renderHubBiometricCardAsync();
   }

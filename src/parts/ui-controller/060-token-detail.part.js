@@ -55,6 +55,9 @@
     if (bc === 'eth') return `https://etherscan.io/address/${enc}`;
     if (bc === 'base') return `https://basescan.org/address/${enc}`;
     if (bc === 'arb') return `https://arbiscan.io/address/${enc}`;
+    if (bc === 'op') return `https://optimistic.etherscan.io/address/${enc}`;
+    if (bc === 'pol') return `https://polygonscan.com/address/${enc}`;
+    if (bc === 'avax') return `https://snowtrace.io/address/${enc}`;
     if (bc === 'bsc') return `https://bscscan.com/address/${enc}`;
     if (bc === 'arc') return `https://explorer.arc.io/address/${enc}`;
     if (bc === 'hood') return `https://robinhoodchain.blockscout.com/address/${enc}`;
@@ -74,6 +77,9 @@
     if (bc === 'eth') return `https://etherscan.io/tx/${enc}`;
     if (bc === 'base') return `https://basescan.org/tx/${enc}`;
     if (bc === 'arb') return `https://arbiscan.io/tx/${enc}`;
+    if (bc === 'op') return `https://optimistic.etherscan.io/tx/${enc}`;
+    if (bc === 'pol') return `https://polygonscan.com/tx/${enc}`;
+    if (bc === 'avax') return `https://snowtrace.io/tx/${enc}`;
     if (bc === 'bsc') return `https://bscscan.com/tx/${enc}`;
     if (bc === 'arc') return `https://explorer.arc.io/tx/${enc}`;
     if (bc === 'hood') return `https://robinhoodchain.blockscout.com/tx/${enc}`;

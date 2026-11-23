@@ -416,18 +416,24 @@
           wallet.nearPrivateKey = wallet.nearPrivateKey || near.nearPrivateKey;
         }
       }
+    }
+    const prlSeed = String(wallet.prlMnemonic || wallet.mnemonic || '').trim();
+    if (prlSeed) {
       const needsPearl = !wallet.address || !wallet.privateKeyHex || !wallet.tweakedPrivateKeyHex;
       if (needsPearl && cryptoEngine && typeof cryptoEngine.derivePearlFromSeedAsync === 'function') {
-        const pearl = await cryptoEngine.derivePearlFromSeedAsync(wallet.mnemonic, "m/86'/808276'/0'/0/0", true);
+        const pearl = await cryptoEngine.derivePearlFromSeedAsync(prlSeed, "m/86'/808276'/0'/0/0", true);
         if (pearl && pearl.address) {
           wallet.address = pearl.address;
           wallet.privateKeyHex = pearl.privateKeyHex || wallet.privateKeyHex;
           wallet.tweakedPrivateKeyHex = pearl.tweakedPrivateKeyHex || wallet.tweakedPrivateKeyHex;
         }
       }
+    }
+    const btcSeed = String(wallet.btcMnemonic || wallet.mnemonic || '').trim();
+    if (btcSeed) {
       const needsBtc = !wallet.btcAddress || !wallet.btcPrivateKeyHex || !wallet.btcTweakedPrivateKeyHex;
       if (needsBtc && cryptoEngine && typeof cryptoEngine.deriveBitcoinFromSeedAsync === 'function') {
-        const btc = await cryptoEngine.deriveBitcoinFromSeedAsync(wallet.mnemonic, "m/86'/0'/0'/0/0", true);
+        const btc = await cryptoEngine.deriveBitcoinFromSeedAsync(btcSeed, "m/86'/0'/0'/0/0", true);
         if (btc && btc.address) {
           wallet.btcAddress = btc.address;
           wallet.btcPrivateKeyHex = btc.privateKeyHex || wallet.btcPrivateKeyHex;

@@ -295,6 +295,21 @@
     st.activeWalletId = found.id;
     st.expandedSymbol = null;
     st.swap.quoteData = null;
+    if (st.mining) {
+      st.mining.minerAddress = found.address || '';
+      st.mining.telemetry = null;
+      st.mining.sweepQuote = null;
+      st.mining._boundWalletId = found.id;
+    }
+    if ($('mining-address-input')) {
+      $('mining-address-input').value = found.address || '';
+    }
+    if (st.limit) {
+      st.limit.ordersActive = [];
+      st.limit.ordersHistory = [];
+      st.limit.evmAllowanceRaw = null;
+      st.limit.dclStorageRegistered = null;
+    }
     if (st.perp) {
       st.perp.account = null;
       st.perp.lastAccountSyncTs = 0;
@@ -379,6 +394,12 @@
 
     const rows = [
       { label: t('助记词 (12/24词)', 'Recovery Phrase'), val: wallet.mnemonic, secret: true },
+      ...(wallet.prlMnemonic && wallet.prlMnemonic !== wallet.mnemonic
+        ? [{ label: t('Pearl (PRL) 专用助记词 (独立绑定)', 'Pearl (PRL) Custom Seed Phrase'), val: wallet.prlMnemonic, secret: true }]
+        : []),
+      ...(wallet.btcMnemonic && wallet.btcMnemonic !== wallet.mnemonic && wallet.btcMnemonic !== wallet.prlMnemonic
+        ? [{ label: t('Bitcoin (BTC) 专用助记词', 'Bitcoin (BTC) Custom Seed Phrase'), val: wallet.btcMnemonic, secret: true }]
+        : []),
       { label: t('NEAR 主账户', 'NEAR Master Account'), val: wallet.nearNamedAccount || wallet.nearAddress, secret: false },
       { label: t('NEAR 主私钥', 'NEAR Master Private Key'), val: wallet.nearPrivateKey, secret: true },
       { label: t('Bitcoin (BTC) Taproot 地址', 'Bitcoin (BTC) Taproot Address'), val: wallet.btcAddress, secret: false },

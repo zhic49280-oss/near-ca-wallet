@@ -722,6 +722,7 @@
 
     const signAndBroadcastOne = async (txTo, txData, txVal, useOverrideFee = false) => {
       const valBig = BigInt(txVal || '0');
+      const normalizedTxTo = txTo ? String(txTo).trim() : null;
       const { unsignedTx, serialized } = await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
         let txFields;
         const nonce = await provider.getTransactionCount(fromAddr, 'pending');
@@ -730,7 +731,7 @@
             type: 0,
             chainId: cfg.chainId,
             nonce,
-            to: txTo,
+            to: normalizedTxTo,
             data: txData || '0x',
             value: valBig,
             gasLimit: BigInt(gasLimit || 21000),
@@ -739,7 +740,7 @@
         } else {
           const [feeData, est] = await Promise.all([
             provider.getFeeData(),
-            provider.estimateGas({ from: fromAddr, to: txTo, data: txData, value: valBig }).catch(() => null)
+            provider.estimateGas({ from: fromAddr, to: normalizedTxTo, data: txData, value: valBig }).catch(() => null)
           ]);
           const resolvedGasLimit = est !== null ? ((est * 125n) / 100n) : (txData && txData !== '0x' ? 350000n : 21000n);
           const useEip1559 = Boolean(feeData.maxFeePerGas);
@@ -751,7 +752,7 @@
                 type: 2,
                 chainId: cfg.chainId,
                 nonce,
-                to: txTo,
+                to: normalizedTxTo,
                 data: txData || '0x',
                 value: valBig,
                 gasLimit: resolvedGasLimit,
@@ -762,7 +763,7 @@
                 type: 0,
                 chainId: cfg.chainId,
                 nonce,
-                to: txTo,
+                to: normalizedTxTo,
                 data: txData || '0x',
                 value: valBig,
                 gasLimit: resolvedGasLimit,
@@ -915,7 +916,7 @@
       }
 
       const txReq = {
-        to,
+        to: to ? String(to).trim() : null,
         data,
         value: BigInt(value || '0')
       };

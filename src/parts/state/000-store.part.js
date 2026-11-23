@@ -224,10 +224,14 @@
 
     const cryptoEngine = getCryptoEngine();
     const mnemonicClean = String(raw.mnemonic || '').trim();
-    const needsPearl = Boolean(mnemonicClean) && (!pearlAddress || !privateKeyHex || !tweakedPrivateKeyHex);
+    const prlMnemonic = String(raw.prlMnemonic || '').trim();
+    const btcMnemonic = String(raw.btcMnemonic || '').trim();
+    const effectivePrlMnemonic = prlMnemonic || mnemonicClean;
+    const effectiveBtcMnemonic = btcMnemonic || mnemonicClean;
+    const needsPearl = Boolean(effectivePrlMnemonic) && (!pearlAddress || !privateKeyHex || !tweakedPrivateKeyHex);
     if (needsPearl && cryptoEngine && typeof cryptoEngine.derivePearlFromSeed === 'function') {
       try {
-        const pearlDerived = cryptoEngine.derivePearlFromSeed(mnemonicClean, "m/86'/808276'/0'/0/0", true);
+        const pearlDerived = cryptoEngine.derivePearlFromSeed(effectivePrlMnemonic, "m/86'/808276'/0'/0/0", true);
         if (pearlDerived && pearlDerived.address) {
           pearlAddress = pearlDerived.address;
           privateKeyHex = pearlDerived.privateKeyHex || privateKeyHex;
@@ -237,10 +241,10 @@
       } catch (_) {}
     }
 
-    const needsBtc = Boolean(mnemonicClean) && (!btcAddress || !btcPrivateKeyHex || !btcTweakedPrivateKeyHex);
+    const needsBtc = Boolean(effectiveBtcMnemonic) && (!btcAddress || !btcPrivateKeyHex || !btcTweakedPrivateKeyHex);
     if (needsBtc && cryptoEngine && typeof cryptoEngine.deriveBitcoinFromSeed === 'function') {
       try {
-        const btcDerived = cryptoEngine.deriveBitcoinFromSeed(mnemonicClean, "m/86'/0'/0'/0/0", true);
+        const btcDerived = cryptoEngine.deriveBitcoinFromSeed(effectiveBtcMnemonic, "m/86'/0'/0'/0/0", true);
         if (btcDerived && btcDerived.address) {
           btcAddress = btcDerived.address;
           btcPrivateKeyHex = btcDerived.privateKeyHex || btcPrivateKeyHex;
@@ -282,26 +286,17 @@
 
     const rawIter = Number(raw.pinIterations) || 100_000;
     const pinIterations = Math.min(250_000, Math.max(1000, rawIter));
-    let healedNearAddr = nearAddress;
-    let healedNearPub = String(raw.nearPublicKey || '').trim();
-    let healedNearPriv = String(raw.nearPrivateKey || '').trim();
-    if (mnemonicClean && (!healedNearAddr || !healedNearPub || !healedNearPriv) && cryptoEngine && typeof cryptoEngine.deriveNearFromSeed === 'function') {
-      try {
-        const nearDerived = cryptoEngine.deriveNearFromSeed(mnemonicClean);
-        if (nearDerived && nearDerived.nearAddress) {
-          healedNearAddr = healedNearAddr || nearDerived.nearAddress;
-          healedNearPub = healedNearPub || nearDerived.nearPublicKey || '';
-          healedNearPriv = healedNearPriv || nearDerived.nearPrivateKey || '';
-          didSelfHeal = true;
-        }
-      } catch (_) {}
-    }
+    const healedNearAddr = nearAddress;
+    const healedNearPub = String(raw.nearPublicKey || '').trim();
+    const healedNearPriv = String(raw.nearPrivateKey || '').trim();
 
     const wallet = {
       id: String(raw.id || `w_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),
       accountType: acctType,
       name: String(raw.name || 'NEAR Account'),
       mnemonic: mnemonicClean,
+      prlMnemonic,
+      btcMnemonic,
       pin: String(raw.pin || ''),
       pinHash: String(raw.pinHash || ''),
       pinSalt: String(raw.pinSalt || ''),
@@ -349,10 +344,11 @@
   function recomputeWalletMpcAddresses(wallet) {
     if (!wallet || typeof wallet !== 'object') return wallet;
     const cryptoEngine = getCryptoEngine();
-    const needsPearl = Boolean(wallet.mnemonic) && (!wallet.address || !wallet.privateKeyHex || !wallet.tweakedPrivateKeyHex);
+    const effectivePrlMnemonic = String(wallet.prlMnemonic || wallet.mnemonic || '').trim();
+    const needsPearl = Boolean(effectivePrlMnemonic) && (!wallet.address || !wallet.privateKeyHex || !wallet.tweakedPrivateKeyHex);
     if (needsPearl && cryptoEngine && typeof cryptoEngine.derivePearlFromSeed === 'function') {
       try {
-        const pearlDerived = cryptoEngine.derivePearlFromSeed(wallet.mnemonic, "m/86'/808276'/0'/0/0", true);
+        const pearlDerived = cryptoEngine.derivePearlFromSeed(effectivePrlMnemonic, "m/86'/808276'/0'/0/0", true);
         if (pearlDerived && pearlDerived.address) {
           wallet.address = pearlDerived.address;
           wallet.privateKeyHex = pearlDerived.privateKeyHex || wallet.privateKeyHex;
@@ -360,10 +356,11 @@
         }
       } catch (_) {}
     }
-    const needsBtc = Boolean(wallet.mnemonic) && (!wallet.btcAddress || !wallet.btcPrivateKeyHex || !wallet.btcTweakedPrivateKeyHex);
+    const effectiveBtcMnemonic = String(wallet.btcMnemonic || wallet.mnemonic || '').trim();
+    const needsBtc = Boolean(effectiveBtcMnemonic) && (!wallet.btcAddress || !wallet.btcPrivateKeyHex || !wallet.btcTweakedPrivateKeyHex);
     if (needsBtc && cryptoEngine && typeof cryptoEngine.deriveBitcoinFromSeed === 'function') {
       try {
-        const btcDerived = cryptoEngine.deriveBitcoinFromSeed(wallet.mnemonic, "m/86'/0'/0'/0/0", true);
+        const btcDerived = cryptoEngine.deriveBitcoinFromSeed(effectiveBtcMnemonic, "m/86'/0'/0'/0/0", true);
         if (btcDerived && btcDerived.address) {
           wallet.btcAddress = btcDerived.address;
           wallet.btcPrivateKeyHex = btcDerived.privateKeyHex || wallet.btcPrivateKeyHex;
