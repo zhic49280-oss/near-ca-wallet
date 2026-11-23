@@ -1,4 +1,4 @@
-  // ==================== WalletConnect v2 Sheet ====================
+﻿  // ==================== WalletConnect v2 Sheet ====================
 
   const DEFAULT_WC_PROJECT_ID = 'a1e691683a26f67375ef31ee654a1f49';
 
@@ -24,7 +24,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.36');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.37');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {

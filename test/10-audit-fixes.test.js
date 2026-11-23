@@ -48,7 +48,7 @@ test('v6.36 Audit Fixes: 4/5-digit PIN length preserved across normalizeWalletRe
 test('v6.36 Audit Fixes: Receive EVM address matches local evmPrivateKey wallet & APP_FEE_CONFIG is exported', async () => {
   assert.ok(nearIntents.APP_FEE_CONFIG, 'APP_FEE_CONFIG should be exported');
   assert.equal(nearIntents.APP_FEE_CONFIG.SWAP_CROSS_CHAIN_BPS, 25);
-  assert.equal(nearIntents.APP_FEE_CONFIG.SEND_CROSS_CHAIN_BPS, 0);
+  assert.equal(nearIntents.APP_FEE_CONFIG.SEND_CROSS_CHAIN_BPS, 25);
 
   const prevDoc = globalThis.document;
   const prevQr = globalThis.QRCode;
@@ -118,7 +118,7 @@ test('v6.36 Audit Fixes: NEAR key delete blocks In-Use key & sw.js/server.js har
   assert.ok(keysSrc.includes('resolvedTarget === creds.publicKeyStr'), 'Must block deleting active key');
 
   const swSrc = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
-  assert.ok(swSrc.includes('nexus-wallet-v6.36'), 'sw.js must be bumped to v6.36');
+  assert.ok(swSrc.includes('nexus-wallet-v6.37'), 'sw.js must be bumped to v6.37');
   assert.ok(swSrc.includes('Promise.allSettled'), 'sw.js must precache fault-tolerantly');
 
   const srvSrc = fs.readFileSync(path.join(ROOT_DIR, 'server.js'), 'utf8');
