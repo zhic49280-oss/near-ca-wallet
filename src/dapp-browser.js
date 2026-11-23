@@ -27,6 +27,16 @@
 
   const DAPP_CATALOG = [
     {
+      id: 'intents',
+      name: 'NEAR Intents',
+      url: 'https://near.com',
+      chain: 'NEAR',
+      category: 'bridge',
+      badge: 'NEAR',
+      descZh: 'NEAR 官方全链意图交易与跨链闪兑终端',
+      descEn: 'Official NEAR Intents cross-chain trading terminal'
+    },
+    {
       id: 'rhea',
       name: 'Rhea Finance',
       url: 'https://app.rhea.finance',
@@ -38,23 +48,23 @@
     },
     {
       id: 'burrow',
-      name: 'Burrow',
-      url: 'https://app.burrow.finance',
+      name: 'Rhea Lending (Burrow)',
+      url: 'https://app.rhea.finance/lending',
       chain: 'NEAR',
       category: 'lend',
       badge: 'NEAR',
-      descZh: 'NEAR 原生去中心化借贷与生息协议',
+      descZh: 'NEAR 原生去中心化借贷与生息市场',
       descEn: 'Native NEAR money market & lending protocol'
     },
     {
-      id: 'intents',
-      name: 'NEAR Intents',
-      url: 'https://app.near-intents.org',
+      id: 'linear',
+      name: 'LiNEAR Protocol',
+      url: 'https://app.linearprotocol.org',
       chain: 'NEAR',
-      category: 'bridge',
+      category: 'stake',
       badge: 'NEAR',
-      descZh: '全链意图跨链路由与零滑点撮合协议',
-      descEn: 'Chain-abstracted cross-chain intents router'
+      descZh: 'NEAR 生态领先流动性质押协议 (LiNEAR)',
+      descEn: 'Leading NEAR liquid staking protocol'
     },
     {
       id: 'hyperliquid',
@@ -87,9 +97,19 @@
       descEn: 'Leading EVM decentralized lending market'
     },
     {
+      id: 'cowswap',
+      name: 'CoW Swap',
+      url: 'https://swap.cow.fi',
+      chain: 'EVM',
+      category: 'dex',
+      badge: 'EVM',
+      descZh: 'EVM 抗 MEV 意图聚合交易与限价单协议',
+      descEn: 'MEV-protected EVM intent DEX & limit orders'
+    },
+    {
       id: 'pancakeswap',
       name: 'PancakeSwap',
-      url: 'https://pancakeswap.finance',
+      url: 'https://pancake.xyz',
       chain: 'EVM',
       category: 'dex',
       badge: 'EVM',
@@ -119,7 +139,7 @@
     {
       id: 'raydium',
       name: 'Raydium',
-      url: 'https://raydium.io',
+      url: 'https://raydium.io/swap/',
       chain: 'Solana',
       category: 'dex',
       badge: 'SOL',
@@ -129,7 +149,7 @@
     {
       id: 'kamino',
       name: 'Kamino',
-      url: 'https://app.kamino.finance',
+      url: 'https://kamino.com',
       chain: 'Solana',
       category: 'lend',
       badge: 'SOL',

@@ -1569,3 +1569,15 @@ test('v6.32: built-in WalletConnect Project ID & QR scanner URI/address parsing'
     globalThis.document = prevDoc;
   }
 });
+
+test('v6.33: DAPP_CATALOG uses live near.com & updated ecosystem URLs without dead/legacy domains', () => {
+  const dappBrowserMod = require('../src/dapp-browser.js');
+  const urls = dappBrowserMod.DAPP_CATALOG.map((d) => d.url);
+  const intentsEntry = dappBrowserMod.DAPP_CATALOG.find((d) => d.id === 'intents');
+  assert.equal(intentsEntry && intentsEntry.url, 'https://near.com');
+  const burrowEntry = dappBrowserMod.DAPP_CATALOG.find((d) => d.id === 'burrow');
+  assert.equal(burrowEntry && burrowEntry.url, 'https://app.rhea.finance/lending');
+  for (const legacy of ['app.near-intents.org', 'app.burrow.finance', 'app.kamino.finance', 'pancakeswap.finance']) {
+    assert.equal(urls.some((u) => u.includes(legacy)), false, `DAPP_CATALOG must not contain legacy URL: ${legacy}`);
+  }
+});
