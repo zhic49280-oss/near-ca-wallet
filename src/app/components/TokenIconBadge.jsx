@@ -16,25 +16,30 @@ function normalizeSymbolLabel(symbol) {
   return clean || '?';
 }
 
+let _prlSvgUid = 0;
+
 function PearlIridescentSvg({ size }) {
   const s = Number(size) || 36;
+  const [uid] = useState(() => ++_prlSvgUid);
+  const shellId = `prlShell_jsx_${uid}`;
+  const rimId = `prlRim_jsx_${uid}`;
   return (
     <svg width={s} height={s} viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" className="rounded-full flex-shrink-0">
       <defs>
-        <radialGradient id="prlShell_jsx" cx="35%" cy="28%" r="72%" fx="30%" fy="24%">
+        <radialGradient id={shellId} cx="35%" cy="28%" r="72%" fx="30%" fy="24%">
           <stop offset="0%" stopColor="#FFFFFF" />
           <stop offset="32%" stopColor="#E0F7FA" />
           <stop offset="65%" stopColor="#C7D2FE" />
           <stop offset="88%" stopColor="#67E8F9" />
           <stop offset="100%" stopColor="#0E7490" />
         </radialGradient>
-        <linearGradient id="prlRim_jsx" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+        <linearGradient id={rimId} x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#A5F3FC" stopOpacity="0.9" />
           <stop offset="50%" stopColor="#E9D5FF" stopOpacity="0.7" />
           <stop offset="100%" stopColor="#22D3EE" stopOpacity="0.9" />
         </linearGradient>
       </defs>
-      <circle cx="18" cy="18" r="17.2" fill="url(#prlShell_jsx)" stroke="url(#prlRim_jsx)" strokeWidth="1.5" />
+      <circle cx="18" cy="18" r="17.2" fill={`url(#${shellId})`} stroke={`url(#${rimId})`} strokeWidth="1.5" />
       <ellipse cx="12.5" cy="10.8" rx="5.2" ry="2.7" transform="rotate(-24 12.5 10.8)" fill="#FFFFFF" fillOpacity="0.72" />
       <circle cx="9.2" cy="14.5" r="1.3" fill="#FFFFFF" fillOpacity="0.65" />
       <path d="M13.6 10.8C10.5 10.8 8.4 13.1 8.4 16C8.4 18.9 10.5 21.2 13.6 21.2V10.8Z" fill="#0F172A" fillOpacity="0.88" />

@@ -128,6 +128,12 @@
       if (isOpen('sheet-token-picker')) renderTokenPickerList();
       if (isOpen('sheet-perp-markets')) renderPerpMarketsSheet();
       if (isOpen('sheet-perp-funding')) renderPerpFundingSheet();
+      if (isOpen('sheet-perp-tpsl') && st.perp && st.perp.editingTpslCoin && st.perp.account) {
+        const pos = (st.perp.account.positions || []).find((p) => p.coin === st.perp.editingTpslCoin);
+        if (pos && $('perp-tpsl-sheet-pair')) {
+          $('perp-tpsl-sheet-pair').textContent = `${formatPerpDisplayPair(pos.coin)} · ${pos.isLong ? t('多', 'Long') : t('空', 'Short')} ${pos.leverageValue || '--'}x`;
+        }
+      }
       if (isOpen('sheet-dapp-browser')) renderDAppCatalog();
       if (isOpen('sheet-mining-pro')) {
         renderMiningWatchlist();

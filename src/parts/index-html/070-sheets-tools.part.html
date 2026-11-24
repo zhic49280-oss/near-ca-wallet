@@ -131,7 +131,7 @@
         <input id="wc-uri-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="sheet.wcUriPlaceholder" placeholder="粘贴 wc: 配对链接" />
         <button type="button" class="btn-ghost-sm" onclick="openQrScannerSheet('wc')" data-i18n="common.scan">扫码</button>
         <button type="button" class="btn-ghost-sm" onclick="pasteToWcUri()" data-i18n="common.paste">粘贴</button>
-        <button type="button" class="btn-primary" style="width: auto; padding: 10px 14px;" onclick="pairWalletConnectUri()" data-i18n="sheet.wcPairBtn">配对连接</button>
+        <button type="button" id="btn-wc-pair" class="btn-primary" style="width: auto; padding: 10px 14px;" onclick="pairWalletConnectUri()" data-i18n="sheet.wcPairBtn">配对连接</button>
       </div>
 
       <button type="button" id="wc-advanced-toggle-btn" class="btn-ghost-sm" style="align-self: flex-start;" onclick="toggleWcAdvancedSettings()" data-i18n="wc.advancedToggle">高级配置: Project ID ▾</button>

@@ -165,8 +165,10 @@
               const nextPx = Number(msg.data.mids[s.perp.selectedCoin]);
               if (m && Number.isFinite(nextPx) && nextPx > 0) {
                 m.markPx = nextPx;
-                if ($('perp-mark-px')) $('perp-mark-px').textContent = `$${formatPerpPx(nextPx)}`;
-                evaluatePerpOrderUI();
+                const fmtPxStr = `$${formatPerpPx(nextPx)}`;
+                if ($('perp-mark-px')) $('perp-mark-px').textContent = fmtPxStr;
+                if ($('perp-ob-mid-badge')) $('perp-ob-mid-badge').textContent = fmtPxStr;
+                evaluatePerpOrderUI(false);
               }
             } else if (msg && msg.channel === 'webData2' && msg.data) {
               const hl = getHyperliquid();
@@ -592,7 +594,8 @@
         rows: vmRows,
         emptyText: t('未找到匹配市场', 'No matching market'),
         formatPerpPx,
-        rowAction: 'select-perp-market'
+        rowAction: 'select-perp-market',
+        selectedCoin: st.perp.selectedCoin || 'BTC'
       });
       return;
     }

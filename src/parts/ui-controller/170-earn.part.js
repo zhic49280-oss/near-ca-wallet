@@ -518,6 +518,17 @@
         ? `1 ${activePool.inSymbol} = ${effectiveRate.toFixed(4)} ${activePool.outSymbol}`
         : '--';
     }
+    const noticeEl = $('earn-lockup-notice');
+    if (noticeEl) {
+      const msg = getEarnPoolLockupNotice(activePool);
+      if (msg) {
+        noticeEl.textContent = msg;
+        noticeEl.classList.remove('hidden');
+      } else {
+        noticeEl.textContent = '';
+        noticeEl.classList.add('hidden');
+      }
+    }
     updateEarnEstimatedOut();
   }
 

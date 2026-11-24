@@ -2626,6 +2626,11 @@ html.nexus-locked #app-lock-overlay {
   background: rgba(0, 236, 151, 0.05);
 }
 
+.perp-overview-row.active {
+  border-color: rgba(0, 236, 151, 0.55);
+  background: rgba(0, 236, 151, 0.08);
+}
+
 .perp-chg-pill {
   display: inline-flex;
   align-items: center;

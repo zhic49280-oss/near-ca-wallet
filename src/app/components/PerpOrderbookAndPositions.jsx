@@ -7,7 +7,7 @@ export function PerpOrderbookSidePanel({ rows = [], side = 'bid', maxSz = 0, fmt
         const pct = maxSz > 0 ? Math.max(6, (r.sz / maxSz) * 100) : 0;
         return (
           <button
-            key={`${side}_${r.px}_${idx}`}
+            key={`${side}_${idx}`}
             type="button"
             className={`perp-ob-row ${side}`}
             data-action="fill-perp-ob-px"

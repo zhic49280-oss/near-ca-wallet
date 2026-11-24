@@ -39,6 +39,7 @@
     const wallet = st.getActiveWallet();
     if (!wallet) return;
     renderNearAccountSummary(wallet);
+    if ($('hub-near-domain-input')) $('hub-near-domain-input').value = '';
     if ($('near-keys-rotate-mnemonic')) $('near-keys-rotate-mnemonic').value = '';
     if ($('hub-near-bind-auth-input')) $('hub-near-bind-auth-input').value = '';
     $('near-bind-drawer')?.classList.add('hidden');
@@ -168,6 +169,12 @@
     if (!(await verifySecurityAuthAsync(wallet, t('为 NEAR 账户添加新密钥', 'Add New Key to NEAR Account')))) return;
 
     _nearKeyActionBusy = true;
+    const addBtn = $('btn-near-keys-add-only');
+    const prevAddText = addBtn ? addBtn.textContent : '';
+    if (addBtn) {
+      addBtn.disabled = true;
+      addBtn.textContent = t('添加中...', 'Adding...');
+    }
     try {
       showToast(t('正在执行 AddKey 添加密钥...', 'Broadcasting AddKey...'));
       const res = await contracts.rotateNearAccountKeyAsync({
@@ -183,6 +190,10 @@
       showToast(e && e.message ? e.message : t('添加密钥失败', 'AddKey failed'));
     } finally {
       _nearKeyActionBusy = false;
+      if (addBtn) {
+        addBtn.disabled = false;
+        if (prevAddText) addBtn.textContent = prevAddText;
+      }
     }
   }
 
@@ -350,6 +361,12 @@
     if (!(await verifySecurityAuthAsync(wallet, t('更换 NEAR 控制助记词', 'Rotate NEAR Control Mnemonic')))) return;
 
     _nearKeyActionBusy = true;
+    const rotBtn = $('btn-near-keys-rotate-confirm');
+    const prevRotText = rotBtn ? rotBtn.textContent : '';
+    if (rotBtn) {
+      rotBtn.disabled = true;
+      rotBtn.textContent = t('更换中...', 'Rotating...');
+    }
     try {
       const oldMnemonic = String(wallet.mnemonic || '').trim();
       const hasCustomPrl = Boolean(wallet.prlMnemonic && wallet.prlMnemonic !== oldMnemonic);
@@ -365,9 +382,9 @@
       ));
       if ((prlBal === null || prlBal > 0 || btcBal === null || btcBal > 0 || hasLegacyEvmOrSol) && oldMnemonic) {
         const assetNotes = [];
-        if (prlBal === null) assetNotes.push('PRL (未知/弱网)');
+        if (prlBal === null) assetNotes.push(t('PRL (未知/弱网)', 'PRL (unknown/offline)'));
         else if (prlBal > 0) assetNotes.push(`PRL (${formatBal(prlBal, 4)})`);
-        if (btcBal === null) assetNotes.push('BTC (未知/弱网)');
+        if (btcBal === null) assetNotes.push(t('BTC (未知/弱网)', 'BTC (unknown/offline)'));
         else if (btcBal > 0) assetNotes.push(`BTC (${formatBal(btcBal, 6)})`);
         if (hasLegacyEvmOrSol) assetNotes.push('EVM / Solana');
         const warnMsg = t(
@@ -443,6 +460,10 @@
       showToast(e && e.message ? e.message : t('更换密钥失败', 'Key rotation failed'));
     } finally {
       _nearKeyActionBusy = false;
+      if (rotBtn) {
+        rotBtn.disabled = false;
+        if (prevRotText) rotBtn.textContent = prevRotText;
+      }
     }
   }
 
@@ -613,6 +634,12 @@
     }
     if (!(await verifySecurityAuthAsync(wallet, `${t('注册域名', 'Register domain')} ${domain}`))) return;
     _nearKeyActionBusy = true;
+    const regBtn = $('btn-register-near-domain');
+    const prevRegText = regBtn ? regBtn.textContent : '';
+    if (regBtn) {
+      regBtn.disabled = true;
+      regBtn.textContent = t('注册中...', 'Registering...');
+    }
     try {
       const res = await contracts.registerNearNamedAccountOnChain({
         wallet,
@@ -642,6 +669,10 @@
       showToast(err && err.message ? err.message : t('注册失败', 'Registration failed'));
     } finally {
       _nearKeyActionBusy = false;
+      if (regBtn) {
+        regBtn.disabled = false;
+        if (prevRegText) regBtn.textContent = prevRegText;
+      }
     }
   }
 
@@ -660,6 +691,12 @@
     if (!(await verifySecurityAuthAsync(wallet, `${t('绑定 NEAR 命名账号', 'Bind NEAR Named Account')}: ${domain}`))) return;
     const authSecret = ($('hub-near-bind-auth-input')?.value || '').trim();
     _nearKeyActionBusy = true;
+    const bindBtn = $('btn-bind-near-domain');
+    const prevBindText = bindBtn ? bindBtn.textContent : '';
+    if (bindBtn) {
+      bindBtn.disabled = true;
+      bindBtn.textContent = t('绑定中...', 'Binding...');
+    }
     try {
       await contracts.ensureWalletSigningKeysAsync(wallet);
       const creds = contracts.getWalletNearSignerCredentials(wallet);
@@ -742,6 +779,10 @@
       showToast(err && err.message ? err.message : t('绑定失败', 'Bind failed'));
     } finally {
       _nearKeyActionBusy = false;
+      if (bindBtn) {
+        bindBtn.disabled = false;
+        if (prevBindText) bindBtn.textContent = prevBindText;
+      }
     }
   }
 

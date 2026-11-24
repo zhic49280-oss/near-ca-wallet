@@ -112,11 +112,39 @@
       }
       return;
     }
+    if (typeof _dappSession !== 'undefined' && _dappSession && _dappSession.pendingApproval && typeof _dappSession.pendingApproval.resolve === 'function') {
+      if (typeof rejectDAppApproval === 'function') {
+        rejectDAppApproval();
+      } else {
+        const pendingDapp = _dappSession.pendingApproval.resolve;
+        _dappSession.pendingApproval = null;
+        pendingDapp(false);
+      }
+      return;
+    }
     _backupRevealActive = false;
     const backupContent = $('backup-keys-content');
     if (backupContent) backupContent.innerHTML = '';
+    if (st && st.staking) st.staking.amountIn = '';
     if (typeof resetFormFields === 'function') {
-      resetFormFields(['earn-amount-in', 'send-amount-input']);
+      resetFormFields([
+        'earn-amount-in',
+        'send-amount-input',
+        'send-recipient-input',
+        'perp-oc-amount',
+        'perp-arb-amount',
+        'perp-withdraw-amount',
+        'perp-pos-tp-input',
+        'perp-pos-sl-input',
+        'pin-input',
+        'contact-name-input',
+        'contact-addr-input',
+        'prl-bind-mnemonic-input',
+        'near-keys-rotate-mnemonic',
+        'hub-near-domain-input',
+        'hub-near-bind-auth-input',
+        'wc-uri-input'
+      ]);
     }
     const backdrop = $('sheet-backdrop');
     if (backdrop) {

@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { TokenIconBadge } from './TokenIconBadge.jsx';
 
-export function PerpOverviewPanel({ rows = [], emptyText = '', formatPerpPx, rowAction = 'open-perp-trade' }) {
+export function PerpOverviewPanel({ rows = [], emptyText = '', formatPerpPx, rowAction = 'open-perp-trade', selectedCoin = '' }) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return (
       <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '14px 0' }}>
@@ -25,11 +25,12 @@ export function PerpOverviewPanel({ rows = [], emptyText = '', formatPerpPx, row
           ? `${delta >= 0 ? '+' : '-'}$${formatPerpPx(Math.abs(delta))}`
           : '--';
         const pxText = m.markPx && typeof formatPerpPx === 'function' ? `$${formatPerpPx(m.markPx)}` : '--';
+        const isSelected = Boolean(selectedCoin && m.name === selectedCoin);
 
         return (
           <div
             key={m.name || idx}
-            className="perp-overview-row"
+            className={`perp-overview-row${isSelected ? ' active' : ''}`}
             role="button"
             tabIndex={0}
             data-action={m.rowAction || rowAction}

@@ -145,7 +145,7 @@
             </div>
             <div class="flex gap-2">
               <input id="swap-order-txhash-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="swap.orderSubmitHashPlaceholder" placeholder="粘贴外部转账 TxHash 加速确认" />
-              <button type="button" class="btn-secondary" onclick="submitSwapOrderTxHash()" data-i18n="swap.orderSubmitHashBtn">提交凭证</button>
+              <button type="button" id="btn-submit-swap-order-txhash" class="btn-secondary" onclick="submitSwapOrderTxHash()" data-i18n="swap.orderSubmitHashBtn">提交凭证</button>
             </div>
           </div>
           <button type="button" id="btn-resume-swap-stage" class="btn-primary hidden" onclick="resumeActiveSwapFollowUp()" data-i18n="swap.orderResumeBtn">继续执行下一步</button>

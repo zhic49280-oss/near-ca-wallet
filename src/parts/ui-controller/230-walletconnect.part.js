@@ -24,7 +24,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.67');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.68');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -241,12 +241,23 @@
     if (!st.wc.projectId) {
       st.wc.projectId = DEFAULT_WC_PROJECT_ID;
     }
+    const btn = $('btn-wc-pair');
+    const prevTxt = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = t('连接中...', 'Pairing...');
+    }
     try {
       const client = await ensureWcReady();
       await client.core.pairing.pair({ uri });
       showToast(t('已发起配对，等待 DApp 请求...', 'Pairing sent...'));
     } catch (e) {
       showToast(e && e.message ? e.message : t('配对失败', 'Pairing failed'));
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        if (prevTxt) btn.textContent = prevTxt;
+      }
     }
   }
 

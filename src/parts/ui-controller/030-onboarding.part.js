@@ -375,10 +375,22 @@
       st.limit.ordersHistory = [];
       st.limit.evmAllowanceRaw = null;
       st.limit.dclStorageRegistered = null;
+      if (typeof resetFormFields === 'function') {
+        resetFormFields(['limit-amount-in', 'limit-target-rate'], st.limit, { amountIn: '', targetRate: '', errorMsg: '' });
+      } else {
+        st.limit.amountIn = '';
+        st.limit.targetRate = '';
+        st.limit.errorMsg = '';
+        if ($('limit-amount-in')) $('limit-amount-in').value = '';
+        if ($('limit-target-rate')) $('limit-target-rate').value = '';
+      }
     }
     if (st.perp) {
       st.perp.account = null;
       st.perp.lastAccountSyncTs = 0;
+      if (typeof resetPerpOrderForm === 'function') {
+        resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
+      }
       if (nextWallet && typeof st.loadCachedPerpSnapshot === 'function') {
         st.loadCachedPerpSnapshot(nextWallet.mpcEvmAddress || nextWallet.evmAddress || '');
       }

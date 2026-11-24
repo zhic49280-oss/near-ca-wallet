@@ -407,7 +407,11 @@
     const authed = await verifySecurityAuthAsync(wallet, `${t('跨链充值至 Hyperliquid', 'Cross-chain deposit to Hyperliquid')} (${amt} ${entry.symbol})`);
     if (!authed) return;
     const btn = $('btn-perp-oc-deposit');
-    if (btn) btn.disabled = true;
+    const prevBtnTxt = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = t('充值提交中...', 'Depositing...');
+    }
     try {
       await ensureEthersLoaded();
       const q = await hl.quoteOneClickDepositToHlSpot({ wallet, originToken: entry, amount: amt, dry: false });
@@ -472,7 +476,11 @@
       evaluatePerpOneClickUI();
       showToast(st.perp.fundingQuoteError);
     } finally {
-      if (btn) btn.disabled = false;
+      if (btn) {
+        btn.disabled = false;
+        if (prevBtnTxt) btn.textContent = prevBtnTxt;
+      }
+      evaluatePerpOneClickUI();
     }
   }
 

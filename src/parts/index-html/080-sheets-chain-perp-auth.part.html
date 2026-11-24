@@ -37,7 +37,7 @@
         <button type="button" class="btn-ghost-sm" style="align-self: flex-start;" onclick="toggleNearBindDrawer()" data-i18n="near.bindToggleBtn">绑定已有 .near 账号 ▾</button>
         <div id="near-bind-drawer" class="hidden flex flex-col gap-2" style="padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06);">
           <input id="hub-near-bind-auth-input" type="password" class="input-field mono" data-i18n-placeholder="hub.nearDomainAuthPlaceholder" placeholder="绑定其他钱包的 .near 时，可填原助记词/私钥自动授权（可选）" />
-          <button type="button" class="btn-secondary" onclick="bindNearDomainFromHub()" data-i18n="hub.nearDomainBindBtn">确认绑定</button>
+          <button type="button" id="btn-bind-near-domain" class="btn-secondary" onclick="bindNearDomainFromHub()" data-i18n="hub.nearDomainBindBtn">确认绑定</button>
         </div>
       </div>
 
@@ -56,9 +56,9 @@
         <textarea id="near-keys-rotate-mnemonic" class="input-field mono" style="min-height: 64px;" data-i18n-placeholder="sheet.keysRotatePlaceholder" placeholder="点击下方生成新助记词，或粘贴已有助记词"></textarea>
         <div class="flex gap-2">
           <button type="button" class="btn-secondary flex-1" onclick="generateRotateMnemonicInSheet()" data-i18n="sheet.keysGenSeedBtn">生成新助记词</button>
-          <button type="button" class="btn-secondary flex-1" onclick="addNearMnemonicKeyOnlyFromSheet()" data-i18n="sheet.keysAddOnlyBtn">仅添加密钥 (保留旧密钥)</button>
+          <button type="button" id="btn-near-keys-add-only" class="btn-secondary flex-1" onclick="addNearMnemonicKeyOnlyFromSheet()" data-i18n="sheet.keysAddOnlyBtn">仅添加密钥 (保留旧密钥)</button>
         </div>
-        <button type="button" class="btn-primary" onclick="confirmRotateNearAccountKey()" data-i18n="sheet.keysRotateConfirmBtn">确认更换并删除旧密钥</button>
+        <button type="button" id="btn-near-keys-rotate-confirm" class="btn-primary" onclick="confirmRotateNearAccountKey()" data-i18n="sheet.keysRotateConfirmBtn">确认更换并删除旧密钥</button>
       </div>
     </div>
   </div>

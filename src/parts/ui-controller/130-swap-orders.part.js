@@ -946,16 +946,29 @@
       showToast(t('请输入有效的 TxHash', 'Enter a valid TxHash'));
       return;
     }
-    const res = await intents.submitExternalDepositTxHash({
-      depositAddress: order.depositAddress,
-      txHash: hash,
-      nearSenderAccount: wallet ? (wallet.nearNamedAccount || wallet.nearAddress) : undefined
-    });
-    if (res.ok) {
-      showToast(t('已提交充值凭证，加速确认中', 'Deposit hash submitted'));
-      refreshActiveSwapOrderStatus();
-    } else {
-      showToast(res.error || t('提交失败', 'Submit failed'));
+    const btn = $('btn-submit-swap-order-txhash');
+    const prevTxt = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = t('提交中...', 'Submitting...');
+    }
+    try {
+      const res = await intents.submitExternalDepositTxHash({
+        depositAddress: order.depositAddress,
+        txHash: hash,
+        nearSenderAccount: wallet ? (wallet.nearNamedAccount || wallet.nearAddress) : undefined
+      });
+      if (res.ok) {
+        showToast(t('已提交充值凭证，加速确认中', 'Deposit hash submitted'));
+        refreshActiveSwapOrderStatus();
+      } else {
+        showToast(res.error || t('提交失败', 'Submit failed'));
+      }
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        if (prevTxt) btn.textContent = prevTxt;
+      }
     }
   }
 
