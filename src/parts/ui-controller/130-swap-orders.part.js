@@ -537,6 +537,54 @@
         const follow = order.followUpArcRelay;
         await ensureEthersLoaded();
         const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
+        if (follow.direction === 'arc_to_base') {
+          if (evmAddr && contracts && typeof contracts.executeEvmRawSteps === 'function') {
+            await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+            const arcBal = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
+            const availArcRaw = BigInt(arcBal?.nativeRaw || '0');
+            const reqRaw = BigInt(follow.amountRaw || '0');
+            const bridgeArcRaw = reqRaw > 0n && availArcRaw > 0n ? (reqRaw < availArcRaw ? reqRaw : availArcRaw) : (reqRaw || availArcRaw);
+            if (bridgeArcRaw <= 0n) throw new Error(t('Arc USDC 余额不足以发起跨链至 Base', 'Insufficient Arc USDC to bridge to Base'));
+            const preBaseRes = await contracts.fetchEvmNativeAndErc20Balance('base', evmAddr, intents.BASE_USDC_EVM, 6).catch(() => null);
+            const isBaseUsdcDest = String(follow.destinationAsset || '') === intents.BASE_USDC_ASSET_ID;
+            const relayLive = await intents.quoteRelayBridge({
+              user: evmAddr,
+              recipient: (isBaseUsdcDest && follow.recipient && /^0x[0-9a-fA-F]{40}$/.test(follow.recipient)) ? follow.recipient : evmAddr,
+              originChainId: 5042,
+              destinationChainId: 8453,
+              originCurrency: intents.ARC_USDC_CONTRACT,
+              destinationCurrency: intents.BASE_USDC_EVM,
+              amount: bridgeArcRaw.toString()
+            });
+            if (!relayLive.ok || !relayLive.steps?.length) throw new Error(relayLive.error || t('Relay Arc->Base 构建失败', 'Relay Arc->Base failed'));
+            const relayTx = await contracts.executeEvmRawSteps({ wallet, chainKey: 'arc', steps: relayLive.steps });
+            delete order.followUpArcRelay;
+            if (!isBaseUsdcDest && follow.destinationAsset) {
+              order.status = 'PENDING_ARC_BRIDGE';
+              order.followUpExecuted = false;
+              order.followUpFailed = false;
+              order.followUpBaseOneClick = {
+                destinationAsset: follow.destinationAsset,
+                toSymbol: follow.toSymbol || order.toSymbol,
+                recipient: follow.recipient || evmAddr,
+                expectedBaseRaw: String(relayLive.amountOut || bridgeArcRaw.toString()),
+                preBaseRaw: String(preBaseRes?.tokenRaw || '0'),
+                slippageBps: follow.slippageBps || 100
+              };
+              if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+              renderSwapOrderCard();
+              startOrderStatusPolling();
+              showToast(`✅ ${t('Arc -> Base 跨链已发送，到账后自动兑换目标资产', 'Arc -> Base bridge sent; will auto-swap on arrival')}: ${shortenAddr(relayTx.txHash)}`);
+              return;
+            }
+            order.followUpExecuted = true;
+            order.followUpFailed = false;
+            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+            renderSwapOrderCard();
+            showToast(`✅ ${t('Arc -> Base 跨链已发送', 'Arc -> Base bridge sent')}: ${shortenAddr(relayTx.txHash)}`);
+            return;
+          }
+        }
         if (evmAddr && contracts && typeof contracts.executeEvmRawSteps === 'function') {
           await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
           const baseBal = await contracts.fetchEvmNativeAndErc20Balance('base', evmAddr, intents.BASE_USDC_EVM, 6).catch(() => null);
@@ -902,8 +950,12 @@
 
   function clearActiveSwapOrder(force = false) {
     const st = getState();
+    if (_followUpRunning) {
+      showToast(t('第二阶段跨链正在执行中，请勿关闭订单', 'Stage 2 execution in progress; please wait'));
+      return;
+    }
     const order = st.swap.activeOrder;
-    if (!force && order && !order.followUpExecuted && (order.followUpFailed || order.followUpRefSwap || order.followUpDclSwap || order.followUpBridgeOut || order.followUpBaseOneClick || order.followUpArcDexSwap || order.followUpConfidentialSwap)) {
+    if (!force && order && !order.followUpExecuted && (order.followUpFailed || hasPendingSwapFollowUp(order))) {
       const upper = String(order.status || '').toUpperCase();
       if (!['FAILED', 'REFUNDED'].includes(upper) && !(upper === 'SUCCESS' && !order.followUpFailed)) {
         if (!_clearOrderWarnedAt || (Date.now() - _clearOrderWarnedAt) > 6000) {

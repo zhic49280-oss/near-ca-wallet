@@ -372,10 +372,28 @@
     return Boolean(wallet && (typeof st.hasWalletPin === 'function' ? st.hasWalletPin(wallet) : Boolean(wallet.pin || wallet.pinHash)));
   }
 
+  function isWalletBiometricAllowed(wallet) {
+    return Boolean(wallet && wallet.biometricEnabled !== false);
+  }
+
+  function isWalletVaultLocked(wallet) {
+    return Boolean(wallet && wallet.encryptedVault && wallet.encryptedVault.ctBase64 && !wallet.mnemonic && !wallet.nearPrivateKey);
+  }
+
+  function openSetWalletPinPromptSafe() {
+    const sheet = $('sheet-pin');
+    if (sheet && sheet.classList && _appLockState.locked) {
+      sheet.classList.add('auth-top');
+    }
+    if (typeof openPinSheet === 'function') openPinSheet();
+  }
+
   function shouldEnableAppLockForWallet(wallet, overrides = {}) {
     if (!wallet) return false;
-    const nativePlugin = getNativeSecurityPlugin(overrides.nativePlugin);
-    return Boolean(nativePlugin || wallet.webauthnCredentialId || hasConfiguredWalletPin(wallet));
+    const bioAllowed = isWalletBiometricAllowed(wallet);
+    const nativePlugin = bioAllowed ? getNativeSecurityPlugin(overrides.nativePlugin) : null;
+    const hasWebAuthn = bioAllowed ? Boolean(wallet.webauthnCredentialId) : false;
+    return Boolean(nativePlugin || hasWebAuthn || hasConfiguredWalletPin(wallet));
   }
 
   function setRootClass(cls, enabled) {
@@ -444,8 +462,11 @@
     if (unlockBtn) unlockBtn.disabled = true;
     if (statusEl) statusEl.textContent = t('正在验证身份...', 'Verifying identity...');
 
-    const nativePlugin = getNativeSecurityPlugin(overrides.nativePlugin);
-    const profile = nativePlugin ? { supported: true } : (_cachedBioProfile || await detectDeviceBiometricProfileAsync(overrides));
+    const bioAllowed = isWalletBiometricAllowed(wallet);
+    const nativePlugin = bioAllowed ? getNativeSecurityPlugin(overrides.nativePlugin) : null;
+    const profile = !bioAllowed
+      ? { supported: false }
+      : (nativePlugin ? { supported: true } : (_cachedBioProfile || await detectDeviceBiometricProfileAsync(overrides)));
     try {
       if (profile && profile.supported) {
         const res = await requestBiometricAuth(
@@ -454,7 +475,7 @@
           overrides
         );
         if (res && res.ok) {
-          if (wallet.encryptedVault && !wallet.mnemonic && !wallet.nearPrivateKey && hasConfiguredWalletPin(wallet)) {
+          if (isWalletVaultLocked(wallet) && hasConfiguredWalletPin(wallet)) {
             return unlockAppLockWithPin();
           }
           clearAppLock();
@@ -471,7 +492,7 @@
             statusEl.textContent = t('设备生物识别不可用且未设置 PIN，请先设置安全 PIN', 'Device biometrics unavailable and no PIN set. Please set a security PIN.');
           }
           showToast(t('设备生物识别不可用，请先设置安全 PIN', 'Biometrics unavailable, please set a security PIN first'));
-          if (typeof openSetWalletPinPrompt === 'function') openSetWalletPinPrompt();
+          openSetWalletPinPromptSafe();
           return false;
         }
         if (statusEl) {
@@ -799,12 +820,14 @@
     const w = wallet || st.getActiveWallet();
     if (!w) return false;
     const hasPin = typeof st.hasWalletPin === 'function' ? st.hasWalletPin(w) : Boolean(w.pin);
-    const profile = _cachedBioProfile || await detectDeviceBiometricProfileAsync();
-    const bioSupported = Boolean(profile && profile.supported);
-    const nativeAuth = Boolean(getNativeSecurityPlugin());
+    const bioAllowed = isWalletBiometricAllowed(w);
+    const profile = !bioAllowed ? { supported: false } : (_cachedBioProfile || await detectDeviceBiometricProfileAsync());
+    const bioSupported = Boolean(bioAllowed && profile && profile.supported);
+    const nativeAuth = Boolean(bioAllowed && getNativeSecurityPlugin());
+    const vaultLocked = isWalletVaultLocked(w);
 
-    // 1. Always try system biometrics first (Face ID / Touch ID / fingerprint / face)
-    if (bioSupported) {
+    // 1. Always try system biometrics first when allowed (unless Vault still needs PIN to decrypt)
+    if (bioSupported && !(vaultLocked && hasPin)) {
       const bioRes = await requestBiometricAuth(reason, w);
       if (bioRes.ok) return true;
       const bioUnavailable = Boolean(
@@ -817,7 +840,7 @@
           showToast(t('已取消验证', 'Verification cancelled'));
         } else if (!nativeAuth) {
           showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
-          if (typeof openSetWalletPinPrompt === 'function') openSetWalletPinPrompt();
+          openSetWalletPinPromptSafe();
         } else {
           showToast(bioRes.error || t('验证未通过', 'Verification failed'));
         }
@@ -825,16 +848,16 @@
       }
       if (bioUnavailable && !hasPin) {
         showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
-        if (typeof openSetWalletPinPrompt === 'function') openSetWalletPinPrompt();
+        openSetWalletPinPromptSafe();
         return false;
       }
     } else if (!hasPin) {
       showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
-      if (typeof openSetWalletPinPrompt === 'function') openSetWalletPinPrompt();
+      openSetWalletPinPromptSafe();
       return false;
     }
 
-    // 2. PIN fallback (PBKDF2 SHA-256 verified)
+    // 2. PIN fallback (PBKDF2 SHA-256 verified + Vault decryption)
     return openPinModalForWalletAsync(w, reason, bioSupported);
   }
   function verifyPinIfNeeded(wallet, reason = '') {

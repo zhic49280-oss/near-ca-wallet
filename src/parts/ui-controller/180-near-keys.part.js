@@ -128,12 +128,18 @@
     }
   }
 
+  let _nearKeyActionBusy = false;
+  let _pendingConfirmSig = '';
+  let _pendingConfirmTs = 0;
+
   async function deleteNearAccessKeyFromSheet(targetPublicKeyStr) {
+    if (_nearKeyActionBusy) return;
     const st = getState();
     const contracts = getContracts();
     const wallet = st.getActiveWallet();
     if (!wallet || !contracts) return;
     if (!(await verifySecurityAuthAsync(wallet, t('删除 NEAR 访问密钥', 'Delete NEAR Access Key')))) return;
+    _nearKeyActionBusy = true;
     try {
       showToast(t('正在广播 DeleteKey 交易...', 'Broadcasting DeleteKey...'));
       const res = await contracts.deleteNearAccessKeyAsync({ wallet, targetPublicKeyStr });
@@ -141,10 +147,13 @@
       await refreshNearAccessKeysSheet();
     } catch (e) {
       showToast(e && e.message ? e.message : t('删除失败', 'Delete failed'));
+    } finally {
+      _nearKeyActionBusy = false;
     }
   }
 
   async function addNearMnemonicKeyOnlyFromSheet() {
+    if (_nearKeyActionBusy) return;
     const st = getState();
     const crypto = getCrypto();
     const contracts = getContracts();
@@ -158,6 +167,7 @@
     }
     if (!(await verifySecurityAuthAsync(wallet, t('为 NEAR 账户添加新密钥', 'Add New Key to NEAR Account')))) return;
 
+    _nearKeyActionBusy = true;
     try {
       showToast(t('正在执行 AddKey 添加密钥...', 'Broadcasting AddKey...'));
       const res = await contracts.rotateNearAccountKeyAsync({
@@ -171,6 +181,8 @@
       await refreshNearAccessKeysSheet();
     } catch (e) {
       showToast(e && e.message ? e.message : t('添加密钥失败', 'AddKey failed'));
+    } finally {
+      _nearKeyActionBusy = false;
     }
   }
 
@@ -206,7 +218,17 @@
     if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
       return window.confirm(message);
     }
-    return true;
+    const sig = String(message || '').slice(0, 80);
+    const now = Date.now();
+    if (_pendingConfirmSig === sig && (now - _pendingConfirmTs) < 8000) {
+      _pendingConfirmSig = '';
+      _pendingConfirmTs = 0;
+      return true;
+    }
+    _pendingConfirmSig = sig;
+    _pendingConfirmTs = now;
+    showToast(`${message} (${t('请再次点击确认操作', 'Tap again within 8s to confirm')})`);
+    return false;
   }
 
   async function bindOrReplacePrlMnemonicUI() {
@@ -314,6 +336,7 @@
   }
 
   async function confirmRotateNearAccountKey() {
+    if (_nearKeyActionBusy) return;
     const st = getState();
     const crypto = getCrypto();
     const contracts = getContracts();
@@ -327,6 +350,7 @@
     }
     if (!(await verifySecurityAuthAsync(wallet, t('更换 NEAR 控制助记词', 'Rotate NEAR Control Mnemonic')))) return;
 
+    _nearKeyActionBusy = true;
     try {
       const oldMnemonic = String(wallet.mnemonic || '').trim();
       const hasCustomPrl = Boolean(wallet.prlMnemonic && wallet.prlMnemonic !== oldMnemonic);
@@ -407,9 +431,8 @@
 
       const savedOk = st.saveWallets();
       if (savedOk === false) {
-        if (typeof window !== 'undefined' && typeof window.alert === 'function') {
-          window.alert(`${t('链上密钥已更换，但本地写入失败！请立即抄写保存新助记词以免丢失账户：', 'On-chain key rotated, but local save failed! Copy your new phrase immediately:')}\n\n${wallet.mnemonic}`);
-        }
+        showToast(t('链上密钥已更换，但本地写入失败！请立即在备份弹窗复制保存新助记词', 'On-chain key rotated, but local save failed! Copy your new phrase immediately'));
+        if (typeof openBackupSheet === 'function') openBackupSheet();
       }
       showToast(`✅ ${t('助记词与链上密钥已更换', 'Mnemonic & on-chain key rotated')}: ${shortenAddr(res.deleteTxHash || res.addTxHash, 8, 6)}`);
       if ($('near-keys-rotate-mnemonic')) $('near-keys-rotate-mnemonic').value = '';
@@ -417,6 +440,8 @@
       await refreshNearAccessKeysSheet();
     } catch (e) {
       showToast(e && e.message ? e.message : t('更换密钥失败', 'Key rotation failed'));
+    } finally {
+      _nearKeyActionBusy = false;
     }
   }
 
@@ -570,6 +595,7 @@
   }
 
   async function registerNearDomainFromHub() {
+    if (_nearKeyActionBusy) return;
     const st = getState();
     const contracts = getContracts();
     const wallet = st.getActiveWallet();
@@ -585,6 +611,7 @@
       return;
     }
     if (!(await verifySecurityAuthAsync(wallet, `${t('注册域名', 'Register domain')} ${domain}`))) return;
+    _nearKeyActionBusy = true;
     try {
       const res = await contracts.registerNearNamedAccountOnChain({
         wallet,
@@ -612,10 +639,13 @@
       refreshAllBalancesAsync(true);
     } catch (err) {
       showToast(err && err.message ? err.message : t('注册失败', 'Registration failed'));
+    } finally {
+      _nearKeyActionBusy = false;
     }
   }
 
   async function bindNearDomainFromHub() {
+    if (_nearKeyActionBusy) return;
     const st = getState();
     const crypto = getCrypto();
     const contracts = getContracts();
@@ -628,6 +658,7 @@
     }
     if (!(await verifySecurityAuthAsync(wallet, `${t('绑定 NEAR 命名账号', 'Bind NEAR Named Account')}: ${domain}`))) return;
     const authSecret = ($('hub-near-bind-auth-input')?.value || '').trim();
+    _nearKeyActionBusy = true;
     try {
       await contracts.ensureWalletSigningKeysAsync(wallet);
       const creds = contracts.getWalletNearSignerCredentials(wallet);
@@ -708,6 +739,8 @@
       refreshAllBalancesAsync(true);
     } catch (err) {
       showToast(err && err.message ? err.message : t('绑定失败', 'Bind failed'));
+    } finally {
+      _nearKeyActionBusy = false;
     }
   }
 
@@ -740,6 +773,7 @@
   }
 
   async function executeHubMpcSign() {
+    if (_nearKeyActionBusy) return;
     const st = getState();
     const crypto = getCrypto();
     const contracts = getContracts();
@@ -759,6 +793,7 @@
       : crypto.keccak256Bytes(rawInput);
 
     if (!(await verifySecurityAuthAsync(wallet, t('确认 MPC 链抽象签名', 'Confirm MPC Chain Signature')))) return;
+    _nearKeyActionBusy = true;
     try {
       const res = await contracts.requestNearMpcChainSignature({
         wallet,
@@ -777,6 +812,8 @@
       showToast(`✅ ${t('MPC 链签名请求已广播', 'MPC sign tx broadcast')}`);
     } catch (err) {
       showToast(err && err.message ? err.message : t('MPC 签名失败', 'MPC sign failed'));
+    } finally {
+      _nearKeyActionBusy = false;
     }
   }
 

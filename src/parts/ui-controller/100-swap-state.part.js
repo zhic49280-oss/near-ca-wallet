@@ -992,7 +992,7 @@
       }
       if (quoteData && !isQuoting) {
         const gInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, gasReserveMode || 'auto', quoteData);
-        if (gInfo && gInfo.reserveNum > 0) {
+        if (gInfo && gInfo.selectedReserve > 0) {
           const { netOutNum } = computeNetSwapOutput(quoteData, toToken, gInfo, Number(quoteData.amountOutFormatted || 0));
           if (Number.isFinite(netOutNum) && netOutNum <= 0) {
             return {
@@ -1038,7 +1038,7 @@
       amountIn: st.swap.amountIn,
       quoteData: st.swap.quoteData || null,
       quoteError: st.swap._lastError || '',
-      isQuoting: Boolean(st.swap._quoting),
+      isQuoting: Boolean(st.swap._quoting || st.swap._quotePending),
       isExecuting: Boolean(st.swap._executing),
       gasReserveMode: st.swap.gasReserveMode || 'auto',
       priceImpact: impact

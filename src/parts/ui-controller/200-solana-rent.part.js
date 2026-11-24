@@ -53,7 +53,7 @@
       });
       _solRentSelectedAtas = new Set(
         _solRentScanAccounts
-          .filter((acc) => acc.isEmpty || acc.isDust)
+          .filter((acc) => acc.isEmpty)
           .map((acc) => acc.ataAddress)
       );
       renderSolRentList();

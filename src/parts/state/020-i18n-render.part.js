@@ -46,6 +46,9 @@
     for (const k of VAULT_SECRET_FIELDS) {
       if (wallet[k]) secrets[k] = wallet[k];
     }
+    if (Object.keys(secrets).length === 0 && wallet.encryptedVault && wallet.encryptedVault.ctBase64) {
+      return null;
+    }
     const envelope = await cryptoLib.encryptVaultJsonAsync(secrets, cleanPin);
     wallet.encryptedVault = envelope;
     return envelope;

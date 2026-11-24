@@ -524,6 +524,7 @@
           if (Array.isArray(groupList)) allTargetTokens.push(...groupList);
         }
 
+        const updatedInRun = new Set();
         for (const token of allTargetTokens) {
           if (!token || !token.assetId) continue;
           const assetLower = String(token.assetId).toLowerCase();
@@ -550,6 +551,7 @@
             if (live.price !== null && live.price > 0) {
               token.price = live.price;
               token.priceUpdatedAt = live.priceUpdatedAt || null;
+              updatedInRun.add(token);
             }
             if (live.contractAddress && !token.contractAddress) {
               token.contractAddress = live.contractAddress;
@@ -564,26 +566,29 @@
               token.logoURI = live.logoURI;
             }
           }
-          if (tokenBc === 'near' && !(token.price > 0) && contractLower && refPriceByContract[contractLower] > 0) {
+          if (tokenBc === 'near' && !updatedInRun.has(token) && contractLower && refPriceByContract[contractLower] > 0) {
             token.price = refPriceByContract[contractLower];
+            updatedInRun.add(token);
           }
 
           const resolvedLogo = resolveTokenLogo(token);
           if (resolvedLogo) token.logoURI = resolvedLogo;
 
-          // Fallback to DexScreener for Solana DEX mints if price still absent
+          // Fallback to DexScreener for Solana DEX mints if price not updated in this run
           if (tokenBc === 'sol') {
             const dsPrice = dexPriceByMint.get(contractLower) || dexPriceByMint.get(assetLower);
-            if (dsPrice > 0 && !(token.price > 0)) {
+            if (dsPrice > 0 && !updatedInRun.has(token)) {
               token.price = dsPrice;
+              updatedInRun.add(token);
             }
           }
 
           // Fallback to Jupiter V2 live prices for Solana xStocks
           if (tokenBc === 'sol') {
             const xsPrice = jupXStockByMint[contractLower] || jupXStockByMint[assetLower] || jupXStockBySym[symUpper];
-            if (xsPrice > 0 && !(token.price > 0)) {
+            if (xsPrice > 0 && !updatedInRun.has(token)) {
               token.price = xsPrice;
+              updatedInRun.add(token);
             }
           }
           if (!token.logoURI && jupXStockIcons[symUpper]) {
@@ -591,17 +596,19 @@
           }
 
           // Ensure PRL gets live market price even if 1Click omits it
-          if (symUpper === 'PRL' && prlLivePrice > 0 && !(token.price > 0)) {
+          if (symUpper === 'PRL' && prlLivePrice > 0 && !updatedInRun.has(token)) {
             token.price = prlLivePrice;
+            updatedInRun.add(token);
           }
 
           // Ensure HYPE / WHYPE get live market price from Hyperliquid if absent in 1Click
-          if ((symUpper === 'HYPE' || symUpper === 'WHYPE') && hypeLivePrice > 0 && !(token.price > 0)) {
+          if ((symUpper === 'HYPE' || symUpper === 'WHYPE') && hypeLivePrice > 0 && !updatedInRun.has(token)) {
             token.price = hypeLivePrice;
+            updatedInRun.add(token);
           }
 
           // Fallback to CoinGecko top-250 live price or canonical base symbol price (WBNB->BNB, BTCB->BTC, USDbC->USDC)
-          if (!(token.price > 0) && CANONICAL_PRICE_SYMBOLS.has(symPriceLookup)) {
+          if (!updatedInRun.has(token) && CANONICAL_PRICE_SYMBOLS.has(symPriceLookup)) {
             const aliasSym = symUpper === 'WBNB' ? 'BNB'
               : (symUpper === 'BTCB' || symUpper === 'CBBTC' || symUpper === 'CIRBTC' ? 'BTC'
               : (symUpper === 'USDBC' || symUpper === 'WUSDC' ? 'USDC'
@@ -610,15 +617,20 @@
             const cgHit = cgPriceBySymbol[symUpper] || cgPriceBySymbol[aliasSym];
             if (aliasLive && aliasLive.price > 0) {
               token.price = aliasLive.price;
+              updatedInRun.add(token);
             } else if (cgHit > 0) {
               token.price = cgHit;
+              updatedInRun.add(token);
             }
           }
 
           // Hydrate Arc Mainnet token live price & icon from Li.Fi / KyberSwap / DexScreener when present
           if (tokenBc === 'arc') {
             const arcP = arcLivePriceByContract[contractLower];
-            if (arcP > 0 && !(token.price > 0)) token.price = arcP;
+            if (arcP > 0 && !updatedInRun.has(token)) {
+              token.price = arcP;
+              updatedInRun.add(token);
+            }
             if (!token.logoURI && arcLiveLogoByContract[contractLower]) {
               token.logoURI = arcLiveLogoByContract[contractLower];
             }
@@ -652,7 +664,7 @@
         const remainingDexTokens = allTargetTokens.filter(
           (t) => t && t.blockchain !== 'arc' && t.contractAddress
             && t.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL_LOWER
-            && !(t.price > 0)
+            && !updatedInRun.has(t)
         );
         const fallbackFactories = [];
         if (remainingDexTokens.length > 0) {
@@ -681,8 +693,9 @@
                   for (const tok of remainingDexTokens) {
                     const addrLow = String(tok.contractAddress || '').trim().toLowerCase();
                     const foundP = extraPriceMap[addrLow];
-                    if (foundP > 0 && !(tok.price > 0)) {
+                    if (foundP > 0 && !updatedInRun.has(tok)) {
                       tok.price = foundP;
+                      updatedInRun.add(tok);
                     }
                   }
                 })
@@ -694,7 +707,7 @@
           (t) => t && t.blockchain === 'arc' && t.contractAddress
             && t.contractAddress.toLowerCase() !== ARC_USDC_CONTRACT
             && t.contractAddress.toLowerCase() !== EVM_NATIVE_SENTINEL_LOWER
-            && !(t.price > 0)
+            && !updatedInRun.has(t)
         );
         if (remainingArcTokens.length > 0) {
           const arcByAddr = new Map();
@@ -704,7 +717,10 @@
             if (!addrLow) continue;
             const cachedArc = _arcKyberPriceCache.get(addrLow);
             if (cachedArc && cachedArc.fetchRef === curFetch && nowMs - cachedArc.ts < 600_000) {
-              if (cachedArc.price > 0 && !(tok.price > 0)) tok.price = cachedArc.price;
+              if (cachedArc.price > 0 && !updatedInRun.has(tok)) {
+                tok.price = cachedArc.price;
+                updatedInRun.add(tok);
+              }
               continue;
             }
             if (!arcByAddr.has(addrLow)) arcByAddr.set(addrLow, []);
@@ -736,7 +752,10 @@
                       const unitPrice = inUsd / outHuman;
                       _arcKyberPriceCache.set(addrLow, { price: unitPrice, ts: Date.now(), fetchRef: curFetch });
                       for (const t of tokGroup) {
-                        if (!(t.price > 0)) t.price = unitPrice;
+                        if (!updatedInRun.has(t)) {
+                          t.price = unitPrice;
+                          updatedInRun.add(t);
+                        }
                       }
                     }
                   } catch (_) {}

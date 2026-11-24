@@ -157,16 +157,6 @@
           throw new Error(`${String(fromToken.blockchain || '').toUpperCase()} ${t('主链 Gas 余额不足', 'native gas insufficient')} (${nativeBal.toFixed(5)} < ${minNative})`);
         }
       }
-      if (st.swap.quoteData && st.swap.quoteData.quotedAt && (Date.now() - Number(st.swap.quoteData.quotedAt)) > 30000) {
-        if (typeof fetchLiveSwapQuoteAsync === 'function') {
-          await fetchLiveSwapQuoteAsync();
-          if (st.swap._lastError || !st.swap.quoteData) {
-            throw new Error(st.swap._lastError || t('报价已过期，请重新确认最新报价', 'Quote expired; please re-confirm latest quote'));
-          }
-        } else {
-          throw new Error(t('报价已过期（超过 30 秒），请重新获取报价', 'Quote expired (>30s); please refresh quote'));
-        }
-      }
       const activeCompType = st.swap.quoteData && st.swap.quoteData.compositeType;
       if (activeCompType === 'CROSS_CHAIN_TO_ARC_MAINNET' || activeCompType === 'ARC_MAINNET_TO_CROSS_CHAIN') {
         const baseEthBal = Number((wallet.nativeBalances && wallet.nativeBalances.base) ?? 0);
@@ -183,6 +173,14 @@
     st.swap._executing = true;
     let _swapAbortedOrFailed = false;
     try {
+      if (st.swap.quoteData && st.swap.quoteData.quotedAt && (Date.now() - Number(st.swap.quoteData.quotedAt)) > 30000) {
+        if (typeof fetchLiveSwapQuoteAsync === 'function') {
+          await fetchLiveSwapQuoteAsync();
+        }
+        _swapAbortedOrFailed = true;
+        showToast(t('报价已超过 30 秒并已刷新，请确认新报价后再次点击闪兑', 'Quote expired (>30s) and refreshed; confirm new rate and tap Swap again'));
+        return;
+      }
       const authImpact = st.swap.quoteData ? computeSwapPriceImpact(st.swap._usdInVal, st.swap._usdOutVal) : null;
       const impactPromptSuffix = authImpact && (authImpact.level === 'high' || authImpact.level === 'critical')
         ? ` (⚠️ ${t('价差', 'Impact')} -${authImpact.pct.toFixed(1)}%)`
@@ -551,10 +549,31 @@
         if (first.type === 'BRIDGE_IN') {
           const swapLeg = stages.find((s) => s.type === 'NEAR_SWAP') || null;
           const outLeg = stages.find((s) => s.type === 'BRIDGE_OUT') || null;
+          const isPostOriginDex = stages.length < activeQuote.stages.length;
+          const bridgeToken = isPostOriginDex
+            ? {
+                blockchain: fromToken.blockchain,
+                symbol: fromToken.blockchain === 'sol' ? 'SOL' : fromToken.blockchain.toUpperCase(),
+                contractAddress: '',
+                decimals: fromToken.blockchain === 'sol' ? 9 : 18
+              }
+            : fromToken;
+          const bridgeAmtNum = isPostOriginDex
+            ? Math.max(0, Number(intents.fromBaseUnits(stageAmtRaw, bridgeToken.decimals)) - (typeof contracts.getNativeGasReserve === 'function' ? contracts.getNativeGasReserve(bridgeToken.blockchain) : 0.002))
+            : amt;
+          const bridgeAvail = isPostOriginDex
+            ? Number(intents.fromBaseUnits(stageAmtRaw, bridgeToken.decimals))
+            : avail;
+          if (bridgeAmtNum <= 0) {
+            throw new Error(t('源链兑换后余额不足以支付跨链手续费', 'Post-swap balance insufficient for bridge gas'));
+          }
+          const quoteAmtRaw = isPostOriginDex
+            ? intents.toBaseUnits(String(bridgeAmtNum), bridgeToken.decimals)
+            : stageAmtRaw;
           const liveIn = await intents.quoteIntentSwapOrWithdraw({
             originAsset: first.originAsset || fromToken.assetId,
             destinationAsset: first.destinationAsset,
-            amountRaw: stageAmtRaw,
+            amountRaw: quoteAmtRaw,
             slippageBps: st.swap.slippageBps,
             recipient: (!swapLeg && !outLeg) ? recipient : nearId,
             refundTo,
@@ -568,23 +587,6 @@
           }
           const destFollow = outLeg ? await buildDestDexFollowUp(outLeg.expectedOut) : {};
           const bridgeOutRecip = outLeg ? resolveBridgeOutRecipient(outLeg) : recipient;
-          const bridgeToken = stages.length < activeQuote.stages.length
-            ? {
-                blockchain: fromToken.blockchain,
-                symbol: fromToken.blockchain === 'sol' ? 'SOL' : fromToken.blockchain.toUpperCase(),
-                contractAddress: '',
-                decimals: fromToken.blockchain === 'sol' ? 9 : 18
-              }
-            : fromToken;
-          const bridgeAmtNum = stages.length < activeQuote.stages.length
-            ? Math.max(0, Number(intents.fromBaseUnits(stageAmtRaw, bridgeToken.decimals)) - (typeof contracts.getNativeGasReserve === 'function' ? contracts.getNativeGasReserve(bridgeToken.blockchain) : 0.002))
-            : amt;
-          const bridgeAvail = stages.length < activeQuote.stages.length
-            ? Number(intents.fromBaseUnits(stageAmtRaw, bridgeToken.decimals))
-            : avail;
-          if (bridgeAmtNum <= 0) {
-            throw new Error(t('源链兑换后余额不足以支付跨链手续费', 'Post-swap balance insufficient for bridge gas'));
-          }
           const inTx = await broadcastOriginDepositTx({
             wallet,
             fromToken: bridgeToken,

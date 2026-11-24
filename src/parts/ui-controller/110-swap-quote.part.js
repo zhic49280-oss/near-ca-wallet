@@ -226,6 +226,8 @@
       st.swap._quoteAbortCtrl = null;
     }
     st.swap._quoting = false;
+    const amtNum = Number(st.swap.amountIn);
+    st.swap._quotePending = Number.isFinite(amtNum) && amtNum > 0;
     st.swap._lastError = '';
     resetSwapQuoteDisplay();
     updateSwapPrimaryButtonState();
@@ -254,6 +256,7 @@
     const contracts = getContracts();
     const wallet = st.getActiveWallet();
     if (!wallet) return;
+    st.swap._quotePending = false;
 
     const amtRaw = Number(st.swap.amountIn);
     if (!Number.isFinite(amtRaw) || amtRaw <= 0) {

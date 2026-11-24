@@ -1,27 +1,27 @@
-const CACHE_NAME = 'nexus-wallet-v6.60';
+const CACHE_NAME = 'nexus-wallet-v6.61';
 const CORE_ASSETS = [
   './',
   './index.html',
   './manifest.json',
-  './style.css?v=6.60',
-  './assets/favicon.png?v=6.60',
-  './assets/nexus-logo-192.png?v=6.60',
-  './assets/nexus-logo-512.png?v=6.60',
-  './bip39-wordlist.js?v=6.60',
-  './src/crypto-engine.js?v=6.60',
-  './src/token-registry.js?v=6.60',
-  './src/near-intents.js?v=6.60',
-  './src/chain-contracts.js?v=6.60',
-  './src/limit-orders.js?v=6.60',
-  './src/hyperliquid-perps.js?v=6.60',
-  './src/state.js?v=6.60',
-  './src/dapp-browser.js?v=6.60',
-  './src/framework-ui.js?v=6.60',
-  './src/ui-controller.js?v=6.60',
-  './src/mining-pro.js?v=6.60',
-  './ethers.umd.min.js?v=6.60',
-  './qrcode.min.js?v=6.60',
-  './walletconnect.umd.min.js?v=6.60'
+  './style.css?v=6.61',
+  './assets/favicon.png?v=6.61',
+  './assets/nexus-logo-192.png?v=6.61',
+  './assets/nexus-logo-512.png?v=6.61',
+  './bip39-wordlist.js?v=6.61',
+  './src/crypto-engine.js?v=6.61',
+  './src/token-registry.js?v=6.61',
+  './src/near-intents.js?v=6.61',
+  './src/chain-contracts.js?v=6.61',
+  './src/limit-orders.js?v=6.61',
+  './src/hyperliquid-perps.js?v=6.61',
+  './src/state.js?v=6.61',
+  './src/dapp-browser.js?v=6.61',
+  './src/framework-ui.js?v=6.61',
+  './src/ui-controller.js?v=6.61',
+  './src/mining-pro.js?v=6.61',
+  './ethers.umd.min.js?v=6.61',
+  './qrcode.min.js?v=6.61',
+  './walletconnect.umd.min.js?v=6.61'
 ];
 
 self.addEventListener('install', (event) => {

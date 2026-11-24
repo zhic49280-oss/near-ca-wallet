@@ -386,6 +386,7 @@
           autoBroadcasted: true,
           createdAt: Date.now(),
           followUpArcRelay: {
+            direction: 'base_to_arc',
             destContract: toToken.contractAddress || intents.ARC_USDC_CONTRACT,
             destDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 6,
             toSymbol: toToken.symbol,
@@ -518,10 +519,13 @@
               followUpFailed: true,
               followUpError: arcStage2Err?.message || t('Arc 第一步已换出 USDC，跨链至 Base 失败，请重发或调整金额', 'Arc Stage 1 swapped to USDC; Stage 2 bridge failed'),
               followUpArcRelay: {
+                direction: 'arc_to_base',
                 originAsset: intents.ARC_USDC_CONTRACT,
                 destinationAsset: toToken.assetId,
                 amountRaw: arcUsdcRaw,
-                recipient: bridgeRecip
+                recipient: bridgeRecip,
+                toSymbol: toToken.symbol,
+                slippageBps: st.swap.slippageBps
               }
             };
             if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);

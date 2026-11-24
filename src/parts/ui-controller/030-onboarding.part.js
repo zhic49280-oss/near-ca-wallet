@@ -129,6 +129,9 @@
       wallet.pin = String(pin).trim();
       wallet.pinLen = wallet.pin.length;
     }
+    if (pin && typeof st.encryptWalletSecretsToVaultAsync === 'function') {
+      await st.encryptWalletSecretsToVaultAsync(wallet, String(pin).trim());
+    }
     // Non-blocking background discovery of linked .near domain
     if (contracts && typeof contracts.discoverNearAccountsByPublicKeyAsync === 'function' && derived.nearPublicKey) {
       contracts.discoverNearAccountsByPublicKeyAsync(derived.nearPublicKey).then((discovered) => {
@@ -547,6 +550,10 @@
       return;
     }
     if (hadPin && !(await verifySecurityAuthAsync(wallet, t('修改钱包安全密码', 'Update wallet PIN')))) return;
+    if (wallet.encryptedVault && wallet.encryptedVault.ctBase64 && !wallet.mnemonic && !wallet.nearPrivateKey) {
+      showToast(t('请先输入旧 PIN 解锁钱包密钥后再修改密码', 'Unlock wallet secrets with current PIN before updating'));
+      return;
+    }
     if (typeof st.setWalletPinAsync === 'function') {
       await st.setWalletPinAsync(wallet, nextPin);
       wallet.pinLen = nextPin ? nextPin.length : 0;
@@ -560,6 +567,9 @@
       wallet.encryptedVault = null;
     }
     st.saveWallets();
+    const sheetPin = $('sheet-pin');
+    if (sheetPin && sheetPin.classList) sheetPin.classList.remove('auth-top');
+    if (nextPin && typeof clearAppLock === 'function') clearAppLock();
     closeAllSheets();
     renderHubBiometricCardAsync();
     showToast(nextPin ? t('安全密码已更新', 'PIN updated') : t('已清除安全密码', 'PIN cleared'));

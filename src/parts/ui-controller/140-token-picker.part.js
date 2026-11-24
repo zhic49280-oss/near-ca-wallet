@@ -176,18 +176,22 @@
 
     const chainBar = $('token-picker-chains');
     if (chainBar) {
-      chainBar.innerHTML = [
-        `<button type="button" class="filter-pill ${activeChain === 'all' ? 'active' : ''}" data-action="set-picker-chain" data-chain="all">${t('全部网络', 'All')}</button>`,
-        ...pinnedVisible.map((ck) => {
-          const meta = tokens.getChainMeta(ck);
-          return `<button type="button" class="filter-pill ${activeChain === ck ? 'active' : ''}" data-action="set-picker-chain" data-chain="${escapeHtml(ck)}">${escapeHtml(meta.shortName)}</button>`;
-        }),
-        ...(tempExtraChain ? [(() => {
-          const meta = tokens.getChainMeta(tempExtraChain);
-          return `<button type="button" class="filter-pill active" data-action="set-picker-chain" data-chain="${escapeHtml(tempExtraChain)}">${escapeHtml(meta.shortName)}</button>`;
-        })()] : []),
-        `<button type="button" class="filter-pill ${showMoreChains ? 'active' : ''}" data-action="toggle-picker-more-chains">${escapeHtml(showMoreChains ? t('收起网络 ▲', 'Less ▲') : t('更多网络 ▾', 'More ▾'))}</button>`
-      ].join('');
+      const nextChainSig = `${activeChain}|${isFromPicker ? '1' : '0'}|${showMoreChains ? '1' : '0'}|${pinnedVisible.join(',')}|${tempExtraChain}|${st.lang}`;
+      if (!chainBar.dataset || chainBar.dataset.renderedSig !== nextChainSig) {
+        if (chainBar.dataset) chainBar.dataset.renderedSig = nextChainSig;
+        chainBar.innerHTML = [
+          `<button type="button" class="filter-pill ${activeChain === 'all' ? 'active' : ''}" data-action="set-picker-chain" data-chain="all">${t('全部网络', 'All')}</button>`,
+          ...pinnedVisible.map((ck) => {
+            const meta = tokens.getChainMeta(ck);
+            return `<button type="button" class="filter-pill ${activeChain === ck ? 'active' : ''}" data-action="set-picker-chain" data-chain="${escapeHtml(ck)}">${escapeHtml(meta.shortName)}</button>`;
+          }),
+          ...(tempExtraChain ? [(() => {
+            const meta = tokens.getChainMeta(tempExtraChain);
+            return `<button type="button" class="filter-pill active" data-action="set-picker-chain" data-chain="${escapeHtml(tempExtraChain)}">${escapeHtml(meta.shortName)}</button>`;
+          })()] : []),
+          `<button type="button" class="filter-pill ${showMoreChains ? 'active' : ''}" data-action="toggle-picker-more-chains">${escapeHtml(showMoreChains ? t('收起网络 ▲', 'Less ▲') : t('更多网络 ▾', 'More ▾'))}</button>`
+        ].join('');
+      }
     }
 
     const moreChainsEl = $('token-picker-more-chains');
@@ -310,11 +314,17 @@
       const side = st.limit.pickerSide;
       st.limit.pickerSide = null;
       if (side === 'from') {
+        if (assetId === st.limit.buyContract) st.limit.buyContract = st.limit.sellContract;
         st.limit.sellContract = assetId;
         resetFormFields(['limit-amount-in', 'limit-target-rate'], st.limit, { amountIn: '', targetRate: '' });
       } else {
+        if (assetId === st.limit.sellContract) {
+          st.limit.sellContract = st.limit.buyContract;
+          resetFormFields(['limit-amount-in', 'limit-target-rate'], st.limit, { amountIn: '', targetRate: '' });
+        } else {
+          resetFormFields(['limit-target-rate'], st.limit, { targetRate: '' });
+        }
         st.limit.buyContract = assetId;
-        resetFormFields(['limit-target-rate'], st.limit, { targetRate: '' });
       }
       st.limit.priceInverted = null;
       st.limit.snappedPoint = null;
@@ -327,9 +337,14 @@
       return;
     }
     if (st.swap.pickerSide === 'from') {
+      if (assetId === st.swap.toAssetId) st.swap.toAssetId = st.swap.fromAssetId;
       st.swap.fromAssetId = assetId;
       resetFormFields(['swap-amount-in'], st.swap, { amountIn: '' });
     } else {
+      if (assetId === st.swap.fromAssetId) {
+        st.swap.fromAssetId = st.swap.toAssetId;
+        resetFormFields(['swap-amount-in'], st.swap, { amountIn: '' });
+      }
       st.swap.toAssetId = assetId;
       st.swap.recipientAddress = '';
     }
