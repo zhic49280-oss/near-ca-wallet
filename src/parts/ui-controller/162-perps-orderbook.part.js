@@ -351,7 +351,8 @@
       return;
     }
 
-    listEl.innerHTML = filtered.slice(0, 120).map((m) => {
+    const visibleRows = filtered.slice(0, 120);
+    const renderMarketRowHtml = (m) => {
       const pair = m.pairLabel || formatPerpDisplayPair(m.name);
       const dexTag = m.dex || extractPerpDexBadge(m.name);
       const chg = typeof m.change24hPct === 'number' ? m.change24hPct : null;
@@ -388,7 +389,17 @@
           </div>
         </div>
       `;
-    }).join('');
+    };
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountPerpOverview === 'function') {
+      fw.mountPerpOverview(listEl, {
+        rows: visibleRows,
+        renderMarketRowHtml,
+        emptyText: t('暂无匹配合约', 'No matching contracts')
+      });
+      return;
+    }
+    listEl.innerHTML = visibleRows.map(renderMarketRowHtml).join('');
   }
 
   function renderPerpView() {
@@ -426,7 +437,12 @@
       if (spotBanner) spotBanner.classList.add('hidden');
     }
 
-    renderPerpOverviewPanel();
+    const isTradeView = st.perp.subView === 'trade';
+    if ($('perp-overview-panel')) $('perp-overview-panel').classList.toggle('hidden', isTradeView);
+    if ($('perp-trade-panel')) $('perp-trade-panel').classList.toggle('hidden', !isTradeView);
+    if (!isTradeView) {
+      renderPerpOverviewPanel();
+    }
 
     const coinRaw = market ? market.name : (st.perp.selectedCoin || 'BTC');
     const pairLabel = market && market.pairLabel ? market.pairLabel : formatPerpDisplayPair(coinRaw);

@@ -156,20 +156,21 @@
     renderAll();
     const activeW = st.getActiveWallet();
     if (activeW) {
-      refreshAllBalancesAsync(false);
-      if (typeof setTimeout === 'function' && typeof window !== 'undefined' && typeof document !== 'undefined') {
-        const prefetchTm = setTimeout(() => {
-          if (st.getActiveWallet()) {
-            refreshPerpDataAsync(false).catch(() => {});
-            ensureStakingMetricsFresh(300_000);
-          }
-        }, 600);
-        if (prefetchTm && typeof prefetchTm.unref === 'function') prefetchTm.unref();
-      }
       if (shouldEnableAppLockForWallet(activeW)) {
+        st._deferredBootSync = true;
         engageAppLock(true);
       } else {
         clearAppLock();
+        refreshAllBalancesAsync(false);
+        if (typeof setTimeout === 'function' && typeof window !== 'undefined' && typeof document !== 'undefined') {
+          const prefetchTm = setTimeout(() => {
+            if (st.getActiveWallet()) {
+              refreshPerpDataAsync(false).catch(() => {});
+              ensureStakingMetricsFresh(300_000);
+            }
+          }, 600);
+          if (prefetchTm && typeof prefetchTm.unref === 'function') prefetchTm.unref();
+        }
       }
     } else {
       clearAppLock();

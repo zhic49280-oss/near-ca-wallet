@@ -266,7 +266,7 @@
       listEl.innerHTML = `<div class="text-muted" style="text-align:center;padding:24px 12px;">${escapeHtml(t('未找到匹配的代币', 'No matching tokens found'))}</div>`;
       return;
     }
-    listEl.innerHTML = filteredWithMeta.map(({ tok, bal }) => {
+    const renderPickerRowHtml = ({ tok, bal }) => {
       const liveP = (typeof tok.price === 'number' && tok.price > 0) ? tok.price : getSymbolPrice(tok.symbol);
       const priceText = formatTokenPrice(liveP);
       const isFav = favSet.has(String(tok.assetId || '').toLowerCase());
@@ -291,7 +291,17 @@
           </div>
         </div>
       `;
-    }).join('');
+    };
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountTokenPicker === 'function') {
+      fw.mountTokenPicker(listEl, {
+        rows: filteredWithMeta,
+        renderRowHtml: renderPickerRowHtml,
+        emptyText: t('未找到匹配的代币', 'No matching tokens found')
+      });
+      return;
+    }
+    listEl.innerHTML = filteredWithMeta.map(renderPickerRowHtml).join('');
   }
 
   function selectSwapToken(assetId) {

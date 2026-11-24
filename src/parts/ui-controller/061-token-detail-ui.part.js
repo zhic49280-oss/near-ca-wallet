@@ -565,10 +565,12 @@
         if (document.hidden) return;
         if (typeof document.querySelector === 'function' && document.querySelector('.bottom-sheet.open')) return;
       }
+      if (typeof isAppLocked === 'function' && isAppLocked()) return;
       const st = getState();
-      if (st && st.getActiveWallet() && !_isRefreshing) {
-        refreshAllBalancesAsync(false);
-      }
+      if (!st || !st.getActiveWallet() || _isRefreshing) return;
+      if (st.activeTab === 'hub') return;
+      if (st.activeTab === 'perp' && st.perp && st.perp.subView === 'trade') return;
+      refreshAllBalancesAsync(false);
     }, 30000);
     return _autoSyncTimer;
   }

@@ -291,7 +291,7 @@
           if (ds && ds.classList && ds.classList.contains('open')) {
             renderTokenDetailSheet();
           }
-        }, 80);
+        }, 250);
       };
 
       const shouldSyncPositions = showFeedback || st.activeTab === 'earn' || (Date.now() - _lastStakingPositionsSyncAt > 120_000);

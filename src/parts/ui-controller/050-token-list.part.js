@@ -477,6 +477,19 @@
     }
 
     const { mainGroups, dustGroups, dustTotalUsd } = partitionDustAssetGroups(groups, HOME_DUST_USD_THRESHOLD);
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountAssetList === 'function') {
+      fw.mountAssetList(listEl, {
+        mainGroups,
+        dustGroups,
+        dustTotalUsd,
+        showDust: Boolean(st.showDustAssets),
+        renderGroupHtml: renderAssetGroupCard,
+        formatUsd,
+        isEn: st.lang === 'en'
+      });
+      return;
+    }
     let html = mainGroups.map(renderAssetGroupCard).join('');
 
     if (dustGroups.length > 0) {

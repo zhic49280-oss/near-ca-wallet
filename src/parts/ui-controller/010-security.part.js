@@ -389,6 +389,15 @@
     setRootClass('nexus-locked', false);
     const overlay = $('app-lock-overlay');
     if (overlay) overlay.setAttribute('aria-hidden', 'true');
+    const st = getState();
+    if (st && st._deferredBootSync) {
+      st._deferredBootSync = false;
+      if (st.getActiveWallet()) {
+        if (typeof refreshAllBalancesAsync === 'function') refreshAllBalancesAsync(false).catch(() => {});
+        if (typeof refreshPerpDataAsync === 'function') refreshPerpDataAsync(false).catch(() => {});
+        if (typeof ensureStakingMetricsFresh === 'function') ensureStakingMetricsFresh(300_000);
+      }
+    }
   }
 
   function setBackgroundPrivacyBlur(enabled) {
