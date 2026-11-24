@@ -655,10 +655,14 @@
       showToast(`✅ ${t('源链已签名发送，正在跨链交付至', 'Origin tx sent, delivering to')} ${shortenAddr(effectiveRecipient)}`);
       startOrderStatusPolling();
     } catch (err) {
+      _swapAbortedOrFailed = true;
       st.swap._executing = false;
       setSwapError(err && err.message ? err.message : t('兑换失败', 'Swap failed'));
       showToast(err && err.message ? err.message : t('兑换失败', 'Swap failed'));
     } finally {
+      if (!_swapAbortedOrFailed && typeof clearSwapAmountAndQuote === 'function') {
+        clearSwapAmountAndQuote();
+      }
       st.swap._executing = false;
       updateSwapPrimaryButtonState();
     }

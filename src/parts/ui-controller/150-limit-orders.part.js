@@ -163,8 +163,7 @@
     st.limit.chain = key;
     st.limit.sellContract = '';
     st.limit.buyContract = '';
-    st.limit.amountIn = '';
-    st.limit.targetRate = '';
+    resetFormFields(['limit-amount-in', 'limit-target-rate'], st.limit, { amountIn: '', targetRate: '' });
     st.limit.priceInverted = null;
     st.limit.snappedPoint = null;
     st.limit.liveMarketRate = null;

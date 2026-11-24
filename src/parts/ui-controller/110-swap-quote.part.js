@@ -189,6 +189,13 @@
     handleSwapAmountInput();
   }
 
+  function clearSwapAmountAndQuote() {
+    const st = getState();
+    resetFormFields(['swap-amount-in'], st.swap, { amountIn: '', _lastError: '' });
+    resetSwapQuoteDisplay();
+    updateSwapPrimaryButtonState();
+  }
+
   function flipSwapTokens() {
     const st = getState();
     const tmp = st.swap.fromAssetId;
@@ -200,11 +207,11 @@
     st.swap._quoting = false;
     st.swap._lastError = '';
     st.swap._liveGas = null;
+    resetFormFields(['swap-amount-in'], st.swap, { amountIn: '' });
     if (typeof st.saveSwapPair === 'function') st.saveSwapPair();
     setSwapError('');
     resetSwapQuoteDisplay();
     renderSwapView();
-    if (st.swap.amountIn) scheduleSwapQuote();
   }
 
   const _swapQuoteCache = new Map();

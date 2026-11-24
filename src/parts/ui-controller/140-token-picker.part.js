@@ -301,10 +301,11 @@
       st.limit.pickerSide = null;
       if (side === 'from') {
         st.limit.sellContract = assetId;
+        resetFormFields(['limit-amount-in', 'limit-target-rate'], st.limit, { amountIn: '', targetRate: '' });
       } else {
         st.limit.buyContract = assetId;
+        resetFormFields(['limit-target-rate'], st.limit, { targetRate: '' });
       }
-      st.limit.targetRate = '';
       st.limit.priceInverted = null;
       st.limit.snappedPoint = null;
       st.limit.liveMarketRate = null;
@@ -317,6 +318,7 @@
     }
     if (st.swap.pickerSide === 'from') {
       st.swap.fromAssetId = assetId;
+      resetFormFields(['swap-amount-in'], st.swap, { amountIn: '' });
     } else {
       st.swap.toAssetId = assetId;
       st.swap.recipientAddress = '';

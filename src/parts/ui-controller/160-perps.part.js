@@ -1084,6 +1084,31 @@
     renderPerpView();
   }
 
+  function resetPerpOrderForm({ clearPrice = true, clearMargin = true, clearTpSl = true } = {}) {
+    const st = getState();
+    const domIds = [];
+    const defaults = { errorMsg: '' };
+    if (clearPrice) {
+      domIds.push('perp-limit-price-input');
+      defaults.limitPriceInput = '';
+    }
+    if (clearMargin) {
+      domIds.push('perp-margin-input');
+      defaults.marginInput = '';
+    }
+    if (clearTpSl) {
+      domIds.push('perp-tp-input', 'perp-sl-input', 'perp-reduce-only-chk');
+      defaults.tpInput = '';
+      defaults.slInput = '';
+      defaults.reduceOnly = false;
+      const drawer = $('perp-tpsl-drawer');
+      if (drawer) drawer.classList.add('hidden');
+      const btn = $('btn-perp-tpsl-toggle');
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+    }
+    resetFormFields(domIds, st.perp, defaults);
+  }
+
   function backToPerpOverview() {
     const st = getState();
     st.perp.subView = 'overview';
@@ -1096,8 +1121,7 @@
     const changedCoin = nextCoin !== st.perp.selectedCoin;
     st.perp.selectedCoin = nextCoin;
     st.perp.subView = 'trade';
-    st.perp.limitPriceInput = '';
-    st.perp.errorMsg = '';
+    resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
     st.perp.lsRatio = null;
     st.perp.inspectedCandleIdx = null;
     st.perp.overviewSearch = '';
@@ -1350,8 +1374,7 @@
     const changedCoin = nextCoin !== st.perp.selectedCoin;
     st.perp.selectedCoin = nextCoin;
     st.perp.subView = 'trade';
-    st.perp.limitPriceInput = '';
-    st.perp.errorMsg = '';
+    resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
     st.perp.lsRatio = null;
     st.perp.inspectedCandleIdx = null;
     st.perp.marketSearch = '';
@@ -1439,8 +1462,7 @@
         slPrice: slNum,
         availableMargin: avail
       });
-      st.perp.marginInput = '';
-      if ($('perp-margin-input')) $('perp-margin-input').value = '';
+      resetPerpOrderForm({ clearPrice: false, clearMargin: true, clearTpSl: true });
       showToast(`✅ ${t('合约委托已提交', 'Perp order submitted')}`);
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
@@ -1975,6 +1997,7 @@
       st.perp.fundingMode = 'deposit';
       st.perp.fundingTab = modeOrTab === 'arbitrum' ? 'arbitrum' : 'oneclick';
     }
+    resetFormFields(['perp-oc-amount', 'perp-arb-amount', 'perp-withdraw-amount']);
     st.perp.fundingQuote = null;
     st.perp.fundingQuoteError = '';
     st.perp.fundingQuoting = false;

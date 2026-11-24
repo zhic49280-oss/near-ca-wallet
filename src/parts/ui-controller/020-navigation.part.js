@@ -105,6 +105,9 @@
     _backupRevealActive = false;
     const backupContent = $('backup-keys-content');
     if (backupContent) backupContent.innerHTML = '';
+    if (typeof resetFormFields === 'function') {
+      resetFormFields(['earn-amount-in']);
+    }
     const backdrop = $('sheet-backdrop');
     if (backdrop) {
       backdrop.classList.remove('open');

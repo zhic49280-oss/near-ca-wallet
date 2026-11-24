@@ -659,7 +659,7 @@
   function computePtrPullDistance(dy, maxPull = 68) {
     const cleanDy = Number(dy);
     if (!Number.isFinite(cleanDy) || cleanDy <= 0) return 0;
-    return maxPull * (1 - Math.exp(-cleanDy / 135));
+    return maxPull * (1 - Math.exp(-cleanDy / 72));
   }
 
   let _ptrInitialized = false;
@@ -696,7 +696,7 @@
     };
 
     viewWallet.addEventListener('touchstart', (e) => {
-      if (_isRefreshing || !e.touches || e.touches.length !== 1) return;
+      if (!e.touches || e.touches.length !== 1) return;
       if (getScrollTop() > 2) return;
       startX = e.touches[0].clientX;
       startY = e.touches[0].clientY;
@@ -706,15 +706,17 @@
     }, { passive: true });
 
     viewWallet.addEventListener('touchmove', (e) => {
-      if (startY === null || _isRefreshing || !e.touches || e.touches.length !== 1) return;
+      if (startY === null || !e.touches || e.touches.length !== 1) return;
       const dx = e.touches[0].clientX - (startX ?? e.touches[0].clientX);
       const dy = e.touches[0].clientY - startY;
-      if (!pulling && Math.abs(dy) <= Math.abs(dx) * 1.35) {
+      const dist = Math.hypot(dx, dy);
+      // 8px deadzone so micro-jitter on initial touch does not cancel vertical pull
+      if (!pulling && dist > 8 && Math.abs(dx) > Math.abs(dy) * 1.5) {
         startY = null;
         startX = null;
         return;
       }
-      if (dy <= 6 || getScrollTop() > 2) {
+      if (dy <= 2 || getScrollTop() > 2) {
         if (pulling) {
           ind.classList.remove('pulling');
           setPullVisual(0, true);
@@ -722,6 +724,7 @@
         }
         return;
       }
+      if (dist <= 4 && !pulling) return;
       pulling = true;
       latestDy = dy;
       if (e.cancelable && typeof e.preventDefault === 'function') {
@@ -731,16 +734,18 @@
       ind.classList.add('pulling');
       setPullVisual(pullPx, false);
       if (txt) {
-        txt.textContent = pullPx >= THRESHOLD
-          ? t('释放立即刷新', 'Release to refresh')
-          : t('下拉刷新链上余额', 'Pull down to refresh');
+        txt.textContent = _isRefreshing
+          ? t('正在同步多链资产...', 'Syncing multi-chain balances...')
+          : (pullPx >= THRESHOLD
+              ? t('释放立即刷新', 'Release to refresh')
+              : t('下拉刷新链上余额', 'Pull down to refresh'));
       }
     }, { passive: false });
 
     const endPull = () => {
       if (startY === null) return;
       const pullPx = computePtrPullDistance(latestDy, MAX_PULL);
-      const triggered = pulling && pullPx >= THRESHOLD && !_isRefreshing;
+      const triggered = pulling && pullPx >= THRESHOLD;
       startX = null;
       startY = null;
       pulling = false;

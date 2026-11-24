@@ -1,7 +1,7 @@
 ﻿      <!-- ==================== Onboarding View ==================== -->
       <section id="view-onboarding" class="view-section hidden">
         <div class="ios-glass-card hero-card" style="padding: 24px 18px; text-align: center;">
-          <img src="assets/nexus-logo-512.png?v=6.37" alt="Nexus Wallet" style="width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 18px; border: 1px solid rgba(0,236,151,0.35); display: block; object-fit: cover; box-shadow: 0 8px 24px rgba(0,236,151,0.16);" />
+          <img src="assets/nexus-logo-512.png?v=6.38" alt="Nexus Wallet" style="width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 18px; border: 1px solid rgba(0,236,151,0.35); display: block; object-fit: cover; box-shadow: 0 8px 24px rgba(0,236,151,0.16);" />
           <span class="ca-badge" data-i18n="onboard.badge">NEAR 链抽象自托管账户</span>
           <h1 style="margin: 12px 0 8px; font-size: 21px; font-weight: 800; color: #fff;" data-i18n="onboard.title">一个 NEAR 账户，畅通全链资产</h1>
           <p style="margin: 0 0 20px; font-size: 12.5px; color: var(--text-secondary);" data-i18n="onboard.subtitle">一站式多链自托管资产管理、跨链闪兑与链上理财</p>
@@ -48,6 +48,7 @@
         <div class="ios-glass-card hero-card">
           <div class="hero-top-row">
             <span class="hero-caption" data-i18n="home.totalBalance">统一资产总览 (USD)</span>
+            <button type="button" id="btn-home-refresh" class="btn-ghost-sm" onclick="refreshAllBalancesAsync(true)" data-i18n="common.refresh" style="padding: 3px 9px; font-size: 11px;">刷新</button>
           </div>
           <div id="hero-total-usd" class="hero-balance">--</div>
 

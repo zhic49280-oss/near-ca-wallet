@@ -118,7 +118,7 @@ test('v6.36 Audit Fixes: NEAR key delete blocks In-Use key & sw.js/server.js har
   assert.ok(keysSrc.includes('resolvedTarget === creds.publicKeyStr'), 'Must block deleting active key');
 
   const swSrc = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
-  assert.ok(swSrc.includes('nexus-wallet-v6.37'), 'sw.js must be bumped to v6.37');
+  assert.match(swSrc, /nexus-wallet-v6\.(3[7-9]|[4-9]\d)/, 'sw.js must be bumped to >= v6.37');
   assert.ok(swSrc.includes('Promise.allSettled'), 'sw.js must precache fault-tolerantly');
 
   const srvSrc = fs.readFileSync(path.join(ROOT_DIR, 'server.js'), 'utf8');

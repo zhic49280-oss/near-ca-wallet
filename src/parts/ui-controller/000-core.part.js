@@ -58,7 +58,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.37');
+      await loadScriptOnce('ethers.umd.min.js?v=6.38');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -68,7 +68,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.37').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.38').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -78,10 +78,31 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.37').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.38').catch(() => false);
       return getMining();
     }
     return null;
+  }
+
+  /**
+   * Synchronously clears both DOM input/checkbox values and backing state keys
+   * so switching coins, chains, or reopening sheets never leaks stale values.
+   */
+  function resetFormFields(domIds = [], stateTarget = null, stateDefaults = null) {
+    if (stateTarget && stateDefaults && typeof stateDefaults === 'object') {
+      for (const [k, v] of Object.entries(stateDefaults)) {
+        stateTarget[k] = v;
+      }
+    }
+    for (const id of domIds) {
+      const el = $(id);
+      if (!el) continue;
+      if (el.type === 'checkbox' || el.type === 'radio') {
+        el.checked = false;
+      } else if ('value' in el) {
+        el.value = '';
+      }
+    }
   }
 
   function isValidHttpsUrl(urlStr) {

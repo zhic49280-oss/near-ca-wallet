@@ -88,12 +88,13 @@
       existingOrder.followUpConfidentialSwap ||
       existingOrder.followUpRefSwap ||
       existingOrder.followUpDclSwap ||
-      existingOrder.followUpSolDex ||
-      existingOrder.followUpEvmDex ||
+      existingOrder.followUpSolDexSwap ||
+      existingOrder.followUpEvmDexSwap ||
       existingOrder.followUpArcRelay ||
+      existingOrder.followUpArcDexSwap ||
       existingOrder.followUpBaseOneClick ||
       existingOrder.followUpBridgeOut
-    ) && !['SUCCESS', 'FAILED', 'REFUNDED'].includes(String(existingOrder.status || '').toUpperCase()) && !existingOrder.followUpCompleted;
+    ) && !['SUCCESS', 'COMPLETED', 'FAILED', 'REFUNDED'].includes(String(existingOrder.status || '').toUpperCase()) && !existingOrder.followUpExecuted;
     if (hasPendingMultiStage) {
       showToast(t('当前有一笔多段闪兑正在执行，请等待完成后再发起新兑换', 'A multi-step swap is in progress. Please wait for it to finish.'));
       return;
@@ -160,6 +161,7 @@
     }
 
     st.swap._executing = true;
+    let _swapAbortedOrFailed = false;
     try {
       const authImpact = st.swap.quoteData ? computeSwapPriceImpact(st.swap._usdInVal, st.swap._usdOutVal) : null;
       const impactPromptSuffix = authImpact && (authImpact.level === 'high' || authImpact.level === 'critical')
@@ -167,7 +169,10 @@
         : '';
       const isThirdParty = isCustomThirdPartySwapRecipient(wallet, toToken);
       const thirdPartySuffix = isThirdParty ? ` → ${shortenAddr(st.swap.recipientAddress)}` : '';
-      if (!(await verifySecurityAuthAsync(wallet, `${t('确认兑换', 'Confirm swap')} ${amtStr} ${fromToken.symbol} → ${toToken.symbol}${impactPromptSuffix}${thirdPartySuffix}`))) return;
+      if (!(await verifySecurityAuthAsync(wallet, `${t('确认兑换', 'Confirm swap')} ${amtStr} ${fromToken.symbol} → ${toToken.symbol}${impactPromptSuffix}${thirdPartySuffix}`))) {
+        _swapAbortedOrFailed = true;
+        return;
+      }
 
       setSwapError('');
       await contracts.ensureWalletSigningKeysAsync(wallet);
@@ -461,7 +466,10 @@
           }
         }
         const first = stages[0];
-        if (!first) return;
+        if (!first) {
+          _swapAbortedOrFailed = true;
+          return;
+        }
         const destDexLeg = stages.find((s) => s.type === 'DEST_DEX') || null;
         const resolveBridgeOutRecipient = (leg) => {
           if (destDexLeg) {
