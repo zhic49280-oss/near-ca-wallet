@@ -1,0 +1,739 @@
+  async function refreshPerpLongShortAsync(coin, force = false) {
+    const st = getState();
+    const hl = getHyperliquid();
+    if (!hl || typeof hl.fetchGlobalLongShortAccountRatio !== 'function') return null;
+    const targetCoin = String(coin || (st.perp && st.perp.selectedCoin) || 'BTC');
+    const res = await hl.fetchGlobalLongShortAccountRatio(targetCoin, { timeoutMs: 2500, force }).catch(() => null);
+    if (st.perp.selectedCoin !== targetCoin) return null;
+    st.perp.lsRatio = res || null;
+    renderPerpLongShortBar();
+    return res || null;
+  }
+
+  async function refreshPerpOrderbookAndCandlesAsync() {
+    const st = getState();
+    const hl = getHyperliquid();
+    if (!hl) return;
+    const coin = st.perp.selectedCoin || 'BTC';
+    const iv = st.perp.chartInterval || '15m';
+    const tasks = [hl.fetchHlOrderbook(coin).catch(() => null)];
+    if (st.perp.showChart) tasks.push(hl.fetchHlCandles(coin, iv, 200).catch(() => []));
+    const [ob, candles] = await Promise.all(tasks);
+    if (st.perp.selectedCoin !== coin) return;
+    if (ob) st.perp.orderbook = ob;
+    if (Array.isArray(candles)) st.perp.candles = candles;
+    if (typeof st.saveCachedPerpSnapshot === 'function') {
+      st.saveCachedPerpSnapshot({
+        candles: Array.isArray(candles) && candles.length > 0 ? candles : undefined,
+        candleCoin: coin,
+        candleInterval: iv,
+        orderbook: ob || undefined,
+        orderbookCoin: coin
+      });
+    }
+    renderPerpView();
+  }
+
+  function setPerpChartInterval(interval) {
+    const st = getState();
+    const iv = ['5m', '15m', '1h', '4h', '1d'].includes(String(interval)) ? String(interval) : '15m';
+    st.perp.chartInterval = iv;
+    st.perp.showChart = true;
+    st.perp.inspectedCandleIdx = null;
+    st.perp.chartOffsetFromEnd = 0;
+    const coin = st.perp.selectedCoin || 'BTC';
+    if (typeof st.getCachedPerpCandles === 'function') {
+      st.perp.candles = st.getCachedPerpCandles(coin, iv) || [];
+    }
+    renderPerpView();
+    refreshPerpOrderbookAndCandlesAsync().catch(() => {});
+  }
+
+  let _perpRefreshInFlight = null;
+
+  async function refreshPerpDataAsync(force = false) {
+    if (!force && _perpRefreshInFlight) {
+      return _perpRefreshInFlight;
+    }
+    const run = (async () => {
+      const st = getState();
+      const hl = getHyperliquid();
+      const contracts = getContracts();
+      const wallet = st.getActiveWallet();
+      if (!hl || !contracts || !wallet) return;
+      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+      const hlAddr = contracts.resolveWalletEvmSender(wallet);
+      if ((!st.perp.markets.length || !st.perp.account) && typeof st.loadCachedPerpSnapshot === 'function') {
+        st.loadCachedPerpSnapshot(hlAddr);
+        renderPerpView();
+      }
+      const now = Date.now();
+      const needMarkets = force || !st.perp.markets.length || (now - st.perp.lastMarketSyncTs > 30_000);
+      const [mkts, acct] = await Promise.all([
+        needMarkets ? hl.fetchHlMarkets().catch(() => null) : Promise.resolve(null),
+        hlAddr ? hl.fetchHlAccountState(hlAddr).catch(() => null) : Promise.resolve(null)
+      ]);
+      if (Array.isArray(mkts) && mkts.length > 0) {
+        st.perp.markets = mkts;
+        st.perp.lastMarketSyncTs = Date.now();
+      }
+      if (acct) {
+        st.perp.account = acct;
+        st.perp.lastAccountSyncTs = Date.now();
+      }
+      if (typeof st.saveCachedPerpSnapshot === 'function') {
+        st.saveCachedPerpSnapshot({
+          markets: Array.isArray(mkts) && mkts.length > 0 ? mkts : undefined,
+          account: acct || undefined,
+          accountAddr: hlAddr
+        });
+      }
+      await refreshPerpOrderbookAndCandlesAsync();
+      if (force) {
+        refreshPerpLongShortAsync(st.perp.selectedCoin || 'BTC', true).catch(() => {});
+        showToast(t('合约数据已刷新', 'Perps synced'));
+      }
+    })();
+
+    if (!force) {
+      _perpRefreshInFlight = run.finally(() => {
+        if (_perpRefreshInFlight === wrapped) _perpRefreshInFlight = null;
+      });
+      var wrapped = _perpRefreshInFlight;
+      return wrapped;
+    }
+    return run;
+  }
+
+  function setPerpSide(side) {
+    getState().perp.side = side === 'short' ? 'short' : 'long';
+    getState().perp.errorMsg = '';
+    renderPerpView();
+  }
+
+  function setPerpMarginMode(mode) {
+    const st = getState();
+    const market = getSelectedPerpMarket();
+    if (mode === 'cross' && market && market.onlyIsolated) {
+      showToast(t('该市场仅支持逐仓模式', 'This market supports Isolated margin only'));
+      return;
+    }
+    st.perp.marginMode = mode === 'cross' ? 'cross' : 'isolated';
+    renderPerpView();
+  }
+
+  function setPerpOrderType(orderType) {
+    const st = getState();
+    const oType = orderType === 'limit' ? 'limit' : (orderType === 'post_only' ? 'post_only' : 'market');
+    st.perp.orderType = oType;
+    st.perp.tif = oType === 'post_only' ? 'Alo' : (oType === 'limit' ? 'Gtc' : 'Ioc');
+    const market = getSelectedPerpMarket();
+    if ((oType === 'limit' || oType === 'post_only') && !st.perp.limitPriceInput && market && market.markPx) {
+      st.perp.limitPriceInput = String(market.markPx);
+      const inp = $('perp-limit-price-input');
+      if (inp) inp.value = st.perp.limitPriceInput;
+    }
+    renderPerpView();
+  }
+
+  function resetPerpOrderForm({ clearPrice = true, clearMargin = true, clearTpSl = true } = {}) {
+    const st = getState();
+    const domIds = [];
+    const defaults = { errorMsg: '' };
+    if (clearPrice) {
+      domIds.push('perp-limit-price-input');
+      defaults.limitPriceInput = '';
+    }
+    if (clearMargin) {
+      domIds.push('perp-margin-input');
+      defaults.marginInput = '';
+    }
+    if (clearTpSl) {
+      domIds.push('perp-tp-input', 'perp-sl-input', 'perp-reduce-only-chk');
+      defaults.tpInput = '';
+      defaults.slInput = '';
+      defaults.reduceOnly = false;
+      const drawer = $('perp-tpsl-drawer');
+      if (drawer) drawer.classList.add('hidden');
+      const btn = $('btn-perp-tpsl-toggle');
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+    }
+    resetFormFields(domIds, st.perp, defaults);
+  }
+
+  function backToPerpOverview() {
+    const st = getState();
+    st.perp.subView = 'overview';
+    renderPerpView();
+  }
+
+  function openPerpTradeScreen(coin) {
+    const st = getState();
+    const nextCoin = coin ? String(coin) : (st.perp.selectedCoin || 'BTC');
+    const changedCoin = nextCoin !== st.perp.selectedCoin;
+    st.perp.selectedCoin = nextCoin;
+    st.perp.subView = 'trade';
+    resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
+    st.perp.lsRatio = null;
+    st.perp.inspectedCandleIdx = null;
+    st.perp.chartOffsetFromEnd = 0;
+    st.perp.chartVisibleCount = 48;
+    st.perp.overviewSearch = '';
+    if ($('perp-overview-search')) $('perp-overview-search').value = '';
+    if ($('perp-overview-search-clear')) $('perp-overview-search-clear').classList.add('hidden');
+    if (changedCoin) st.perp.orderbook = null;
+    if (typeof st.getCachedPerpCandles === 'function') {
+      st.perp.candles = st.getCachedPerpCandles(nextCoin, st.perp.chartInterval || '15m') || [];
+    } else if (changedCoin) {
+      st.perp.candles = [];
+    }
+    if (typeof st.loadCachedPerpSnapshot === 'function') {
+      st.loadCachedPerpSnapshot();
+    }
+    renderPerpView();
+    refreshPerpOrderbookAndCandlesAsync().catch(() => {});
+    refreshPerpLongShortAsync(st.perp.selectedCoin, false).catch(() => {});
+  }
+
+  function handlePerpOverviewSearch(val) {
+    const st = getState();
+    st.perp.overviewSearch = String(val || '');
+    renderPerpOverviewPanel();
+  }
+
+  function clearPerpOverviewSearch() {
+    const st = getState();
+    st.perp.overviewSearch = '';
+    const inp = $('perp-overview-search');
+    if (inp) {
+      inp.value = '';
+      if (typeof inp.focus === 'function') inp.focus();
+    }
+    const clr = $('perp-overview-search-clear');
+    if (clr) clr.classList.add('hidden');
+    renderPerpOverviewPanel();
+  }
+
+  function clearPerpMarketSearch() {
+    const st = getState();
+    st.perp.marketSearch = '';
+    const inp = $('perp-market-search');
+    if (inp) {
+      inp.value = '';
+      if (typeof inp.focus === 'function') inp.focus();
+    }
+    const clr = $('perp-market-search-clear');
+    if (clr) clr.classList.add('hidden');
+    renderPerpMarketsSheet();
+  }
+
+  function setPerpOverviewCategory(cat) {
+    const st = getState();
+    st.perp.overviewCategory = ['favorites', 'crypto', 'stocks', 'all'].includes(cat) ? cat : 'crypto';
+    renderPerpOverviewPanel();
+  }
+
+  function togglePerpOverviewSort(key) {
+    const st = getState();
+    const k = ['vol', 'px', 'chg'].includes(key) ? key : 'vol';
+    if (st.perp.overviewSortKey === k) {
+      st.perp.overviewSortDir = st.perp.overviewSortDir === 'desc' ? 'asc' : 'desc';
+    } else {
+      st.perp.overviewSortKey = k;
+      st.perp.overviewSortDir = 'desc';
+    }
+    renderPerpOverviewPanel();
+  }
+
+  function fillPerpBboPrice() {
+    const st = getState();
+    const ob = st.perp && st.perp.orderbook;
+    const market = getSelectedPerpMarket();
+    const isLong = st.perp.side !== 'short';
+    let bboPx = null;
+    if (ob && isLong && Array.isArray(ob.bids) && ob.bids.length > 0) {
+      bboPx = ob.bids[0].px;
+    } else if (ob && !isLong && Array.isArray(ob.asks) && ob.asks.length > 0) {
+      bboPx = ob.asks[0].px;
+    } else if (market && market.markPx) {
+      bboPx = market.markPx;
+    }
+    if (!bboPx) return;
+    if (st.perp.orderType !== 'limit' && st.perp.orderType !== 'post_only') {
+      st.perp.orderType = 'limit';
+      st.perp.tif = 'Gtc';
+    }
+    st.perp.limitPriceInput = String(bboPx);
+    const inp = $('perp-limit-price-input');
+    if (inp) inp.value = st.perp.limitPriceInput;
+    renderPerpView();
+  }
+
+  function togglePerpReduceOnly(checked) {
+    getState().perp.reduceOnly = Boolean(checked);
+    evaluatePerpOrderUI();
+  }
+
+  function setPerpLeverage(val) {
+    const st = getState();
+    const market = getSelectedPerpMarket();
+    const maxLev = market ? (Number(market.maxLeverage) || 20) : 50;
+    const n = Math.max(1, Math.min(maxLev, Math.round(Number(val) || 1)));
+    st.perp.leverage = n;
+    const levEl = $('perp-lev-val');
+    if (levEl) levEl.textContent = `${n}x`;
+    evaluatePerpOrderUI();
+  }
+
+  function handlePerpMarginInput() {
+    getState().perp.errorMsg = '';
+    evaluatePerpOrderUI();
+  }
+
+  function handlePerpLimitPriceInput() {
+    getState().perp.errorMsg = '';
+    evaluatePerpOrderUI();
+  }
+
+  function setPerpMarginPercent(pct) {
+    const st = getState();
+    const avail = st.perp.account ? Number(st.perp.account.availableMargin || 0) : 0;
+    if (avail <= 0) {
+      showToast(t('可用保证金为 0，请先充值或从 Spot 划转', 'Available margin is 0; deposit or transfer first'));
+      return;
+    }
+    const amt = (avail * Number(pct)).toFixed(2);
+    st.perp.marginInput = amt;
+    const inp = $('perp-margin-input');
+    if (inp) inp.value = amt;
+    st.perp.errorMsg = '';
+    evaluatePerpOrderUI();
+  }
+
+  function togglePerpChart() {
+    const st = getState();
+    st.perp.showChart = !st.perp.showChart;
+    renderPerpView();
+    if (st.perp.showChart) refreshPerpOrderbookAndCandlesAsync().catch(() => {});
+  }
+
+  function fillPerpLimitPrice(px) {
+    const st = getState();
+    if (st.perp.orderType !== 'post_only') {
+      st.perp.orderType = 'limit';
+      st.perp.tif = 'Gtc';
+    }
+    st.perp.limitPriceInput = String(px || '');
+    const inp = $('perp-limit-price-input');
+    if (inp) inp.value = st.perp.limitPriceInput;
+    renderPerpView();
+  }
+
+  function setPerpBottomTab(tab) {
+    getState().perp.bottomTab = ['positions', 'orders', 'fills'].includes(tab) ? tab : 'positions';
+    renderPerpBottomList();
+  }
+
+  function setPerpMarketFilter(filter) {
+    const st = getState();
+    st.perp.marketFilter = ['hot', 'all', 'stocks', 'gainers', 'vol'].includes(filter) ? filter : 'hot';
+    renderPerpMarketsSheet();
+  }
+
+  function renderPerpMarketsSheet() {
+    const st = getState();
+    const tokens = getTokens();
+    const hl = getHyperliquid();
+    const listEl = $('perp-market-list');
+    if (!listEl) return;
+    const q = String($('perp-market-search')?.value || st.perp.marketSearch || '').trim().toUpperCase();
+    st.perp.marketSearch = q;
+    const mktClr = $('perp-market-search-clear');
+    if (mktClr) mktClr.classList.toggle('hidden', q.length === 0);
+    const activeFilter = st.perp.marketFilter || 'hot';
+    if (typeof document !== 'undefined') {
+      document.querySelectorAll('#perp-market-filters [data-mkt-filter]').forEach((btn) => {
+        btn.classList.toggle('active', btn.getAttribute('data-mkt-filter') === activeFilter);
+      });
+    }
+
+    const mkts = Array.isArray(st.perp.markets) ? [...st.perp.markets] : [];
+    let filtered = q
+      ? mkts.filter((m) => `${m.name} ${m.baseSymbol || ''} ${m.pairLabel || ''}`.toUpperCase().includes(q))
+      : mkts;
+    if (activeFilter === 'stocks') {
+      filtered = filtered.filter((m) => m.category === 'stocks' || Boolean(m.dex));
+      filtered.sort((a, b) => (Number(b.dayNtlVlm) || 0) - (Number(a.dayNtlVlm) || 0));
+    } else if (activeFilter === 'gainers') {
+      filtered.sort((a, b) => (Number.isFinite(Number(b.change24hPct)) ? Number(b.change24hPct) : -999999) - (Number.isFinite(Number(a.change24hPct)) ? Number(a.change24hPct) : -999999));
+    } else if (activeFilter === 'vol') {
+      filtered.sort((a, b) => (Number(b.dayNtlVlm) || 0) - (Number(a.dayNtlVlm) || 0));
+    } else if (activeFilter === 'hot') {
+      const pinned = new Set((hl && hl.PINNED_COINS) || ['BTC', 'ETH', 'SOL', 'NEAR', 'HYPE']);
+      const top = filtered.filter((m) => pinned.has(m.name));
+      const rest = filtered.filter((m) => !pinned.has(m.name)).sort((a, b) => (Number(b.dayNtlVlm) || 0) - (Number(a.dayNtlVlm) || 0));
+      filtered = q ? [...top, ...rest] : [...top, ...rest.slice(0, 45)];
+    }
+
+    if (filtered.length === 0) {
+      listEl.innerHTML = `<div style="font-size: 12px; color: var(--text-muted); text-align:center; padding: 18px 0;">${escapeHtml(t('未找到匹配市场', 'No matching market'))}</div>`;
+      return;
+    }
+    const selCoin = st.perp.selectedCoin || 'BTC';
+    listEl.innerHTML = filtered.slice(0, 120).map((m) => {
+      const chg = typeof m.change24hPct === 'number' ? m.change24hPct : null;
+      const chgStr = chg !== null ? `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%` : '--';
+      const chgCls = chg !== null ? (chg >= 0 ? 'text-emerald' : 'text-rose') : '';
+      const pairLabel = m.pairLabel || formatPerpDisplayPair(m.name);
+      const dexTag = m.dex || extractPerpDexBadge(m.name);
+      const iconHtml = tokens && typeof tokens.renderTokenIconWithBadge === 'function'
+        ? tokens.renderTokenIconWithBadge({ symbol: m.name, blockchain: 'hype' }, 28, false)
+        : '';
+      const volText = typeof m.dayNtlVlm === 'number' && m.dayNtlVlm > 0 ? `${t('量', 'Vol')} ${formatCompactUsd(m.dayNtlVlm)}` : '';
+      return `
+        <button type="button" class="perp-market-item ${m.name === selCoin ? 'active' : ''}" data-action="select-perp-market" data-coin="${escapeHtml(m.name)}">
+          <div class="flex items-center gap-2">
+            ${iconHtml}
+            <div class="flex flex-col" style="gap:1px;">
+              <div class="flex items-center gap-1">
+                <strong>${escapeHtml(pairLabel)}</strong>
+                ${dexTag ? `<span class="perp-dex-pill">${escapeHtml(dexTag)}</span>` : ''}
+                <span class="ca-badge">${escapeHtml(String(m.maxLeverage || 20))}x</span>
+              </div>
+              <span style="font-size: 10.5px; color: var(--text-muted);">${escapeHtml(volText)}</span>
+            </div>
+          </div>
+          <div class="flex flex-col mono" style="font-size: 12.5px; text-align: right; gap: 2px;">
+            <strong style="color: #fff;">${m.markPx ? `$${escapeHtml(formatPerpPx(m.markPx))}` : '--'}</strong>
+            <span class="${chgCls}" style="font-size: 11px;">${escapeHtml(chgStr)}</span>
+          </div>
+        </button>
+      `;
+    }).join('');
+  }
+
+  function openPerpMarketsSheet() {
+    const st = getState();
+    st.perp.marketSearch = '';
+    if ($('perp-market-search')) $('perp-market-search').value = '';
+    if ($('perp-market-search-clear')) $('perp-market-search-clear').classList.add('hidden');
+    renderPerpMarketsSheet();
+    openSheet('sheet-perp-markets');
+    if (!getState().perp.markets.length) refreshPerpDataAsync(false).then(() => renderPerpMarketsSheet()).catch(() => {});
+  }
+
+  function selectPerpMarket(coin) {
+    const st = getState();
+    const nextCoin = String(coin || 'BTC');
+    const changedCoin = nextCoin !== st.perp.selectedCoin;
+    st.perp.selectedCoin = nextCoin;
+    st.perp.subView = 'trade';
+    resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
+    st.perp.lsRatio = null;
+    st.perp.inspectedCandleIdx = null;
+    st.perp.chartOffsetFromEnd = 0;
+    st.perp.chartVisibleCount = 48;
+    st.perp.marketSearch = '';
+    if ($('perp-market-search')) $('perp-market-search').value = '';
+    if ($('perp-market-search-clear')) $('perp-market-search-clear').classList.add('hidden');
+    if (changedCoin) st.perp.orderbook = null;
+    if (typeof st.getCachedPerpCandles === 'function') {
+      st.perp.candles = st.getCachedPerpCandles(nextCoin, st.perp.chartInterval || '15m') || [];
+    } else if (changedCoin) {
+      st.perp.candles = [];
+    }
+    if (typeof st.loadCachedPerpSnapshot === 'function') {
+      st.loadCachedPerpSnapshot();
+    }
+    const existingPos = st.perp.account && Array.isArray(st.perp.account.positions)
+      ? st.perp.account.positions.find((p) => p.coin === nextCoin)
+      : null;
+    if (existingPos) {
+      if (existingPos.leverageType === 'cross' || existingPos.leverageType === 'isolated') {
+        st.perp.marginMode = existingPos.leverageType;
+      }
+      if (Number(existingPos.leverageValue) >= 1) {
+        st.perp.leverage = Math.round(Number(existingPos.leverageValue));
+      }
+    }
+    closeAllSheets();
+    renderPerpView();
+    refreshPerpOrderbookAndCandlesAsync().catch(() => {});
+    refreshPerpLongShortAsync(st.perp.selectedCoin, false).catch(() => {});
+  }
+
+  async function executePerpOrderUI() {
+    const st = getState();
+    if (st.perp.submitting) return;
+    const hl = getHyperliquid();
+    const wallet = st.getActiveWallet();
+    if (!hl || !wallet) return;
+    const evalRes = evaluatePerpOrderUI();
+    if (evalRes.disabled || !evalRes.sizeNum) {
+      if (evalRes.error) showToast(evalRes.error);
+      return;
+    }
+    const market = getSelectedPerpMarket();
+    if (!market) return;
+    const isBuy = st.perp.side === 'long';
+    const refPx = Number(st.perp.limitPriceInput) || Number(market.markPx) || 0;
+    const tpNum = st.perp.tpInput ? Number(st.perp.tpInput) : null;
+    const slNum = st.perp.slInput ? Number(st.perp.slInput) : null;
+    if (!st.perp.reduceOnly && refPx > 0) {
+      if (tpNum && ((isBuy && tpNum <= refPx) || (!isBuy && tpNum >= refPx))) {
+        showToast(t('止盈价方向有误（多单需高于开仓价，空单需低于开仓价）', 'Invalid TP price direction for position side'));
+        return;
+      }
+      if (slNum && ((isBuy && slNum >= refPx) || (!isBuy && slNum <= refPx))) {
+        showToast(t('止损价方向有误（多单需低于开仓价，空单需高于开仓价）', 'Invalid SL price direction for position side'));
+        return;
+      }
+    }
+    const sideLabel = isBuy ? t('做多', 'Long') : t('做空', 'Short');
+    const confirmLabel = `${t('确认合约下单', 'Confirm Perp Order')}: ${sideLabel} ${formatPerpDisplayPair(market.name)} ${st.perp.leverage}x · ${evalRes.sizeNum}`;
+    if (!(await verifySecurityAuthAsync(wallet, confirmLabel))) return;
+    st.perp.submitting = true;
+    st.perp.errorMsg = '';
+    renderPerpView();
+    try {
+      await ensureEthersLoaded();
+      const oType = st.perp.orderType || 'market';
+      const tif = st.perp.tif || (oType === 'post_only' ? 'Alo' : (oType === 'limit' ? 'Gtc' : 'Ioc'));
+      const isLimitLike = oType === 'limit' || oType === 'post_only';
+      const avail = st.perp.account ? Number(st.perp.account.availableMargin || 0) : null;
+      const openPos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === market.name);
+      const levUnchanged = openPos && Number(openPos.leverageValue) === Number(st.perp.leverage) && openPos.leverageType === st.perp.marginMode;
+      await hl.placeHlPerpOrder({
+        wallet,
+        market,
+        isBuy,
+        size: evalRes.sizeNum,
+        orderType: oType,
+        tif,
+        limitPrice: isLimitLike ? Number(st.perp.limitPriceInput) : null,
+        reduceOnly: Boolean(st.perp.reduceOnly),
+        leverage: levUnchanged ? null : st.perp.leverage,
+        isCross: st.perp.marginMode === 'cross',
+        tpPrice: tpNum,
+        slPrice: slNum,
+        availableMargin: avail
+      });
+      resetPerpOrderForm({ clearPrice: false, clearMargin: true, clearTpSl: true });
+      showToast(`✅ ${t('合约委托已提交', 'Perp order submitted')}`);
+      await refreshPerpDataAsync(false).catch(() => {});
+    } catch (err) {
+      const rawMsg = (err && err.message) || '';
+      st.perp.errorMsg = /does not exist/i.test(rawMsg)
+        ? t('合约账户尚未激活，请先充值 USDC', 'Perp account not activated; please deposit USDC first')
+        : (rawMsg || t('下单失败', 'Order failed'));
+      showToast(st.perp.errorMsg);
+    } finally {
+      st.perp.submitting = false;
+      renderPerpView();
+    }
+  }
+
+  async function closePerpPositionUI(coin) {
+    const st = getState();
+    const hl = getHyperliquid();
+    const wallet = st.getActiveWallet();
+    if (!hl || !wallet || !coin) return;
+    const pos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === coin);
+    let market = (st.perp.markets || []).find((m) => m.name === coin);
+    if (!pos) return;
+    if (!(await verifySecurityAuthAsync(wallet, `${t('确认市价平仓', 'Confirm Market Close')}: ${formatPerpDisplayPair(coin)}`))) return;
+    try {
+      await ensureEthersLoaded();
+      if (!market) {
+        const mkts = await hl.fetchHlMarkets();
+        st.perp.markets = mkts;
+        market = mkts.find((m) => m.name === coin);
+      }
+      if (!market) throw new Error(t('未找到对应合约市场', 'Market metadata unavailable'));
+      await hl.closeHlPositionMarket({ wallet, market, position: pos });
+      showToast(`✅ ${formatPerpDisplayPair(coin)} ${t('已市价平仓', 'position closed')}`);
+      await refreshPerpDataAsync(false).catch(() => {});
+    } catch (err) {
+      showToast((err && err.message) || t('平仓失败', 'Close failed'));
+    }
+  }
+
+  function openPerpPositionTpSlSheet(coin) {
+    const st = getState();
+    const acct = st.perp && st.perp.account;
+    const pos = acct && (acct.positions || []).find((p) => p.coin === coin);
+    if (!pos) return;
+    st.perp.editingTpslCoin = pos.coin;
+    if ($('perp-tpsl-sheet-pair')) {
+      $('perp-tpsl-sheet-pair').textContent = `${formatPerpDisplayPair(pos.coin)} · ${pos.isLong ? t('多', 'Long') : t('空', 'Short')} ${pos.leverageValue || '--'}x`;
+    }
+    if ($('perp-tpsl-sheet-liq')) {
+      $('perp-tpsl-sheet-liq').textContent = pos.liquidationPx ? `$${formatPerpPx(pos.liquidationPx)}` : '--';
+    }
+    if ($('perp-pos-tp-input')) $('perp-pos-tp-input').value = pos.tpTriggerPx ? String(pos.tpTriggerPx) : '';
+    if ($('perp-pos-sl-input')) $('perp-pos-sl-input').value = pos.slTriggerPx ? String(pos.slTriggerPx) : '';
+    openSheet('sheet-perp-tpsl');
+  }
+
+  async function submitPerpPositionTpSlUI(clearOnly = false) {
+    const st = getState();
+    const hl = getHyperliquid();
+    const wallet = st.getActiveWallet();
+    const coin = st.perp && st.perp.editingTpslCoin;
+    if (!hl || !wallet || !coin) return;
+    const acct = st.perp.account;
+    const pos = acct && (acct.positions || []).find((p) => p.coin === coin);
+    if (!pos) return;
+    const tpRaw = clearOnly ? NaN : Number($('perp-pos-tp-input')?.value);
+    const slRaw = clearOnly ? NaN : Number($('perp-pos-sl-input')?.value);
+    const tpPrice = Number.isFinite(tpRaw) && tpRaw > 0 ? tpRaw : null;
+    const slPrice = Number.isFinite(slRaw) && slRaw > 0 ? slRaw : null;
+    const btn = $('btn-perp-tpsl-save');
+    if (btn) btn.disabled = true;
+    try {
+      await ensureEthersLoaded();
+      let market = (st.perp.markets || []).find((m) => m.name === coin);
+      if (!market) {
+        const mkts = await hl.fetchHlMarkets();
+        st.perp.markets = mkts;
+        market = mkts.find((m) => m.name === coin);
+      }
+      if (!market) throw new Error(t('未找到对应合约市场', 'Market metadata unavailable'));
+      await hl.updateHlPositionTpSl({
+        wallet,
+        market,
+        position: pos,
+        tpPrice,
+        slPrice,
+        openOrders: (acct && acct.openOrders) || []
+      });
+      closeAllSheets();
+      showToast(`✅ ${clearOnly ? t('已清除止盈止损', 'TP/SL cleared') : t('止盈止损已更新', 'TP/SL updated')}`);
+      await refreshPerpDataAsync(false).catch(() => {});
+    } catch (err) {
+      showToast((err && err.message) || t('更新止盈止损失败', 'TP/SL update failed'));
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function reversePerpPositionUI(coin) {
+    const st = getState();
+    const hl = getHyperliquid();
+    const wallet = st.getActiveWallet();
+    if (!hl || !wallet || !coin) return;
+    const pos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === coin);
+    if (!pos) return;
+    if (!(await verifySecurityAuthAsync(wallet, `${t('确认反手开仓', 'Confirm Reverse Position')}: ${formatPerpDisplayPair(coin)}`))) return;
+    try {
+      await ensureEthersLoaded();
+      let market = (st.perp.markets || []).find((m) => m.name === coin);
+      if (!market) {
+        const mkts = await hl.fetchHlMarkets();
+        st.perp.markets = mkts;
+        market = mkts.find((m) => m.name === coin);
+      }
+      if (!market) throw new Error(t('未找到对应合约市场', 'Market metadata unavailable'));
+      const avail = st.perp.account ? Number(st.perp.account.availableMargin || 0) : null;
+      await hl.reverseHlPositionMarket({ wallet, market, position: pos, availableMargin: avail });
+      showToast(`✅ ${formatPerpDisplayPair(coin)} ${t('已反手开仓', 'position reversed')}`);
+      await refreshPerpDataAsync(false).catch(() => {});
+    } catch (err) {
+      showToast((err && err.message) || t('反手开仓失败', 'Reverse failed'));
+    }
+  }
+
+  let _perpBatchBusy = false;
+
+  async function executePerpBatchAction() {
+    if (_perpBatchBusy) return;
+    const st = getState();
+    const hl = getHyperliquid();
+    const wallet = st.getActiveWallet();
+    const acct = st.perp && st.perp.account;
+    if (!hl || !wallet || !acct) return;
+    const tab = st.perp.bottomTab || 'positions';
+    const actionLabel = tab === 'orders' ? t('确认撤销全部委托', 'Confirm Cancel All Orders') : t('确认一键全平所有仓位', 'Confirm Close All Positions');
+    if (!(await verifySecurityAuthAsync(wallet, actionLabel))) return;
+    _perpBatchBusy = true;
+    const batchBtn = $('btn-perp-batch-action');
+    if (batchBtn) batchBtn.disabled = true;
+    try {
+      await ensureEthersLoaded();
+      if ((!st.perp.markets || st.perp.markets.length === 0) && typeof hl.fetchHlMarkets === 'function') {
+        st.perp.markets = await hl.fetchHlMarkets();
+      }
+      if (tab === 'orders') {
+        if (!acct.openOrders || acct.openOrders.length === 0) return;
+        await hl.cancelAllHlOrders({ wallet, openOrders: acct.openOrders, markets: st.perp.markets || [] });
+        showToast(`✅ ${t('已撤销全部委托', 'All orders cancelled')}`);
+      } else {
+        const positions = acct.positions || [];
+        if (positions.length === 0) return;
+        let closedCount = 0;
+        let lastErr = null;
+        for (const pos of positions) {
+          const market = (st.perp.markets || []).find((m) => m.name === pos.coin);
+          if (market) {
+            try {
+              await hl.closeHlPositionMarket({ wallet, market, position: pos });
+              closedCount += 1;
+            } catch (e) {
+              lastErr = e;
+            }
+          }
+        }
+        if (closedCount === positions.length) {
+          showToast(`✅ ${t('已全部市价平仓', 'All positions closed')}`);
+        } else {
+          showToast(t(`已平仓 ${closedCount}/${positions.length} 个仓位`, `Closed ${closedCount}/${positions.length} positions`) + (lastErr?.message ? `: ${lastErr.message}` : ''));
+        }
+      }
+      await refreshPerpDataAsync(false).catch(() => {});
+    } catch (err) {
+      showToast((err && err.message) || t('批量操作失败', 'Batch action failed'));
+    } finally {
+      _perpBatchBusy = false;
+      if (batchBtn) batchBtn.disabled = false;
+    }
+  }
+
+  async function cancelPerpOrderUI(coin, oid) {
+    const st = getState();
+    const hl = getHyperliquid();
+    const wallet = st.getActiveWallet();
+    if (!hl || !wallet || !coin || !oid) return;
+    let market = (st.perp.markets || []).find((m) => m.name === coin);
+    try {
+      await ensureEthersLoaded();
+      if (!market) {
+        const mkts = await hl.fetchHlMarkets();
+        st.perp.markets = mkts;
+        market = mkts.find((m) => m.name === coin);
+      }
+      if (!market) throw new Error(t('未找到对应合约市场', 'Market metadata unavailable'));
+      await hl.cancelHlOrder({ wallet, assetIndex: market.index, oid: Number(oid) });
+      showToast(t('已撤单', 'Order cancelled'));
+      await refreshPerpDataAsync(false).catch(() => {});
+    } catch (err) {
+      showToast((err && err.message) || t('撤单失败', 'Cancel failed'));
+    }
+  }
+
+  async function quickTransferSpotToPerpUI() {
+    const st = getState();
+    const hl = getHyperliquid();
+    const wallet = st.getActiveWallet();
+    if (!hl || !wallet || !st.perp.account) return;
+    const amt = Number(st.perp.account.spotUsdc || 0);
+    if (amt <= 0) return;
+    try {
+      await ensureEthersLoaded();
+      await hl.transferHlUsdClass({ wallet, amount: amt, toPerp: true });
+      showToast(`✅ ${t('已划转至合约账户', 'Moved to Perp account')}`);
+      await refreshPerpDataAsync(false).catch(() => {});
+    } catch (err) {
+      showToast((err && err.message) || t('划转失败', 'Transfer failed'));
+    }
+  }
+
