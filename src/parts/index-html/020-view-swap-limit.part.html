@@ -149,7 +149,15 @@
             </div>
           </div>
           <button type="button" id="btn-resume-swap-stage" class="btn-primary hidden" onclick="resumeActiveSwapFollowUp()" data-i18n="swap.orderResumeBtn">继续执行下一步</button>
-          <button type="button" class="btn-secondary" onclick="refreshActiveSwapOrderStatus()" data-i18n="swap.orderRefresh">刷新状态</button>
+          <button type="button" id="btn-refresh-swap-order" class="btn-secondary" onclick="refreshActiveSwapOrderStatus(true)" data-i18n="swap.orderRefresh">刷新状态</button>
+        </div>
+
+        <!-- Swap History Card -->
+        <div id="swap-history-card" class="ios-glass-card flex flex-col gap-2">
+          <div class="flex items-center justify-between">
+            <span style="font-weight: 700; font-size: 14px;" data-i18n="swap.historyTitle">闪兑记录</span>
+          </div>
+          <div id="swap-history-list" class="flex flex-col gap-2"></div>
         </div>
         </div>
 

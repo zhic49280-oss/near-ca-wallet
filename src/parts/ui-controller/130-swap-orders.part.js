@@ -1,15 +1,4 @@
-  function renderSwapOrderCard() {
-    const st = getState();
-    const order = st.swap.activeOrder;
-    const activeWallet = st.getActiveWallet();
-    const card = $('swap-order-card');
-    if (!card) return;
-    if (!order || !order.depositAddress || (order.walletId && activeWallet && order.walletId !== activeWallet.id)) {
-      card.classList.add('hidden');
-      return;
-    }
-    card.classList.remove('hidden');
-    if ($('swap-order-deposit-addr')) $('swap-order-deposit-addr').textContent = order.depositAddress;
+  function getSwapOrderStatusLabel(rawStatus) {
     const statusMap = {
       PENDING_DEPOSIT: t('等待源链充值', 'Awaiting Deposit'),
       PENDING_ARC_BRIDGE: t('Arc 跨链桥接中', 'Bridging to Arc'),
@@ -20,8 +9,74 @@
       FAILED: t('失败', 'Failed'),
       REFUNDED: t('已退款', 'Refunded')
     };
-    const rawStatus = String(order.status || 'PENDING').toUpperCase();
-    const friendlyStatus = statusMap[rawStatus] || order.status || 'PENDING';
+    const upper = String(rawStatus || 'PENDING').toUpperCase();
+    return statusMap[upper] || rawStatus || 'PENDING';
+  }
+
+  function getSwapHistoryItems(wallet) {
+    if (!wallet || !Array.isArray(wallet.activityHistory)) return [];
+    return wallet.activityHistory.filter((x) => x && x.type === 'swap').slice(0, 15);
+  }
+
+  function renderSwapHistoryCard() {
+    const st = getState();
+    const listEl = $('swap-history-list');
+    if (!listEl) return;
+    const wallet = st.getActiveWallet();
+    const items = getSwapHistoryItems(wallet);
+    if (items.length === 0) {
+      listEl.innerHTML = `<div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 10px 0;">${escapeHtml(t('暂无闪兑记录', 'No swap history yet'))}</div>`;
+      return;
+    }
+    const activeOrder = st.swap && st.swap.activeOrder;
+    const tokens = getTokens();
+    listEl.innerHTML = items.map((it, idx) => {
+      const pairLabel = it.toSymbol ? `${it.symbol || ''} ➔ ${it.toSymbol}` : (it.title || t('闪兑', 'Swap'));
+      const amtText = (typeof it.amount === 'number' && Number.isFinite(it.amount))
+        ? `${formatBal(it.amount, 6)} ${it.symbol || ''}`
+        : '--';
+      const chainMeta = it.chain && tokens ? tokens.getChainMeta(it.chain) : null;
+      const netTag = chainMeta ? chainMeta.shortName : (it.chain ? String(it.chain).toUpperCase() : '');
+      const relTime = typeof formatRelativeActivityTime === 'function' ? formatRelativeActivityTime(it.timestamp) : '';
+      let statusText = t('已广播', 'Broadcast');
+      if (activeOrder && it.txHash && activeOrder.originTxHash === it.txHash && activeOrder.status) {
+        statusText = getSwapOrderStatusLabel(activeOrder.status);
+      }
+      return `
+        <button type="button" class="tx-compact-row" data-action="open-tx-detail" data-tx-source="swap" data-tx-idx="${idx}" data-tx-hash="${escapeHtml(it.txHash || '')}" data-chain="${escapeHtml(it.chain || '')}">
+          <div class="flex items-center gap-2" style="min-width:0;flex:1;">
+            <span class="tx-dir-circle swap">⇄</span>
+            <div class="flex flex-col" style="min-width:0;flex:1;gap:2px;">
+              <div class="flex items-center gap-1" style="flex-wrap:wrap;">
+                <span class="mono" style="font-size:12.5px;font-weight:700;color:#f8fafc;">${escapeHtml(pairLabel)}</span>
+                <span class="tx-conf-pill">${escapeHtml(statusText)}</span>
+              </div>
+              <span class="mono" style="font-size:10.5px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml([amtText, netTag].filter(Boolean).join(' · '))}</span>
+            </div>
+          </div>
+          <div class="flex flex-col" style="text-align:right;flex-shrink:0;gap:2px;">
+            <span style="font-size:10.5px;color:var(--text-muted);">${escapeHtml(relTime)}</span>
+            <span style="font-size:10.5px;color:var(--near-emerald);">${it.txHash ? escapeHtml(shortenAddr(it.txHash, 4, 4)) : ''}</span>
+          </div>
+        </button>
+      `;
+    }).join('');
+  }
+
+  function renderSwapOrderCard() {
+    const st = getState();
+    const order = st.swap.activeOrder;
+    const activeWallet = st.getActiveWallet();
+    const card = $('swap-order-card');
+    if (typeof renderSwapHistoryCard === 'function') renderSwapHistoryCard();
+    if (!card) return;
+    if (!order || !order.depositAddress || (order.walletId && activeWallet && order.walletId !== activeWallet.id)) {
+      card.classList.add('hidden');
+      return;
+    }
+    card.classList.remove('hidden');
+    if ($('swap-order-deposit-addr')) $('swap-order-deposit-addr').textContent = order.depositAddress;
+    const friendlyStatus = getSwapOrderStatusLabel(order.status);
     if ($('swap-order-status')) {
       $('swap-order-status').textContent = order.followUpFailed && order.followUpError
         ? `${friendlyStatus} · ⚠️ ${order.followUpError}`
@@ -600,81 +655,119 @@
     refreshAllBalancesAsync(false);
   }
 
-  async function refreshActiveSwapOrderStatus() {
+  async function refreshActiveSwapOrderStatus(manual = false) {
     const st = getState();
     const order = st.swap.activeOrder;
     const intents = getIntents();
     const contracts = getContracts();
-    if (!order || !order.depositAddress) return;
-    if (order.followUpBaseOneClick && !order.followUpExecuted && !order.followUpFailed && order.status === 'PENDING_BASE_BRIDGE') {
-      const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
-      const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
-      if (evmAddr && contracts) {
-        const baseBalRes = await contracts.fetchEvmNativeAndErc20Balance('base', evmAddr, intents.BASE_USDC_EVM, 6).catch(() => null);
-        const availRaw = BigInt(baseBalRes?.tokenRaw || '0');
-        const preRaw = BigInt(order.followUpBaseOneClick.preBaseRaw || '0');
-        if (availRaw > preRaw) {
-          if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
-          order.status = 'SUCCESS';
-          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-          renderSwapOrderCard();
-          await runActiveSwapFollowUp(order);
-          refreshAllBalancesAsync(false);
-        }
-      }
+    if (!order || !order.depositAddress) {
+      if (manual) showToast(t('当前没有进行中的跨链订单', 'No active cross-chain order'));
       return;
     }
-    if (order.followUpArcDexSwap && !order.followUpExecuted && !order.followUpFailed && order.status === 'PENDING_ARC_BRIDGE') {
-      const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
-      const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
-      if (evmAddr && contracts) {
-        const arcBalRes = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
-        const availWei = BigInt(arcBalRes?.nativeRaw || '0');
-        const preWei = BigInt(order.followUpArcDexSwap.preArcUsdcRaw || '0');
-        const reserveWei = BigInt(intents.toBaseUnits('0.02', 18));
-        if (availWei > preWei && availWei > reserveWei) {
-          if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
-          order.status = 'SUCCESS';
-          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-          renderSwapOrderCard();
-          await runActiveSwapFollowUp(order);
-          refreshAllBalancesAsync(false);
-        }
-      }
-      return;
+    const refreshBtn = manual ? $('btn-refresh-swap-order') : null;
+    const prevBtnText = refreshBtn ? refreshBtn.textContent : '';
+    if (refreshBtn) {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = t('刷新中...', 'Refreshing...');
     }
-    if (order.followUpConfidentialSwap && order.followUpConfidentialSwap.depositProof && !order.followUpExecuted && !order.followUpFailed && typeof intents.fetchNearcomConfidentialDepositStatus === 'function') {
-      const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
-      if (wallet) {
-        const depRes = await intents.fetchNearcomConfidentialDepositStatus({ wallet, proof: order.followUpConfidentialSwap.depositProof }).catch(() => null);
-        if (depRes && depRes.ok && depRes.status) {
-          order.status = depRes.status;
-          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-          renderSwapOrderCard();
-          const upper = String(depRes.status).toUpperCase();
-          if (['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED', 'FAILED_EXECUTION'].includes(upper)) {
+    try {
+      if (order.followUpBaseOneClick && !order.followUpExecuted && !order.followUpFailed && order.status === 'PENDING_BASE_BRIDGE') {
+        const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
+        const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
+        if (evmAddr && contracts) {
+          const baseBalRes = await contracts.fetchEvmNativeAndErc20Balance('base', evmAddr, intents.BASE_USDC_EVM, 6).catch(() => null);
+          const availRaw = BigInt(baseBalRes?.tokenRaw || '0');
+          const preRaw = BigInt(order.followUpBaseOneClick.preBaseRaw || '0');
+          if (availRaw > preRaw) {
             if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
-            if (['SUCCESS', 'COMPLETED'].includes(upper)) {
-              await runActiveSwapFollowUp(order);
-            }
+            order.status = 'SUCCESS';
+            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+            renderSwapOrderCard();
+            await runActiveSwapFollowUp(order);
             refreshAllBalancesAsync(false);
+            if (manual) showToast(`✅ ${t('Base 跨链已到账', 'Base bridge arrived')}`);
+            return;
           }
+        }
+        if (manual) showToast(`${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
+        return;
+      }
+      if (order.followUpArcDexSwap && !order.followUpExecuted && !order.followUpFailed && order.status === 'PENDING_ARC_BRIDGE') {
+        const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
+        const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
+        if (evmAddr && contracts) {
+          const arcBalRes = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
+          const availWei = BigInt(arcBalRes?.nativeRaw || '0');
+          const preWei = BigInt(order.followUpArcDexSwap.preArcUsdcRaw || '0');
+          const reserveWei = BigInt(intents.toBaseUnits('0.02', 18));
+          if (availWei > preWei && availWei > reserveWei) {
+            if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
+            order.status = 'SUCCESS';
+            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+            renderSwapOrderCard();
+            await runActiveSwapFollowUp(order);
+            refreshAllBalancesAsync(false);
+            if (manual) showToast(`✅ ${t('Arc 跨链已到账', 'Arc bridge arrived')}`);
+            return;
+          }
+        }
+        if (manual) showToast(`${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
+        return;
+      }
+      if (order.followUpConfidentialSwap && order.followUpConfidentialSwap.depositProof) {
+        if (order.followUpExecuted || order.followUpFailed) {
+          if (manual) showToast(`${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
           return;
         }
-      }
-    }
-    const res = await intents.fetchSwapOrderStatus(order.depositAddress);
-    if (res.ok && res.status) {
-      order.status = res.status;
-      if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-      renderSwapOrderCard();
-      const upper = String(res.status).toUpperCase();
-      if (['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper)) {
-        if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
-        if (['SUCCESS', 'COMPLETED'].includes(upper) && !order.followUpExecuted && !order.followUpFailed) {
-          await runActiveSwapFollowUp(order);
+        if (typeof intents.fetchNearcomConfidentialDepositStatus === 'function') {
+          const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
+          if (wallet) {
+            const depRes = await intents.fetchNearcomConfidentialDepositStatus({ wallet, proof: order.followUpConfidentialSwap.depositProof }).catch((e) => ({ ok: false, error: e && e.message }));
+            if (depRes && depRes.ok && depRes.status) {
+              order.status = depRes.status;
+              if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+              renderSwapOrderCard();
+              const upper = String(depRes.status).toUpperCase();
+              if (['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED', 'FAILED_EXECUTION'].includes(upper)) {
+                if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
+                if (['SUCCESS', 'COMPLETED'].includes(upper)) {
+                  await runActiveSwapFollowUp(order);
+                }
+                refreshAllBalancesAsync(false);
+              }
+              if (manual) showToast(`${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
+              return;
+            }
+            if (manual) {
+              showToast((depRes && depRes.error) || `${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
+            }
+            return;
+          }
         }
-        refreshAllBalancesAsync(false);
+        if (manual) showToast(`${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
+        return;
+      }
+      const res = await intents.fetchSwapOrderStatus(order.depositAddress).catch((e) => ({ ok: false, error: e && e.message }));
+      if (res && res.ok && res.status) {
+        order.status = res.status;
+        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+        renderSwapOrderCard();
+        const upper = String(res.status).toUpperCase();
+        if (['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper)) {
+          if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
+          if (['SUCCESS', 'COMPLETED'].includes(upper) && !order.followUpExecuted && !order.followUpFailed) {
+            await runActiveSwapFollowUp(order);
+          }
+          refreshAllBalancesAsync(false);
+        }
+        if (manual) showToast(`${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
+      } else if (manual) {
+        showToast((res && res.error) || `${t('暂未获取到新状态，当前', 'No update yet; status')}: ${getSwapOrderStatusLabel(order.status)}`);
+      }
+    } finally {
+      if (refreshBtn) {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = prevBtnText || t('刷新状态', 'Refresh');
       }
     }
   }

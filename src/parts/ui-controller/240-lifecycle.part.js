@@ -27,9 +27,11 @@
           const idx = Number(ds.txIdx);
           const arr = src === 'mining'
             ? _lastMiningNormalizedPayouts
-            : (src === 'modal' ? (getState().txModal?.items || []) : _lastTokenDetailMergedItems);
+            : (src === 'modal'
+                ? (getState().txModal?.items || [])
+                : (src === 'swap' ? getSwapHistoryItems(getState().getActiveWallet()) : _lastTokenDetailMergedItems));
           const item = (Number.isInteger(idx) && arr[idx]) || (ds.txHash ? arr.find((x) => x && x.txHash === ds.txHash) : null);
-          const backId = src === 'modal' ? 'sheet-tx-history' : (src === 'mining' ? 'sheet-mining-pro' : 'sheet-token-detail');
+          const backId = src === 'modal' ? 'sheet-tx-history' : (src === 'mining' ? 'sheet-mining-pro' : (src === 'swap' ? '' : 'sheet-token-detail'));
           if (item) openTxDetailSheet(item, backId);
           break;
         }

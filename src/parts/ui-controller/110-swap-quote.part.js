@@ -90,6 +90,7 @@
     }
 
     renderSwapOrderCard();
+    if (typeof renderSwapHistoryCard === 'function') renderSwapHistoryCard();
     if (isSwapTokenNative(fromToken)) {
       prefetchSwapLiveGasAsync(false).catch(() => {});
     }

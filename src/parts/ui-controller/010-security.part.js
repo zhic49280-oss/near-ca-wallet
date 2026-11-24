@@ -519,6 +519,13 @@
     if (leftAt > 0 && (Number(nowMs) - leftAt) >= APP_LOCK_TIMEOUT_MS && shouldEnableAppLockForWallet(wallet, overrides)) {
       engageAppLock(true, overrides);
     }
+    if (st && st.swap && st.swap.activeOrder && st.swap.activeOrder.depositAddress) {
+      const upper = String(st.swap.activeOrder.status || '').toUpperCase();
+      if (!['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper)) {
+        if (typeof refreshActiveSwapOrderStatus === 'function') refreshActiveSwapOrderStatus(false).catch(() => {});
+        if (typeof startOrderStatusPolling === 'function') startOrderStatusPolling();
+      }
+    }
   }
 
   function initAppSecurityLifecycle() {
