@@ -41,6 +41,10 @@
     if (st && typeof st.saveWallets === 'function') {
       st.saveWallets();
     }
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.notifyFrameworkState === 'function') {
+      fw.notifyFrameworkState('swap');
+    }
     return entry;
   }
 

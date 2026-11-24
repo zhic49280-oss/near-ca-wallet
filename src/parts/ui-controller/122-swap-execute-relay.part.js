@@ -13,12 +13,21 @@
               amountRaw,
               slippageBps: st.swap.slippageBps
             });
-        await contracts.executeSolanaJupiterSwap({
+        const s1Tx = await contracts.executeSolanaJupiterSwap({
           wallet,
           quoteResponse: s1Quote,
           wrapAndUnwrapSol: true,
           tokenBalance: avail,
           inputDecimals: fromToken.decimals
+        });
+        recordWalletActivity(wallet, {
+          type: 'swap',
+          symbol: fromToken.symbol,
+          toSymbol: 'SOL',
+          chain: 'sol',
+          amount: amt,
+          txHash: s1Tx?.txHash || '',
+          title: `${fromToken.symbol} ➔ SOL (Stage 1)`
         });
 
         let postSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
@@ -33,27 +42,55 @@
         const sendLamports = deltaLamports > maxSendable ? maxSendable : deltaLamports;
         if (sendLamports <= 0n) throw new Error(t('SOL 余额不足以执行跨链第二阶段', 'Insufficient SOL for Stage 2 bridge'));
 
-        const stage2Live = await intents.quoteIntentSwapOrWithdraw({
-          originAsset: 'nep141:sol.omft.near',
-          destinationAsset: toToken.assetId,
-          amountRaw: sendLamports.toString(),
-          slippageBps: st.swap.slippageBps,
-          recipient,
-          refundTo: solAddr,
-          nearAccountId: nearId,
-          depositType: 'ORIGIN_CHAIN',
-          recipientType: 'DESTINATION_CHAIN',
-          dry: false
-        });
-        if (!stage2Live.ok || !stage2Live.depositAddress) {
-          throw new Error(stage2Live.error || t('第二阶段跨链下单失败', 'Stage 2 cross-chain order failed'));
+        let stage2Live;
+        let sendSolTx;
+        try {
+          stage2Live = await intents.quoteIntentSwapOrWithdraw({
+            originAsset: 'nep141:sol.omft.near',
+            destinationAsset: toToken.assetId,
+            amountRaw: sendLamports.toString(),
+            slippageBps: st.swap.slippageBps,
+            recipient,
+            refundTo: solAddr,
+            nearAccountId: nearId,
+            depositType: 'ORIGIN_CHAIN',
+            recipientType: 'DESTINATION_CHAIN',
+            dry: false
+          });
+          if (!stage2Live.ok || !stage2Live.depositAddress) {
+            throw new Error(stage2Live.error || t('第二阶段跨链下单失败', 'Stage 2 cross-chain order failed'));
+          }
+          const sendSolNum = Number(contracts.fromBaseUnits(sendLamports.toString(), 9));
+          sendSolTx = await contracts.executeSolanaNativeTransfer({
+            wallet,
+            toAddress: stage2Live.depositAddress,
+            amountSol: sendSolNum
+          });
+        } catch (s2Err) {
+          st.swap.activeOrder = {
+            walletId: wallet.id,
+            depositAddress: s1Tx?.txHash || `sol_bridge_${Date.now()}`,
+            status: 'SUCCESS',
+            fromSymbol: fromToken.symbol,
+            toSymbol: toToken.symbol,
+            originTxHash: s1Tx?.txHash || '',
+            autoBroadcasted: true,
+            createdAt: Date.now(),
+            followUpFailed: true,
+            followUpError: s2Err?.message || t('第一步已换出 SOL，第二步跨链失败，请点击继续重试', 'Stage 1 swapped to SOL; tap Resume for Stage 2'),
+            followUpBaseOneClick: null,
+            followUpSolBridgeOut: {
+              destinationAsset: toToken.assetId,
+              amountRaw: sendLamports.toString(),
+              recipient,
+              slippageBps: st.swap.slippageBps,
+              toSymbol: toToken.symbol
+            }
+          };
+          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+          renderSwapOrderCard();
+          throw s2Err;
         }
-        const sendSolNum = Number(contracts.fromBaseUnits(sendLamports.toString(), 9));
-        const sendSolTx = await contracts.executeSolanaNativeTransfer({
-          wallet,
-          toAddress: stage2Live.depositAddress,
-          amountSol: sendSolNum
-        });
         await intents.submitExternalDepositTxHash({
           depositAddress: stage2Live.depositAddress,
           txHash: sendSolTx.txHash,
@@ -416,6 +453,15 @@
             gasBuffer: isNative ? gasBuf : null
           });
           arcUsdcRaw = s1Q.amountOut;
+          recordWalletActivity(wallet, {
+            type: 'swap',
+            symbol: fromToken.symbol,
+            toSymbol: 'USDC',
+            chain: 'arc',
+            amount: amt,
+            txHash: s1Tx?.txHash || '',
+            title: `${fromToken.symbol} ➔ USDC (Arc Stage 1)`
+          });
           showToast(`✅ ${t('Arc 第一步已换出 USDC，正在跨链至 Base', 'Arc USDC swapped; bridging to Base')}: ${shortenAddr(s1Tx.txHash)}`);
         }
         const hasStage3 = Boolean(activeQuote.stage3Quote);
@@ -430,32 +476,58 @@
         let rTx = null;
         let bridgeOutRaw = String(activeQuote.baseOutRaw || arcUsdcRaw);
         const arcBQuote = activeQuote.bridgeQuote;
-        if (arcBQuote && arcBQuote.provider === 'LI.FI' && arcBQuote.transactionRequest && bridgeRecip.toLowerCase() === evmAddr.toLowerCase()) {
-          rTx = await contracts.executeEvmDexSwap({
-            wallet,
-            chainKey: 'arc',
-            routeSource: 'lifi',
-            routeData: arcBQuote,
-            srcToken: intents.ARC_USDC_CONTRACT,
-            destToken: intents.BASE_USDC_EVM,
-            amountRaw: arcUsdcRaw,
-            srcDecimals: 6,
-            slippageBps: st.swap.slippageBps,
-            tokenBalance: avail
-          });
-        } else {
-          const liveRelay = await intents.quoteRelayBridge({
-            user: evmAddr,
-            recipient: bridgeRecip,
-            originChainId: 5042,
-            destinationChainId: 8453,
-            originCurrency: intents.ARC_USDC_CONTRACT,
-            destinationCurrency: intents.BASE_USDC_EVM,
-            amount: arcUsdcRaw
-          });
-          if (!liveRelay.ok || !liveRelay.steps?.length) throw new Error(liveRelay.error || t('Relay 从 Arc 跨链失败', 'Relay bridge from Arc failed'));
-          bridgeOutRaw = String(liveRelay.amountOut || bridgeOutRaw);
-          rTx = await contracts.executeEvmRawSteps({ wallet, chainKey: 'arc', steps: liveRelay.steps });
+        try {
+          if (arcBQuote && arcBQuote.provider === 'LI.FI' && arcBQuote.transactionRequest && bridgeRecip.toLowerCase() === evmAddr.toLowerCase()) {
+            rTx = await contracts.executeEvmDexSwap({
+              wallet,
+              chainKey: 'arc',
+              routeSource: 'lifi',
+              routeData: arcBQuote,
+              srcToken: intents.ARC_USDC_CONTRACT,
+              destToken: intents.BASE_USDC_EVM,
+              amountRaw: arcUsdcRaw,
+              srcDecimals: 6,
+              slippageBps: st.swap.slippageBps,
+              tokenBalance: avail
+            });
+          } else {
+            const liveRelay = await intents.quoteRelayBridge({
+              user: evmAddr,
+              recipient: bridgeRecip,
+              originChainId: 5042,
+              destinationChainId: 8453,
+              originCurrency: intents.ARC_USDC_CONTRACT,
+              destinationCurrency: intents.BASE_USDC_EVM,
+              amount: arcUsdcRaw
+            });
+            if (!liveRelay.ok || !liveRelay.steps?.length) throw new Error(liveRelay.error || t('Relay 从 Arc 跨链失败', 'Relay bridge from Arc failed'));
+            bridgeOutRaw = String(liveRelay.amountOut || bridgeOutRaw);
+            rTx = await contracts.executeEvmRawSteps({ wallet, chainKey: 'arc', steps: liveRelay.steps });
+          }
+        } catch (arcStage2Err) {
+          if (srcContract.toLowerCase() !== intents.ARC_USDC_CONTRACT.toLowerCase()) {
+            st.swap.activeOrder = {
+              walletId: wallet.id,
+              depositAddress: `arc_bridge_${Date.now()}`,
+              status: 'SUCCESS',
+              fromSymbol: fromToken.symbol,
+              toSymbol: toToken.symbol,
+              originTxHash: '',
+              autoBroadcasted: true,
+              createdAt: Date.now(),
+              followUpFailed: true,
+              followUpError: arcStage2Err?.message || t('Arc 第一步已换出 USDC，跨链至 Base 失败，请重发或调整金额', 'Arc Stage 1 swapped to USDC; Stage 2 bridge failed'),
+              followUpArcRelay: {
+                originAsset: intents.ARC_USDC_CONTRACT,
+                destinationAsset: toToken.assetId,
+                amountRaw: arcUsdcRaw,
+                recipient: bridgeRecip
+              }
+            };
+            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+            renderSwapOrderCard();
+          }
+          throw arcStage2Err;
         }
         recordWalletActivity(wallet, {
           type: 'swap',

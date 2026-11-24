@@ -523,10 +523,12 @@
       engageAppLock(true, overrides);
     }
     if (st && st.swap && st.swap.activeOrder && st.swap.activeOrder.depositAddress) {
-      const upper = String(st.swap.activeOrder.status || '').toUpperCase();
-      if (!['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper)) {
+      const ord = st.swap.activeOrder;
+      const upper = String(ord.status || '').toUpperCase();
+      const pendingFollow = typeof hasPendingSwapFollowUp === 'function' && hasPendingSwapFollowUp(ord) && !ord.followUpFailed;
+      if (!['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper) || pendingFollow) {
         if (typeof refreshActiveSwapOrderStatus === 'function') refreshActiveSwapOrderStatus(false).catch(() => {});
-        if (typeof startOrderStatusPolling === 'function') startOrderStatusPolling();
+        if (typeof startOrderStatusPolling === 'function') startOrderStatusPolling(false);
       }
     }
   }

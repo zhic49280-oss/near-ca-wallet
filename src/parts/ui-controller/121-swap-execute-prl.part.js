@@ -38,6 +38,9 @@
             followUpFailed: true,
             followUpError: bridgeQuote.error || t('获取 PRL 跨链桥路由失败，请点击继续重试', 'Failed to get PRL bridge route; tap Resume to retry'),
             followUpBridgeOut: {
+              originAsset: intents.PRL_NEAR_ASSET_ID,
+              hubContract: intents.PRL_NEAR_CONTRACT,
+              hubDecimals: 8,
               destinationAsset: intents.PRL_PEARL_ASSET_ID,
               recipient,
               expectedInRaw: prlOutRaw,
@@ -194,7 +197,7 @@
         if (!step1Q.ok || !step1Q.amountOut) {
           throw new Error(step1Q.error || t('Ref Finance 暂无 PRL/USDC 路由', 'Ref Finance PRL/USDC route unavailable'));
         }
-        await contracts.executeNearRefFinanceSwap({
+        const refPrlRes = await contracts.executeNearRefFinanceSwap({
           wallet,
           routeData: step1Q.routeData,
           actions: step1Q.actions,
@@ -205,6 +208,16 @@
           tokenBalance: avail,
           inputDecimals: 8,
           tokenSymbol: 'PRL'
+        });
+
+        recordWalletActivity(wallet, {
+          type: 'swap',
+          symbol: fromToken.symbol,
+          toSymbol: 'USDC',
+          chain: 'near',
+          amount: amt,
+          txHash: refPrlRes.txHash,
+          title: `${fromToken.symbol} ➔ USDC (Stage 1)`
         });
 
         // Verify actual post-swap USDC increase on NEAR before step 2
@@ -225,31 +238,56 @@
             slippageBps: st.swap.slippageBps
           }).catch(() => null);
           if (dclCheck && dclCheck.ok) {
-            const usdcHuman = Number(intents.fromBaseUnits(sendUsdcRaw, 6));
-            const dclRes = await contracts.executeNearDclPoolSwap({
-              wallet,
-              poolIds: dclCheck.poolIds,
-              tokenIn: intents.NEAR_USDC_CONTRACT,
-              tokenOut: intents.QTC_NEAR_CONTRACT,
-              amountRaw: sendUsdcRaw,
-              minAmountOut: dclCheck.minAmountOut,
-              slippageBps: st.swap.slippageBps,
-              tokenBalance: usdcHuman,
-              inputDecimals: 6,
-              tokenSymbol: 'USDC'
-            });
-            recordWalletActivity(wallet, {
-              type: 'swap',
-              symbol: fromToken.symbol,
-              toSymbol: toToken.symbol,
-              chain: fromToken.blockchain,
-              amount: amt,
-              txHash: dclRes.txHash,
-              title: `${fromToken.symbol} ➔ ${toToken.symbol}`
-            });
-            showToast(`✅ ${t('已通过 Ref + Rhea CLMM 兑换为 QTC', 'Swapped PRL -> USDC -> QTC via Ref + Rhea CLMM')}: ${shortenAddr(dclRes.txHash)}`);
-            refreshAllBalancesAsync(false);
-            return;
+            try {
+              const usdcHuman = Number(intents.fromBaseUnits(sendUsdcRaw, 6));
+              const dclRes = await contracts.executeNearDclPoolSwap({
+                wallet,
+                poolIds: dclCheck.poolIds,
+                tokenIn: intents.NEAR_USDC_CONTRACT,
+                tokenOut: intents.QTC_NEAR_CONTRACT,
+                amountRaw: sendUsdcRaw,
+                minAmountOut: dclCheck.minAmountOut,
+                slippageBps: st.swap.slippageBps,
+                tokenBalance: usdcHuman,
+                inputDecimals: 6,
+                tokenSymbol: 'USDC'
+              });
+              recordWalletActivity(wallet, {
+                type: 'swap',
+                symbol: fromToken.symbol,
+                toSymbol: toToken.symbol,
+                chain: fromToken.blockchain,
+                amount: amt,
+                txHash: dclRes.txHash,
+                title: `${fromToken.symbol} ➔ ${toToken.symbol}`
+              });
+              showToast(`✅ ${t('已通过 Ref + Rhea CLMM 兑换为 QTC', 'Swapped PRL -> USDC -> QTC via Ref + Rhea CLMM')}: ${shortenAddr(dclRes.txHash)}`);
+              refreshAllBalancesAsync(false);
+              return;
+            } catch (dclErr) {
+              st.swap.activeOrder = {
+                walletId: wallet.id,
+                depositAddress: refPrlRes.txHash || `near_dcl_${Date.now()}`,
+                status: 'SUCCESS',
+                fromSymbol: fromToken.symbol,
+                toSymbol: toToken.symbol,
+                originTxHash: refPrlRes.txHash || '',
+                autoBroadcasted: true,
+                createdAt: Date.now(),
+                followUpFailed: true,
+                followUpError: dclErr?.message || t('第二阶段 Rhea DCL 兑换失败，请点击继续重试', 'Stage 2 Rhea DCL swap failed; tap Resume'),
+                followUpDclSwap: {
+                  tokenIn: intents.NEAR_USDC_CONTRACT,
+                  tokenOut: intents.QTC_NEAR_CONTRACT,
+                  amountRaw: sendUsdcRaw,
+                  slippageBps: st.swap.slippageBps,
+                  toSymbol: toToken.symbol
+                }
+              };
+              if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+              renderSwapOrderCard();
+              throw dclErr;
+            }
           }
         }
 
@@ -268,30 +306,60 @@
           ? await contracts.fetchEvmNativeAndErc20Balance(toToken.blockchain, step2Recip).catch(() => null)
           : null;
 
-        const step2Live = await intents.quoteIntentSwapOrWithdraw({
-          originAsset: intents.NEAR_USDC_ASSET_ID,
-          destinationAsset: step2DestAsset,
-          amountRaw: sendUsdcRaw,
-          slippageBps: st.swap.slippageBps,
-          recipient: step2Recip,
-          refundTo: nearId,
-          depositType: 'ORIGIN_CHAIN',
-          recipientType: 'DESTINATION_CHAIN',
-          dry: false
-        });
-        if (!step2Live.ok || !step2Live.depositAddress) {
-          throw new Error(step2Live.error || t('创建 USDC 跨链第二步订单失败', 'Failed to create 1Click step 2 order'));
+        let step2Live;
+        let sendTx;
+        try {
+          step2Live = await intents.quoteIntentSwapOrWithdraw({
+            originAsset: intents.NEAR_USDC_ASSET_ID,
+            destinationAsset: step2DestAsset,
+            amountRaw: sendUsdcRaw,
+            slippageBps: st.swap.slippageBps,
+            recipient: step2Recip,
+            refundTo: nearId,
+            depositType: 'ORIGIN_CHAIN',
+            recipientType: 'DESTINATION_CHAIN',
+            dry: false
+          });
+          if (!step2Live.ok || !step2Live.depositAddress) {
+            throw new Error(step2Live.error || t('创建 USDC 跨链第二步订单失败', 'Failed to create 1Click step 2 order'));
+          }
+          const usdcHuman = intents.fromBaseUnits(sendUsdcRaw, 6);
+          sendTx = await contracts.executeNearNep141Transfer({
+            wallet,
+            tokenContract: intents.NEAR_USDC_CONTRACT,
+            receiverId: step2Live.depositAddress,
+            amount: usdcHuman,
+            decimals: 6,
+            tokenSymbol: 'USDC',
+            tokenBalance: Number(usdcHuman)
+          });
+        } catch (s2Err) {
+          st.swap.activeOrder = {
+            walletId: wallet.id,
+            depositAddress: refPrlRes.txHash || `near_usdc_bridge_${Date.now()}`,
+            status: 'SUCCESS',
+            fromSymbol: fromToken.symbol,
+            toSymbol: toToken.symbol,
+            originTxHash: refPrlRes.txHash || '',
+            autoBroadcasted: true,
+            createdAt: Date.now(),
+            followUpFailed: true,
+            followUpError: s2Err?.message || t('第一阶段已换出 NEAR USDC，第二步跨链失败，请点击继续重试', 'Stage 1 swapped to NEAR USDC; tap Resume for Stage 2'),
+            followUpBridgeOut: {
+              originAsset: intents.NEAR_USDC_ASSET_ID,
+              hubContract: intents.NEAR_USDC_CONTRACT,
+              hubDecimals: 6,
+              destinationAsset: step2DestAsset,
+              recipient: step2Recip,
+              expectedInRaw: sendUsdcRaw,
+              slippageBps: st.swap.slippageBps,
+              toSymbol: toToken.symbol
+            }
+          };
+          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+          renderSwapOrderCard();
+          throw s2Err;
         }
-        const usdcHuman = intents.fromBaseUnits(sendUsdcRaw, 6);
-        const sendTx = await contracts.executeNearNep141Transfer({
-          wallet,
-          tokenContract: intents.NEAR_USDC_CONTRACT,
-          receiverId: step2Live.depositAddress,
-          amount: usdcHuman,
-          decimals: 6,
-          tokenSymbol: 'USDC',
-          tokenBalance: Number(usdcHuman)
-        });
         await intents.submitExternalDepositTxHash({
           depositAddress: step2Live.depositAddress,
           txHash: sendTx.txHash,

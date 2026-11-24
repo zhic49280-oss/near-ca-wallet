@@ -183,21 +183,28 @@
     showToast(`✅ ${t('后续跨链交付已发起', 'Follow-up bridge sent')}`);
   }
 
-  async function runActiveSwapFollowUp(order) {
-    const st = getState();
-    const intents = getIntents();
-    const contracts = getContracts();
-    if (!order || order._followUpInFlight || order.followUpExecuted) return;
-    const hasFollowUp = Boolean(
+  function hasPendingSwapFollowUp(order) {
+    if (!order || order.followUpExecuted) return false;
+    return Boolean(
       order.followUpConfidentialSwap ||
       order.followUpRefSwap ||
+      order.followUpDclSwap ||
       order.followUpBridgeOut ||
+      order.followUpSolBridgeOut ||
       order.followUpSolDexSwap ||
       order.followUpEvmDexSwap ||
       order.followUpArcRelay ||
       order.followUpArcDexSwap ||
       order.followUpBaseOneClick
     );
+  }
+
+  async function runActiveSwapFollowUp(order) {
+    const st = getState();
+    const intents = getIntents();
+    const contracts = getContracts();
+    if (!order || order._followUpInFlight || order.followUpExecuted) return;
+    const hasFollowUp = hasPendingSwapFollowUp(order);
     if (!hasFollowUp) return;
 
     const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
@@ -328,6 +335,89 @@
             showToast(`✅ ${t('第二阶段 Ref Finance 已自动兑换', 'Step 2 auto-swapped on Ref')}: ${shortenAddr(swapRes.txHash)}`);
             return;
           }
+        }
+      }
+
+      if (order.followUpDclSwap && typeof contracts?.executeNearDclPoolSwap === 'function') {
+        const dclFollow = order.followUpDclSwap;
+        const nearId = wallet.nearNamedAccount || wallet.nearAddress;
+        const balMap = await intents.fetchNearNep141Balances(nearId, { [dclFollow.tokenIn]: 6 }).catch(() => null);
+        const liveRaw = BigInt(balMap?.[dclFollow.tokenIn]?.raw || '0');
+        const expectedRaw = BigInt(dclFollow.amountRaw || '0');
+        const dclInRaw = (liveRaw > 0n
+          ? (expectedRaw > 0n && liveRaw > expectedRaw ? expectedRaw : liveRaw)
+          : expectedRaw).toString();
+        const dclQ = await contracts.quoteNearDclPoolSwap({
+          tokenIn: dclFollow.tokenIn,
+          tokenOut: dclFollow.tokenOut,
+          amountRaw: dclInRaw,
+          slippageBps: dclFollow.slippageBps || 100
+        });
+        if (!dclQ || !dclQ.ok) {
+          throw new Error((dclQ && dclQ.error) || t('DCL 第二阶段询价失败', 'DCL stage 2 quote failed'));
+        }
+        const dclRes = await contracts.executeNearDclPoolSwap({
+          wallet,
+          poolIds: dclQ.poolIds,
+          tokenIn: dclFollow.tokenIn,
+          tokenOut: dclFollow.tokenOut,
+          amountRaw: dclInRaw,
+          minAmountOut: dclQ.minAmountOut,
+          slippageBps: dclFollow.slippageBps || 100,
+          tokenBalance: Number(intents.fromBaseUnits(dclInRaw, 6)),
+          inputDecimals: 6,
+          tokenSymbol: 'USDC'
+        });
+        order.followUpExecuted = true;
+        order.followUpFailed = false;
+        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+        renderSwapOrderCard();
+        showToast(`✅ ${t('第二阶段已自动完成兑换', 'Stage 2 auto-swap completed')}: ${shortenAddr(dclRes.txHash)}`);
+        return;
+      }
+
+      if (order.followUpSolBridgeOut && order.followUpSolBridgeOut.destinationAsset) {
+        const sFollow = order.followUpSolBridgeOut;
+        const solAddr = wallet.solAddress;
+        const nearId = wallet.nearNamedAccount || wallet.nearAddress;
+        if (solAddr && contracts) {
+          const s2Live = await intents.quoteIntentSwapOrWithdraw({
+            originAsset: 'nep141:sol.omft.near',
+            destinationAsset: sFollow.destinationAsset,
+            amountRaw: String(sFollow.amountRaw || '0'),
+            slippageBps: sFollow.slippageBps || 100,
+            recipient: sFollow.recipient,
+            refundTo: solAddr,
+            nearAccountId: nearId,
+            depositType: 'ORIGIN_CHAIN',
+            recipientType: 'DESTINATION_CHAIN',
+            dry: false
+          });
+          if (!s2Live.ok || !s2Live.depositAddress) {
+            throw new Error(s2Live.error || t('第二阶段跨链下单失败', 'Stage 2 cross-chain order failed'));
+          }
+          const sendSolNum = Number(contracts.fromBaseUnits(String(sFollow.amountRaw || '0'), 9));
+          const sendSolTx = await contracts.executeSolanaNativeTransfer({
+            wallet,
+            toAddress: s2Live.depositAddress,
+            amountSol: sendSolNum
+          });
+          await intents.submitExternalDepositTxHash({
+            depositAddress: s2Live.depositAddress,
+            txHash: sendSolTx.txHash,
+            nearSenderAccount: nearId
+          }).catch(() => {});
+          order.depositAddress = s2Live.depositAddress;
+          order.memo = s2Live.memo || null;
+          order.status = 'PENDING_DEPOSIT';
+          order.originTxHash = sendSolTx.txHash;
+          order.followUpSolBridgeOut = null;
+          order.followUpFailed = false;
+          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+          renderSwapOrderCard();
+          startOrderStatusPolling();
+          showToast(`✅ ${t('第二阶段 SOL 跨链已发出', 'Stage 2 SOL bridge sent')}: ${shortenAddr(sendSolTx.txHash)}`);
+          return;
         }
       }
 
@@ -582,31 +672,18 @@
           if (bridgeInRaw <= 0n || availRaw < bridgeInRaw) {
             throw new Error(t('Base USDC 尚未到账，无法发起第三阶段跨链', 'Base USDC not yet arrived for stage 3 swap'));
           }
-          const isPrlDest = String(follow.destinationAsset || '').toLowerCase() === String(intents.PRL_PEARL_ASSET_ID || '').toLowerCase()
-            || String(follow.destinationAsset || '').toLowerCase() === String(intents.PRL_NEAR_ASSET_ID || '').toLowerCase();
-          const s3Quote = isPrlDest && typeof intents.quoteCompositePrlSwap === 'function'
-            ? await intents.quoteCompositePrlSwap({
-                fromToken: { assetId: intents.BASE_USDC_1CLICK_ID, blockchain: 'base', symbol: 'USDC', decimals: 6, contractAddress: intents.BASE_USDC_EVM },
-                toToken: { assetId: follow.destinationAsset, blockchain: follow.destBlockchain || 'prl', symbol: follow.toSymbol || 'PRL', decimals: 8 },
-                amountRaw: bridgeInRaw.toString(),
-                slippageBps: follow.slippageBps || 100,
-                recipient: follow.recipient,
-                refundTo: nearId || evmAddr,
-                nearAccountId: nearId,
-                dry: false
-              })
-            : await intents.quoteIntentSwapOrWithdraw({
-                originAsset: intents.BASE_USDC_1CLICK_ID,
-                destinationAsset: follow.destinationAsset,
-                amountRaw: bridgeInRaw.toString(),
-                slippageBps: follow.slippageBps || 100,
-                recipient: follow.recipient,
-                refundTo: nearId || evmAddr,
-                nearAccountId: nearId,
-                depositType: 'ORIGIN_CHAIN',
-                recipientType: 'DESTINATION_CHAIN',
-                dry: false
-              });
+          const s3Quote = await intents.quoteIntentSwapOrWithdraw({
+            originAsset: intents.BASE_USDC_1CLICK_ID,
+            destinationAsset: follow.destinationAsset,
+            amountRaw: bridgeInRaw.toString(),
+            slippageBps: follow.slippageBps || 100,
+            recipient: follow.recipient,
+            refundTo: nearId || evmAddr,
+            nearAccountId: nearId,
+            depositType: 'ORIGIN_CHAIN',
+            recipientType: 'DESTINATION_CHAIN',
+            dry: false
+          });
           if (!s3Quote.ok || !s3Quote.depositAddress) {
             throw new Error(s3Quote.error || t('获取第三阶段跨链路由失败', 'Failed to get stage 3 1Click route'));
           }
@@ -660,7 +737,10 @@
     refreshAllBalancesAsync(false);
   }
 
+  let _orderPollInFlight = false;
+
   async function refreshActiveSwapOrderStatus(manual = false) {
+    if (_orderPollInFlight && !manual) return;
     const st = getState();
     const order = st.swap.activeOrder;
     const intents = getIntents();
@@ -669,6 +749,7 @@
       if (manual) showToast(t('当前没有进行中的跨链订单', 'No active cross-chain order'));
       return;
     }
+    _orderPollInFlight = true;
     const refreshBtn = manual ? $('btn-refresh-swap-order') : null;
     const prevBtnText = refreshBtn ? refreshBtn.textContent : '';
     if (refreshBtn) {
@@ -770,6 +851,7 @@
         showToast((res && res.error) || `${t('暂未获取到新状态，当前', 'No update yet; status')}: ${getSwapOrderStatusLabel(order.status)}`);
       }
     } finally {
+      _orderPollInFlight = false;
       if (refreshBtn) {
         refreshBtn.disabled = false;
         refreshBtn.textContent = prevBtnText || t('刷新状态', 'Refresh');
@@ -777,10 +859,10 @@
     }
   }
 
-  function startOrderStatusPolling() {
+  function startOrderStatusPolling(immediate = true) {
     if (_orderPollTimer) clearInterval(_orderPollTimer);
     _orderPollCount = 0;
-    refreshActiveSwapOrderStatus();
+    if (immediate) refreshActiveSwapOrderStatus();
     _orderPollTimer = setInterval(() => {
       _orderPollCount += 1;
       if (_orderPollCount > 240) {

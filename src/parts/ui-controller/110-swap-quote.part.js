@@ -7,9 +7,10 @@
     const amtInputEl = $('swap-amount-in');
     const fromPickerBtn = $('swap-from-token-btn');
     const toPickerBtn = $('swap-to-token-btn');
-    if (amtInputEl) amtInputEl.disabled = false;
-    if (fromPickerBtn) fromPickerBtn.disabled = false;
-    if (toPickerBtn) toPickerBtn.disabled = false;
+    const isExec = Boolean(st.swap._executing);
+    if (amtInputEl) amtInputEl.disabled = isExec;
+    if (fromPickerBtn) fromPickerBtn.disabled = isExec;
+    if (toPickerBtn) toPickerBtn.disabled = isExec;
 
     const errBanner = $('swap-error-banner');
     if (errBanner) {
@@ -286,20 +287,34 @@
       return;
     }
 
+    st.swap._quoteReqSeq = (st.swap._quoteReqSeq || 0) + 1;
+    const reqSeq = st.swap._quoteReqSeq;
     const reqSnapshot = {
+      seq: reqSeq,
       amountIn: st.swap.amountIn,
       fromId: fromToken.assetId,
-      toId: toToken.assetId
+      toId: toToken.assetId,
+      slippageBps: st.swap.slippageBps || 100,
+      recipientAddress: st.swap.recipientAddress || '',
+      gasReserveMode: st.swap.gasReserveMode || 'auto'
     };
-    const isStaleReq = () => st.swap.amountIn !== reqSnapshot.amountIn || st.swap.fromAssetId !== reqSnapshot.fromId || st.swap.toAssetId !== reqSnapshot.toId;
+    const isStaleReq = () => (
+      st.swap._quoteReqSeq !== reqSnapshot.seq ||
+      st.swap.amountIn !== reqSnapshot.amountIn ||
+      st.swap.fromAssetId !== reqSnapshot.fromId ||
+      st.swap.toAssetId !== reqSnapshot.toId ||
+      (st.swap.slippageBps || 100) !== reqSnapshot.slippageBps ||
+      (st.swap.recipientAddress || '') !== reqSnapshot.recipientAddress ||
+      (st.swap.gasReserveMode || 'auto') !== reqSnapshot.gasReserveMode
+    );
 
-    const cacheKey = `${wallet.id || ''}|${fromToken.assetId}|${toToken.assetId}|${amountRaw}|${st.swap.slippageBps || 100}|${st.swap.recipientAddress || ''}`;
+    const cacheKey = `${wallet.id || ''}|${fromToken.assetId}|${toToken.assetId}|${amountRaw}|${st.swap.slippageBps || 100}|${st.swap.recipientAddress || ''}|${st.swap.gasReserveMode || 'auto'}`;
     const cached = _swapQuoteCache.get(cacheKey);
     if (cached && (Date.now() - cached.ts < 15000)) {
       st.swap._quoting = false;
       st.swap._lastError = '';
       setSwapError('');
-      st.swap.quoteData = cached.quoteData;
+      st.swap.quoteData = cached.quoteData ? { ...cached.quoteData, quotedAt: cached.ts } : null;
       st.swap.quoteSource = cached.quoteSource;
       const gInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', cached.quoteData);
       const { netOutNum, ratio } = computeNetSwapOutput(cached.quoteData, toToken, gInfo, cached.grossOutNum);
@@ -369,7 +384,7 @@
       const usdIn = numUsdIn !== null ? formatUsd(numUsdIn) : '--';
       const usdOut = numUsdOut !== null ? formatUsd(numUsdOut) : '--';
       const feeBps = Number(quoteData?.serviceFeeBps ?? 0);
-      st.swap.quoteData = quoteData;
+      st.swap.quoteData = quoteData ? { ...quoteData, quotedAt: Date.now() } : quoteData;
       st.swap.quoteSource = quoteSource;
       st.swap.amountOut = amtOutText;
       st.swap._quoteRateOutPerIn = rateOutPerIn;

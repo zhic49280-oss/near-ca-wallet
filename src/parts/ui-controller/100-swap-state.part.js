@@ -959,6 +959,24 @@
           };
         }
       }
+      if (!isNative && contracts && (typeof contracts.getNativeGasReserve === 'function' || contracts.DEFAULT_GAS_BUFFERS)) {
+        const ck = String(fromToken.blockchain || '').toLowerCase();
+        const minNative = typeof contracts.getNativeGasReserve === 'function'
+          ? contracts.getNativeGasReserve(ck)
+          : Number((contracts.DEFAULT_GAS_BUFFERS && contracts.DEFAULT_GAS_BUFFERS[ck]) || 0);
+        const nativeBal = Number((wallet.nativeBalances && wallet.nativeBalances[ck]) ?? 0);
+        if (minNative > 0 && nativeBal + 1e-12 < minNative) {
+          return {
+            disabled: true,
+            isError: true,
+            isWarning: false,
+            text: t(`${gasSym} Gas 余额不足`, `Insufficient ${gasSym} for gas`),
+            reason: 'insufficient_gas',
+            gasSymbol: gasSym,
+            tokenSymbol: fromToken.symbol
+          };
+        }
+      }
       if (!isQuoting || quoteData) {
         try {
           validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData, amountIn: amt });
@@ -970,6 +988,21 @@
             text: t('NEAR Gas 余额不足', 'Insufficient NEAR for gas'),
             reason: 'insufficient_near_gas'
           };
+        }
+      }
+      if (quoteData && !isQuoting) {
+        const gInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, gasReserveMode || 'auto', quoteData);
+        if (gInfo && gInfo.reserveNum > 0) {
+          const { netOutNum } = computeNetSwapOutput(quoteData, toToken, gInfo, Number(quoteData.amountOutFormatted || 0));
+          if (Number.isFinite(netOutNum) && netOutNum <= 0) {
+            return {
+              disabled: true,
+              isError: true,
+              isWarning: false,
+              text: t('兑换金额过小（扣除目标链 Gas 预留后为 0）', 'Amount too small after target gas reserve'),
+              reason: 'net_out_zero'
+            };
+          }
         }
       }
     }

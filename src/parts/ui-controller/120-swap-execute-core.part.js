@@ -147,6 +147,26 @@
         gasBuffer: gasBuf
       });
       validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData: st.swap.quoteData, amountIn: amt });
+      if (!isNative && (typeof contracts.getNativeGasReserve === 'function' || contracts.DEFAULT_GAS_BUFFERS)) {
+        const ck = String(fromToken.blockchain || '').toLowerCase();
+        const minNative = typeof contracts.getNativeGasReserve === 'function'
+          ? contracts.getNativeGasReserve(ck)
+          : Number((contracts.DEFAULT_GAS_BUFFERS && contracts.DEFAULT_GAS_BUFFERS[ck]) || 0);
+        const nativeBal = Number((wallet.nativeBalances && wallet.nativeBalances[ck]) ?? 0);
+        if (minNative > 0 && nativeBal + 1e-12 < minNative) {
+          throw new Error(`${String(fromToken.blockchain || '').toUpperCase()} ${t('主链 Gas 余额不足', 'native gas insufficient')} (${nativeBal.toFixed(5)} < ${minNative})`);
+        }
+      }
+      if (st.swap.quoteData && st.swap.quoteData.quotedAt && (Date.now() - Number(st.swap.quoteData.quotedAt)) > 30000) {
+        if (typeof fetchLiveSwapQuoteAsync === 'function') {
+          await fetchLiveSwapQuoteAsync();
+          if (st.swap._lastError || !st.swap.quoteData) {
+            throw new Error(st.swap._lastError || t('报价已过期，请重新确认最新报价', 'Quote expired; please re-confirm latest quote'));
+          }
+        } else {
+          throw new Error(t('报价已过期（超过 30 秒），请重新获取报价', 'Quote expired (>30s); please refresh quote'));
+        }
+      }
       const activeCompType = st.swap.quoteData && st.swap.quoteData.compositeType;
       if (activeCompType === 'CROSS_CHAIN_TO_ARC_MAINNET' || activeCompType === 'ARC_MAINNET_TO_CROSS_CHAIN') {
         const baseEthBal = Number((wallet.nativeBalances && wallet.nativeBalances.base) ?? 0);
@@ -421,12 +441,21 @@
               amountRaw,
               slippageBps: st.swap.slippageBps
             });
-            await contracts.executeSolanaJupiterSwap({
+            const origTx = await contracts.executeSolanaJupiterSwap({
               wallet,
               quoteResponse: s0Quote,
               wrapAndUnwrapSol: true,
               tokenBalance: avail,
               inputDecimals: fromToken.decimals
+            });
+            recordWalletActivity(wallet, {
+              type: 'swap',
+              symbol: fromToken.symbol,
+              toSymbol: 'SOL',
+              chain: 'sol',
+              amount: amt,
+              txHash: origTx?.txHash || '',
+              title: `${fromToken.symbol} ➔ SOL (Stage 1)`
             });
             const postSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
             const postLamports = BigInt(postSolRes?.nativeLamports || '0');
@@ -447,7 +476,7 @@
               slippageBps: st.swap.slippageBps,
               fromAddress: evmAddr
             });
-            await contracts.executeEvmDexSwap({
+            const origTx = await contracts.executeEvmDexSwap({
               wallet,
               chainKey: origStage.chain,
               routeSource: s0Q.routeSource,
@@ -458,6 +487,15 @@
               srcDecimals: fromToken.decimals,
               slippageBps: st.swap.slippageBps,
               tokenBalance: avail
+            });
+            recordWalletActivity(wallet, {
+              type: 'swap',
+              symbol: fromToken.symbol,
+              toSymbol: origStage.chain.toUpperCase(),
+              chain: origStage.chain,
+              amount: amt,
+              txHash: origTx?.txHash || '',
+              title: `${fromToken.symbol} ➔ ${origStage.chain.toUpperCase()} (Stage 1)`
             });
             const postEvm = await contracts.fetchEvmNativeAndErc20Balance(origStage.chain, evmAddr).catch(() => null);
             const postWei = BigInt(postEvm?.nativeRaw || '0');
@@ -654,49 +692,89 @@
             refreshAllBalancesAsync(false);
             return;
           }
+          recordWalletActivity(wallet, {
+            type: 'swap',
+            symbol: fromToken.symbol,
+            toSymbol: first.outSymbol || toToken.symbol,
+            chain: 'near',
+            amount: amt,
+            txHash: swapRes.txHash,
+            title: `${fromToken.symbol} ➔ ${first.outSymbol || toToken.symbol} (Stage 1)`
+          });
           const postOutBal = await intents.fetchNearNep141Balances(nearId, { [first.tokenOut]: first.outDecimals || 8 }).catch(() => null);
           const postOutRaw = BigInt(postOutBal?.[first.tokenOut]?.raw || '0');
           const deltaOut = postOutRaw > preOutRaw ? (postOutRaw - preOutRaw) : BigInt(swapRes.amountOut || first.expectedOut || '0');
           const bridgeInRaw = (deltaOut > 0n ? deltaOut : BigInt(first.expectedOut || '0')).toString();
           const destFollow = await buildDestDexFollowUp(outLeg.expectedOut);
-          const liveOut = await intents.quoteIntentSwapOrWithdraw({
-            originAsset: outLeg.originAsset,
-            destinationAsset: outLeg.destinationAsset,
-            amountRaw: bridgeInRaw,
-            slippageBps: st.swap.slippageBps,
-            recipient: resolveBridgeOutRecipient(outLeg),
-            refundTo: nearId,
-            depositType: 'ORIGIN_CHAIN',
-            recipientType: 'DESTINATION_CHAIN',
-            dry: false
-          });
-          if (!liveOut.ok || !liveOut.depositAddress) {
-            throw new Error(liveOut.error || t('获取第二阶段跨链桥路由失败', 'Failed to get Stage 2 bridge route'));
-          }
-          const bridgeDec = outLeg.hubDecimals || first.outDecimals || 8;
-          const bridgeSym = outLeg.hubSymbol || first.outSymbol || 'PRL';
-          const bridgeHuman = intents.fromBaseUnits(bridgeInRaw, bridgeDec);
+          let liveOut;
           let sendBridge = null;
-          if (outLeg.hubContract === 'wrap.near') {
-            sendBridge = await contracts.executeNearNep141Transfer({
-              wallet,
-              tokenContract: 'wrap.near',
-              receiverId: liveOut.depositAddress,
-              amount: bridgeHuman,
-              decimals: 24,
-              tokenSymbol: 'wNEAR',
-              tokenBalance: Number(bridgeHuman)
+          try {
+            liveOut = await intents.quoteIntentSwapOrWithdraw({
+              originAsset: outLeg.originAsset,
+              destinationAsset: outLeg.destinationAsset,
+              amountRaw: bridgeInRaw,
+              slippageBps: st.swap.slippageBps,
+              recipient: resolveBridgeOutRecipient(outLeg),
+              refundTo: nearId,
+              depositType: 'ORIGIN_CHAIN',
+              recipientType: 'DESTINATION_CHAIN',
+              dry: false
             });
-          } else {
-            sendBridge = await contracts.executeNearNep141Transfer({
-              wallet,
-              tokenContract: outLeg.hubContract,
-              receiverId: liveOut.depositAddress,
-              amount: bridgeHuman,
-              decimals: bridgeDec,
-              tokenSymbol: bridgeSym,
-              tokenBalance: Number(bridgeHuman)
-            });
+            if (!liveOut.ok || !liveOut.depositAddress) {
+              throw new Error(liveOut.error || t('获取第二阶段跨链桥路由失败', 'Failed to get Stage 2 bridge route'));
+            }
+            const bridgeDec = outLeg.hubDecimals || first.outDecimals || 8;
+            const bridgeSym = outLeg.hubSymbol || first.outSymbol || 'PRL';
+            const bridgeHuman = intents.fromBaseUnits(bridgeInRaw, bridgeDec);
+            if (outLeg.hubContract === 'wrap.near') {
+              sendBridge = await contracts.executeNearNep141Transfer({
+                wallet,
+                tokenContract: 'wrap.near',
+                receiverId: liveOut.depositAddress,
+                amount: bridgeHuman,
+                decimals: 24,
+                tokenSymbol: 'wNEAR',
+                tokenBalance: Number(bridgeHuman)
+              });
+            } else {
+              sendBridge = await contracts.executeNearNep141Transfer({
+                wallet,
+                tokenContract: outLeg.hubContract,
+                receiverId: liveOut.depositAddress,
+                amount: bridgeHuman,
+                decimals: bridgeDec,
+                tokenSymbol: bridgeSym,
+                tokenBalance: Number(bridgeHuman)
+              });
+            }
+          } catch (s2Err) {
+            st.swap.activeOrder = {
+              walletId: wallet.id,
+              depositAddress: swapRes.txHash || `near_hub_bridge_${Date.now()}`,
+              status: 'SUCCESS',
+              fromSymbol: fromToken.symbol,
+              toSymbol: toToken.symbol,
+              originTxHash: swapRes.txHash || '',
+              autoBroadcasted: true,
+              createdAt: Date.now(),
+              followUpFailed: true,
+              followUpError: s2Err?.message || t('第一阶段已成交，第二步跨链失败，请点击继续重试', 'Stage 1 swapped; tap Resume for Stage 2 bridge'),
+              followUpBridgeOut: {
+                originAsset: outLeg.originAsset,
+                destinationAsset: outLeg.destinationAsset,
+                hubContract: outLeg.hubContract,
+                hubDecimals: outLeg.hubDecimals || first.outDecimals || 8,
+                hubSymbol: outLeg.hubSymbol || first.outSymbol || 'PRL',
+                recipient: resolveBridgeOutRecipient(outLeg),
+                expectedInRaw: bridgeInRaw,
+                slippageBps: st.swap.slippageBps,
+                toSymbol: toToken.symbol,
+                ...destFollow
+              }
+            };
+            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+            renderSwapOrderCard();
+            throw s2Err;
           }
           await intents.submitExternalDepositTxHash({
             depositAddress: liveOut.depositAddress,

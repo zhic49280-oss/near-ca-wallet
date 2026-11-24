@@ -177,7 +177,8 @@
     if (st.swap.activeOrder && st.swap.activeOrder.depositAddress) {
       renderSwapOrderCard();
       const upper = String(st.swap.activeOrder.status || '').toUpperCase();
-      if (!['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper)) {
+      const pendingFollow = typeof hasPendingSwapFollowUp === 'function' && hasPendingSwapFollowUp(st.swap.activeOrder) && !st.swap.activeOrder.followUpFailed;
+      if (!['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper) || pendingFollow) {
         startOrderStatusPolling();
       }
     }
