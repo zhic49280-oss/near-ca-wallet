@@ -56,7 +56,7 @@
       }
     }
 
-    const candidates = Array.from(candidateSet).slice(0, 25);
+    const candidates = Array.from(candidateSet).slice(0, 60);
     const registry = (typeof globalThis !== 'undefined' && globalThis.NearCATokens) || (typeof window !== 'undefined' && window.NearCATokens) || null;
     const nearDexTokens = (registry && registry.DEX_CHAIN_TOKENS && Array.isArray(registry.DEX_CHAIN_TOKENS.near))
       ? registry.DEX_CHAIN_TOKENS.near

@@ -314,7 +314,12 @@ const server = http.createServer((req, res) => {
       baseHeaders['Vary'] = 'Accept-Encoding';
     }
     res.writeHead(200, baseHeaders);
-    fs.createReadStream(filePath).pipe(res);
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', () => {
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    });
+    stream.pipe(res);
   });
 });
 

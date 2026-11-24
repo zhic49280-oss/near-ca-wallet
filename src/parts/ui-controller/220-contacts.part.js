@@ -81,6 +81,7 @@
   }
 
   function deleteContactById(id) {
+    if (!confirmWithUserIfSupported(t('确认删除该联系人？', 'Delete this contact?'))) return;
     const st = getState();
     st.contacts = st.contacts.filter((c) => c.id !== id);
     st.saveContacts();
@@ -90,8 +91,8 @@
   function pickContactAddress(address) {
     const st = getState();
     const target = _contactsPickerTarget;
-    _contactsPickerTarget = null;
     if (target === 'send') {
+      _contactsPickerTarget = null;
       const contactsSheet = $('sheet-contacts');
       if (contactsSheet) {
         contactsSheet.classList.remove('open');
@@ -111,6 +112,7 @@
         showToast(t(`该联系人地址不属于目标网络 (${destBc.toUpperCase()})`, `Contact address does not match destination network (${destBc.toUpperCase()})`));
         return;
       }
+      _contactsPickerTarget = null;
       closeAllSheets();
       if (!doesSwapRouteRequireSelfRecipient(ft, tt, st.swap.quoteData || null)) {
         st.swap.recipientAddress = address;

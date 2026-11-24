@@ -119,10 +119,21 @@
       8000
     );
 
+    const formatNearRpcErr = (errObj, fallbackMsg) => {
+      if (!errObj) return fallbackMsg;
+      const raw = errObj.data !== undefined ? errObj.data : (errObj.message !== undefined ? errObj.message : errObj);
+      if (typeof raw === 'string') return raw;
+      if (raw && typeof raw === 'object') {
+        if (typeof raw.Failure === 'string') return raw.Failure;
+        if (raw.TxExecutionError) return JSON.stringify(raw.TxExecutionError);
+        try { return JSON.stringify(raw); } catch (_) { return fallbackMsg; }
+      }
+      return fallbackMsg;
+    };
+
     if (!akRes || akRes.error || !akRes.result || typeof akRes.result.nonce !== 'number') {
       throw new Error(
-        (akRes && akRes.error && (akRes.error.data || akRes.error.message)) ||
-          t('NEAR 账户未激活或 AccessKey 不存在', 'NEAR account not activated or AccessKey missing')
+        formatNearRpcErr(akRes && akRes.error, t('NEAR 账户未激活或 AccessKey 不存在', 'NEAR account not activated or AccessKey missing'))
       );
     }
 
@@ -188,8 +199,7 @@
 
     if (!txRes || txRes.error) {
       throw new Error(
-        (txRes && txRes.error && (txRes.error.data || txRes.error.message)) ||
-          t('NEAR 交易广播失败', 'NEAR transaction broadcast failed')
+        formatNearRpcErr(txRes && txRes.error, t('NEAR 交易广播失败', 'NEAR transaction broadcast failed'))
       );
     }
     const receiptFailure = extractNearOutcomeFailure(txRes.result);

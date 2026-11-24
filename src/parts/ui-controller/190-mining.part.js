@@ -123,6 +123,14 @@
     const myGen = ++_miningQueryGen;
     st.mining.minerAddress = addr;
     st.mining.loading = true;
+    st.mining.telemetry = null;
+    renderMiningTelemetry();
+    const queryBtn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
+    const prevTxt = queryBtn ? queryBtn.textContent : '';
+    if (queryBtn) {
+      queryBtn.disabled = true;
+      queryBtn.textContent = t('查询中...', 'Querying...');
+    }
     try {
       const tel = await mining.queryMinerDeepStats(addr, st.mining.poolKey);
       if (myGen !== _miningQueryGen) return;
@@ -130,11 +138,17 @@
       renderMiningTelemetry();
     } catch (err) {
       if (myGen === _miningQueryGen) {
-        showToast(err && err.message ? err.message : t('矿工数据查询失败', 'Miner query failed'));
+        const errMsg = err && err.message ? err.message : t('矿工数据查询失败', 'Miner query failed');
+        const isStaticWeb = typeof window !== 'undefined' && window.location && !/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname || '') && !window.Capacitor?.Plugins?.CapacitorHttp;
+        showToast(isStaticWeb ? t('公网静态网页受浏览器 CORS 限制，请在原生 App 或本地代理环境使用矿机监控', 'Static web blocked by CORS; use native App or local proxy for mining telemetry') : errMsg);
       }
     } finally {
       if (myGen === _miningQueryGen) {
         st.mining.loading = false;
+      }
+      if (queryBtn) {
+        queryBtn.disabled = false;
+        queryBtn.textContent = prevTxt;
       }
     }
   }

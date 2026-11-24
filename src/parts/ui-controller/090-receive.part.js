@@ -89,9 +89,11 @@
       const isFetching = Boolean(nearId && _qtcDepositPromiseKey === `${wallet.id}:${nearId}`);
       if (valEl) {
         if (valEl.dataset) valEl.dataset.loading = isFetching ? '1' : '';
-        valEl.textContent = isFetching
-          ? t('正在获取 Quantus 跨链充值地址...', 'Fetching Quantus deposit address...')
-          : '--';
+        if (isFetching) {
+          valEl.textContent = t('正在获取 Quantus 跨链充值地址...', 'Fetching Quantus deposit address...');
+        } else {
+          valEl.innerHTML = `<span>${escapeHtml(t('获取 Quantus 地址失败', 'Failed to fetch Quantus address'))}</span> <button type="button" class="mini-action-btn primary" style="margin-left:6px;" data-action="select-receive-network" data-net="qtc">${escapeHtml(t('重试', 'Retry'))}</button>`;
+        }
       }
       renderQrInto('receive-qr-container', '', 172);
       return;

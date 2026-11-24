@@ -141,7 +141,11 @@
     if (!(await verifySecurityAuthAsync(wallet, promptText))) return;
 
     const btn = $('btn-execute-sol-rent');
-    if (btn) btn.disabled = true;
+    const prevTxt = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = t('回收中...', 'Reclaiming...');
+    }
     try {
       const res = await contracts.executeSolanaRentReclaim({ wallet, accounts: selected });
       const firstHash = res.txHashes && res.txHashes[0] ? `: ${shortenAddr(res.txHashes[0])}` : '';
@@ -152,7 +156,12 @@
       showToast(err && err.message ? err.message : t('租金回收失败', 'Rent reclaim failed'));
       await scanSolRentReclaimUI().catch(() => {});
     } finally {
-      if (btn) btn.disabled = false;
+      if (btn && _solRentSelectedAtas.size > 0) {
+        btn.disabled = false;
+      }
+      if (btn && btn.textContent === t('回收中...', 'Reclaiming...')) {
+        btn.textContent = prevTxt;
+      }
     }
   }
 

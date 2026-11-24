@@ -336,7 +336,10 @@
       nearStakingPositions: Array.isArray(raw.nearStakingPositions) ? raw.nearStakingPositions.slice() : [],
       solStakingPositions: Array.isArray(raw.solStakingPositions) ? raw.solStakingPositions.slice() : [],
       evmStakingPositions: Array.isArray(raw.evmStakingPositions) ? raw.evmStakingPositions.slice() : [],
-      activityHistory: Array.isArray(raw.activityHistory) ? raw.activityHistory.slice(0, 100) : []
+      activityHistory: Array.isArray(raw.activityHistory) ? raw.activityHistory.slice(0, 100) : [],
+      encryptedVault: (raw.encryptedVault && typeof raw.encryptedVault === 'object') ? raw.encryptedVault : null,
+      legacyEvmMnemonic: String(raw.legacyEvmMnemonic || '').trim(),
+      legacySolMnemonic: String(raw.legacySolMnemonic || '').trim()
     };
     if (didSelfHeal) wallet._needsSelfHealSave = true;
 

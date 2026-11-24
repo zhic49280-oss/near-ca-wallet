@@ -1,33 +1,41 @@
-﻿const CACHE_NAME = 'nexus-wallet-v6.49';
+const CACHE_NAME = 'nexus-wallet-v6.60';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './style.css?v=6.49',
-  './assets/favicon.png?v=6.49',
-  './assets/nexus-logo-192.png?v=6.49',
-  './bip39-wordlist.js?v=6.49',
-  './src/crypto-engine.js?v=6.49',
-  './src/token-registry.js?v=6.49',
-  './src/near-intents.js?v=6.49',
-  './src/chain-contracts.js?v=6.49',
-  './src/limit-orders.js?v=6.49',
-  './src/hyperliquid-perps.js?v=6.49',
-  './src/state.js?v=6.49',
-  './src/dapp-browser.js?v=6.49',
-  './src/framework-ui.js?v=6.49',
-  './src/ui-controller.js?v=6.49',
-  './src/mining-pro.js?v=6.49',
-  './ethers.umd.min.js?v=6.49',
-  './qrcode.min.js?v=6.49'
+  './manifest.json',
+  './style.css?v=6.60',
+  './assets/favicon.png?v=6.60',
+  './assets/nexus-logo-192.png?v=6.60',
+  './assets/nexus-logo-512.png?v=6.60',
+  './bip39-wordlist.js?v=6.60',
+  './src/crypto-engine.js?v=6.60',
+  './src/token-registry.js?v=6.60',
+  './src/near-intents.js?v=6.60',
+  './src/chain-contracts.js?v=6.60',
+  './src/limit-orders.js?v=6.60',
+  './src/hyperliquid-perps.js?v=6.60',
+  './src/state.js?v=6.60',
+  './src/dapp-browser.js?v=6.60',
+  './src/framework-ui.js?v=6.60',
+  './src/ui-controller.js?v=6.60',
+  './src/mining-pro.js?v=6.60',
+  './ethers.umd.min.js?v=6.60',
+  './qrcode.min.js?v=6.60',
+  './walletconnect.umd.min.js?v=6.60'
 ];
 
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) =>
       Promise.allSettled(CORE_ASSETS.map((u) => cache.add(u).catch(() => null)))
     )
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event && event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('activate', (event) => {
@@ -69,7 +77,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   event.respondWith(
-    fetch(event.request)
+    Promise.race([
+      fetch(event.request),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('SW network timeout')), 3000))
+    ])
       .then((netRes) => {
         if (netRes && netRes.ok) {
           const copy = netRes.clone();
@@ -77,6 +88,6 @@ self.addEventListener('fetch', (event) => {
         }
         return netRes;
       })
-      .catch(() => caches.match(event.request))
+      .catch(() => caches.match(event.request, { ignoreSearch: true }))
   );
 });

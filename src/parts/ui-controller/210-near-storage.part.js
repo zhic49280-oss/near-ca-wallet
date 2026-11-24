@@ -119,7 +119,11 @@
     if (!(await verifySecurityAuthAsync(wallet, promptText))) return;
 
     const btn = $('btn-execute-near-storage');
-    if (btn) btn.disabled = true;
+    const prevTxt = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = t('回收中...', 'Reclaiming...');
+    }
     try {
       const res = await contracts.executeNearStorageReclaim({ wallet, contracts: selected });
       const firstHash = res.txHashes && res.txHashes[0] ? `: ${shortenAddr(res.txHashes[0])}` : '';
@@ -128,8 +132,14 @@
       refreshAllBalancesAsync(false);
     } catch (err) {
       showToast(err && err.message ? err.message : t('存储押金回收失败', 'Storage reclaim failed'));
+      await scanNearStorageReclaimUI().catch(() => {});
     } finally {
-      if (btn) btn.disabled = false;
+      if (btn && _nearStorageSelectedContracts.size > 0) {
+        btn.disabled = false;
+      }
+      if (btn && btn.textContent === t('回收中...', 'Reclaiming...')) {
+        btn.textContent = prevTxt;
+      }
     }
   }
 

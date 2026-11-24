@@ -235,6 +235,21 @@
       return;
     }
     const normalizedPhrase = check.words.join(' ');
+    const preExisting = st.wallets.find((w) => w && w.mnemonic && String(w.mnemonic).trim() === normalizedPhrase);
+    if (preExisting) {
+      if (String(name || '').trim()) preExisting.name = String(name).trim();
+      st.activeWalletId = preExisting.id;
+      if ($('onboard-import-phrase')) $('onboard-import-phrase').value = '';
+      if ($('onboard-import-name')) $('onboard-import-name').value = '';
+      resetPerWalletTransientState(preExisting);
+      st.saveWallets();
+      _isAddingAdditionalWallet = false;
+      st.activeTab = 'wallet';
+      renderAll();
+      refreshAllBalancesAsync(true);
+      showToast(t('已切换至该助记词对应钱包', 'Switched to existing wallet'));
+      return;
+    }
     _onboardingBusy = true;
     const btn = $('btn-confirm-import-wallet');
     if (btn) btn.disabled = true;
@@ -243,6 +258,7 @@
       const existing = st.wallets.find((w) => w.nearAddress && w.nearAddress === wallet.nearAddress);
       let activeTarget = wallet;
       if (existing) {
+        if (String(name || '').trim()) existing.name = String(name).trim();
         st.activeWalletId = existing.id;
         activeTarget = existing;
         showToast(t('已切换至该助记词对应钱包', 'Switched to existing wallet'));
@@ -324,6 +340,8 @@
     if (st.swap) {
       st.swap.quoteData = null;
       st.swap.recipientAddress = '';
+      st.swap.amountIn = '';
+      if ($('swap-amount-in')) $('swap-amount-in').value = '';
       if (typeof stopOrderStatusPolling === 'function') stopOrderStatusPolling();
       st.swap.activeOrder = null;
     }
@@ -356,6 +374,7 @@
     if (typeof _tokenDetailState !== 'undefined' && _tokenDetailState) {
       _tokenDetailState.historyItems = [];
       _tokenDetailState.mergedItems = [];
+      _tokenDetailState.fetchSeq = (_tokenDetailState.fetchSeq || 0) + 1;
     }
   }
 
@@ -487,7 +506,7 @@
         <div class="meta-list">
           <div class="meta-row">
             <span class="meta-key">${escapeHtml(r.label)}</span>
-            <button type="button" class="btn-ghost-sm" data-action="copy-text" data-val="${escapeHtml(r.val || '')}" data-label="${escapeHtml(r.label)}">${t('复制', 'Copy')}</button>
+            <button type="button" class="btn-ghost-sm" ${r.secret ? 'data-secret-copy="1"' : ''} data-action="copy-text" data-val="${escapeHtml(r.val || '')}" data-label="${escapeHtml(r.label)}">${t('复制', 'Copy')}</button>
           </div>
           <div class="mono ${r.secret ? 'backup-secret-val' : ''}" data-secret="${escapeHtml(r.val || '')}" style="font-size:11px;word-break:break-all;color:#fff;${r.secret ? 'filter:blur(4px);user-select:none;' : ''}">${escapeHtml(r.secret ? (r.val ? '•••• •••• •••• •••• •••• ••••' : '--') : (r.val || '--'))}</div>
         </div>
@@ -497,6 +516,13 @@
   }
 
   function copyTextValue(val, label) {
+    if (typeof event !== 'undefined' && event?.target?.closest) {
+      const btn = event.target.closest('button');
+      if (btn && btn.getAttribute('data-secret-copy') === '1' && !_backupRevealActive) {
+        showToast(t('请先点击「显示助记词与私钥」后再复制', 'Reveal phrase & keys first before copying'));
+        return;
+      }
+    }
     if (val) copyText(val, label);
   }
 

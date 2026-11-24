@@ -1,4 +1,4 @@
-﻿  // ==================== WalletConnect v2 Sheet ====================
+  // ==================== WalletConnect v2 Sheet ====================
 
   const DEFAULT_WC_PROJECT_ID = 'a1e691683a26f67375ef31ee654a1f49';
 
@@ -24,7 +24,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.49');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.60');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -616,6 +616,7 @@
       await videoEl.play().catch(() => {});
 
       const DetectorCtor = (typeof window !== 'undefined' && window.BarcodeDetector) || (typeof globalThis !== 'undefined' && globalThis.BarcodeDetector);
+      const getJsQrFn = () => (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
       if (typeof DetectorCtor === 'function') {
         const detector = new DetectorCtor({ formats: ['qr_code'] });
         if (statusEl) {
@@ -631,11 +632,36 @@
             }
           } catch (_) {}
         }, 220);
+      } else if (typeof getJsQrFn() === 'function' && typeof document !== 'undefined') {
+        if (statusEl) {
+          statusEl.textContent = t('请将二维码对准取景框内', 'Align the QR code inside the frame');
+        }
+        const canvas = document.createElement('canvas');
+        const ctx2d = canvas.getContext ? canvas.getContext('2d', { willReadFrequently: true }) : null;
+        _qrScanTimer = setInterval(async () => {
+          if (!_qrMediaStream || _qrScanHandling || videoEl.readyState < 2 || !ctx2d) return;
+          const w = videoEl.videoWidth || 320;
+          const h = videoEl.videoHeight || 240;
+          if (!w || !h) return;
+          canvas.width = w;
+          canvas.height = h;
+          ctx2d.drawImage(videoEl, 0, 0, w, h);
+          try {
+            const imgData = ctx2d.getImageData(0, 0, w, h);
+            const jsQr = getJsQrFn();
+            const code = jsQr ? jsQr(imgData.data, w, h) : null;
+            if (code && code.data) {
+              await handleQrScanResultAsync(code.data);
+            }
+          } catch (_) {}
+        }, 260);
       } else if (statusEl) {
+        statusEl.setAttribute('data-i18n-dynamic', '1');
         statusEl.textContent = t('当前系统内核暂不支持摄像头扫码，请返回直接粘贴地址或链接', 'QR camera decoder unsupported on this WebView; please go back and paste the address or URI');
       }
     } catch (_) {
       if (statusEl) {
+        statusEl.setAttribute('data-i18n-dynamic', '1');
         statusEl.textContent = t('无法访问摄像头（请检查相机权限），可点击「从相册选图」识别二维码', 'Camera access denied. Use "Pick from Album" to scan QR image.');
       }
     }
@@ -662,12 +688,12 @@
     const file = event && event.target && event.target.files && event.target.files[0];
     if (!file) return;
     const DetectorCtor = (typeof window !== 'undefined' && window.BarcodeDetector) || (typeof globalThis !== 'undefined' && globalThis.BarcodeDetector);
-    if (typeof DetectorCtor !== 'function') {
+    const jsQrFn = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
+    if (typeof DetectorCtor !== 'function' && typeof jsQrFn !== 'function') {
       showToast(t('当前设备不支持图片二维码解码，请直接复制 wc: 链接粘贴', 'Image QR decoding unsupported on this WebView; paste wc: URI instead'));
       return;
     }
     try {
-      const detector = new DetectorCtor({ formats: ['qr_code'] });
       let source = null;
       if (typeof createImageBitmap === 'function') {
         source = await createImageBitmap(file);
@@ -687,10 +713,28 @@
         });
       }
       if (!source) throw new Error('Image decode unavailable');
-      const codes = await detector.detect(source);
-      const hit = Array.isArray(codes) && codes.find((c) => c && c.rawValue);
-      if (hit && hit.rawValue) {
-        await handleQrScanResultAsync(hit.rawValue);
+      let rawQr = '';
+      if (typeof DetectorCtor === 'function') {
+        const detector = new DetectorCtor({ formats: ['qr_code'] });
+        const codes = await detector.detect(source);
+        const hit = Array.isArray(codes) && codes.find((c) => c && c.rawValue);
+        if (hit && hit.rawValue) rawQr = hit.rawValue;
+      } else if (typeof jsQrFn === 'function' && typeof document !== 'undefined') {
+        const canvas = document.createElement('canvas');
+        const w = source.width || source.naturalWidth || 400;
+        const h = source.height || source.naturalHeight || 400;
+        canvas.width = w;
+        canvas.height = h;
+        const ctx2d = canvas.getContext && canvas.getContext('2d');
+        if (ctx2d) {
+          ctx2d.drawImage(source, 0, 0, w, h);
+          const imgData = ctx2d.getImageData(0, 0, w, h);
+          const res = jsQrFn(imgData.data, w, h);
+          if (res && res.data) rawQr = res.data;
+        }
+      }
+      if (rawQr) {
+        await handleQrScanResultAsync(rawQr);
       } else {
         showToast(t('未在图片中识别到有效二维码', 'No valid QR code found in image'));
       }

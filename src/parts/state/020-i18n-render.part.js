@@ -32,6 +32,39 @@
     return out;
   }
 
+  const VAULT_SECRET_FIELDS = [
+    'mnemonic', 'prlMnemonic', 'btcMnemonic', 'legacyEvmMnemonic', 'legacySolMnemonic',
+    'nearPrivateKey', 'nearPrivateSeedHex', 'evmPrivateKey', 'solPrivateSeedHex',
+    'privateKeyHex', 'tweakedPrivateKeyHex', 'btcPrivateKeyHex', 'btcTweakedPrivateKeyHex'
+  ];
+
+  async function encryptWalletSecretsToVaultAsync(wallet, pin) {
+    const cryptoLib = (typeof root !== 'undefined' && root.NearCACrypto) || (typeof globalThis !== 'undefined' && globalThis.NearCACrypto);
+    const cleanPin = String(pin || '').trim();
+    if (!wallet || !cleanPin || !cryptoLib || typeof cryptoLib.encryptVaultJsonAsync !== 'function') return null;
+    const secrets = {};
+    for (const k of VAULT_SECRET_FIELDS) {
+      if (wallet[k]) secrets[k] = wallet[k];
+    }
+    const envelope = await cryptoLib.encryptVaultJsonAsync(secrets, cleanPin);
+    wallet.encryptedVault = envelope;
+    return envelope;
+  }
+
+  async function unlockWalletVaultSecretsAsync(wallet, pin) {
+    const cryptoLib = (typeof root !== 'undefined' && root.NearCACrypto) || (typeof globalThis !== 'undefined' && globalThis.NearCACrypto);
+    const cleanPin = String(pin || '').trim();
+    if (!wallet || !wallet.encryptedVault || !cleanPin || !cryptoLib || typeof cryptoLib.decryptVaultJsonAsync !== 'function') return false;
+    const secrets = await cryptoLib.decryptVaultJsonAsync(wallet.encryptedVault, cleanPin);
+    if (secrets && typeof secrets === 'object') {
+      for (const k of VAULT_SECRET_FIELDS) {
+        if (secrets[k]) wallet[k] = secrets[k];
+      }
+      return true;
+    }
+    return false;
+  }
+
   let _saveWalletsTimer = null;
 
   function saveWallets() {
@@ -46,6 +79,11 @@
       delete copy.nearBalance;
       delete copy.balance;
       delete copy._needsSelfHealSave;
+      if (copy.encryptedVault && typeof copy.encryptedVault === 'object' && copy.encryptedVault.ctBase64) {
+        for (const k of VAULT_SECRET_FIELDS) {
+          delete copy[k];
+        }
+      }
       copy.erc20Balances = serializeCompactErc20Map(w.erc20Balances);
       return copy;
     });
@@ -417,6 +455,7 @@
       document.documentElement.lang = normalized === 'en' ? 'en' : 'zh-CN';
       const nodes = document.querySelectorAll('[data-i18n]');
       nodes.forEach((el) => {
+        if (el.getAttribute('data-i18n-dynamic') === '1') return;
         const key = el.getAttribute('data-i18n');
         if (key && dict[key] !== undefined) {
           el.textContent = dict[key];
@@ -483,6 +522,9 @@
       if (parsed && typeof parsed === 'object' && parsed.createdAt) {
         if (Date.now() - Number(parsed.createdAt) > 24 * 3600_000) {
           safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, '');
+          return null;
+        }
+        if (parsed.walletId && state.activeWalletId && parsed.walletId !== state.activeWalletId) {
           return null;
         }
         state.swap.activeOrder = parsed;
@@ -700,6 +742,8 @@
   state.setWalletErc20Balance = setWalletErc20Balance;
   state.getWalletErc20Balance = getWalletErc20Balance;
   state.createEmptyNativeBalances = createEmptyNativeBalances;
+  state.encryptWalletSecretsToVaultAsync = encryptWalletSecretsToVaultAsync;
+  state.unlockWalletVaultSecretsAsync = unlockWalletVaultSecretsAsync;
   state.initState = initState;
 
   if (root) {

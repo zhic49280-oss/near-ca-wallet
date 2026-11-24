@@ -369,9 +369,8 @@
                 try { return BigInt(String(tok.balance || '0')) > 0n; } catch (_) { return true; }
               });
               fastNearConfirmedZero = !anyFt;
-            } else if (fnStatus === 404) {
-              fastNearConfirmedZero = true;
             }
+            // Do not treat HTTP 404 or timeout as confirmed zero assets (prevents accidental DeleteAccount)
           }
 
           if (!hasLocalFt && fastNearConfirmedZero) {

@@ -727,6 +727,10 @@
         return;
       }
       if (dy <= 2 || getScrollTop() > 2) {
+        if (dy < -8 && !pulling) {
+          startY = null;
+          startX = null;
+        }
         if (pulling) {
           ind.classList.remove('pulling');
           setPullVisual(0, true);
