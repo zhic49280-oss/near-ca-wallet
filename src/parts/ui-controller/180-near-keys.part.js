@@ -432,7 +432,7 @@
       const savedOk = st.saveWallets();
       if (savedOk === false) {
         showToast(t('链上密钥已更换，但本地写入失败！请立即在备份弹窗复制保存新助记词', 'On-chain key rotated, but local save failed! Copy your new phrase immediately'));
-        if (typeof openBackupSheet === 'function') openBackupSheet();
+        if (typeof openBackupKeysSheet === 'function') openBackupKeysSheet();
       }
       showToast(`✅ ${t('助记词与链上密钥已更换', 'Mnemonic & on-chain key rotated')}: ${shortenAddr(res.deleteTxHash || res.addTxHash, 8, 6)}`);
       if ($('near-keys-rotate-mnemonic')) $('near-keys-rotate-mnemonic').value = '';

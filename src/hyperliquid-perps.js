@@ -1124,7 +1124,7 @@
         const orders = await fetchHlOpenOrders(addr).catch(() => []);
         const coinTriggers = (orders || []).filter((o) => o && o.coin === market.name && o.isTrigger);
         if (coinTriggers.length > 0) {
-          await cancelHlOrders({ wallet, cancels: coinTriggers.map((o) => ({ assetIndex: market.index, oid: o.oid })) }).catch(() => {});
+          await cancelHlOrdersBatch({ wallet, cancels: coinTriggers.map((o) => ({ a: market.index, o: o.oid })) }).catch(() => {});
         }
       }
     } catch (_) {}
