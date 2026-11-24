@@ -266,13 +266,14 @@
     };
 
     const scheduleChartRedraw = () => {
-      if (rafId || typeof requestAnimationFrame !== 'function') {
+      if (typeof requestAnimationFrame !== 'function') {
         const st = getState();
         const market = getSelectedPerpMarket();
         host.innerHTML = renderPerpCandleSvg(st.perp.candles, market, st.perp.inspectedCandleIdx);
         renderPerpCandleDetailBar(st.perp.candles, st.perp.inspectedCandleIdx);
         return;
       }
+      if (rafId) return;
       rafId = requestAnimationFrame(() => {
         rafId = 0;
         const st = getState();

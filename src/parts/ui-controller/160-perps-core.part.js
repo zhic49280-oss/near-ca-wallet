@@ -107,7 +107,10 @@
     const limitPx = Number(override.limitPriceInput ?? st.perp.limitPriceInput);
     const availMargin = acct ? Number(acct.availableMargin || 0) : null;
     const markPx = market ? Number(market.markPx || 0) : null;
-    const execPx = isLimitLike ? limitPx : markPx;
+    const rawExecPx = isLimitLike ? limitPx : markPx;
+    const execPx = (hl && market && Number.isFinite(rawExecPx) && rawExecPx > 0)
+      ? Number(hl.formatHlPrice(rawExecPx, market.szDecimals))
+      : rawExecPx;
     const feeRate = isLimitLike
       ? (acct && Number.isFinite(Number(acct.makerFeeRate)) ? Number(acct.makerFeeRate) : 0.00015)
       : (acct && Number.isFinite(Number(acct.takerFeeRate)) ? Number(acct.takerFeeRate) : 0.00045);
@@ -124,7 +127,7 @@
       sizeStr = hl ? hl.formatHlSize(rawSize, market ? market.szDecimals : 4) : rawSize.toFixed(4);
       sizeNum = Number(sizeStr);
       if (hl) {
-        estLiqPx = hl.computeEstimatedLiqPrice({ markPx: execPx, leverage: lev, isLong: isBuy });
+        estLiqPx = hl.computeEstimatedLiqPrice({ markPx: execPx, leverage: lev, isLong: isBuy, maxLeverage: market ? market.maxLeverage : 100 });
       }
     }
 

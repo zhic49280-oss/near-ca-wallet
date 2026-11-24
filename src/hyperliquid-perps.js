@@ -340,7 +340,11 @@
       return String(Math.round(n));
     }
     const sig = Number(n.toPrecision(5));
-    return trimDecimalTrailingZeros(sig.toFixed(maxDec));
+    const fixed = trimDecimalTrailingZeros(sig.toFixed(maxDec));
+    if (fixed === '0' && n > 0) {
+      return trimDecimalTrailingZeros(sig.toFixed(12));
+    }
+    return fixed;
   }
 
   function formatHlSize(sz, szDecimals = 0) {
@@ -359,12 +363,12 @@
     return trimDecimalTrailingZeros(n.toFixed(6));
   }
 
-  function computeEstimatedLiqPrice({ markPx, leverage, isLong }) {
+  function computeEstimatedLiqPrice({ markPx, leverage, isLong, maxLeverage = 100 }) {
     const px = Number(markPx);
     const lev = Number(leverage);
     if (!Number.isFinite(px) || px <= 0 || !Number.isFinite(lev) || lev <= 0) return null;
-    // Standard isolated maintenance margin ratio approximation (~0.5% MMR buffer)
-    const mmr = 0.005;
+    const maxLev = Math.max(1, Number(maxLeverage) || 100);
+    const mmr = 1 / (2 * maxLev);
     const raw = isLong
       ? px * (1 - (1 / lev) + mmr)
       : px * (1 + (1 / lev) - mmr);
@@ -732,7 +736,9 @@
       withdrawable,
       totalMarginUsed,
       totalNtlPos,
-      availableMargin: Math.max(0, accountValue - totalMarginUsed),
+      availableMargin: Number.isFinite(withdrawable) && withdrawable >= 0
+        ? Math.min(Math.max(0, accountValue - totalMarginUsed), withdrawable)
+        : Math.max(0, accountValue - totalMarginUsed),
       spotUsdc,
       positions,
       openOrders: dedupOrders,
@@ -1016,21 +1022,32 @@
     if (!market || market.index === undefined) throw new Error(t('请选择有效合约市场', 'Select a valid perpetual market'));
     if (!position || !position.absSize) throw new Error(t('无效持仓', 'Invalid position'));
 
-    const existingTriggers = (Array.isArray(openOrders) ? openOrders : []).filter(
-      (o) => o && String(o.coin || '') === String(position.coin || '') && (o.isTrigger || /Take Profit|Stop/i.test(String(o.orderType || ''))) && o.oid !== undefined
-    );
-    if (existingTriggers.length > 0) {
-      await cancelHlOrdersBatch({
-        wallet,
-        cancels: existingTriggers.map((o) => ({ a: market.index, o: o.oid }))
-      });
-    }
-
     const szDec = Number(market.szDecimals) || 0;
     const sizeStr = formatHlSize(position.absSize, szDec);
     const orders = [];
     const tpNum = Number(tpPrice);
     const slNum = Number(slPrice);
+    const refMark = Number(market.markPx || position.entryPx || 0);
+    if (refMark > 0) {
+      if (Number.isFinite(tpNum) && tpNum > 0 && ((position.isLong && tpNum <= refMark) || (!position.isLong && tpNum >= refMark))) {
+        throw new Error(t('止盈价方向有误（多单需高于标记价，空单需低于标记价）', 'Invalid TP trigger direction relative to mark price'));
+      }
+      if (Number.isFinite(slNum) && slNum > 0 && ((position.isLong && slNum >= refMark) || (!position.isLong && slNum <= refMark))) {
+        throw new Error(t('止损价方向有误（多单需低于标记价，空单需高于标记价）', 'Invalid SL trigger direction relative to mark price'));
+      }
+    }
+
+    const existingTriggers = (Array.isArray(openOrders) ? openOrders : []).filter(
+      (o) => o && String(o.coin || '') === String(position.coin || '') && (o.isTrigger || /Take Profit|Stop/i.test(String(o.orderType || ''))) && o.oid !== undefined
+    );
+    let cancelledOld = false;
+    if (existingTriggers.length > 0) {
+      await cancelHlOrdersBatch({
+        wallet,
+        cancels: existingTriggers.map((o) => ({ a: market.index, o: o.oid }))
+      });
+      cancelledOld = true;
+    }
 
     if (Number.isFinite(tpNum) && tpNum > 0) {
       const tpStr = formatHlPrice(tpNum, szDec);
@@ -1062,12 +1079,21 @@
     }
 
     const action = { type: 'order', orders, grouping: 'positionTpsl' };
-    const signed = await signHlL1Action({ wallet, action });
-    const res = await postHlExchange({ action, nonce: signed.nonce, signature: signed.signature });
-    return { ok: true, action, response: res };
+    try {
+      const signed = await signHlL1Action({ wallet, action });
+      const res = await postHlExchange({ action, nonce: signed.nonce, signature: signed.signature });
+      return { ok: true, action, response: res };
+    } catch (err) {
+      if (cancelledOld) {
+        const warn = new Error(t(`旧止盈止损已撤销，但新单提交失败，请立即重设！(${err?.message || 'Error'})`, `Old TP/SL cancelled, but new order failed — re-set immediately! (${err?.message || 'Error'})`));
+        warn.oldCancelled = true;
+        throw warn;
+      }
+      throw err;
+    }
   }
 
-  async function closeHlPositionMarket({ wallet, market, position, slippageBps = 80 }) {
+  async function closeHlPositionMarket({ wallet, market, position, slippageBps = 250 }) {
     if (!position || !position.absSize) throw new Error(t('无效持仓', 'Invalid position'));
     return placeHlPerpOrder({
       wallet,
@@ -1080,7 +1106,7 @@
     });
   }
 
-  async function reverseHlPositionMarket({ wallet, market, position, slippageBps = 80, availableMargin = null }) {
+  async function reverseHlPositionMarket({ wallet, market, position, slippageBps = 250, availableMargin = null }) {
     if (!position || !position.absSize) throw new Error(t('无效持仓', 'Invalid position'));
     const curLev = Number(position.leverageValue || 5);
     const freedMargin = Number(position.marginUsed) || ((Number(position.absSize) * (Number(market.markPx) || Number(position.entryPx) || 0)) / Math.max(1, curLev));
@@ -1095,7 +1121,7 @@
       orderType: 'market',
       slippageBps,
       reduceOnly: false,
-      leverage: null,
+      leverage: curLev,
       isCross: position.leverageType === 'cross',
       availableMargin: effectiveAvail
     });

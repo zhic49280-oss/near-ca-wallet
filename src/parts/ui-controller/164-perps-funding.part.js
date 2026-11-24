@@ -328,11 +328,14 @@
     renderPerpFundingSheet();
   }
 
+  let _perpQuoteSeq = 0;
+
   function schedulePerpOneClickQuote() {
     const st = getState();
     st.perp.fundingQuote = null;
     st.perp.fundingQuoteError = '';
     if (_perpQuoteTimer) clearTimeout(_perpQuoteTimer);
+    const seq = ++_perpQuoteSeq;
     const amt = Number($('perp-oc-amount')?.value || 0);
     const entries = getEligiblePerpOneClickEntries(st.getActiveWallet());
     const selKey = $('perp-oc-origin-select')?.value || '';
@@ -353,6 +356,7 @@
         const curEntry = curEntries.find((e) => e.key === curKey) || curEntries[0];
         if (!hl || !wallet || !curEntry) return;
         const q = await hl.quoteOneClickDepositToHlSpot({ wallet, originToken: curEntry, amount: amt, dry: true });
+        if (seq !== _perpQuoteSeq) return;
         st.perp.fundingQuoting = false;
         if (q && q.ok) {
           st.perp.fundingQuote = q;
@@ -362,11 +366,12 @@
           st.perp.fundingQuoteError = (q && q.error) || t('暂无跨链报价', 'Quote unavailable');
         }
       } catch (err) {
+        if (seq !== _perpQuoteSeq) return;
         st.perp.fundingQuoting = false;
         st.perp.fundingQuote = null;
         st.perp.fundingQuoteError = (err && err.message) || t('询价失败', 'Quote failed');
       } finally {
-        evaluatePerpOneClickUI();
+        if (seq === _perpQuoteSeq) evaluatePerpOneClickUI();
       }
     }, 360);
   }
@@ -481,7 +486,11 @@
     const authed = await verifySecurityAuthAsync(wallet, `${t('Arbitrum 充值 USDC 至 Hyperliquid', 'Deposit Arbitrum USDC to Hyperliquid')} (${amt} USDC)`);
     if (!authed) return;
     const btn = $('btn-perp-arb-deposit');
-    if (btn) btn.disabled = true;
+    const prevBtnTxt = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = t('提交充值中...', 'Depositing...');
+    }
     try {
       await ensureEthersLoaded();
       const res = await hl.depositArbUsdcToHlBridge({ wallet, amount: amt });
@@ -495,14 +504,19 @@
           title: t('Hyperliquid Arbitrum 充值', 'Hyperliquid Arbitrum Deposit')
         });
       }
-      showToast(`✅ ${t('Arbitrum 充值已提交', 'Arbitrum deposit sent')}: ${shortenAddr(res.txHash)}`);
+      showToast(`✅ ${t('Arbitrum 充值已提交 (约 1~2 分钟到账)', 'Arbitrum deposit sent (~1-2 min arrival)')}: ${shortenAddr(res.txHash)}`);
       closeAllSheets();
       refreshAllBalancesAsync(false);
       refreshPerpDataAsync(false).catch(() => {});
+      setTimeout(() => refreshPerpDataAsync(false).catch(() => {}), 20000).unref?.();
+      setTimeout(() => refreshPerpDataAsync(false).catch(() => {}), 60000).unref?.();
     } catch (err) {
       showToast((err && err.message) || t('Arbitrum 充值失败', 'Arbitrum deposit failed'));
     } finally {
-      if (btn) btn.disabled = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = prevBtnTxt || t('确认 Arbitrum 充值', 'Confirm Arbitrum Deposit');
+      }
       evaluatePerpArbDepositUI();
     }
   }
@@ -523,7 +537,11 @@
     if (!authed) return;
 
     const btn = $('btn-perp-withdraw');
-    if (btn) btn.disabled = true;
+    const prevBtnTxt = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = t('提现提交中...', 'Withdrawing...');
+    }
     try {
       await ensureEthersLoaded();
       await hl.withdrawHlToArbitrum({ wallet, amount: amt, withdrawable });
@@ -533,7 +551,10 @@
     } catch (err) {
       showToast((err && err.message) || t('提现失败', 'Withdrawal failed'));
     } finally {
-      if (btn) btn.disabled = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = prevBtnTxt || t('确认提现到 Arbitrum', 'Confirm Withdraw to Arbitrum');
+      }
       evaluatePerpWithdrawUI();
     }
   }

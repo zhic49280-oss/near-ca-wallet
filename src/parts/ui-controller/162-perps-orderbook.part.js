@@ -210,15 +210,17 @@
     }).join('');
   }
 
-  function evaluatePerpOrderUI() {
+  function evaluatePerpOrderUI(syncFromDom = true) {
     const st = getState();
     const market = getSelectedPerpMarket();
-    const marginEl = $('perp-margin-input');
-    const limitEl = $('perp-limit-price-input');
-    if (marginEl && marginEl.value !== undefined) st.perp.marginInput = marginEl.value;
-    if (limitEl && limitEl.value !== undefined) st.perp.limitPriceInput = limitEl.value;
-    st.perp.tpInput = ($('perp-tp-input')?.value || '').trim();
-    st.perp.slInput = ($('perp-sl-input')?.value || '').trim();
+    if (syncFromDom) {
+      const marginEl = $('perp-margin-input');
+      const limitEl = $('perp-limit-price-input');
+      if (marginEl && marginEl.value !== undefined) st.perp.marginInput = marginEl.value;
+      if (limitEl && limitEl.value !== undefined) st.perp.limitPriceInput = limitEl.value;
+      st.perp.tpInput = ($('perp-tp-input')?.value || '').trim();
+      st.perp.slInput = ($('perp-sl-input')?.value || '').trim();
+    }
 
     const evalRes = evaluatePerpOrderState({ market });
     const ntlEl = $('perp-meta-notional');
@@ -516,7 +518,7 @@
     const levValEl = $('perp-lev-val');
     if (levValEl) levValEl.textContent = `${st.perp.leverage}x`;
 
-    evaluatePerpOrderUI();
+    evaluatePerpOrderUI(false);
     renderPerpBottomList();
   }
 

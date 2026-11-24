@@ -204,7 +204,8 @@
             <input id="perp-arb-amount" type="number" step="any" min="5" class="amount-input-lg" placeholder="5.00" oninput="evaluatePerpArbDepositUI()" />
           </div>
           <div id="perp-arb-error" class="swap-error-banner hidden"></div>
-          <button type="button" id="btn-perp-arb-deposit" class="btn-primary" onclick="executePerpArbBridgeDepositUI()" data-i18n="perp.arbDepositBtn">确认 Arbitrum 充值</button>
+          <div style="font-size: 11px; color: #fbbf24; line-height: 1.45; background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.22); border-radius: 8px; padding: 6px 8px;" data-i18n="perp.arbBridgeNotice">Arbitrum Bridge2 充值最低 5 USDC（低于 5 USDC 将永久丢失），链上确认约需 1~2 分钟。</div>
+        <button type="button" id="btn-perp-arb-deposit" class="btn-primary" onclick="executePerpArbBridgeDepositUI()" data-i18n="perp.arbDepositBtn">确认 Arbitrum 充值</button>
         </div>
       </div>
 
