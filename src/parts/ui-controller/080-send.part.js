@@ -276,6 +276,11 @@
   }
 
   function updateSendAvailabilityUI() {
+    if (typeof resetFormFields === 'function') {
+      resetFormFields(['send-amount-input']);
+    } else if ($('send-amount-input')) {
+      $('send-amount-input').value = '';
+    }
     const asset = getSelectedSendAsset();
     const bal = getSendSourceAvailable();
     const el = $('send-available-bal');
@@ -320,6 +325,11 @@
     if (isSameChain) {
       previewEl.classList.add('hidden');
       previewEl.textContent = '';
+      return;
+    }
+    if (asset.blockchain === 'arc') {
+      previewEl.classList.remove('hidden');
+      previewEl.textContent = t('Arc 主网暂不支持跨链直转，请使用闪兑', 'Arc Mainnet does not support direct cross-chain send; please use Swap');
       return;
     }
     const destAsset = resolveDestinationAssetForNetwork(asset.symbol, net, asset.assetId, targetEvmChain);
@@ -642,10 +652,7 @@
     }
 
     try {
-      if (!(await verifySecurityAuthAsync(wallet, `${t('确认发送', 'Confirm send')} ${amountNum} ${asset.symbol}`))) return;
       const isEvmOrigin = EVM_CHAIN_KEYS.includes(asset.blockchain);
-      if (isEvmOrigin) await ensureEthersLoaded();
-      await contracts.ensureWalletSigningKeysAsync(wallet);
       const targetEvmChain = detectedNet === 'evm'
         ? (_sendTargetEvmChain || (isEvmOrigin ? asset.blockchain : 'eth'))
         : detectedNet;
@@ -655,6 +662,51 @@
         (isEvmOrigin && detectedNet === 'evm' && asset.blockchain === targetEvmChain) ||
         (asset.blockchain === 'prl' && detectedNet === 'prl') ||
         (asset.blockchain === 'btc' && detectedNet === 'btc');
+
+      const exactAmt = rawAmtStr || amountNum;
+      let preQuotedCross = null;
+      let preDestAsset = null;
+      let authReason = `${t('确认发送', 'Confirm send')} ${exactAmt} ${asset.symbol}`;
+
+      if (!isSameChain) {
+        const canBroadcastOrigin =
+          asset.blockchain === 'near' ||
+          asset.blockchain === 'sol' ||
+          asset.blockchain === 'prl' ||
+          asset.blockchain === 'btc' ||
+          (isEvmOrigin && asset.blockchain !== 'arc');
+        if (!canBroadcastOrigin) {
+          throw new Error(t('所选源链暂不支持自动签名跨链，请在收款网络切换或使用支持的源链', 'Origin chain does not support automated cross-chain broadcast'));
+        }
+        preDestAsset = resolveDestinationAssetForNetwork(asset.symbol, detectedNet, asset.assetId, targetEvmChain);
+        if (!preDestAsset) {
+          throw new Error(t('该代币暂不支持跨链直转到目标网络，请使用闪兑', 'This token cannot be sent directly to the target network; please use Swap'));
+        }
+        await contracts.ensureWalletSigningKeysAsync(wallet);
+        const amountRaw = intents.toBaseUnits(exactAmt, asset.decimals || 8);
+        const refundTo = getWalletDefaultRecipientForChain(wallet, asset.blockchain) || (wallet.nearNamedAccount || wallet.nearAddress);
+        preQuotedCross = await intents.quoteIntentSwapOrWithdraw({
+          originAsset: asset.assetId,
+          destinationAsset: preDestAsset.assetId,
+          amountRaw,
+          slippageBps: 100,
+          recipient,
+          refundTo,
+          depositType: 'ORIGIN_CHAIN',
+          recipientType: 'DESTINATION_CHAIN',
+          appFeeBps: (intents.APP_FEE_CONFIG && intents.APP_FEE_CONFIG.SEND_CROSS_CHAIN_BPS) ?? 25,
+          dry: false
+        });
+        if (!preQuotedCross.ok || !preQuotedCross.depositAddress) {
+          throw new Error(preQuotedCross.error || t('获取跨链转账路由失败', 'Failed to obtain cross-chain route'));
+        }
+        const outHuman = preQuotedCross.amountOutFormatted || intents.fromBaseUnits(String(preQuotedCross.amountOut || '0'), preDestAsset.decimals || 8);
+        authReason = `${t('确认跨链发送', 'Confirm cross-chain send')} ${exactAmt} ${asset.symbol} → ~${formatBal(Number(outHuman), 6)} ${preDestAsset.symbol || asset.symbol}`;
+      }
+
+      if (!(await verifySecurityAuthAsync(wallet, authReason))) return;
+      if (isEvmOrigin) await ensureEthersLoaded();
+      await contracts.ensureWalletSigningKeysAsync(wallet);
 
       // Case 1: Same-chain direct on-chain transfer
       if (isSameChain) {
@@ -766,13 +818,13 @@
           const res = await contracts.executeBitcoinTransfer({
             wallet,
             toAddress: recipient,
-            amountBtc: amountNum,
+            amountBtc: exactAmt,
             feeDeductMode: 'extra',
             feeRateSatVb: gasMeta.feeRateSatVb ?? null,
             gasBuffer: gasBuf
           });
           const feeBtc = Number(res.feeBtc) || 0;
-          const netSent = Number(res.sentBtc) || amountNum;
+          const netSent = Number(res.amountBtc || res.sentBtc) || amountNum;
           applyOptimisticChainSpend(wallet, 'btc', netSent, feeBtc, res.txHash);
           recordWalletActivity(wallet, {
             type: 'send',
@@ -793,53 +845,21 @@
         throw new Error(t('该同链代币转账暂未接通签名广播', 'Direct transfer unsupported for this token'));
       }
 
-      // Case 2: Cross-chain L1 -> L1 transfer via 1Click ORIGIN_CHAIN -> DESTINATION_CHAIN
-      const canBroadcastOrigin =
-        asset.blockchain === 'near' ||
-        asset.blockchain === 'sol' ||
-        asset.blockchain === 'prl' ||
-        asset.blockchain === 'btc' ||
-        (isEvmOrigin && asset.blockchain !== 'arc');
-
-      if (!canBroadcastOrigin) {
-        throw new Error(t('所选源链暂不支持自动签名跨链，请在收款网络切换或使用支持的源链', 'Origin chain does not support automated cross-chain broadcast'));
-      }
-
-      const destAsset = resolveDestinationAssetForNetwork(asset.symbol, detectedNet, asset.assetId, targetEvmChain);
-      if (!destAsset) {
-        throw new Error(t('该代币暂不支持跨链直转到目标网络，请使用闪兑', 'This token cannot be sent directly to the target network; please use Swap'));
-      }
-      const amountRaw = intents.toBaseUnits(rawAmtStr || amountNum, asset.decimals || 8);
-      const refundTo = getWalletDefaultRecipientForChain(wallet, asset.blockchain) || (wallet.nearNamedAccount || wallet.nearAddress);
-
-      const quote = await intents.quoteIntentSwapOrWithdraw({
-        originAsset: asset.assetId,
-        destinationAsset: destAsset.assetId,
-        amountRaw,
-        slippageBps: 100,
-        recipient,
-        refundTo,
-        depositType: 'ORIGIN_CHAIN',
-        recipientType: 'DESTINATION_CHAIN',
-        appFeeBps: (intents.APP_FEE_CONFIG && intents.APP_FEE_CONFIG.SEND_CROSS_CHAIN_BPS) ?? 25,
-        dry: false
-      });
-
-      if (!quote.ok || !quote.depositAddress) {
-        throw new Error(quote.error || t('获取跨链转账路由失败', 'Failed to obtain cross-chain route'));
-      }
+      // Case 2: Cross-chain L1 -> L1 transfer via pre-quoted 1Click ORIGIN_CHAIN -> DESTINATION_CHAIN
+      const destAsset = preDestAsset;
+      const quote = preQuotedCross;
 
       let depositTxHash = '';
       let depositFeeNum = null;
       if (asset.blockchain === 'near' && asset.kind !== 'nep141' && asset.symbol === 'NEAR') {
-        const res = await contracts.signAndSendNearTransfer({ wallet, receiverId: quote.depositAddress, amountNear: amountNum, gasBuffer: gasBuf });
+        const res = await contracts.signAndSendNearTransfer({ wallet, receiverId: quote.depositAddress, amountNear: exactAmt, gasBuffer: gasBuf });
         depositTxHash = res.txHash;
       } else if (asset.blockchain === 'near' && asset.contractAddress && typeof contracts.executeNearNep141Transfer === 'function') {
         const res = await contracts.executeNearNep141Transfer({
           wallet,
           tokenContract: asset.contractAddress,
           receiverId: quote.depositAddress,
-          amount: amountNum,
+          amount: exactAmt,
           decimals: asset.decimals || 8,
           tokenSymbol: asset.symbol,
           tokenBalance: avail
@@ -847,14 +867,14 @@
         depositTxHash = res.txHash;
       } else if (asset.blockchain === 'sol') {
         if (!asset.contractAddress || asset.contractAddress === 'So11111111111111111111111111111111111111112') {
-          const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: quote.depositAddress, amountSol: amountNum, gasBuffer: gasBuf });
+          const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: quote.depositAddress, amountSol: exactAmt, gasBuffer: gasBuf });
           depositTxHash = res.txHash;
         } else {
           const res = await contracts.executeSolanaSplTransfer({
             wallet,
             mintAddress: asset.contractAddress,
             toAddress: quote.depositAddress,
-            amount: amountNum,
+            amount: exactAmt,
             decimals: asset.decimals || 6,
             tokenBalance: avail
           });
@@ -864,7 +884,7 @@
         const res = await contracts.executePearlTransfer({
           wallet,
           toAddress: quote.depositAddress,
-          amountPrl: amountNum,
+          amountPrl: exactAmt,
           feeDeductMode: 'extra',
           feePerKbPrl: gasMeta.feePerKbPrl ?? null,
           gasBuffer: gasBuf
@@ -876,7 +896,7 @@
         const res = await contracts.executeBitcoinTransfer({
           wallet,
           toAddress: quote.depositAddress,
-          amountBtc: amountNum,
+          amountBtc: exactAmt,
           feeDeductMode: 'extra',
           feeRateSatVb: gasMeta.feeRateSatVb ?? null,
           gasBuffer: gasBuf
@@ -889,7 +909,7 @@
           wallet,
           chainKey: asset.blockchain,
           toAddress: quote.depositAddress,
-          amount: amountNum,
+          amount: exactAmt,
           tokenContract: asset.contractAddress,
           decimals: asset.decimals,
           tokenBalance: avail,

@@ -51,6 +51,11 @@
 
   let _perpWs = null;
   let _perpWsCoin = '';
+  let _perpWsPingTimer = null;
+  let _perpWsReconnectTimer = null;
+  let _perpWsAttempt = 0;
+  let _perpObRenderTs = 0;
+  let _perpObRenderTimer = null;
   let _perpPollTimer = null;
   let _perpTradeActionBusy = false;
 
@@ -59,11 +64,39 @@
       clearInterval(_perpPollTimer);
       _perpPollTimer = null;
     }
+    if (_perpWsPingTimer) {
+      clearInterval(_perpWsPingTimer);
+      _perpWsPingTimer = null;
+    }
+    if (_perpWsReconnectTimer) {
+      clearTimeout(_perpWsReconnectTimer);
+      _perpWsReconnectTimer = null;
+    }
+    if (_perpObRenderTimer) {
+      clearTimeout(_perpObRenderTimer);
+      _perpObRenderTimer = null;
+    }
     if (_perpWs) {
-      try { _perpWs.close(); } catch (_) {}
+      const prev = _perpWs;
       _perpWs = null;
       _perpWsCoin = '';
+      try { prev.onclose = null; prev.close(); } catch (_) {}
     }
+  }
+
+  function scheduleThrottledOrderbookRender() {
+    const now = Date.now();
+    if (now - _perpObRenderTs >= 300) {
+      _perpObRenderTs = now;
+      renderPerpOrderbook();
+      return;
+    }
+    if (_perpObRenderTimer) return;
+    _perpObRenderTimer = setTimeout(() => {
+      _perpObRenderTimer = null;
+      _perpObRenderTs = Date.now();
+      renderPerpOrderbook();
+    }, Math.max(20, 300 - (now - _perpObRenderTs)));
   }
 
   function startPerpLiveFeed() {
@@ -72,59 +105,100 @@
     if (st.activeTab !== 'perp' || st.perp.subView !== 'trade') return;
     if (typeof document !== 'undefined' && document.hidden) return;
     const coin = st.perp.selectedCoin || 'BTC';
+    const wallet = st.getActiveWallet();
+    const contracts = getContracts();
+    const hlAddr = wallet && contracts && typeof contracts.resolveWalletEvmSender === 'function'
+      ? contracts.resolveWalletEvmSender(wallet)
+      : '';
 
-    if (typeof WebSocket === 'function') {
+    const connectWs = () => {
+      if (typeof WebSocket !== 'function') return;
+      const curSt = getState();
+      if (curSt.activeTab !== 'perp' || curSt.perp.subView !== 'trade') return;
       try {
         const ws = new WebSocket('wss://api.hyperliquid.xyz/ws');
         _perpWs = ws;
         _perpWsCoin = coin;
         ws.onopen = () => {
           if (_perpWs !== ws) return;
+          _perpWsAttempt = 0;
           try {
             ws.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'l2Book', coin } }));
             ws.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'allMids' } }));
+            if (hlAddr) {
+              ws.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'webData2', user: hlAddr } }));
+            }
           } catch (_) {}
+          if (_perpWsPingTimer) clearInterval(_perpWsPingTimer);
+          _perpWsPingTimer = setInterval(() => {
+            if (_perpWs === ws && ws.readyState === 1) {
+              try { ws.send(JSON.stringify({ method: 'ping' })); } catch (_) {}
+            }
+          }, 25_000);
+          if (_perpWsPingTimer && typeof _perpWsPingTimer.unref === 'function') _perpWsPingTimer.unref();
         };
         ws.onmessage = (evt) => {
-          const curSt = getState();
-          if (curSt.activeTab !== 'perp' || curSt.perp.subView !== 'trade') {
+          const s = getState();
+          if (s.activeTab !== 'perp' || s.perp.subView !== 'trade') {
             stopPerpLiveFeed();
             return;
           }
           try {
             const msg = JSON.parse(evt.data);
-            if (msg && msg.channel === 'l2Book' && msg.data && msg.data.coin === curSt.perp.selectedCoin && Array.isArray(msg.data.levels)) {
+            if (msg && msg.channel === 'l2Book' && msg.data && msg.data.coin === s.perp.selectedCoin && Array.isArray(msg.data.levels)) {
               const mapLvl = (r) => ({ px: Number(r.px), sz: Number(r.sz), n: Number(r.n) || 1 });
               const bids = (msg.data.levels[0] || []).slice(0, 12).map(mapLvl);
               const asks = (msg.data.levels[1] || []).slice(0, 12).map(mapLvl);
-              const bidTotalSz = bids.reduce((s, r) => s + r.sz, 0);
-              const askTotalSz = asks.reduce((s, r) => s + r.sz, 0);
+              const bidTotalSz = bids.reduce((sum, r) => sum + r.sz, 0);
+              const askTotalSz = asks.reduce((sum, r) => sum + r.sz, 0);
               const tot = bidTotalSz + askTotalSz;
-              curSt.perp.orderbook = {
+              s.perp.orderbook = {
                 bids,
                 asks,
                 bidTotalSz,
                 askTotalSz,
                 bidRatioPct: tot > 0 ? Math.round((bidTotalSz / tot) * 100) : 50
               };
-              renderPerpOrderbook();
+              scheduleThrottledOrderbookRender();
             } else if (msg && msg.channel === 'allMids' && msg.data && msg.data.mids) {
               const m = getSelectedPerpMarket();
-              const nextPx = Number(msg.data.mids[curSt.perp.selectedCoin]);
+              const nextPx = Number(msg.data.mids[s.perp.selectedCoin]);
               if (m && Number.isFinite(nextPx) && nextPx > 0) {
                 m.markPx = nextPx;
                 if ($('perp-mark-px')) $('perp-mark-px').textContent = `$${formatPerpPx(nextPx)}`;
                 evaluatePerpOrderUI();
               }
+            } else if (msg && msg.channel === 'webData2' && msg.data) {
+              const hl = getHyperliquid();
+              const ch = msg.data.clearinghouseState;
+              if (ch && hl && typeof hl.parseHlClearinghouseState === 'function') {
+                s.perp.account = hl.parseHlClearinghouseState(ch);
+              }
+              if (Array.isArray(msg.data.openOrders)) {
+                s.perp.openOrders = msg.data.openOrders;
+              }
+              if (typeof renderPerpBottomList === 'function') renderPerpBottomList();
+              evaluatePerpOrderUI(false);
             }
           } catch (_) {}
         };
         ws.onerror = () => {};
         ws.onclose = () => {
-          if (_perpWs === ws) _perpWs = null;
+          if (_perpWsPingTimer) { clearInterval(_perpWsPingTimer); _perpWsPingTimer = null; }
+          if (_perpWs === ws) {
+            _perpWs = null;
+            const s = getState();
+            if (s.activeTab === 'perp' && s.perp.subView === 'trade' && !(typeof document !== 'undefined' && document.hidden)) {
+              const delay = Math.min(15_000, 1500 * Math.pow(2, Math.min(3, _perpWsAttempt++)));
+              _perpWsReconnectTimer = setTimeout(connectWs, delay);
+              if (_perpWsReconnectTimer && typeof _perpWsReconnectTimer.unref === 'function') _perpWsReconnectTimer.unref();
+            }
+          }
         };
       } catch (_) {}
-    }
+    };
+
+    connectWs();
 
     _perpPollTimer = setInterval(() => {
       const curSt = getState();
@@ -135,6 +209,7 @@
       if (typeof document !== 'undefined' && document.hidden) return;
       if (!_perpWs || _perpWs.readyState !== 1) {
         refreshPerpOrderbookAndCandlesAsync().catch(() => {});
+        refreshPerpDataAsync(false).catch(() => {});
       }
     }, 4500);
     if (_perpPollTimer && typeof _perpPollTimer.unref === 'function') _perpPollTimer.unref();
@@ -197,8 +272,15 @@
   }
 
   function setPerpSide(side) {
-    getState().perp.side = side === 'short' ? 'short' : 'long';
-    getState().perp.errorMsg = '';
+    const st = getState();
+    st.perp.side = side === 'short' ? 'short' : 'long';
+    st.perp.errorMsg = '';
+    if (typeof resetFormFields === 'function') {
+      resetFormFields(['perp-tp-input', 'perp-sl-input'], st.perp, { tpInput: '', slInput: '' });
+    } else {
+      st.perp.tpInput = '';
+      st.perp.slInput = '';
+    }
     renderPerpView();
   }
 
@@ -565,6 +647,7 @@
     }
     closeAllSheets();
     renderPerpView();
+    startPerpLiveFeed();
     refreshPerpOrderbookAndCandlesAsync().catch(() => {});
     refreshPerpLongShortAsync(st.perp.selectedCoin, false).catch(() => {});
   }
@@ -651,9 +734,9 @@
     const pos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === coin);
     let market = (st.perp.markets || []).find((m) => m.name === coin);
     if (!pos) return;
+    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     if (!(await verifySecurityAuthAsync(wallet, `${t('确认市价平仓', 'Confirm Market Close')}: ${formatPerpDisplayPair(coin)}`))) return;
     _perpTradeActionBusy = true;
-    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     const prevTxt = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = t('平仓中...', 'Closing...'); }
     try {
@@ -758,9 +841,9 @@
     if (!hl || !wallet || !coin) return;
     const pos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === coin);
     if (!pos) return;
+    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     if (!(await verifySecurityAuthAsync(wallet, `${t('确认反手开仓', 'Confirm Reverse Position')}: ${formatPerpDisplayPair(coin)}`))) return;
     _perpTradeActionBusy = true;
-    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     const prevTxt = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = t('反手中...', 'Reversing...'); }
     try {

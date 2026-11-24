@@ -569,6 +569,9 @@
       throw new Error(t('缺少 NEAR 签名凭据', 'Missing NEAR signing credentials'));
     }
 
+    const storageState = await checkNearDclStorage(sender);
+    const minNearNeeded = storageState.registered ? DCL_GAS_RESERVE_NEAR : (DCL_STORAGE_DEPOSIT_NEAR + DCL_GAS_RESERVE_NEAR);
+    let shortfallBig = 0n;
     if (sellId === 'wrap.near') {
       const liveWrapStr = typeof contracts.viewNearContractCall === 'function'
         ? await contracts.viewNearContractCall('wrap.near', 'ft_balance_of', { account_id: sender }).catch(() => null)
@@ -578,25 +581,26 @@
         : BigInt(toBaseUnits(String(currentWrapped), 24));
       const neededBig = BigInt(amtStr);
       if (liveWrapBig < neededBig) {
-        const shortfallBig = neededBig - liveWrapBig;
-        await wrapNearForLimit({ wallet: resolvedWallet, amountRaw: shortfallBig.toString() });
-        const wrappedNearNum = Number(fromBaseUnits(shortfallBig.toString(), 24));
-        if (resolvedWallet.nativeBalances && typeof resolvedWallet.nativeBalances.near === 'number') {
-          resolvedWallet.nativeBalances.near = Math.max(0, resolvedWallet.nativeBalances.near - wrappedNearNum - 0.005);
-        }
+        shortfallBig = neededBig - liveWrapBig;
       }
     }
-
-    const storageState = await checkNearDclStorage(sender);
-    const minNearNeeded = storageState.registered ? DCL_GAS_RESERVE_NEAR : (DCL_STORAGE_DEPOSIT_NEAR + DCL_GAS_RESERVE_NEAR);
+    const shortfallNear = shortfallBig > 0n ? Number(fromBaseUnits(shortfallBig.toString(), 24)) : 0;
+    const totalNearNeeded = minNearNeeded + shortfallNear;
     const nearAvail = Number(contracts.resolveWalletChainBalance(resolvedWallet, 'near') || 0);
-    if (nearAvail < minNearNeeded) {
+    if (nearAvail + 1e-9 < totalNearNeeded) {
       throw new Error(
         t(
-          `NEAR 余额不足 (需 ${minNearNeeded.toFixed(2)} NEAR 作${storageState.registered ? ' Gas' : '存储押金与 Gas'}，当前: ${nearAvail.toFixed(4)})`,
-          `Insufficient NEAR (need ${minNearNeeded.toFixed(2)} NEAR for ${storageState.registered ? 'gas' : 'storage deposit + gas'}, available: ${nearAvail.toFixed(4)})`
+          `NEAR 余额不足 (需 ${totalNearNeeded.toFixed(2)} NEAR 作${storageState.registered ? ' Gas' : '存储押金与 Gas'}，当前: ${nearAvail.toFixed(4)})`,
+          `Insufficient NEAR (need ${totalNearNeeded.toFixed(2)} NEAR for ${storageState.registered ? 'gas' : 'storage deposit + gas'}, available: ${nearAvail.toFixed(4)})`
         )
       );
+    }
+
+    if (shortfallBig > 0n) {
+      await wrapNearForLimit({ wallet: resolvedWallet, amountRaw: shortfallBig.toString() });
+      if (resolvedWallet.nativeBalances && typeof resolvedWallet.nativeBalances.near === 'number') {
+        resolvedWallet.nativeBalances.near = Math.max(0, resolvedWallet.nativeBalances.near - shortfallNear - 0.005);
+      }
     }
 
     await contracts.ensureNearNep141StorageRegistered({
@@ -706,9 +710,19 @@
 
   async function withdrawNearDclInnerTokens({ resolvedWallet, sender, tokenIds = [] }) {
     const contracts = getContracts();
-    const assets = await contracts.viewNearContractCall(DCL_CONTRACT_ID, 'list_user_assets', { account_id: sender }).catch(() => null);
+    const targetIds = Array.from(new Set(tokenIds.filter(Boolean)));
+    let assets = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      assets = await contracts.viewNearContractCall(DCL_CONTRACT_ID, 'list_user_assets', { account_id: sender }).catch(() => null);
+      const hasPositive = targetIds.some((tid) => {
+        const b = assets && assets[tid] !== undefined ? String(assets[tid]) : null;
+        return b && /^\d+$/.test(b) && BigInt(b) > 0n;
+      });
+      if (hasPositive || attempt === 2) break;
+      await new Promise((r) => setTimeout(r, 1200));
+    }
     const withdrawn = [];
-    for (const tid of Array.from(new Set(tokenIds.filter(Boolean)))) {
+    for (const tid of targetIds) {
       const balStr = assets && assets[tid] !== undefined ? String(assets[tid]) : null;
       if (balStr && /^\d+$/.test(balStr) && BigInt(balStr) > 0n) {
         const txHash = await contracts.signAndSendNearFunctionCall({
@@ -964,9 +978,9 @@
       fetchJsonWithTimeout(`${JUPITER_TRIGGER_URL}/getTriggerOrders?user=${encodeURIComponent(addr)}&orderStatus=active`, {}, 8000).catch(() => null),
       fetchJsonWithTimeout(`${JUPITER_TRIGGER_URL}/getTriggerOrders?user=${encodeURIComponent(addr)}&orderStatus=history`, {}, 8000).catch(() => null)
     ]);
-    const actBad = !actRes || (!actRes.ok && [401, 403, 404, 410].includes(actRes.status));
-    const histBad = !histRes || (!histRes.ok && [401, 403, 404, 410].includes(histRes.status));
-    if (actBad && histBad && (actRes?.status || histRes?.status)) {
+    const actBad = !actRes || !actRes.ok;
+    const histBad = !histRes || !histRes.ok;
+    if (actBad && histBad) {
       return {
         active: [],
         history: [],

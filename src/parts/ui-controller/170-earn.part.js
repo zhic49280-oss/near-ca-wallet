@@ -279,10 +279,14 @@
             jupActionLabel = t('开启解锁', 'Unstake');
           }
         } else if (sp.type === 'sol_validator' && sp.subtitle) {
-          if (sp.isDeactivating) {
+          if (sp.isDeactivating && sp.isReadyToWithdraw) {
             jupActionType = 'sol_validator_withdraw';
             jupActionTarget = `${sp.subtitle}|${sp.lamports || 0}|${sp.amount || 0}`;
             jupActionLabel = t('提取', 'Withdraw');
+          } else if (sp.isDeactivating) {
+            jupActionType = '';
+            jupActionTarget = '';
+            jupActionLabel = t('冷却中', 'Cooling');
           } else {
             jupActionType = 'sol_validator_deactivate';
             jupActionTarget = `${sp.subtitle}|${sp.amount || 0}`;
@@ -469,8 +473,8 @@
       }
     }
 
-    const activePool = (contracts.findStakingPool && contracts.findStakingPool(st.staking.selectedPoolId))
-      || allPools.find((p) => p.id === st.staking.selectedPoolId)
+    const activePool = allPools.find((p) => p.id === st.staking.selectedPoolId)
+      || (contracts.findStakingPool && contracts.findStakingPool(st.staking.selectedPoolId))
       || filteredPools[0]
       || allPools[0];
     if (!activePool) return;
@@ -778,10 +782,10 @@
       erc4626_redeem: `${t('赎回金库资产', 'Redeem Vault')}`
     };
     const authLabel = actionLabelMap[actionType] || t('确认质押赎回操作', 'Confirm Stake Redemption');
+    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     if (!(await verifySecurityAuthAsync(wallet, authLabel))) return;
 
     _earnActionInFlight = true;
-    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     const prevTxt = btn ? btn.textContent : '';
     if (btn) {
       btn.disabled = true;

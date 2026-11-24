@@ -319,13 +319,17 @@
         base58Decode(voterProgId)
       );
 
-      const [escrowRes, stakeAccountsRes] = await Promise.all([
+      const [escrowRes, stakeAccountsRes, epochInfoRes] = await Promise.all([
         callSolanaRpc('getAccountInfo', [escrowPda.address, { encoding: 'base64' }]).catch(() => null),
         callSolanaRpc('getProgramAccounts', [
           'Stake11111111111111111111111111111111111111',
           { encoding: 'jsonParsed', filters: [{ memcmp: { offset: 12, bytes: addr } }] }
-        ], 6000).catch(() => null)
+        ], 6000).catch(() => null),
+        callSolanaRpc('getEpochInfo', [], 3500).catch(() => null)
       ]);
+      const currentEpoch = epochInfoRes && Number.isFinite(Number(epochInfoRes.epoch))
+        ? Number(epochInfoRes.epoch)
+        : null;
 
       if (escrowRes && escrowRes.value && escrowRes.value.data && escrowRes.value.data[0]) {
         try {
@@ -370,6 +374,8 @@
             const voter = delegation.voter || 'Solana Validator';
             const deactEpoch = String(delegation.deactivationEpoch || '');
             const isDeactivating = Boolean(deactEpoch && deactEpoch !== '18446744073709551615');
+            const isReadyToWithdraw = Boolean(isDeactivating && currentEpoch !== null && currentEpoch > Number(deactEpoch));
+            const isCoolingDown = Boolean(isDeactivating && !isReadyToWithdraw);
             const solAmt = Number(lamports) / 1e9;
             positions.push({
               type: 'sol_validator',
@@ -379,7 +385,10 @@
               subtitle: item.pubkey || '',
               amount: solAmt,
               lamports: lamports.toString(),
-              isDeactivating
+              isDeactivating,
+              isReadyToWithdraw,
+              isCoolingDown,
+              deactivationEpoch: isDeactivating ? Number(deactEpoch) : null
             });
           }
         } catch (_) {}

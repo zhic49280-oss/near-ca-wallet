@@ -273,9 +273,13 @@
     const sel = $('perp-oc-origin-select');
     if (sel && entries.length > 0) {
       const prevVal = st.perp.fundingOriginAssetId || sel.value;
-      sel.innerHTML = entries.map((e) =>
-        `<option value="${escapeHtml(e.key)}">${escapeHtml(`${e.symbol} · ${e.chainLabel} (${formatBal(e.balance, 4)})`)}</option>`
-      ).join('');
+      const optSig = entries.map((e) => `${e.key}:${formatBal(e.balance, 4)}`).join('|');
+      if (!sel.dataset || sel.dataset.optSig !== optSig) {
+        if (sel.dataset) sel.dataset.optSig = optSig;
+        sel.innerHTML = entries.map((e) =>
+          `<option value="${escapeHtml(e.key)}">${escapeHtml(`${e.symbol} · ${e.chainLabel} (${formatBal(e.balance, 4)})`)}</option>`
+        ).join('');
+      }
       if (entries.some((e) => e.key === prevVal)) sel.value = prevVal;
       const chosen = entries.find((e) => e.key === sel.value) || entries[0] || null;
       st.perp.fundingOriginAssetId = chosen ? chosen.key : '';

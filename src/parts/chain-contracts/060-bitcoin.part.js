@@ -373,9 +373,12 @@
     satPerVbyte = Math.max(1, satPerVbyte);
 
     const sortedUtxos = [...spendableUtxos].sort((a, b) => (BigInt(String(b.value)) > BigInt(String(a.value)) ? 1 : -1));
-    const reqSatsBig = BigInt(toBaseUnits(String(reqAmt), 8));
-    let feeSatsBig = BigInt(Math.ceil((12 + 58 + 2 * 43) * satPerVbyte));
-    for (let pass = 0; pass < 3; pass++) {
+    const reqAmtStr = (typeof reqAmt === 'number' && /e/i.test(String(reqAmt))) || /e/i.test(String(reqAmt))
+      ? Number(reqAmt).toFixed(8)
+      : String(reqAmt);
+    const reqSatsBig = BigInt(toBaseUnits(reqAmtStr, 8));
+    let feeSatsBig = BigInt(Math.ceil((12 + Math.max(1, sortedUtxos.length > 1 ? 1 : 1) * 58 + 2 * 43) * satPerVbyte));
+    for (let pass = 0; pass < 4; pass++) {
       const targetSend = feeDeductMode === 'internal'
         ? (reqSatsBig > feeSatsBig ? reqSatsBig - feeSatsBig : 0n)
         : reqSatsBig;

@@ -106,7 +106,7 @@
     const backupContent = $('backup-keys-content');
     if (backupContent) backupContent.innerHTML = '';
     if (typeof resetFormFields === 'function') {
-      resetFormFields(['earn-amount-in']);
+      resetFormFields(['earn-amount-in', 'send-amount-input']);
     }
     const backdrop = $('sheet-backdrop');
     if (backdrop) {

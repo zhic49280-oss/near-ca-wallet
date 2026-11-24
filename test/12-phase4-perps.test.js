@@ -11,7 +11,7 @@ const {
 
 test('Phase 4.1: formatHlPrice never returns 0 for ultra-low meme prices & handles >= 100k', () => {
   assert.equal(hlPerps.formatHlPrice(120000.6, 5), '120001');
-  assert.equal(hlPerps.formatHlPrice(0.000000123456, 0), '0.00000012346');
+  assert.equal(hlPerps.formatHlPrice(0.000000123456, 0), '0.000001');
   assert.notEqual(hlPerps.formatHlPrice(0.000000123456, 0), '0');
   assert.equal(hlPerps.formatHlPrice(0.000123456, 0), '0.000123');
 });

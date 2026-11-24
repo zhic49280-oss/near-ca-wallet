@@ -455,6 +455,14 @@
       }
     }
 
+    if (btnState.action === 'retry_allowance') {
+      st.limit.evmAllowanceFailed = false;
+      st.limit.evmAllowanceRaw = null;
+      renderLimitOrderCalculations();
+      await refreshLimitMarketContextAsync();
+      return;
+    }
+
     const actionTitle = btnState.action === 'approve'
       ? t(`授权 ${sellToken.symbol}`, `Approve ${sellToken.symbol}`)
       : `${t(`提交 ${sellToken.symbol} → ${buyToken.symbol} 限价单`, `Place ${sellToken.symbol} → ${buyToken.symbol} Limit Order`)}${worsePromptSuffix}`;
@@ -469,14 +477,6 @@
       if (btnState.action === 'approve') {
         await lo.approveEvmCowToken({ wallet, chainKey: chain, tokenAddress: sellToken.contractAddress });
         showToast(t(`${sellToken.symbol} 授权成功`, `${sellToken.symbol} approved`));
-        await refreshLimitMarketContextAsync();
-        return;
-      }
-
-      if (btnState.action === 'retry_allowance') {
-        st.limit.evmAllowanceFailed = false;
-        st.limit.evmAllowanceRaw = null;
-        renderLimitOrderCalculations();
         await refreshLimitMarketContextAsync();
         return;
       }
@@ -562,8 +562,14 @@
         });
       }
 
-      st.limit.amountIn = '';
-      if ($('limit-amount-in')) $('limit-amount-in').value = '';
+      if (typeof resetFormFields === 'function') {
+        resetFormFields(['limit-amount-in', 'limit-target-rate'], st.limit, { amountIn: '', targetRate: '' });
+      } else {
+        st.limit.amountIn = '';
+        st.limit.targetRate = '';
+        if ($('limit-amount-in')) $('limit-amount-in').value = '';
+        if ($('limit-target-rate')) $('limit-target-rate').value = '';
+      }
       showToast(t('限价单已提交', 'Limit order placed'));
       await refreshAllBalancesAsync(true).catch(() => {});
       await refreshLimitMarketContextAsync().catch(() => {});
@@ -585,10 +591,10 @@
     const lo = getLimitOrders();
     const wallet = st.getActiveWallet();
     if (!wallet || !lo || !orderId) return;
+    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     const authed = await verifySecurityAuthAsync(wallet, t('领取已成交限价单资产', 'Claim filled limit order'));
     if (!authed) return;
     _limitOrderActionInFlight = true;
-    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     const prevTxt = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = t('领取中...', 'Claiming...'); }
     try {
@@ -610,10 +616,10 @@
     const lo = getLimitOrders();
     const wallet = st.getActiveWallet();
     if (!wallet || !lo || !orderId) return;
+    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     const authed = await verifySecurityAuthAsync(wallet, t('撤销限价单', 'Cancel limit order'));
     if (!authed) return;
     _limitOrderActionInFlight = true;
-    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     const prevTxt = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = t('撤单中...', 'Cancelling...'); }
     try {

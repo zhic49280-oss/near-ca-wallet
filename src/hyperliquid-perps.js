@@ -332,17 +332,17 @@
     return s.includes('.') ? s.replace(/\.?0+$/, '') : s;
   }
 
-  function formatHlPrice(px, szDecimals = 0) {
+  function formatHlPrice(px, szDecimals = 0, isSpot = false) {
     const n = Number(px);
     if (!Number.isFinite(n) || n <= 0) return '0';
-    const maxDec = Math.max(0, 6 - (Math.max(0, Math.floor(Number(szDecimals) || 0))));
+    const maxDec = Math.max(0, (isSpot ? 8 : 6) - (Math.max(0, Math.floor(Number(szDecimals) || 0))));
     if (n >= 100_000) {
       return String(Math.round(n));
     }
     const sig = Number(n.toPrecision(5));
     const fixed = trimDecimalTrailingZeros(sig.toFixed(maxDec));
     if (fixed === '0' && n > 0) {
-      return trimDecimalTrailingZeros(sig.toFixed(12));
+      return maxDec > 0 ? (Math.pow(10, -maxDec)).toFixed(maxDec) : '1';
     }
     return fixed;
   }
@@ -857,7 +857,7 @@
     orderType = 'market',
     tif = null,
     limitPrice = null,
-    slippageBps = 50,
+    slippageBps = 200,
     reduceOnly = false,
     leverage = null,
     isCross = false,
@@ -886,7 +886,7 @@
       if (!Number.isFinite(mark) || mark <= 0) {
         throw new Error(t('暂未获取实时价格', 'Live market price unavailable'));
       }
-      const slip = Math.max(10, Number(slippageBps) || 50) / 10_000;
+      const slip = Math.max(10, Number(slippageBps) || 200) / 10_000;
       refPx = isBuy ? mark * (1 + slip) : mark * (1 - slip);
     } else {
       refPx = Number(limitPrice);
@@ -1109,10 +1109,33 @@
   async function reverseHlPositionMarket({ wallet, market, position, slippageBps = 250, availableMargin = null }) {
     if (!position || !position.absSize) throw new Error(t('无效持仓', 'Invalid position'));
     const curLev = Number(position.leverageValue || 5);
-    const freedMargin = Number(position.marginUsed) || ((Number(position.absSize) * (Number(market.markPx) || Number(position.entryPx) || 0)) / Math.max(1, curLev));
+    const mark = Number(market.markPx) || Number(position.entryPx) || 0;
+    const freedMargin = Number(position.marginUsed) || ((Number(position.absSize) * mark) / Math.max(1, curLev));
+    const unrealized = Number(position.unrealizedPnl || 0);
+    const lossBuffer = unrealized < 0 ? Math.abs(unrealized) : 0;
     const effectiveAvail = (availableMargin !== null && availableMargin !== undefined)
-      ? (Number(availableMargin) + Math.max(0, freedMargin))
+      ? Math.max(0, Number(availableMargin) + Math.max(0, freedMargin) - lossBuffer)
       : null;
+
+    // Cancel existing TP/SL triggers on this coin before reversing
+    try {
+      const addr = wallet.mpcEvmAddress || wallet.evmAddress;
+      if (addr) {
+        const orders = await fetchHlOpenOrders(addr).catch(() => []);
+        const coinTriggers = (orders || []).filter((o) => o && o.coin === market.name && o.isTrigger);
+        if (coinTriggers.length > 0) {
+          await cancelHlOrders({ wallet, cancels: coinTriggers.map((o) => ({ assetIndex: market.index, oid: o.oid })) }).catch(() => {});
+        }
+      }
+    } catch (_) {}
+
+    if (effectiveAvail !== null && mark > 0) {
+      const newReqMargin = (Number(position.absSize) * mark) / Math.max(1, curLev);
+      if (newReqMargin > effectiveAvail + 1e-6) {
+        throw new Error(t('反手开仓保证金不足（已计入未实现盈亏）', 'Insufficient margin for reverse position (after PnL)'));
+      }
+    }
+
     return placeHlPerpOrder({
       wallet,
       market,
@@ -1123,7 +1146,7 @@
       reduceOnly: false,
       leverage: curLev,
       isCross: position.leverageType === 'cross',
-      availableMargin: effectiveAvail
+      availableMargin: null
     });
   }
 

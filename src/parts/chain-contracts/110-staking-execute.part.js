@@ -49,9 +49,14 @@
     let effectiveIsNative = !pool.isTokenStake || Boolean(pool.useNativeOrPrecompile);
     let effectiveTokenBal = resolvedTokenBal;
     if ((pool.isBurrowSupply || pool.isAaveV3) && pool.isNativeWrapSupply) {
+      const addrLower = String(pool.tokenContract || '').toLowerCase();
       const wrappedBal = pool.isBurrowSupply
         ? Number(wallet.nearNep141Balances?.[pool.tokenContract]?.formatted || 0)
-        : Number((wallet.erc20Balances?.[pool.chain]?.[String(pool.tokenContract || '').toLowerCase()]) || 0);
+        : Number(
+            wallet.erc20Balances?.[`${pool.chain}_${addrLower}`] ??
+            wallet.erc20Balances?.[pool.chain]?.[addrLower] ??
+            0
+          );
       if (wrappedBal >= Number(amount)) {
         effectiveIsNative = false;
         effectiveTokenBal = wrappedBal;
@@ -81,39 +86,37 @@
 
     // Helper: check explicit NEAR storage_balance_of === null (only when RPC succeeded, never on offline failure)
     const ensureNearStorageIfExplicitlyNull = async (acctId, contractId, depositYoctoStr) => {
-      try {
-        const res = await nearRpcPostAsync(
-          {
-            jsonrpc: '2.0',
-            id: `${contractId}-storage_balance_of`,
-            method: 'query',
-            params: {
-              request_type: 'call_function',
-              finality: 'final',
-              account_id: contractId,
-              method_name: 'storage_balance_of',
-              args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify({ account_id: acctId })))
-            }
-          },
-          4000
-        ).catch(() => null);
-        const bytes = res && res.result && res.result.result;
-        if (Array.isArray(bytes)) {
-          const parsed = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes)));
-          if (parsed === null) {
-            await api.signAndSendNearFunctionCall({
-              accountId: acctId,
-              publicKeyStr: wallet.nearPublicKey,
-              privateKeyStr: wallet.nearPrivateKey,
-              receiverId: contractId,
-              methodName: 'storage_deposit',
-              argsJson: JSON.stringify({ account_id: acctId, registration_only: true }),
-              gas: '30000000000000',
-              depositYocto: depositYoctoStr
-            });
+      const res = await nearRpcPostAsync(
+        {
+          jsonrpc: '2.0',
+          id: `${contractId}-storage_balance_of`,
+          method: 'query',
+          params: {
+            request_type: 'call_function',
+            finality: 'final',
+            account_id: contractId,
+            method_name: 'storage_balance_of',
+            args_base64: bytesToBase64(new TextEncoder().encode(JSON.stringify({ account_id: acctId })))
           }
+        },
+        4000
+      ).catch(() => null);
+      const bytes = res && res.result && res.result.result;
+      if (Array.isArray(bytes)) {
+        const parsed = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes)));
+        if (parsed === null) {
+          await api.signAndSendNearFunctionCall({
+            accountId: acctId,
+            publicKeyStr: wallet.nearPublicKey,
+            privateKeyStr: wallet.nearPrivateKey,
+            receiverId: contractId,
+            methodName: 'storage_deposit',
+            argsJson: JSON.stringify({ account_id: acctId, registration_only: true }),
+            gas: '30000000000000',
+            depositYocto: depositYoctoStr
+          });
         }
-      } catch (_) {}
+      }
     };
 
     // A. NEAR Native Staking & Rhea / Burrow Token Staking/Lending
@@ -413,7 +416,7 @@
       });
     } else if (pool.isAaveV3) {
       const gasBal = resolveWalletChainBalance(wallet, pool.chain);
-      const minGas = DEFAULT_GAS_BUFFERS[pool.chain] || 0.001;
+      const minGas = pool.chain === 'eth' ? 0.005 : (DEFAULT_GAS_BUFFERS[pool.chain] || 0.002);
       if (gasBal < minGas) {
         throw new Error(t(`${pool.chainLabel} ETH Gas 余额不足`, `Insufficient ETH gas on ${pool.chainLabel}`));
       }
@@ -426,7 +429,11 @@
           0
         );
         if (wethBal < Number(amount)) {
-          const shortfallWei = toBaseUnits(Math.max(0, Number(amount) - Math.max(0, wethBal)), 18);
+          const shortfallHuman = Math.max(0, Number(amount) - Math.max(0, wethBal));
+          if (gasBal < shortfallHuman + minGas) {
+            throw new Error(t(`${pool.chainLabel} ETH 余额不足以完成 Wrap 与 Supply Gas`, `Insufficient ${pool.chainLabel} ETH for wrap + supply gas`));
+          }
+          const shortfallWei = toBaseUnits(shortfallHuman, 18);
           if (BigInt(shortfallWei) > 0n) {
             const wrapRes = await sendEvmContractCall({
               chainKey: pool.chain,
@@ -434,9 +441,10 @@
               data: '0xd0e30db0', // WETH9.deposit()
               value: shortfallWei
             });
-            if (wrapRes && wrapRes.txHash) {
-              await waitForEvmTxConfirmation(pool.chain, wrapRes.txHash, 45000);
+            if (!wrapRes || !wrapRes.txHash) {
+              throw new Error(t('ETH Wrap 交易未返回哈希，已中止 Supply', 'ETH wrap did not return txHash; aborted supply'));
             }
+            await waitForEvmTxConfirmation(pool.chain, wrapRes.txHash, 45000);
           }
         }
       }
