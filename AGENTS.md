@@ -13,33 +13,44 @@
 ## 3. 中英双语规范
 - **禁止中文固化**：所有新增界面元素（`src/parts/index-html/*.part.html`）必须带有 `data-i18n` 并在 `src/parts/state/010-i18n-dict.part.js` 的 `i18nDict` 中同步维护 `zh` / `en` 两套词条；所有 JS 动态渲染文案必须使用 `t(zh, en)` 辅助函数，并在 `applyLanguage()` 中触发动态视图重绘。
 
-## 4. 界面极简原则
+## 4. 界面极简原则与移动端 UX 红线
 - **面向终端用户**：钱包界面内禁止出现面向开发者的解释性文字、技术调试术语或冗长段落说明；保持卡片简洁、操作路径直观。
+- **表单生命周期双清红线（严禁跨币种/跨弹窗残留）**：
+  - 凡切换币种、切换链、翻转币对、提交下单/兑换成功、或关闭弹窗，必须同步清空 State 与 DOM 输入框（使用 `resetFormFields()` / `resetPerpOrderForm()`，或在 Preact 组件中使用 `key` 卸载重建）；
+  - 严禁在 `render()` 函数中反向读取 DOM `<input>.value` 覆盖已重置的 State；仅持久化用户偏好（闪兑币对、自选列表、滑点、语言），不持久化交易金额与委托价格。
+- **移动端交互 5 项必查清单**：
+  1. **按钮即时反馈**：所有异步操作（刷新状态、下单、撤单、质押）点击后必须立即禁用并展示 loading 文案，结束时必须给出明确 toast 反馈，禁止静默吞错；
+  2. **零布局跳动（Zero CLS）**：详情栏/提示栏优先采用常驻固定高度设计（如 K 线信息栏常态显示区间高低/最新价，触摸时原地切换），禁止点击后突然插入大块 DOM 导致页面跳动；
+  3. **375px 窄屏适配**：列头、买卖盘汇总与标签需控制在单行内（`white-space: nowrap`），不得误导文案（如堆叠盘口列头统一为“价格”）；
+  4. **触摸手势死区**：下拉刷新与图表手势必须设置 6~8px 方向死区与轻阻尼，禁止首帧微抖掐死垂直滑动，后台静默同步不得锁死用户手动下拉；
+  5. **交易记录页内闭环**：闪兑/限价/合约页均需在当前视图直接可查近期记录与状态，并支持切回前台自动续查未终态订单。
 
 ## 5. 发布前验证流程
 - 每次修改后必须依次执行：
   1. 递增缓存版本号与静态资源 `?v=` 参数（6 处：`sw.js`、`src/parts/index-html/{000-head-shell,010-view-onboarding-wallet,090-scripts-footer}.part.html`、`src/parts/ui-controller/{000-core,230-walletconnect}.part.js`）；
-  2. 运行 `npm run build`（自动从 `src/parts/*` 拼接生成 `index.html` 与 6 个 `src/*.js`，并同步到 `dist/`、`android/`、`ios/`）；
-  3. 运行 `npm test` 确认全部测试用例 100% 通过后方可提交本地 Git。
+  2. 运行 `npm run build`（依次执行 `scripts/build-parts.js` 拼接分片、`npx vite build` 编译 `src/app/` -> `src/framework-ui.js`、`scripts/sync-assets.js` 使用 `esbuild` 压缩 `src/*.js` 与 `style.css` 并同步 22 个资源到 `dist/`、`android/`、`ios/`）；
+  3. 运行 `npm test` 确认全部测试用例 100% 通过后方可提交本地 Git（CI 流程需在 `npm run build` 前执行 `npm ci`）。
 
 ## 6. Git 提交与推送规范
 - **按模块分步本地提交**：每完成一个独立功能模块并严格通过上述验证流程后，仅执行本地 `git commit` 保存版本节点，便于分步回溯与验收。
 - **严禁自动推送远端**：未经用户明确确认验收，严禁主动执行 `git push`；必须等待用户明确指令后，再推送至 GitHub 触发 iOS / Android 包编译流程。
 
-## 7. 源码分片规范（拆分重构后）
-- **生成文件由分片自动拼接**：`index.html` 与 `src/{ui-controller,chain-contracts,near-intents,token-registry,state,crypto-engine}.js` 均由 `scripts/build-parts.js` 按文件名顺序拼接 `src/parts/<name>/` 生成（纯拼接，无转译）。**只改分片，禁止直接编辑生成文件**；改完运行 `npm run build`，`test/08-build-parts.test.js` 会校验分片同步。
-- **产物已移出 Git（`.gitignore`）**：上述 7 个拼接产物以及 `dist/`、`android/app/src/main/assets/public/`、`ios/App/App/public/` 均在 `.gitignore` 中排除，由本地及 GitHub Actions CI（Android/iOS 构建流）自动执行 `npm run build` 生成。
-- **按需读取与分片上限**：定位代码后只读相关分片，禁止整读生成的大文件。新增页面/模块/链时新建分片（如 `125-xxx.part.js`），单分片尽量不超过 80 KB。
+## 7. 源码分片与 Vite + Preact 框架开发规范
+- **生成文件由分片自动拼接**：`index.html` 与 `src/{ui-controller,chain-contracts,near-intents,token-registry,state,crypto-engine}.js` 由 `scripts/build-parts.js` 按文件名顺序拼接 `src/parts/<name>/` 生成；`src/framework-ui.js` 由 `vite.config.mjs` 从 `src/app/main.jsx` 编译生成。**只改分片与 `src/app/`，禁止直接编辑生成文件**；改完运行 `npm run build`，`test/08-build-parts.test.js` 会校验分片同步。
+- **渐进式 Preact 框架层（`src/app/`）**：新增独立 UI 面板与交互组件优先写入 `src/app/components/*.jsx`，通过 `src/app/store/useWalletStore.js` 订阅 `NearCAState` 并由 `src/app/main.jsx` 挂载到对应容器，保持 Node 单测兼容降级。
+- **产物已移出 Git（`.gitignore`）**：上述 7 个拼接产物、`src/framework-ui.js` 以及 `dist/`、`android/app/src/main/assets/public/`、`ios/App/App/public/` 均在 `.gitignore` 中排除，由本地及 GitHub Actions CI（`npm ci && npm run build`）自动生成并压缩。
+- **按需读取与分片上限**：定位代码后只读相关分片，禁止整读生成的大文件。新增页面/模块/链时新建分片（如 `125-xxx.part.js`），**单分片软上限 50 KB（硬上限 60 KB）**，禁止再出现百 KB 巨型分片；`globalHandlers` 与 `NearCAUI` 严禁重复键名。
 - **测试分文件**：公共工具在 `test/helpers.js`，新版本测试写入对应 `test/NN-*.test.js`（或新建），禁止再堆回单文件。
 
 ## 8. 项目地图与搜索防污染规范
 
 ### 8.1 搜索范围硬约束（省额度关键）
-- **只允许搜索源码目录/文件**：`src/parts/`、`src/limit-orders.js`、`src/hyperliquid-perps.js`、`src/mining-pro.js`、`style.css`、`sw.js`、`server.js`、`scripts/`、`test/`。
-- **严禁全仓搜索**：`dist/`、`android/app/src/main/assets/public/`、`ios/App/App/public/`、生成的 `index.html`、生成的 6 个 `src/*.js`，以及第三方单行压缩库（`ethers.umd.min.js`、`walletconnect.umd.min.js`、`qrcode.min.js`、`bip39-wordlist.js`）。
+- **只允许搜索源码目录/文件**：`src/parts/`、`src/app/`、`src/limit-orders.js`、`src/hyperliquid-perps.js`、`src/mining-pro.js`、`style.css`、`sw.js`、`server.js`、`scripts/`、`test/`。
+- **严禁全仓搜索**：`node_modules/`、`dist/`、`android/app/src/main/assets/public/`、`ios/App/App/public/`、生成的 `index.html`、生成的 7 个 `src/*.js`，以及第三方单行压缩库（`ethers.umd.min.js`、`walletconnect.umd.min.js`、`qrcode.min.js`、`bip39-wordlist.js`）。
 
 ### 8.2 项目架构与分片索引（直达目标文件）
-- **运行入口与构建**：`index.html` 按序加载全局 IIFE 脚本（无打包器）；`scripts/build-parts.js` 拼接分片，`scripts/sync-assets.js` 同步 20 个资源到 `dist/`、`android/`、`ios/`；`server.js` 提供本地静态服务与 `/pearl-proxy`、`/kryptex-proxy`；`sw.js` 管理 PWA 离线缓存；`style.css` 存放全局样式。
+- **运行入口与构建**：`index.html` 按序加载全局 IIFE 脚本与 `src/framework-ui.js`；`scripts/build-parts.js` 拼接分片，`vite.config.mjs` 编译 Preact 组件，`scripts/sync-assets.js` 使用 `esbuild` 压缩并同步 22 个资源到 `dist/`、`android/`、`ios/`；`server.js` 提供本地静态服务与 `/pearl-proxy`、`/kryptex-proxy`；`sw.js` 管理 PWA 离线缓存；`style.css` 存放全局样式。
+- **Preact 框架目录（`src/app/` -> `src/framework-ui.js`）**：`main.jsx`（入口挂载与全局桥接 `window.NearCAFramework`）、`store/useWalletStore.js`（响应式状态订阅）、`components/SwapHistoryPanel.jsx`（闪兑历史组件）。
 - **原生插件（受保护，勿误删）**：Android (`android/app/src/main/{AndroidManifest.xml,java/io/nexus/wallet/{MainActivity,NativeSecurityPlugin}.java}`)；iOS (`ios/App/App/{Info.plist,MainViewController,NativeSecurityPlugin}.swift`)。CI 编译流在 `.github/workflows/{build-android-apk,build-ios-ipa}.yml`。
 - **`src/parts/index-html/`（10 个 HTML 片段 -> `index.html`）**：
   - `000-head-shell` 锁屏/隐私遮罩与顶栏；`010-view-onboarding-wallet` 引导与资产首页；`020-view-swap-limit` 闪兑与限价单；`030-view-perp` 永续合约；`040-view-earn` 质押理财；`050-view-hub-nav` 枢纽设置与底栏；
@@ -54,9 +65,9 @@
   - `000-config-evm-chains`、`010-staking-pools-data`、`020-utils-crypto`、`030-rpc-balances`；按链签名广播：`040-solana`、`050-pearl`、`060-bitcoin`、`070-evm`、`080-near`、`090-near-keys`；质押与扩展：`100-staking-metrics`、`110-staking-execute`、`120-near-ref-dex`、`130-near-storage-misc`、`140-exports`。
 - **`src/parts/state/`（3 个分片 -> `src/state.js`）**：
   - `000-store`（钱包存储/迁移/全局状态）；`010-i18n-dict`（`i18nDict` 中英词典）；`020-i18n-render`（`t()` / `applyLanguage()`）。
-- **`src/parts/ui-controller/`（27 个分片 -> `src/ui-controller.js`）**：
-  - `000-core`、`010-security`（锁屏/PIN/生物识别）、`020-navigation`、`030-onboarding`、`040-balance-sync`、`050-token-list`、`060-token-detail`、`070-home`、`080-send`、`090-receive`；
+- **`src/parts/ui-controller/`（32 个分片 -> `src/ui-controller.js`）**：
+  - `000-core`、`010-security`（锁屏/PIN/生物识别）、`020-navigation`、`030-onboarding`、`040-balance-sync`、`050-token-list`、`060-token-detail-core` / `061-token-detail-ui`、`070-home`、`080-send`、`090-receive`；
   - 闪兑模块：`100-swap-state`、`110-swap-quote`、`120-swap-execute-core`（校验/同链DEX/SmartHub）、`121-swap-execute-prl`（PRL/QTC 组合路由）、`122-swap-execute-relay`（SOL/EVM/Arc 超级聚合与直连 1Click）、`130-swap-orders`、`140-token-picker`；
-  - 业务视图与工具：`150-limit-orders`、`160-perps`、`170-earn`、`180-near-keys`、`190-mining`、`200-solana-rent`、`210-near-storage`、`220-contacts`、`230-walletconnect`、`240-lifecycle`。
+  - 业务视图与工具：`150-limit-orders-core` / `151-limit-orders-ui`、`160-perps-core` / `161-perps-chart` / `162-perps-orderbook` / `163-perps-trade` / `164-perps-funding`、`170-earn`、`180-near-keys`、`190-mining`、`200-solana-rent`、`210-near-storage`、`220-contacts`、`230-walletconnect`、`240-lifecycle`。
 - **独立模块（未分片，直接编辑）**：`src/limit-orders.js`（NEAR DCL / Jupiter Trigger / CoW 限价单）、`src/hyperliquid-perps.js`（Hyperliquid 永续协议）、`src/mining-pro.js`（Pearl 矿机遥测与扫币，按需懒加载）。
 - **测试文件（`test/`）**：`helpers.js` + `01-core-modules` / `02-v1-v2.0` / `03-v2.1-v3.3` / `04-v4-v5` / `05-v6.0-v6.4` / `06-v6.7-v6.10` / `07-v6.11-plus` / `08-build-parts.test.js`。
