@@ -1,5 +1,4 @@
 import { h } from 'preact';
-import { useWalletState } from '../store/useWalletStore.js';
 import { TokenIconBadge } from './TokenIconBadge.jsx';
 
 function AssetGroupCard({ g, expandedSymbol, formatBal, formatTokenPrice, formatUsd, isEn, getChainName }) {
@@ -101,7 +100,6 @@ export function AssetListPanel({
   getChainName,
   isEn
 }) {
-  useWalletState(['assets', 'lang']);
   return (
     <div className="flex flex-col gap-2">
       {mainGroups.map((g, idx) => (

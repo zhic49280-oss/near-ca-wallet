@@ -127,8 +127,8 @@
       }
       if (pool.isBurrowSupply && pool.isNativeWrapSupply) {
         const nearGasAvail = resolveWalletChainBalance(wallet, 'near');
-        if (nearGasAvail < 0.05) {
-          throw new Error(t(`NEAR 余额不足以支付合约 Gas (当前: ${nearGasAvail.toFixed(4)} NEAR)`, `Insufficient NEAR for contract gas (Available: ${nearGasAvail.toFixed(4)} NEAR)`));
+        if (nearGasAvail < 0.12) {
+          throw new Error(t(`NEAR 余额不足以支付合约 Gas 与存储押金 (需 >= 0.12 NEAR，当前: ${nearGasAvail.toFixed(4)} NEAR)`, `Insufficient NEAR for contract gas + storage (need >= 0.12, available: ${nearGasAvail.toFixed(4)} NEAR)`));
         }
         const rawAmt = toBaseUnits(amount, pool.decimals || 24);
         let wnearRaw = 0n;
@@ -143,6 +143,10 @@
         const neededBig = BigInt(rawAmt);
         if (wnearRaw < neededBig) {
           const shortfall = (neededBig - wnearRaw).toString();
+          const shortfallNear = Number(fromBaseUnits(shortfall, 24));
+          if (nearGasAvail < shortfallNear + 0.12) {
+            throw new Error(t(`NEAR 余额不足以完成 Wrap 与合约存储押金 (需 >= ${(shortfallNear + 0.12).toFixed(4)} NEAR，当前: ${nearGasAvail.toFixed(4)})`, `Insufficient NEAR for wrap + storage deposit (need >= ${(shortfallNear + 0.12).toFixed(4)}, available: ${nearGasAvail.toFixed(4)})`));
+          }
           await ensureNearStorageIfExplicitlyNull(accountId, pool.tokenContract, '1250000000000000000000');
           await api.signAndSendNearFunctionCall({
             accountId,

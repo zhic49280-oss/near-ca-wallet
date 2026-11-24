@@ -380,6 +380,10 @@
     return Boolean(wallet && wallet.encryptedVault && wallet.encryptedVault.ctBase64 && !wallet.mnemonic && !wallet.nearPrivateKey);
   }
 
+  function isAppLocked() {
+    return Boolean(_appLockState.locked);
+  }
+
   function openSetWalletPinPromptSafe() {
     const sheet = $('sheet-pin');
     if (sheet && sheet.classList && _appLockState.locked) {
@@ -538,6 +542,7 @@
       return;
     }
     if (isHidden) {
+      if (typeof stopPerpLiveFeed === 'function') stopPerpLiveFeed();
       if (_appLockState.authenticating) return;
       if (!_appLockState.backgroundedAt) {
         _appLockState.backgroundedAt = Number(nowMs) || Date.now();
@@ -554,6 +559,8 @@
     _appLockState.backgroundedAt = 0;
     if (leftAt > 0 && (Number(nowMs) - leftAt) >= APP_LOCK_TIMEOUT_MS && shouldEnableAppLockForWallet(wallet, overrides)) {
       engageAppLock(true, overrides);
+    } else if (!isAppLocked() && st && st.activeTab === 'perp' && st.perp && st.perp.subView === 'trade' && typeof startPerpLiveFeed === 'function') {
+      startPerpLiveFeed();
     }
     if (st && st.swap && st.swap.activeOrder && st.swap.activeOrder.depositAddress) {
       const ord = st.swap.activeOrder;
@@ -699,6 +706,10 @@
   async function triggerSecurityBiometricNow() {
     const wallet = _secAuthState.wallet || getState().getActiveWallet();
     const reason = _secAuthState.reason || t('请验证身份以继续', 'Authenticate to continue');
+    if (isWalletVaultLocked(wallet)) {
+      showToast(t('当前钱包密钥尚未解锁，请输入交易 PIN 解密', 'Wallet vault is locked; enter PIN to decrypt'));
+      return false;
+    }
     const btn = $('btn-security-biometric');
     if (btn) btn.disabled = true;
     try {
@@ -857,8 +868,8 @@
       return false;
     }
 
-    // 2. PIN fallback (PBKDF2 SHA-256 verified + Vault decryption)
-    return openPinModalForWalletAsync(w, reason, bioSupported);
+    // 2. PIN fallback (PBKDF2 SHA-256 verified + Vault decryption; hide biometric button if Vault is still locked)
+    return openPinModalForWalletAsync(w, reason, bioSupported && !vaultLocked);
   }
   function verifyPinIfNeeded(wallet, reason = '') {
     return verifySecurityAuthAsync(wallet, reason);

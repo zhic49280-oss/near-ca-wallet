@@ -541,10 +541,11 @@
           if (evmAddr && contracts && typeof contracts.executeEvmRawSteps === 'function') {
             await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
             const arcBal = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
-            const availArcRaw = BigInt(arcBal?.nativeRaw || '0');
+            const availArcWei = BigInt(arcBal?.nativeRaw || '0');
+            const availArc6 = availArcWei / 1000000000000n;
             const reqRaw = BigInt(follow.amountRaw || '0');
-            const bridgeArcRaw = reqRaw > 0n && availArcRaw > 0n ? (reqRaw < availArcRaw ? reqRaw : availArcRaw) : (reqRaw || availArcRaw);
-            if (bridgeArcRaw <= 0n) throw new Error(t('Arc USDC 余额不足以发起跨链至 Base', 'Insufficient Arc USDC to bridge to Base'));
+            const bridgeArc6 = reqRaw > 0n && availArc6 > 0n ? (reqRaw < availArc6 ? reqRaw : availArc6) : (reqRaw || availArc6);
+            if (bridgeArc6 <= 0n) throw new Error(t('Arc USDC 余额不足以发起跨链至 Base', 'Insufficient Arc USDC to bridge to Base'));
             const preBaseRes = await contracts.fetchEvmNativeAndErc20Balance('base', evmAddr, intents.BASE_USDC_EVM, 6).catch(() => null);
             const isBaseUsdcDest = String(follow.destinationAsset || '') === intents.BASE_USDC_ASSET_ID;
             const relayLive = await intents.quoteRelayBridge({
@@ -554,20 +555,20 @@
               destinationChainId: 8453,
               originCurrency: intents.ARC_USDC_CONTRACT,
               destinationCurrency: intents.BASE_USDC_EVM,
-              amount: bridgeArcRaw.toString()
+              amount: bridgeArc6.toString()
             });
             if (!relayLive.ok || !relayLive.steps?.length) throw new Error(relayLive.error || t('Relay Arc->Base 构建失败', 'Relay Arc->Base failed'));
             const relayTx = await contracts.executeEvmRawSteps({ wallet, chainKey: 'arc', steps: relayLive.steps });
             delete order.followUpArcRelay;
             if (!isBaseUsdcDest && follow.destinationAsset) {
-              order.status = 'PENDING_ARC_BRIDGE';
+              order.status = 'PENDING_BASE_BRIDGE';
               order.followUpExecuted = false;
               order.followUpFailed = false;
               order.followUpBaseOneClick = {
                 destinationAsset: follow.destinationAsset,
                 toSymbol: follow.toSymbol || order.toSymbol,
                 recipient: follow.recipient || evmAddr,
-                expectedBaseRaw: String(relayLive.amountOut || bridgeArcRaw.toString()),
+                expectedBaseRaw: String(relayLive.amountOut || bridgeArc6.toString()),
                 preBaseRaw: String(preBaseRes?.tokenRaw || '0'),
                 slippageBps: follow.slippageBps || 100
               };
@@ -950,11 +951,11 @@
 
   function clearActiveSwapOrder(force = false) {
     const st = getState();
-    if (_followUpRunning) {
+    const order = st.swap.activeOrder;
+    if (order && order._followUpInFlight) {
       showToast(t('第二阶段跨链正在执行中，请勿关闭订单', 'Stage 2 execution in progress; please wait'));
       return;
     }
-    const order = st.swap.activeOrder;
     if (!force && order && !order.followUpExecuted && (order.followUpFailed || hasPendingSwapFollowUp(order))) {
       const upper = String(order.status || '').toUpperCase();
       if (!['FAILED', 'REFUNDED'].includes(upper) && !(upper === 'SUCCESS' && !order.followUpFailed)) {

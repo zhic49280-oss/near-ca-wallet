@@ -640,6 +640,41 @@
     return out;
   }
 
+  function parseHlClearinghouseState(ch, openOrders = null) {
+    if (!ch || typeof ch !== 'object') return null;
+    const ms = ch.marginSummary || ch.crossMarginSummary || {};
+    const accountValue = Number(ms.accountValue || 0);
+    const totalMarginUsed = Number(ms.totalMarginUsed || 0);
+    const withdrawable = Number(ch.withdrawable ?? Math.max(0, accountValue - totalMarginUsed));
+    const availableMargin = Math.max(0, Math.min(withdrawable, accountValue - totalMarginUsed));
+    const positions = mapClearinghousePositions(ch);
+    const parsedOrders = Array.isArray(openOrders)
+      ? openOrders.map((o) => ({
+          ...o,
+          isTrigger: Boolean(o && (o.isTrigger || o.orderType === 'Stop Market' || o.orderType === 'Take Profit Market' || o.triggerCondition))
+        }))
+      : undefined;
+    return {
+      accountValue,
+      totalMarginUsed,
+      withdrawable,
+      availableMargin,
+      positions,
+      ...(parsedOrders !== undefined ? { openOrders: parsedOrders } : {})
+    };
+  }
+
+  async function fetchHlOpenOrders(userAddress) {
+    const addr = String(userAddress || '').trim();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) return [];
+    const list = await postHlInfo({ type: 'frontendOpenOrders', user: addr }).catch(() => []);
+    if (!Array.isArray(list)) return [];
+    return list.map((o) => ({
+      ...o,
+      isTrigger: Boolean(o && (o.isTrigger || o.orderType === 'Stop Market' || o.orderType === 'Take Profit Market' || o.triggerCondition))
+    }));
+  }
+
   async function fetchHlAccountState(userAddress) {
     const addr = String(userAddress || '').trim();
     if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) return null;
@@ -1436,6 +1471,8 @@
     signHlL1Action,
     signHlUserSignedAction,
     fetchHlMarkets,
+    parseHlClearinghouseState,
+    fetchHlOpenOrders,
     fetchHlAccountState,
     fetchHlOrderbook,
     fetchHlCandles,

@@ -1,9 +1,7 @@
 import { h } from 'preact';
-import { useWalletState } from '../store/useWalletStore.js';
 import { TokenIconBadge } from './TokenIconBadge.jsx';
 
 export function PerpOverviewPanel({ rows = [], emptyText = '', formatPerpPx }) {
-  useWalletState(['perp', 'lang']);
   if (!Array.isArray(rows) || rows.length === 0) {
     return (
       <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '14px 0' }}>

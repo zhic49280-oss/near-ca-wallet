@@ -15,11 +15,11 @@
       ? 'evm'
       : rawKey;
     const wallet = st.getActiveWallet();
-    renderReceiveSheet();
-    openSheet('sheet-receive');
     if (st.receive.selectedNetwork === 'qtc' && wallet && isQtcDepositExpired(wallet)) {
       ensureQtcReceiveDepositAddressAsync(wallet);
     }
+    renderReceiveSheet();
+    openSheet('sheet-receive');
   }
 
   let _qtcDepositPromiseKey = '';
@@ -125,10 +125,10 @@
     const st = getState();
     st.receive.selectedNetwork = key;
     const wallet = st.getActiveWallet();
-    renderReceiveSheet();
     if (key === 'qtc' && wallet && isQtcDepositExpired(wallet)) {
       ensureQtcReceiveDepositAddressAsync(wallet);
     }
+    renderReceiveSheet();
   }
 
   function copyReceiveAddress() {

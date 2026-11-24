@@ -187,7 +187,7 @@
   }
 
   async function checkWalletPrlBalanceBeforeOverwriteAsync(wallet) {
-    if (!wallet) return 0;
+    if (!wallet) return null;
     const contracts = getContracts();
     const cached = wallet.nativeBalances && typeof wallet.nativeBalances.prl === 'number'
       ? wallet.nativeBalances.prl
@@ -196,12 +196,13 @@
     if (wallet.address && contracts && typeof contracts.fetchPearlNativeBalance === 'function') {
       const live = await contracts.fetchPearlNativeBalance(wallet.address).catch(() => null);
       if (live && Number.isFinite(Number(live.formatted))) return Math.max(0, Number(live.formatted));
+      return null;
     }
-    return 0;
+    return null;
   }
 
   async function checkWalletBtcBalanceBeforeOverwriteAsync(wallet) {
-    if (!wallet) return 0;
+    if (!wallet) return null;
     const contracts = getContracts();
     const cached = wallet.nativeBalances && typeof wallet.nativeBalances.btc === 'number'
       ? wallet.nativeBalances.btc
@@ -210,8 +211,9 @@
     if (wallet.btcAddress && contracts && typeof contracts.fetchBitcoinNativeBalance === 'function') {
       const live = await contracts.fetchBitcoinNativeBalance(wallet.btcAddress).catch(() => null);
       if (live && Number.isFinite(Number(live.formatted))) return Math.max(0, Number(live.formatted));
+      return null;
     }
-    return 0;
+    return null;
   }
 
   function confirmWithUserIfSupported(message) {
@@ -364,10 +366,12 @@
         (wallet.erc20Balances && Object.keys(wallet.erc20Balances).length > 0) ||
         (wallet.splBalances && Object.keys(wallet.splBalances).length > 0)
       ));
-      if ((prlBal > 0 || btcBal > 0 || hasLegacyEvmOrSol) && oldMnemonic) {
+      if ((prlBal === null || prlBal > 0 || btcBal === null || btcBal > 0 || hasLegacyEvmOrSol) && oldMnemonic) {
         const assetNotes = [];
-        if (prlBal > 0) assetNotes.push(`PRL (${formatBal(prlBal, 4)})`);
-        if (btcBal > 0) assetNotes.push(`BTC (${formatBal(btcBal, 6)})`);
+        if (prlBal === null) assetNotes.push('PRL (未知/弱网)');
+        else if (prlBal > 0) assetNotes.push(`PRL (${formatBal(prlBal, 4)})`);
+        if (btcBal === null) assetNotes.push('BTC (未知/弱网)');
+        else if (btcBal > 0) assetNotes.push(`BTC (${formatBal(btcBal, 6)})`);
         if (hasLegacyEvmOrSol) assetNotes.push('EVM / Solana');
         const warnMsg = t(
           `检测到原助记词下的 ${assetNotes.join('、')} 账户仍有资产或记录。更换 NEAR 助记词后，系统将自动保留原助记词/私钥用于继续管理这些资产，请务必备份原助记词。是否继续更换？`,
@@ -400,7 +404,7 @@
       wallet.nearPrivateSeedHex = res.newDerived.nearPrivateSeedHex;
 
       if (!hasCustomPrl) {
-        if (prlBal > 0 && oldMnemonic && oldMnemonic !== wallet.mnemonic) {
+        if ((prlBal === null || prlBal > 0) && oldMnemonic && oldMnemonic !== wallet.mnemonic) {
           wallet.prlMnemonic = oldMnemonic;
         } else {
           const newPrl = await crypto.derivePearlFromSeedAsync(wallet.mnemonic, "m/86'/808276'/0'/0/0", true);
@@ -418,7 +422,7 @@
       }
 
       if (!hasCustomBtc) {
-        if (btcBal > 0 && oldMnemonic && oldMnemonic !== wallet.mnemonic) {
+        if ((btcBal === null || btcBal > 0) && oldMnemonic && oldMnemonic !== wallet.mnemonic) {
           wallet.btcMnemonic = oldMnemonic;
         } else {
           const newBtc = await crypto.deriveBitcoinFromSeedAsync(wallet.mnemonic, "m/86'/0'/0'/0/0", true);

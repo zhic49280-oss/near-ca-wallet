@@ -404,6 +404,11 @@
       return;
     }
     const target = st.wallets.find((w) => w.id === walletId);
+    const delMsg = t(
+      `确认永久移除钱包「${target?.name || walletId}」？请确保已备份助记词。`,
+      `Permanently remove wallet "${target?.name || walletId}"? Ensure you backed up its recovery phrase.`
+    );
+    if (typeof confirmWithUserIfSupported === 'function' && !confirmWithUserIfSupported(delMsg)) return;
     if (target && !(await verifySecurityAuthAsync(target, t('删除钱包账户', 'Delete wallet account')))) return;
     const deletedActive = st.activeWalletId === walletId;
     st.wallets = st.wallets.filter((w) => w.id !== walletId);

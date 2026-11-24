@@ -24,7 +24,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.64');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.65');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -441,7 +441,8 @@
             chain: cfg[0],
             tokenSymbol: cfg[1].symbol || 'ETH',
             amount: valNative,
-            isNative: true
+            isNative: true,
+            allowZeroAmount: true
           });
         }
         if (wallet.evmPrivateKey && typeof contracts.sendEvmSignedTransaction === 'function') {

@@ -94,7 +94,10 @@
       existingOrder.followUpArcDexSwap ||
       existingOrder.followUpBaseOneClick ||
       existingOrder.followUpBridgeOut
-    ) && !['SUCCESS', 'COMPLETED', 'FAILED', 'REFUNDED'].includes(String(existingOrder.status || '').toUpperCase()) && !existingOrder.followUpExecuted;
+    ) && !existingOrder.followUpExecuted && (
+      existingOrder.followUpFailed ||
+      !['SUCCESS', 'COMPLETED', 'FAILED', 'REFUNDED'].includes(String(existingOrder.status || '').toUpperCase())
+    );
     if (hasPendingMultiStage) {
       showToast(t('当前有一笔多段闪兑正在执行，请等待完成后再发起新兑换', 'A multi-step swap is in progress. Please wait for it to finish.'));
       return;
@@ -189,6 +192,14 @@
       const thirdPartySuffix = isThirdParty ? ` → ${shortenAddr(st.swap.recipientAddress)}` : '';
       if (!(await verifySecurityAuthAsync(wallet, `${t('确认兑换', 'Confirm swap')} ${amtStr} ${fromToken.symbol} → ${toToken.symbol}${impactPromptSuffix}${thirdPartySuffix}`))) {
         _swapAbortedOrFailed = true;
+        return;
+      }
+      if (st.swap.quoteData && st.swap.quoteData.quotedAt && (Date.now() - Number(st.swap.quoteData.quotedAt)) > 30000) {
+        if (typeof fetchLiveSwapQuoteAsync === 'function') {
+          await fetchLiveSwapQuoteAsync();
+        }
+        _swapAbortedOrFailed = true;
+        showToast(t('验证期间报价已过期并已刷新，请确认新报价后再次点击闪兑', 'Quote expired during auth and refreshed; confirm new rate and tap Swap again'));
         return;
       }
 

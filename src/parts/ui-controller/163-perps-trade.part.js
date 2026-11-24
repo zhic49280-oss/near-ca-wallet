@@ -171,11 +171,16 @@
             } else if (msg && msg.channel === 'webData2' && msg.data) {
               const hl = getHyperliquid();
               const ch = msg.data.clearinghouseState;
+              const prevAcct = s.perp.account || {};
               if (ch && hl && typeof hl.parseHlClearinghouseState === 'function') {
-                s.perp.account = hl.parseHlClearinghouseState(ch);
-              }
-              if (Array.isArray(msg.data.openOrders)) {
-                s.perp.openOrders = msg.data.openOrders;
+                const nextAcct = hl.parseHlClearinghouseState(ch, msg.data.openOrders);
+                s.perp.account = {
+                  ...prevAcct,
+                  ...nextAcct,
+                  openOrders: Array.isArray(msg.data.openOrders) ? msg.data.openOrders : (nextAcct.openOrders || prevAcct.openOrders || [])
+                };
+              } else if (Array.isArray(msg.data.openOrders)) {
+                s.perp.account = { ...prevAcct, openOrders: msg.data.openOrders };
               }
               if (typeof renderPerpBottomList === 'function') renderPerpBottomList();
               evaluatePerpOrderUI(false);

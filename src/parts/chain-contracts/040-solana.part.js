@@ -1092,7 +1092,7 @@
     });
     const ix = buildSolanaStakeDeactivateInstruction({ stakeAccount, authority: wallet.solAddress });
     const res = await buildAndBroadcastSolanaInstructionsAsync({ wallet, instructions: [ix] });
-    return { ok: true, txHash: res.txHash, explorerUrl: `${SOLANA_EXPLORER_TX}${res.txHash}` };
+    return { ok: true, txHash: res.txHash, explorerUrl: `${SOLSCAN_TX}${res.txHash}` };
   }
 
   async function withdrawSolanaStakeAccount({ wallet, stakeAccount, lamports } = {}) {
@@ -1123,6 +1123,6 @@
       lamports: withdrawLamports.toString()
     });
     const res = await buildAndBroadcastSolanaInstructionsAsync({ wallet, instructions: [ix] });
-    return { ok: true, txHash: res.txHash, explorerUrl: `${SOLANA_EXPLORER_TX}${res.txHash}` };
+    return { ok: true, txHash: res.txHash, explorerUrl: `${SOLSCAN_TX}${res.txHash}` };
   }
 

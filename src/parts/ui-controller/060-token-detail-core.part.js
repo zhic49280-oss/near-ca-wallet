@@ -28,6 +28,7 @@
         ? Number(activity.netAmount)
         : null,
       txHash: String(activity.txHash || '').trim(),
+      counterparty: activity.counterparty ? String(activity.counterparty).trim() : '',
       title: String(activity.title || '').trim(),
       timestamp: Number.isFinite(Number(activity.timestamp)) ? Number(activity.timestamp) : Math.floor(Date.now() / 1000)
     };

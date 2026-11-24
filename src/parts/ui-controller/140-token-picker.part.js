@@ -266,6 +266,18 @@
 
     const listEl = $('token-picker-list');
     if (!listEl) return;
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountTokenPicker === 'function') {
+      fw.mountTokenPicker(listEl, {
+        rows: filteredWithMeta,
+        emptyText: t('未找到匹配的代币', 'No matching tokens found'),
+        favSet,
+        formatBal,
+        formatTokenPrice,
+        getSymbolPrice
+      });
+      return;
+    }
     if (filteredWithMeta.length === 0) {
       listEl.innerHTML = `<div class="text-muted" style="text-align:center;padding:24px 12px;">${escapeHtml(t('未找到匹配的代币', 'No matching tokens found'))}</div>`;
       return;
@@ -296,18 +308,6 @@
         </div>
       `;
     };
-    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
-    if (fw && typeof fw.mountTokenPicker === 'function') {
-      fw.mountTokenPicker(listEl, {
-        rows: filteredWithMeta,
-        emptyText: t('未找到匹配的代币', 'No matching tokens found'),
-        favSet,
-        formatBal,
-        formatTokenPrice,
-        getSymbolPrice
-      });
-      return;
-    }
     listEl.innerHTML = filteredWithMeta.map(renderPickerRowHtml).join('');
   }
 

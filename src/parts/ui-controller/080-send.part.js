@@ -695,9 +695,9 @@
           depositType: 'ORIGIN_CHAIN',
           recipientType: 'DESTINATION_CHAIN',
           appFeeBps: (intents.APP_FEE_CONFIG && intents.APP_FEE_CONFIG.SEND_CROSS_CHAIN_BPS) ?? 25,
-          dry: false
+          dry: true
         });
-        if (!preQuotedCross.ok || !preQuotedCross.depositAddress) {
+        if (!preQuotedCross.ok) {
           throw new Error(preQuotedCross.error || t('获取跨链转账路由失败', 'Failed to obtain cross-chain route'));
         }
         const outHuman = preQuotedCross.amountOutFormatted || intents.fromBaseUnits(String(preQuotedCross.amountOut || '0'), preDestAsset.decimals || 8);
@@ -707,6 +707,26 @@
       if (!(await verifySecurityAuthAsync(wallet, authReason))) return;
       if (isEvmOrigin) await ensureEthersLoaded();
       await contracts.ensureWalletSigningKeysAsync(wallet);
+
+      if (!isSameChain) {
+        const amountRaw = intents.toBaseUnits(exactAmt, asset.decimals || 8);
+        const refundTo = getWalletDefaultRecipientForChain(wallet, asset.blockchain) || (wallet.nearNamedAccount || wallet.nearAddress);
+        preQuotedCross = await intents.quoteIntentSwapOrWithdraw({
+          originAsset: asset.assetId,
+          destinationAsset: preDestAsset.assetId,
+          amountRaw,
+          slippageBps: 100,
+          recipient,
+          refundTo,
+          depositType: 'ORIGIN_CHAIN',
+          recipientType: 'DESTINATION_CHAIN',
+          appFeeBps: (intents.APP_FEE_CONFIG && intents.APP_FEE_CONFIG.SEND_CROSS_CHAIN_BPS) ?? 25,
+          dry: false
+        });
+        if (!preQuotedCross.ok || !preQuotedCross.depositAddress) {
+          throw new Error(preQuotedCross.error || t('获取跨链转账路由失败', 'Failed to obtain cross-chain route'));
+        }
+      }
 
       // Case 1: Same-chain direct on-chain transfer
       if (isSameChain) {

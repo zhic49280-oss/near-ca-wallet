@@ -606,7 +606,7 @@
     if (avail === null || avail <= 0) return;
     const needsGasReserve = !activePool.isTokenStake || Boolean(activePool.isNativeWrapSupply);
     const reserve = needsGasReserve
-      ? (activePool.isBurrowSupply ? 0.12 : (activePool.chain === 'near' ? 0.05 : activePool.chain === 'sol' ? 0.002 : activePool.chain === 'arc' ? 0.02 : 0.002))
+      ? (activePool.isBurrowSupply ? 0.12 : (activePool.chain === 'near' ? 0.05 : activePool.chain === 'sol' ? 0.002 : activePool.chain === 'arc' ? 0.02 : (activePool.chain === 'eth' ? 0.005 : 0.002)))
       : 0;
     const maxAmt = Math.max(0, avail - reserve);
     if ($('earn-amount-in')) $('earn-amount-in').value = maxAmt > 0 ? Number(maxAmt.toFixed(6)).toString() : '0';
@@ -663,7 +663,7 @@
           ? (contracts.resolveWalletPoolTokenBalance(wallet, { ...pool, useNativeOrPrecompile: false }) || 0)
           : 0;
         const nativeShortfall = Math.max(0, amt - Math.max(0, Number(wrappedBal) || 0));
-        const gasReserve = pool.chain === 'near' ? 0.12 : 0.002;
+        const gasReserve = pool.chain === 'near' ? 0.12 : (pool.chain === 'eth' ? 0.005 : 0.002);
         const nativeAvail = Number(wallet.nativeBalances?.[pool.chain] ?? (pool.chain === 'near' ? wallet.nearBalance : 0) ?? 0);
         if (nativeAvail < nativeShortfall + gasReserve) {
           throw new Error(

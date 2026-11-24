@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 
 function getTokensMod() {
   return (typeof window !== 'undefined' && window.NearCATokens) || globalThis.NearCATokens || {};
@@ -13,6 +13,9 @@ export function TokenIconBadge({ symbol = '?', blockchain = '', logoURI = '', co
     : { primaryUrl: logoURI || '', fallbackUrl: '', secondFallbackUrl: '', isPearlSvg: false };
 
   const [srcStage, setSrcStage] = useState(0);
+  useEffect(() => {
+    setSrcStage(0);
+  }, [symbol, blockchain, logoURI, contractAddress]);
   const candidates = [resolved.primaryUrl, resolved.fallbackUrl, resolved.secondFallbackUrl].filter(Boolean);
   const activeUrl = candidates[srcStage] || '';
   const symText = String(symbol || '?').toUpperCase().slice(0, 4);

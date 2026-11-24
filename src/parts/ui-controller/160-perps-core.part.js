@@ -151,8 +151,9 @@
       return { disabled: true, error: msg, text: t('保证金不足', 'Insufficient Margin'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike };
     }
     const minNotional = hl ? hl.HL_MIN_ORDER_USD : 10;
-    if (!reduceOnly && (!notional || notional < minNotional)) {
-      const msg = t(`名义价值需 >= $${minNotional} USDC (当前 $${(notional || 0).toFixed(2)})`, `Notional must be >= $${minNotional} USDC (now $${(notional || 0).toFixed(2)})`);
+    const flooredNotional = (sizeNum > 0 && execPx > 0) ? (sizeNum * execPx) : 0;
+    if (!reduceOnly && (!flooredNotional || flooredNotional < minNotional)) {
+      const msg = t(`名义价值需 >= $${minNotional} USDC (按精度取整后 $${flooredNotional.toFixed(2)})`, `Notional must be >= $${minNotional} USDC ($${flooredNotional.toFixed(2)} after size step)`);
       return { disabled: true, error: msg, text: t(`最低名义 $${minNotional}`, `Min $${minNotional} Notional`), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike };
     }
     if (!sizeNum || sizeNum <= 0) {

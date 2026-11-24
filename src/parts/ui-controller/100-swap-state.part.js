@@ -353,12 +353,13 @@
   function isSwapTokenNative(tok) {
     if (!tok) return false;
     const c = String(tok.contractAddress || '').toLowerCase();
+    const sym = String(tok.symbol || '').toUpperCase();
     return !tok.contractAddress ||
       tok.blockchain === 'prl' ||
       tok.blockchain === 'btc' ||
       tok.contractAddress === 'So11111111111111111111111111111111111111112' ||
       c === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' ||
-      tok.contractAddress === 'wrap.near' ||
+      (c === 'wrap.near' && sym === 'NEAR') ||
       (tok.blockchain === 'arc' && c === '0x3600000000000000000000000000000000000000');
   }
 

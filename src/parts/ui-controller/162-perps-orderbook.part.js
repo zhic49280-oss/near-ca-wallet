@@ -419,14 +419,15 @@
     };
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (fw && typeof fw.mountPerpOverview === 'function') {
-      const favs = new Set((st.perp.favorites || []).map((c) => String(c || '').toUpperCase()));
+      const favs = new Set(getPerpFavoriteCoins());
       const vmRows = visibleRows.map((m) => {
         const vol = Number(m.dayNtlVlm || 0);
         const volText = vol >= 1e9 ? `$${(vol / 1e9).toFixed(2)}B` : (vol >= 1e6 ? `$${(vol / 1e6).toFixed(2)}M` : (vol >= 1e3 ? `$${(vol / 1e3).toFixed(1)}K` : `$${vol.toFixed(0)}`));
+        const dexTag = m.dex ? String(m.dex).toUpperCase() : (typeof extractPerpDexBadge === 'function' ? extractPerpDexBadge(m.name) : '');
         return {
           ...m,
           pair: formatPerpDisplayPair(m.name),
-          dexTag: m.isHip3 && m.hip3Dex ? m.hip3Dex.toUpperCase() : '',
+          dexTag,
           volText: `${t('24h量', '24h Vol')} ${volText}`,
           isFav: favs.has(String(m.name || '').toUpperCase())
         };

@@ -1,5 +1,4 @@
 import { h } from 'preact';
-import { useWalletState } from '../store/useWalletStore.js';
 import { TokenIconBadge } from './TokenIconBadge.jsx';
 
 export function TokenPickerPanel({
@@ -10,7 +9,6 @@ export function TokenPickerPanel({
   formatTokenPrice,
   getSymbolPrice
 }) {
-  useWalletState(['picker', 'lang']);
   if (!Array.isArray(rows) || rows.length === 0) {
     return emptyText ? (
       <div className="text-muted" style={{ textAlign: 'center', padding: '16px', fontSize: '12px' }}>

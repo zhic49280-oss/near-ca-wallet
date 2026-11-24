@@ -210,6 +210,12 @@
         navigator.serviceWorker.addEventListener?.('controllerchange', () => {
           if (_swReloaded) return;
           _swReloaded = true;
+          const curSt = getState();
+          const busy = Boolean((typeof document !== 'undefined' && document.querySelector && document.querySelector('.sheet-backdrop.open')) || (curSt && ((curSt.swap && curSt.swap._executing) || (curSt.perp && curSt.perp.submitting))));
+          if (busy) {
+            showToast(t('新版本已就绪，将在下次打开时生效', 'Update ready; will apply on next launch'));
+            return;
+          }
           if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
             window.location.reload();
           }
@@ -257,6 +263,7 @@
     shouldEnableAppLockForWallet,
     engageAppLock,
     clearAppLock,
+    isAppLocked,
     unlockAppLockNow,
     unlockAppLockWithPin,
     handleAppVisibilityChange,

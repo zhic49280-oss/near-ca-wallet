@@ -516,10 +516,11 @@
     amount,
     isNative = false,
     tokenBalance = null,
-    gasBuffer = null
+    gasBuffer = null,
+    allowZeroAmount = false
   } = {}) {
     const reqAmt = Number(amount);
-    if (!Number.isFinite(reqAmt) || reqAmt <= 0) {
+    if (!Number.isFinite(reqAmt) || (allowZeroAmount ? reqAmt < 0 : reqAmt <= 0)) {
       throw new Error(t('请输入有效金额', 'Enter a valid positive amount'));
     }
 
