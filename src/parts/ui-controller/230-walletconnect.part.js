@@ -24,7 +24,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.63');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.64');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -112,17 +112,20 @@
         if ($('wc-request-payload')) {
           let preview = '';
           try {
-            if (req.method === 'personal_sign' && Array.isArray(req.params) && req.params[0]) {
-              const rawHex = String(req.params[0]);
-              if (/^0x[0-9a-fA-F]+$/.test(rawHex)) {
-                const bytes = new Uint8Array(rawHex.slice(2).match(/.{2}/g).map((h) => parseInt(h, 16)));
+            if (req.method === 'personal_sign' && Array.isArray(req.params) && req.params.length > 0) {
+              const p0 = String(req.params[0] || '');
+              const p1 = String(req.params[1] || '');
+              const msgParam = (/^0x[0-9a-fA-F]{40}$/.test(p0) && p1) ? p1 : p0;
+              if (/^0x[0-9a-fA-F]+$/.test(msgParam) && msgParam.length > 2) {
+                const pairs = msgParam.slice(2).match(/.{2}/g) || [];
+                const bytes = new Uint8Array(pairs.map((h) => parseInt(h, 16)));
                 preview = new TextDecoder().decode(bytes);
               } else {
-                preview = rawHex;
+                preview = msgParam;
               }
             } else if (req.method === 'eth_sendTransaction' && Array.isArray(req.params) && req.params[0]) {
               const tx = req.params[0];
-              const weiBig = tx.value ? BigInt(tx.value) : 0n;
+              const weiBig = parseHexBigInt(tx.value);
               const ethStr = (Number(weiBig) / 1e18).toFixed(6).replace(/\.?0+$/, '') || '0';
               const cidNum = Number(String(ev.params?.chainId || 'eip155:1').split(':')[1] || 1);
               const contractsMod = getContracts();
@@ -305,6 +308,16 @@
     renderWcCards();
   }
 
+  function parseHexBigInt(val) {
+    const s = String(val ?? '').trim();
+    if (!s || s === '0x' || s === '0X') return 0n;
+    try {
+      return BigInt(s);
+    } catch (_) {
+      return 0n;
+    }
+  }
+
   let _wcApprovingRequest = false;
   const _wcSessionWallets = {};
 
@@ -417,9 +430,11 @@
         const cid = Number(String(params.chainId || 'eip155:1').split(':')[1] || 1);
         const cfg = Object.entries(contracts.EVM_CHAINS).find(([, c]) => c.chainId === cid);
         if (!cfg) throw new Error(t(`不支持的网络 chainId: ${cid}`, `Unsupported chainId: ${cid}`));
-        const valWei = txReq.value ? BigInt(txReq.value) : 0n;
+        const valWei = parseHexBigInt(txReq.value);
         const valNative = Number(valWei) / 1e18;
-        const reqGasLimit = (txReq.gasLimit || txReq.gas) ? BigInt(txReq.gasLimit || txReq.gas).toString() : null;
+        const gasRaw = txReq.gasLimit || txReq.gas;
+        const gasBig = gasRaw ? parseHexBigInt(gasRaw) : 0n;
+        const reqGasLimit = gasBig > 0n ? gasBig.toString() : null;
         if (typeof contracts.validateSufficientChainBalance === 'function') {
           contracts.validateSufficientChainBalance({
             wallet,

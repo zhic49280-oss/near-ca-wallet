@@ -248,7 +248,7 @@
           const ercVal = st.getWalletErc20Balance(wallet, chainKey, dt.contractAddress);
           if (typeof ercVal === 'number' && Number.isFinite(ercVal)) {
             bal = ercVal;
-          } else if (chainNativeLoaded && ['USDC', 'USDT', 'WETH', 'DAI', 'WBTC'].includes(String(dt.symbol || '').toUpperCase())) {
+          } else if (chainNativeLoaded && ['USDC', 'USDT'].includes(String(dt.symbol || '').toUpperCase())) {
             bal = 0;
           }
         }

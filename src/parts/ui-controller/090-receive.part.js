@@ -1,5 +1,13 @@
   // ==================== Unified Receive Sheet ====================
 
+  const QTC_DEPOSIT_TTL_MS = 20 * 60 * 1000;
+
+  function isQtcDepositExpired(wallet) {
+    if (!wallet || !wallet.qtcDepositAddress) return true;
+    const ts = Number(wallet.qtcDepositAddressAt || 0);
+    return !ts || (Date.now() - ts) > QTC_DEPOSIT_TTL_MS;
+  }
+
   function openReceiveSheet(networkKey = 'near') {
     const st = getState();
     const rawKey = String(networkKey || 'near').toLowerCase();
@@ -9,7 +17,7 @@
     const wallet = st.getActiveWallet();
     renderReceiveSheet();
     openSheet('sheet-receive');
-    if (st.receive.selectedNetwork === 'qtc' && wallet && !wallet.qtcDepositAddress) {
+    if (st.receive.selectedNetwork === 'qtc' && wallet && isQtcDepositExpired(wallet)) {
       ensureQtcReceiveDepositAddressAsync(wallet);
     }
   }
@@ -39,6 +47,7 @@
       });
       if (res && res.ok && res.depositAddress) {
         wallet.qtcDepositAddress = res.depositAddress;
+        wallet.qtcDepositAddressAt = Date.now();
         st.saveWallets();
       } else if (st.receive.selectedNetwork === 'qtc') {
         showToast((res && res.error) || t('获取 QTC 跨链收款地址失败', 'Failed to obtain QTC deposit address'));
@@ -69,7 +78,7 @@
       { key: 'sol', label: 'Solana (SOL)', addr: wallet.solAddress },
       { key: 'btc', label: t('Bitcoin (BTC 主网)', 'Bitcoin (BTC Mainnet)'), addr: wallet.btcAddress },
       { key: 'prl', label: t('Pearl (PRL 主网)', 'Pearl (PRL Mainnet)'), addr: wallet.address },
-      { key: 'qtc', label: t('QTC (Quantus 跨链收款)', 'QTC (Quantus Deposit)'), addr: wallet.qtcDepositAddress || '' }
+      { key: 'qtc', label: t('QTC (Quantus 跨链收款)', 'QTC (Quantus Deposit)'), addr: isQtcDepositExpired(wallet) ? '' : (wallet.qtcDepositAddress || '') }
     ];
 
     const pillsEl = $('receive-network-pills');
@@ -88,7 +97,10 @@
       const nearId = wallet.nearNamedAccount || wallet.nearAddress;
       const isFetching = Boolean(nearId && _qtcDepositPromiseKey === `${wallet.id}:${nearId}`);
       if (valEl) {
-        if (valEl.dataset) valEl.dataset.loading = isFetching ? '1' : '';
+        if (valEl.dataset) {
+          valEl.dataset.loading = isFetching ? '1' : '';
+          valEl.dataset.error = isFetching ? '' : '1';
+        }
         if (isFetching) {
           valEl.textContent = t('正在获取 Quantus 跨链充值地址...', 'Fetching Quantus deposit address...');
         } else {
@@ -100,7 +112,10 @@
     }
 
     if (valEl) {
-      if (valEl.dataset) valEl.dataset.loading = '';
+      if (valEl.dataset) {
+        valEl.dataset.loading = '';
+        valEl.dataset.error = '';
+      }
       valEl.textContent = active.addr || '--';
     }
     renderQrInto('receive-qr-container', active.addr || '', 172);
@@ -111,7 +126,7 @@
     st.receive.selectedNetwork = key;
     const wallet = st.getActiveWallet();
     renderReceiveSheet();
-    if (key === 'qtc' && wallet && !wallet.qtcDepositAddress) {
+    if (key === 'qtc' && wallet && isQtcDepositExpired(wallet)) {
       ensureQtcReceiveDepositAddressAsync(wallet);
     }
   }
@@ -119,7 +134,7 @@
   function copyReceiveAddress() {
     const valEl = $('receive-addr-value');
     const addr = (valEl?.textContent || '').trim();
-    if (!addr || addr === '--' || valEl?.dataset?.loading === '1') return;
+    if (!addr || addr === '--' || valEl?.dataset?.loading === '1' || valEl?.dataset?.error === '1') return;
     copyText(addr, $('receive-addr-label')?.textContent || '');
   }
 

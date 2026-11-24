@@ -136,6 +136,12 @@
       if (myGen !== _miningQueryGen) return;
       st.mining.telemetry = tel;
       renderMiningTelemetry();
+      if (tel && tel.hashrate === null && tel.workersOnline === null && tel.unpaidBalance === null) {
+        const isStaticWeb = typeof window !== 'undefined' && window.location && !/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname || '') && !window.Capacitor?.Plugins?.CapacitorHttp;
+        if (isStaticWeb) {
+          showToast(t('公网静态网页受浏览器 CORS 限制，请在原生 App 或本地代理环境使用矿机监控', 'Static web blocked by CORS; use native App or local proxy for mining telemetry'));
+        }
+      }
     } catch (err) {
       if (myGen === _miningQueryGen) {
         const errMsg = err && err.message ? err.message : t('矿工数据查询失败', 'Miner query failed');

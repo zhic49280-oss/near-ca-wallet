@@ -1,10 +1,14 @@
 import { h, render } from 'preact';
+import jsQR from 'jsqr';
 import { SwapHistoryPanel } from './components/SwapHistoryPanel.jsx';
 import { AssetListPanel } from './components/AssetListPanel.jsx';
 import { TokenPickerPanel } from './components/TokenPickerPanel.jsx';
 import { PerpOverviewPanel } from './components/PerpOverviewPanel.jsx';
 import { PerpOrderbookSidePanel, PerpBottomListPanel } from './components/PerpOrderbookAndPositions.jsx';
 import { useWalletState, notifyFrameworkState } from './store/useWalletStore.js';
+
+if (typeof window !== 'undefined' && !window.jsQR) window.jsQR = jsQR;
+if (typeof globalThis !== 'undefined' && !globalThis.jsQR) globalThis.jsQR = jsQR;
 
 export function mountSwapHistory(containerEl, opts = {}) {
   if (!containerEl) return false;

@@ -325,13 +325,17 @@
           }).catch(() => {});
         }
       }
+      let prlSyncFailed = false;
+      let btcSyncFailed = false;
       if (wallet.address && typeof contracts.fetchPearlNativeBalance === 'function') {
         contracts.fetchPearlNativeBalance(wallet.address).then((res) => {
           if (!isStaleRefresh() && res && typeof res.formatted === 'number' && Number.isFinite(res.formatted)) {
             wallet.nativeBalances.prl = reconcileFetchedChainBalance(wallet, 'prl', res.formatted);
             scheduleProgressiveWalletRender();
+          } else {
+            prlSyncFailed = true;
           }
-        }).catch(() => {});
+        }).catch(() => { prlSyncFailed = true; });
       }
       if (wallet.btcAddress && typeof contracts.fetchBitcoinNativeBalance === 'function') {
         contracts.fetchBitcoinNativeBalance(wallet.btcAddress).then((res) => {
@@ -339,8 +343,10 @@
           if (!isStaleRefresh() && typeof bal === 'number' && Number.isFinite(bal)) {
             wallet.nativeBalances.btc = reconcileFetchedChainBalance(wallet, 'btc', bal);
             scheduleProgressiveWalletRender();
+          } else {
+            btcSyncFailed = true;
           }
-        }).catch(() => {});
+        }).catch(() => { btcSyncFailed = true; });
       }
 
       const softCapPromise = (promise, ms) => {
@@ -545,7 +551,7 @@
         renderTokenDetailSheet();
       }
 
-      const anyTimedOut = (nearAccountId && nearBalRes === null) || (wallet.solAddress && solBalRes === null) || (wallet.evmAddress && evmBatchResults.some((r) => r === null));
+      const anyTimedOut = (nearAccountId && nearBalRes === null) || (wallet.solAddress && solBalRes === null) || (wallet.evmAddress && evmBatchResults.some((r) => r === null)) || prlSyncFailed || btcSyncFailed;
       if (showFeedback) {
         showToast(anyTimedOut ? t('部分链仍在后台同步中...', 'Syncing remaining chains...') : t('多链资产已同步', 'Balances synced'));
       }
