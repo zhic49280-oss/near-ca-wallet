@@ -9,6 +9,7 @@ npm-debug.log*
 /index.html
 /src/chain-contracts.js
 /src/crypto-engine.js
+/src/framework-ui.js
 /src/near-intents.js
 /src/state.js
 /src/token-registry.js

@@ -1675,6 +1675,7 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
     'src/hyperliquid-perps.js',
     'src/state.js',
     'src/dapp-browser.js',
+    'src/framework-ui.js',
     'src/ui-controller.js'
   ];
   const strippedScripts = scriptSrcs.map((s) => s.split('?')[0]);
@@ -1689,17 +1690,17 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
   const versionedHtmlAssets = [
     ...indexHtml.matchAll(/(?:href|src)="((?:style\.css|src\/[^"]+\.js)\?v=[^"]+)"/g)
   ].map((m) => `./${m[1]}`);
-  assert.equal(versionedHtmlAssets.length, 10);
+  assert.equal(versionedHtmlAssets.length, 11);
   for (const asset of versionedHtmlAssets) {
     assert.ok(swJs.includes(`'${asset}'`), `sw.js CORE_ASSETS must include ${asset}`);
   }
 
-  // Verify scripts/sync-assets.js outputs match root SHA-256 hashes
+  // Verify scripts/sync-assets.js outputs match across dist/, android/, ios/ (minified for src/*.js & style.css)
   const syncScript = fs.readFileSync(path.join(ROOT_DIR, 'scripts', 'sync-assets.js'), 'utf8');
   const listMatch = syncScript.match(/const FILES_TO_SYNC = \[([\s\S]*?)\];/);
   assert.ok(listMatch, 'scripts/sync-assets.js must define FILES_TO_SYNC');
   const filesToSync = [...listMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  assert.equal(filesToSync.length, 21);
+  assert.equal(filesToSync.length, 22);
 
   const targets = [
     path.join(ROOT_DIR, 'dist'),
@@ -1712,7 +1713,8 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
   for (const rel of filesToSync) {
     const srcPath = path.join(ROOT_DIR, rel);
     assert.ok(fs.existsSync(srcPath), `Missing root file: ${rel}`);
-    const expectedHash = sha256(srcPath);
+    const isMinifiedTarget = rel === 'style.css' || (rel.startsWith('src/') && rel.endsWith('.js') && rel !== 'src/framework-ui.js');
+    const expectedHash = isMinifiedTarget ? sha256(path.join(targets[0], rel)) : sha256(srcPath);
     for (const targetDir of targets) {
       const dstPath = path.join(targetDir, rel);
       assert.ok(fs.existsSync(dstPath), `Missing synced file: ${dstPath}`);

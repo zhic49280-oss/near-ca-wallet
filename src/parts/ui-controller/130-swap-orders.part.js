@@ -22,6 +22,11 @@
     const st = getState();
     const listEl = $('swap-history-list');
     if (!listEl) return;
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || globalThis.NearCAFramework;
+    if (fw && typeof fw.mountSwapHistory === 'function') {
+      fw.mountSwapHistory(listEl, { getStatusLabel: getSwapOrderStatusLabel });
+      return;
+    }
     const wallet = st.getActiveWallet();
     const items = getSwapHistoryItems(wallet);
     if (items.length === 0) {

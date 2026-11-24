@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const esbuild = require('esbuild');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const FILES_TO_SYNC = [
@@ -24,6 +25,7 @@ const FILES_TO_SYNC = [
   'src/mining-pro.js',
   'src/state.js',
   'src/dapp-browser.js',
+  'src/framework-ui.js',
   'src/ui-controller.js'
 ];
 
@@ -71,6 +73,19 @@ function syncDirectory(relDir, targetRoots) {
   return srcFiles.length;
 }
 
+function buildProdBuffer(rel, src) {
+  const raw = fs.readFileSync(src);
+  if (rel === 'style.css') {
+    const out = esbuild.transformSync(raw.toString('utf8'), { loader: 'css', minify: true });
+    return { buf: Buffer.from(out.code, 'utf8'), rawLen: raw.length };
+  }
+  if (rel.startsWith('src/') && rel.endsWith('.js') && rel !== 'src/framework-ui.js') {
+    const out = esbuild.transformSync(raw.toString('utf8'), { loader: 'js', minify: true, legalComments: 'none' });
+    return { buf: Buffer.from(out.code, 'utf8'), rawLen: raw.length };
+  }
+  return { buf: raw, rawLen: raw.length };
+}
+
 function syncAll() {
   for (const rel of FILES_TO_SYNC) {
     const src = path.join(ROOT_DIR, rel);
@@ -79,13 +94,23 @@ function syncAll() {
       process.exit(1);
     }
   }
+  const builtMap = new Map();
+  let rawTotal = 0;
+  let minTotal = 0;
+  for (const rel of FILES_TO_SYNC) {
+    const src = path.join(ROOT_DIR, rel);
+    const { buf, rawLen } = buildProdBuffer(rel, src);
+    builtMap.set(rel, { buf, hash: crypto.createHash('sha256').update(buf).digest('hex') });
+    rawTotal += rawLen;
+    minTotal += buf.length;
+  }
   for (const targetRoot of TARGET_DIRS) {
     for (const rel of FILES_TO_SYNC) {
-      const src = path.join(ROOT_DIR, rel);
       const dst = path.join(targetRoot, rel);
+      const { buf, hash } = builtMap.get(rel);
       fs.mkdirSync(path.dirname(dst), { recursive: true });
-      fs.copyFileSync(src, dst);
-      if (sha256(src) !== sha256(dst)) {
+      fs.writeFileSync(dst, buf);
+      if (sha256(dst) !== hash) {
         console.error(`Checksum mismatch for ${rel}`);
         process.exit(1);
       }
@@ -95,7 +120,8 @@ function syncAll() {
   for (const relDir of DIRS_TO_SYNC) {
     dirFileTotal += syncDirectory(relDir, TARGET_DIRS);
   }
-  console.log(`Successfully synchronized ${FILES_TO_SYNC.length} modular assets and ${dirFileTotal} bundled icons to dist/, android/, and ios/.`);
+  const savedKb = Math.round((rawTotal - minTotal) / 1024);
+  console.log(`Successfully synchronized ${FILES_TO_SYNC.length} modular assets (minified ${savedKb} KB) and ${dirFileTotal} bundled icons to dist/, android/, and ios/.`);
 }
 
 syncAll();

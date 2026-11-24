@@ -6,9 +6,15 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "start": "node server.js",
-    "build": "node scripts/build-parts.js && node scripts/sync-assets.js",
-    "sync": "node scripts/build-parts.js && node scripts/sync-assets.js"
+    "build": "node scripts/build-parts.js && npx vite build && node scripts/sync-assets.js",
+    "sync": "node scripts/build-parts.js && npx vite build && node scripts/sync-assets.js"
   },
   "type": "commonjs",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
+    "esbuild": "^0.28.2",
+    "preact": "^11.2.0",
+    "vite": "^8.3.8"
+  }
 }

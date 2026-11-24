@@ -21,6 +21,9 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install build dependencies
+        run: npm ci
+
       - name: Build assets and run tests
         run: |
           npm run build
