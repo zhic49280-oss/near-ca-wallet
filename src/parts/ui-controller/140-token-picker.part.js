@@ -300,8 +300,11 @@
     if (fw && typeof fw.mountTokenPicker === 'function') {
       fw.mountTokenPicker(listEl, {
         rows: filteredWithMeta,
-        renderRowHtml: renderPickerRowHtml,
-        emptyText: t('未找到匹配的代币', 'No matching tokens found')
+        emptyText: t('未找到匹配的代币', 'No matching tokens found'),
+        favSet,
+        formatBal,
+        formatTokenPrice,
+        getSymbolPrice
       });
       return;
     }

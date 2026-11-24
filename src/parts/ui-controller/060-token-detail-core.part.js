@@ -305,6 +305,7 @@
   let _lastTokenDetailMergedItems = [];
   let _lastMiningNormalizedPayouts = [];
   let _txDetailFetchSeq = 0;
+  let _lastDetailHistorySig = '';
 
   function renderTokenDetailHistoryList() {
     const listEl = $('token-detail-history-list');
@@ -316,6 +317,7 @@
     const chainFilter = _tokenDetailState.chainFilter || 'all';
     if (!wallet || !symKey) {
       _lastTokenDetailMergedItems = [];
+      _lastDetailHistorySig = '';
       if (allBtn) allBtn.classList.add('hidden');
       listEl.innerHTML = '';
       return;
@@ -324,6 +326,10 @@
     const items = getMergedTokenHistoryItems(wallet, symKey, chainFilter);
     _lastTokenDetailMergedItems = items;
     if (allBtn) allBtn.classList.toggle('hidden', items.length === 0);
+
+    const nextSig = `${wallet.id}|${symKey}|${chainFilter}|${_tokenDetailState.historyLoading ? 1 : 0}|${st.lang}|${items.slice(0, 6).map((x) => `${x.id || x.txHash || ''}:${x.status || ''}:${x.tsSec || ''}`).join(',')}`;
+    if (nextSig === _lastDetailHistorySig && listEl.innerHTML) return;
+    _lastDetailHistorySig = nextSig;
 
     if (_tokenDetailState.historyLoading && items.length === 0) {
       listEl.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:8px 0;">${escapeHtml(t('正在加载链上交易记录...', 'Loading on-chain activity...'))}</div>`;

@@ -240,7 +240,7 @@
       return `<rect x="${hx.toFixed(1)}" y="${candleTop}" width="${step.toFixed(1)}" height="${(volBottom - candleTop).toFixed(1)}" fill="transparent" class="perp-candle-hit" data-action="inspect-perp-candle" data-candle-idx="${idx}" />`;
     }).join('');
 
-    return `<svg viewBox="0 0 ${W} ${H}" class="perp-chart-svg" preserveAspectRatio="none">${legendSvg}${gridSvg}${timeGridSvg}${candleSvg}${maSvg}${hiPin}${loPin}${markSvg}${crosshairSvg}${hitTargetsSvg}</svg>`;
+    return `<svg viewBox="0 0 ${W} ${H}" class="perp-chart-svg">${legendSvg}${gridSvg}${timeGridSvg}${candleSvg}${maSvg}${hiPin}${loPin}${markSvg}${crosshairSvg}${hitTargetsSvg}</svg>`;
   }
 
   function bindPerpChartGestures() {
@@ -249,8 +249,9 @@
     if (!host || (host.dataset && host.dataset.gesturesBound === '1') || typeof host.addEventListener !== 'function') return;
     if (host.dataset) host.dataset.gesturesBound = '1';
 
-    let mode = null; // 'pan' | 'scrub' | 'pinch'
+    let mode = null; // 'pan' | 'scrub' | 'pinch' | 'scroll'
     let startX = 0;
+    let startY = 0;
     let startOffset = 0;
     let startPinchDist = 0;
     let startVisibleCount = 48;
@@ -299,6 +300,7 @@
       if (e.touches.length === 1) {
         mode = null;
         startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
         startOffset = Number(st.perp.chartOffsetFromEnd || 0);
         const touchX = e.touches[0].clientX;
         longPressTimer = setTimeout(() => {
@@ -328,11 +330,21 @@
       }
       if (e.touches.length === 1) {
         const curX = e.touches[0].clientX;
+        const curY = e.touches[0].clientY;
         const dx = curX - startX;
-        if (!mode && Math.abs(dx) > 6) {
-          if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
-          mode = 'pan';
+        const dy = curY - startY;
+        if (!mode) {
+          if (Math.abs(dy) > 6 && Math.abs(dy) > Math.abs(dx)) {
+            if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+            mode = 'scroll';
+            return;
+          }
+          if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+            if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+            mode = 'pan';
+          }
         }
+        if (mode === 'scroll') return;
         if (mode === 'scrub') {
           if (e.cancelable) e.preventDefault();
           const idx = clientXToCandleIdx(curX);

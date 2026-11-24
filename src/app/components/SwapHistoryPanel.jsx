@@ -37,7 +37,7 @@ function formatRelTime(tsSec, isEn) {
 }
 
 export function SwapHistoryPanel({ getStatusLabel }) {
-  const st = useWalletState();
+  const st = useWalletState(['swap', 'lang']);
   if (!st) return null;
   const isEn = st.lang === 'en';
   const wallet = typeof st.getActiveWallet === 'function' ? st.getActiveWallet() : null;

@@ -131,6 +131,9 @@
       return;
     }
     st.activeTab = ['wallet', 'swap', 'perp', 'earn', 'hub'].includes(tab) ? tab : 'wallet';
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      try { window.scrollTo(0, 0); } catch (_) {}
+    }
 
     const views = ['wallet', 'swap', 'perp', 'earn', 'hub'];
     for (const v of views) {

@@ -166,7 +166,6 @@
           const prefetchTm = setTimeout(() => {
             if (st.getActiveWallet()) {
               refreshPerpDataAsync(false).catch(() => {});
-              ensureStakingMetricsFresh(300_000);
             }
           }, 600);
           if (prefetchTm && typeof prefetchTm.unref === 'function') prefetchTm.unref();

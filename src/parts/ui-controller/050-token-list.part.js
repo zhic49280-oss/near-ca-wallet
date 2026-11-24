@@ -479,13 +479,17 @@
     const { mainGroups, dustGroups, dustTotalUsd } = partitionDustAssetGroups(groups, HOME_DUST_USD_THRESHOLD);
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (fw && typeof fw.mountAssetList === 'function') {
+      const tokensMod = getTokens();
       fw.mountAssetList(listEl, {
         mainGroups,
         dustGroups,
         dustTotalUsd,
         showDust: Boolean(st.showDustAssets),
-        renderGroupHtml: renderAssetGroupCard,
+        expandedSymbol: st.expandedSymbol || '',
+        formatBal,
+        formatTokenPrice,
         formatUsd,
+        getChainName: (e) => (e.blockchain ? (tokensMod.getChainMeta(e.blockchain)?.name || e.networkName) : e.networkName),
         isEn: st.lang === 'en'
       });
       return;

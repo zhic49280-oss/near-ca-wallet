@@ -57,6 +57,12 @@
       const dec = Number.isFinite(szDec) ? Math.max(0, Math.min(5, szDec)) : 3;
       return Number(v || 0).toFixed(v >= 1000 ? Math.min(2, dec) : dec);
     };
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountPerpOrderbookSide === 'function') {
+      fw.mountPerpOrderbookSide(bidsEl, { rows: bidRows, side: 'bid', maxSz: maxBidSz, fmtObSz, formatPerpPx });
+      fw.mountPerpOrderbookSide(asksEl, { rows: askRows, side: 'ask', maxSz: maxAskSz, fmtObSz, formatPerpPx });
+      return;
+    }
     bidsEl.innerHTML = bidRows.map((r) => {
       const pct = maxBidSz > 0 ? Math.max(6, (r.sz / maxBidSz) * 100) : 0;
       return `<button type="button" class="perp-ob-row bid" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></div><span>${escapeHtml(fmtObSz(r.sz))}</span><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span></button>`;
@@ -99,6 +105,27 @@
       } else {
         batchBtn.classList.add('hidden');
       }
+    }
+
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountPerpBottomList === 'function') {
+      if (!acct) {
+        fw.mountPerpBottomList(listEl, { items: [], tab, emptyText: '--', isEn: st.lang === 'en', formatPerpPx });
+        return;
+      }
+      if (tab === 'positions') {
+        const items = (acct.positions || []).map((p) => ({ ...p, pair: formatPerpDisplayPair(p.coin || '') }));
+        fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无持仓', 'No open positions'), isEn: st.lang === 'en', formatPerpPx });
+        return;
+      }
+      if (tab === 'orders') {
+        const items = (acct.openOrders || []).slice(0, 25).map((o) => ({ ...o, pair: formatPerpDisplayPair(o.coin || '') }));
+        fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无委托', 'No open orders'), isEn: st.lang === 'en', formatPerpPx });
+        return;
+      }
+      const items = (acct.fills || []).slice(0, 20).map((f) => ({ ...f, pair: formatPerpDisplayPair(f.coin || '') }));
+      fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无成交记录', 'No recent fills'), isEn: st.lang === 'en', formatPerpPx });
+      return;
     }
 
     if (!acct) {
@@ -392,10 +419,22 @@
     };
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (fw && typeof fw.mountPerpOverview === 'function') {
+      const favs = new Set((st.perp.favorites || []).map((c) => String(c || '').toUpperCase()));
+      const vmRows = visibleRows.map((m) => {
+        const vol = Number(m.dayNtlVlm || 0);
+        const volText = vol >= 1e9 ? `$${(vol / 1e9).toFixed(2)}B` : (vol >= 1e6 ? `$${(vol / 1e6).toFixed(2)}M` : (vol >= 1e3 ? `$${(vol / 1e3).toFixed(1)}K` : `$${vol.toFixed(0)}`));
+        return {
+          ...m,
+          pair: formatPerpDisplayPair(m.name),
+          dexTag: m.isHip3 && m.hip3Dex ? m.hip3Dex.toUpperCase() : '',
+          volText: `${t('24h量', '24h Vol')} ${volText}`,
+          isFav: favs.has(String(m.name || '').toUpperCase())
+        };
+      });
       fw.mountPerpOverview(listEl, {
-        rows: visibleRows,
-        renderMarketRowHtml,
-        emptyText: t('暂无匹配合约', 'No matching contracts')
+        rows: vmRows,
+        emptyText: t('暂无匹配合约', 'No matching contracts'),
+        formatPerpPx
       });
       return;
     }
