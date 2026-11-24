@@ -159,7 +159,12 @@
           fromAddress: owner
         }).catch(() => null)
       ]);
-      if (allowance !== null) st.limit.evmAllowanceRaw = allowance.toString();
+      if (allowance !== null) {
+        st.limit.evmAllowanceRaw = allowance.toString();
+        st.limit.evmAllowanceFailed = false;
+      } else if (owner) {
+        st.limit.evmAllowanceFailed = true;
+      }
       const evmOutRaw = q && (q.destAmountRaw || q.amountOut);
       if (evmOutRaw) {
         const outNum = Number(contracts.fromBaseUnits(String(evmOutRaw), buyToken.decimals));
@@ -212,6 +217,7 @@
         st.limit.ordersActive = res.active || [];
         st.limit.ordersHistory = res.history || [];
         st.limit.rateLimited = Boolean(res.rateLimited);
+        if (chain === 'sol') st.limit.solUnavailable = Boolean(res.unavailable);
         if (res.unavailable && showFeedback) {
           showToast(res.error || t('当前链限价单接口暂不可用', 'Limit order service unavailable on this chain'));
         }
@@ -366,7 +372,8 @@
       ? (entered > currentSellBal ? (entered - currentSellBal) : entered)
       : (chain === 'near' ? 1 : 0.01);
     if (chain === 'near' && sellToken.contractAddress === 'wrap.near') {
-      const wnearOnly = Number((wallet.nearNep141Balances && wallet.nearNep141Balances['wrap.near']) || 0);
+      const wnearEntry = wallet.nearNep141Balances && wallet.nearNep141Balances['wrap.near'];
+      const wnearOnly = Number((wnearEntry && typeof wnearEntry === 'object') ? (wnearEntry.formatted ?? 0) : (wnearEntry || 0));
       if (Number.isFinite(entered) && entered > 0) {
         targetAmt = entered > wnearOnly ? (entered - wnearOnly) : entered;
       }
@@ -466,11 +473,32 @@
         return;
       }
 
+      if (btnState.action === 'retry_allowance') {
+        st.limit.evmAllowanceFailed = false;
+        st.limit.evmAllowanceRaw = null;
+        renderLimitOrderCalculations();
+        await refreshLimitMarketContextAsync();
+        return;
+      }
+
       const sellAmtNum = Number(st.limit.amountIn);
       const rateNum = Number(st.limit.targetRate);
       const sellRaw = contracts.toBaseUnits(String(st.limit.amountIn), sellToken.decimals);
-      const buyAmtFloat = sellAmtNum * rateNum;
-      const buyRaw = contracts.toBaseUnits(buyAmtFloat.toFixed(Math.min(18, buyToken.decimals)), buyToken.decimals);
+      const computeExactBuyRaw = (amtStr, rateStr, outDecimals) => {
+        const cleanA = String(amtStr || '0').trim();
+        const cleanR = String(rateStr || '0').trim();
+        if (!/^\d+(\.\d+)?$/.test(cleanA) || !/^\d+(\.\d+)?$/.test(cleanR)) {
+          return contracts.toBaseUnits((Number(cleanA) * Number(cleanR)).toFixed(Math.min(18, outDecimals)), outDecimals);
+        }
+        const [aInt, aFrac = ''] = cleanA.split('.');
+        const [rInt, rFrac = ''] = cleanR.split('.');
+        const scale = BigInt(aFrac.length + rFrac.length);
+        const prod = BigInt((aInt + aFrac).replace(/^0+/, '') || '0') * BigInt((rInt + rFrac).replace(/^0+/, '') || '0');
+        const outDec = BigInt(outDecimals);
+        if (outDec >= scale) return (prod * (10n ** (outDec - scale))).toString();
+        return (prod / (10n ** (scale - outDec))).toString();
+      };
+      const buyRaw = computeExactBuyRaw(st.limit.amountIn, st.limit.targetRate, buyToken.decimals);
       const sellPrice = (typeof sellToken.price === 'number' && sellToken.price > 0) ? sellToken.price : getSymbolPrice(sellToken.symbol === 'wNEAR' ? 'NEAR' : sellToken.symbol);
       const sellUsd = sellPrice ? sellAmtNum * sellPrice : null;
       const sellBal = getLimitTokenBalance(wallet, sellToken);
@@ -549,13 +577,20 @@
     }
   }
 
+  let _limitOrderActionInFlight = false;
+
   async function claimLimitOrderUI(orderId, buyToken) {
+    if (_limitOrderActionInFlight) return;
     const st = getState();
     const lo = getLimitOrders();
     const wallet = st.getActiveWallet();
     if (!wallet || !lo || !orderId) return;
     const authed = await verifySecurityAuthAsync(wallet, t('领取已成交限价单资产', 'Claim filled limit order'));
     if (!authed) return;
+    _limitOrderActionInFlight = true;
+    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
+    const prevTxt = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = t('领取中...', 'Claiming...'); }
     try {
       await lo.claimNearDclOrder({ wallet, orderId, buyToken });
       showToast(t('已领取至钱包', 'Claimed to wallet'));
@@ -563,16 +598,24 @@
       await refreshLimitOrdersAsync(false).catch(() => {});
     } catch (err) {
       showToast((err && err.message) || t('领取失败', 'Claim failed'));
+    } finally {
+      _limitOrderActionInFlight = false;
+      if (btn) { btn.disabled = false; btn.textContent = prevTxt; }
     }
   }
 
   async function cancelLimitOrderUI(chain, orderId, remainAmount, sellToken, buyToken) {
+    if (_limitOrderActionInFlight) return;
     const st = getState();
     const lo = getLimitOrders();
     const wallet = st.getActiveWallet();
     if (!wallet || !lo || !orderId) return;
     const authed = await verifySecurityAuthAsync(wallet, t('撤销限价单', 'Cancel limit order'));
     if (!authed) return;
+    _limitOrderActionInFlight = true;
+    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
+    const prevTxt = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = t('撤单中...', 'Cancelling...'); }
     try {
       if (chain === 'near') {
         await lo.cancelNearDclOrder({ wallet, orderId, remainAmount, sellToken, buyToken });
@@ -587,6 +630,9 @@
       await refreshLimitOrdersAsync(false).catch(() => {});
     } catch (err) {
       showToast((err && err.message) || t('撤单失败', 'Cancel failed'));
+    } finally {
+      _limitOrderActionInFlight = false;
+      if (btn) { btn.disabled = false; btn.textContent = prevTxt; }
     }
   }
 

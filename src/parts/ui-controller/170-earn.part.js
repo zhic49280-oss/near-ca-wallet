@@ -278,6 +278,16 @@
             jupActionTarget = 'toggle_max_lock';
             jupActionLabel = t('开启解锁', 'Unstake');
           }
+        } else if (sp.type === 'sol_validator' && sp.subtitle) {
+          if (sp.isDeactivating) {
+            jupActionType = 'sol_validator_withdraw';
+            jupActionTarget = `${sp.subtitle}|${sp.lamports || 0}|${sp.amount || 0}`;
+            jupActionLabel = t('提取', 'Withdraw');
+          } else {
+            jupActionType = 'sol_validator_deactivate';
+            jupActionTarget = `${sp.subtitle}|${sp.amount || 0}`;
+            jupActionLabel = t('解质押', 'Unstake');
+          }
         }
         posItems.push({
           symbol: sp.symbol || (isJup ? 'JUP' : 'SOL'),
@@ -525,12 +535,54 @@
     renderEarnView();
   }
 
+  function getEarnPoolLockupNotice(pool) {
+    if (!pool) return '';
+    if (pool.id === 'jupiter_jup') {
+      return t('⚠️ 注意：Jupiter DAO 质押将开启永久锁仓，解锁需 30 天冷却期，且需参与治理投票才有 ASR 奖励。', '⚠️ Note: Jupiter DAO staking enables max lock (30-day unlock cooldown) and requires governance voting for ASR rewards.');
+    }
+    if (pool.id === 'ethena_susde') {
+      return t('⚠️ 注意：sUSDe 赎回需 7 天冷却期，期间资金不可提前提取。', '⚠️ Note: sUSDe unstaking requires a 7-day cooldown before withdrawal.');
+    }
+    if (pool.chain === 'near' && !pool.isBurrowSupply && pool.id !== 'rhea_orhea_convert') {
+      return t('⚠️ 注意：NEAR 流动性质押常规解押需 2~3 天（4 Epochs）冷却期。', '⚠️ Note: NEAR liquid staking unstake requires ~2-3 days (4 epochs) cooldown.');
+    }
+    if (pool.id === 'rhea_orhea_convert') {
+      return t('⚠️ 注意：oRHEA 转换按所选锁仓天数（30~180 天）到期后方可领取。', '⚠️ Note: oRHEA conversion is locked until the selected lock tier expires.');
+    }
+    return '';
+  }
+
+  function getEarnPoolMinStake(pool) {
+    if (!pool) return 0;
+    if (pool.chain === 'near' && (pool.inSymbol === 'NEAR' || pool.id === 'rhea_rnear' || pool.id === 'meta_pool' || pool.id === 'linear_protocol' || pool.id === 'stader_nearx')) {
+      return pool.isBurrowSupply ? 0.05 : 1;
+    }
+    return 0;
+  }
+
   function selectStakingPool(poolId) {
-    getState().staking.selectedPoolId = poolId;
+    const st = getState();
+    st.staking.selectedPoolId = poolId;
+    st.staking.amountIn = '';
+    if ($('earn-amount-in')) $('earn-amount-in').value = '';
+    if ($('earn-est-out')) $('earn-est-out').textContent = '--';
     const rec = $('earn-tx-receipt');
     if (rec) {
       rec.classList.add('hidden');
       rec.innerHTML = '';
+    }
+    const contracts = getContracts();
+    const pool = contracts?.findStakingPool?.(poolId) || (st.staking.pools || []).find((p) => p.id === poolId);
+    const noticeEl = $('earn-lockup-notice');
+    if (noticeEl) {
+      const msg = getEarnPoolLockupNotice(pool);
+      if (msg) {
+        noticeEl.textContent = msg;
+        noticeEl.classList.remove('hidden');
+      } else {
+        noticeEl.textContent = '';
+        noticeEl.classList.add('hidden');
+      }
     }
     renderEarnView();
     openSheet('sheet-earn-stake');
@@ -590,6 +642,10 @@
     const avail = getEarnPoolAvailableBalance(wallet, pool);
 
     try {
+      const minStake = getEarnPoolMinStake(pool);
+      if (minStake > 0 && (!Number.isFinite(amt) || amt < minStake)) {
+        throw new Error(t(`该质押池最低质押数量为 ${minStake} ${pool.inSymbol}`, `Minimum stake for this pool is ${minStake} ${pool.inSymbol}`));
+      }
       if (pool.isNativeWrapSupply) {
         contracts.validateSufficientChainBalance({
           wallet,
@@ -622,6 +678,19 @@
           isNative: !pool.isTokenStake,
           tokenBalance: pool.isTokenStake ? avail : null
         });
+        if (pool.isTokenStake && contracts.DEFAULT_GAS_BUFFERS) {
+          const ck = String(pool.chain || '').toLowerCase();
+          const minNative = Number(contracts.DEFAULT_GAS_BUFFERS[ck] || 0);
+          const nativeAvail = Number(wallet.nativeBalances?.[ck] ?? (ck === 'near' ? wallet.nearBalance : 0) ?? 0);
+          if (minNative > 0 && nativeAvail + 1e-12 < minNative) {
+            throw new Error(
+              t(
+                `${pool.chainLabel} 原生 Gas 余额不足 (可用: ${nativeAvail.toFixed(5)}，需 >= ${minNative})`,
+                `Insufficient native gas on ${pool.chainLabel} (${nativeAvail.toFixed(5)} < ${minNative})`
+              )
+            );
+          }
+        }
       }
     } catch (err) {
       showToast(err.message);
@@ -631,7 +700,11 @@
     if (!(await verifySecurityAuthAsync(wallet, `${t('确认质押', 'Confirm stake')} ${amt} ${pool.inSymbol}`))) return;
 
     const btn = $('btn-execute-stake');
-    if (btn) btn.disabled = true;
+    const prevBtnTxt = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = t('质押提交中...', 'Staking...');
+    }
     try {
       if (pool.chain !== 'near' && pool.chain !== 'sol') {
         await ensureEthersLoaded();
@@ -643,6 +716,9 @@
         lockDays: st.staking.lockDays || 181,
         tokenBalance: pool.isTokenStake ? avail : null
       });
+      st.staking.amountIn = '';
+      if ($('earn-amount-in')) $('earn-amount-in').value = '';
+      if ($('earn-est-out')) $('earn-est-out').textContent = '--';
       const rec = $('earn-tx-receipt');
       if (rec) {
         rec.classList.remove('hidden');
@@ -662,41 +738,102 @@
       });
       showToast(`✅ ${pool.name} ${t('质押成功', 'Staked')}`);
       refreshAllBalancesAsync(false);
+      setTimeout(() => refreshAllBalancesAsync(false).catch(() => {}), 5000).unref?.();
+      setTimeout(() => refreshAllBalancesAsync(false).catch(() => {}), 15000).unref?.();
     } catch (err) {
       showToast(err && err.message ? err.message : t('质押失败', 'Staking failed'));
     } finally {
-      if (btn) btn.disabled = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = prevBtnTxt || t('确认链上质押', 'Confirm On-Chain Stake');
+      }
     }
   }
 
+  let _earnActionInFlight = false;
+
   async function executeEarnPositionAction(actionType, actionTarget) {
+    if (_earnActionInFlight) return;
     const st = getState();
     const contracts = getContracts();
     const wallet = st.getActiveWallet();
     if (!wallet) return;
-    if (!(await verifySecurityAuthAsync(wallet, t('确认质押赎回操作', 'Confirm Stake Redemption')))) return;
+    const actionLabelMap = {
+      near_unstake: `${t('解质押 NEAR', 'Unstake NEAR')} (${actionTarget})`,
+      near_withdraw: `${t('提取 NEAR', 'Withdraw NEAR')} (${actionTarget})`,
+      sol_validator_deactivate: `${t('解质押 SOL 验证节点', 'Deactivate SOL Stake')} (${String(actionTarget).split('|')[0]?.slice(0, 8) || ''})`,
+      sol_validator_withdraw: `${t('提取 SOL 验证节点', 'Withdraw SOL Stake')} (${String(actionTarget).split('|')[0]?.slice(0, 8) || ''})`,
+      aave_withdraw: `${t('提取 Aave V3 存款', 'Withdraw Aave V3')} (${actionTarget})`,
+      burrow_withdraw: `${t('提取 Burrow 存款', 'Withdraw Burrow')}`,
+      orhea_claim: t('领取 RHEA 到期兑换', 'Claim Matured RHEA'),
+      xrhea_unstake: t('解质押 xRHEA', 'Unstake xRHEA'),
+      xrhea_claim: t('领取已解锁 RHEA', 'Claim Unlocked RHEA'),
+      near_lst_unstake: `${t('解质押 NEAR LST', 'Unstake NEAR LST')} (${String(actionTarget).split('|')[0] || ''})`,
+      near_lst_withdraw: `${t('提取 NEAR LST', 'Withdraw NEAR LST')} (${actionTarget})`,
+      jup_dao_toggle: t('开启 JUP 30天解锁', 'Start JUP 30d Unlock'),
+      jup_dao_withdraw: t('提取已解锁 JUP', 'Withdraw JUP'),
+      lst_exit: `${t('换回流动性质押', 'Exit LST')} (${String(actionTarget).split('|')[0] || ''})`,
+      erc4626_cooldown: `${t('发起 sUSDe 冷却解锁', 'Cooldown sUSDe')}`,
+      erc4626_unstake: `${t('提取已冷却 sUSDe', 'Unstake sUSDe')}`,
+      erc4626_redeem: `${t('赎回金库资产', 'Redeem Vault')}`
+    };
+    const authLabel = actionLabelMap[actionType] || t('确认质押赎回操作', 'Confirm Stake Redemption');
+    if (!(await verifySecurityAuthAsync(wallet, authLabel))) return;
 
+    _earnActionInFlight = true;
+    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
+    const prevTxt = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = t('处理中...', 'Processing...');
+    }
     try {
       showToast(t('正在签名并广播赎回交易...', 'Signing & broadcasting redemption...'));
       let res = null;
-      if (actionType === 'near_unstake') {
+      if (actionType === 'sol_validator_deactivate') {
+        const [stakeAcct, amtStr] = String(actionTarget || '').split('|');
+        res = await contracts.deactivateSolanaStakeAccount({ wallet, stakeAccount: stakeAcct });
+        recordWalletActivity(wallet, {
+          type: 'unstake',
+          symbol: 'SOL',
+          chain: 'sol',
+          amount: Number(amtStr) || 0,
+          txHash: res.txHash,
+          title: `${t('SOL 验证节点解押', 'Deactivate SOL Stake')} · ${shortenAddr(stakeAcct)}`
+        });
+        showToast(`✅ ${t('已提交 SOL 质押解押 (冷却约 1 Epoch)', 'SOL stake deactivation submitted')}: ${shortenAddr(res.txHash)}`);
+      } else if (actionType === 'sol_validator_withdraw') {
+        const [stakeAcct, lamportsStr, amtStr] = String(actionTarget || '').split('|');
+        res = await contracts.withdrawSolanaStakeAccount({ wallet, stakeAccount: stakeAcct, lamports: lamportsStr });
+        recordWalletActivity(wallet, {
+          type: 'unstake',
+          symbol: 'SOL',
+          chain: 'sol',
+          amount: Number(amtStr) || 0,
+          txHash: res.txHash,
+          title: `${t('SOL 验证节点提取', 'Withdraw SOL Stake')} · ${shortenAddr(stakeAcct)}`
+        });
+        showToast(`✅ ${t('SOL 已提取至钱包余额', 'SOL withdrawn to wallet')}: ${shortenAddr(res.txHash)}`);
+      } else if (actionType === 'near_unstake') {
         res = await contracts.unstakeFromNearValidator({ wallet, validatorId: actionTarget });
+        const pos = (wallet.nearStakingPositions || []).find((x) => x && x.poolId === actionTarget);
         recordWalletActivity(wallet, {
           type: 'unstake',
           symbol: 'NEAR',
           chain: 'near',
-          amount: 0,
+          amount: Number(pos?.stakedNear || pos?.totalNear || 0),
           txHash: res.txHash,
           title: `${t('解质押', 'Unstake')} · ${actionTarget}`
         });
         showToast(`✅ ${t('已提交解质押 (冷却约 4 Epochs)', 'Unstake submitted')}: ${shortenAddr(res.txHash)}`);
       } else if (actionType === 'near_withdraw') {
         res = await contracts.withdrawFromNearValidator({ wallet, validatorId: actionTarget });
+        const pos = (wallet.nearStakingPositions || []).find((x) => x && x.poolId === actionTarget);
         recordWalletActivity(wallet, {
           type: 'unstake',
           symbol: 'NEAR',
           chain: 'near',
-          amount: 0,
+          amount: Number(pos?.unstakedNear || pos?.totalNear || 0),
           txHash: res.txHash,
           title: `${t('提取质押', 'Withdraw')} · ${actionTarget}`
         });
@@ -704,12 +841,13 @@
       } else if (actionType === 'aave_withdraw') {
         await ensureEthersLoaded();
         const poolCfg = contracts.findStakingPool ? contracts.findStakingPool(actionTarget) : null;
+        const posAmt = poolCfg ? Number(contracts.resolveWalletPoolTokenBalance?.(wallet, poolCfg) || 0) : 0;
         res = await contracts.withdrawFromAaveV3({ wallet, poolId: actionTarget, amount: 'max' });
         recordWalletActivity(wallet, {
           type: 'unstake',
           symbol: poolCfg?.inSymbol || 'USDC',
           chain: poolCfg?.chain || 'eth',
-          amount: 0,
+          amount: posAmt,
           txHash: res.txHash,
           title: `${t('Aave V3 全额提取', 'Aave V3 Withdraw')} · ${actionTarget}`
         });
@@ -724,7 +862,7 @@
           type: 'unstake',
           symbol: sym,
           chain: 'near',
-          amount: 0,
+          amount: Number(res?.amount || 0),
           txHash: res.txHash,
           title: `${t('Burrow 全额提取', 'Burrow Withdraw')} · ${sym}`
         });
@@ -736,7 +874,7 @@
           type: 'unstake',
           symbol: 'RHEA',
           chain: 'near',
-          amount: 0,
+          amount: Number(res?.amount || 0),
           txHash: res.txHash,
           title: t('领取 oRHEA 到期兑换', 'Claim Matured RHEA')
         });
@@ -769,7 +907,7 @@
           type: 'unstake',
           symbol: 'RHEA',
           chain: 'near',
-          amount: 0,
+          amount: Number(res?.amount || 0),
           txHash: res.txHash,
           title: t('领取已解锁 RHEA', 'Claim xRHEA Unstake')
         });
@@ -801,12 +939,13 @@
           type: 'unstake',
           symbol: 'NEAR',
           chain: 'near',
-          amount: 0,
+          amount: Number(res?.amount || 0),
           txHash: res.txHash,
           title: `${t('提取已解质押 NEAR', 'Withdraw NEAR LST')} · ${actionTarget}`
         });
         showToast(`✅ ${t('NEAR 提取交易已广播', 'NEAR withdraw broadcast')}: ${shortenAddr(res.txHash)}`);
       } else if (actionType === 'jup_dao_toggle' || actionType === 'jup_dao_withdraw') {
+        const jupPos = (wallet.solStakingPositions || []).find((x) => x && x.type === 'jupiter_dao');
         res = await contracts.unstakeJupiterDao({
           wallet,
           action: actionType === 'jup_dao_toggle' ? 'toggle_max_lock' : 'withdraw'
@@ -815,7 +954,7 @@
           type: 'unstake',
           symbol: 'JUP',
           chain: 'sol',
-          amount: 0,
+          amount: Number(jupPos?.amount || 0),
           txHash: res.txHash,
           title: actionType === 'jup_dao_toggle' ? t('开启 JUP 30天解锁', 'Start JUP 30d Unlock') : t('提取已解锁 JUP', 'Withdraw JUP')
         });
@@ -850,7 +989,7 @@
           type: 'unstake',
           symbol: poolCfg?.inSymbol || 'USDC',
           chain: poolCfg?.chain || 'eth',
-          amount: 0,
+          amount: Number(res?.amount || 0),
           txHash: res.txHash,
           title: `${poolCfg?.name || actionTarget} (${mode})`
         });
@@ -861,8 +1000,15 @@
         );
       }
       refreshAllBalancesAsync(false);
+      setTimeout(() => refreshAllBalancesAsync(false).catch(() => {}), 5000).unref?.();
     } catch (err) {
       showToast(err && err.message ? err.message : t('赎回失败', 'Redemption failed'));
+    } finally {
+      _earnActionInFlight = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = prevTxt;
+      }
     }
   }
 

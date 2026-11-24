@@ -121,65 +121,83 @@
     const llamaPromise = useCachedLlama
       ? Promise.resolve({ data: _llamaPoolsCache.data })
       : fetchJsonWithTimeout('https://yields.llama.fi/pools', {}, 7000);
-    const fastSettledPromise = Promise.allSettled([
-      fetchJsonWithTimeout('https://validators.narwallets.com/metrics_json', {}, 6000),
-      viewNearContractCall('lst.rhealab.near', 'get_summary', {}),
-      viewNearContractCall('lst.rhealab.near', 'get_number_of_accounts', {}),
-      fetchJsonWithTimeout('https://api.ref.finance/get-rnear-apy', {}, 6000),
-      viewNearContractCall('xtoken.rhealab.near', 'get_virtual_price', {}),
-      viewNearContractCall('xtoken.rhealab.near', 'contract_metadata', {}),
-      viewNearContractCall('orhea-conv.rhealab.near', 'get_conversion_strategy_infos', {}),
-      viewNearContractCall('orhea-conv.rhealab.near', 'get_converted_source_token_amounts', {}),
-      viewNearContractCall('orhea-conv.rhealab.near', 'get_accounts_count', {}),
-      viewNearContractCall('meta-pool.near', 'get_contract_state', {}),
-      viewNearContractCall('linear-protocol.near', 'get_summary', {}),
-      viewNearContractCall('linear-protocol.near', 'get_number_of_accounts', {}),
-      viewNearContractCall('v2-nearx.stader-labs.near', 'get_nearx_price', {}),
-      viewNearContractCall('v2-nearx.stader-labs.near', 'get_total_staked_balance', {}),
-      viewNearContractCall('v2-nearx.stader-labs.near', 'get_number_of_accounts', {}),
-      fetchJsonWithTimeout('https://extra-api.sanctum.so/v1/sol-value/current?lst=INF&lst=jupSOL&lst=mSOL&lst=JitoSOL', {}, 6000),
-      fetchJsonWithTimeout('https://kobe.mainnet.jito.network/api/v1/stake_pool_stats', {}, 6000),
-      fetchJsonWithTimeout(
+    const runTasksWithLimit = async (taskFns, limit = 6) => {
+      const results = new Array(taskFns.length);
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < taskFns.length) {
+          const i = cursor++;
+          try {
+            results[i] = { status: 'fulfilled', value: await taskFns[i]() };
+          } catch (reason) {
+            results[i] = { status: 'rejected', reason };
+          }
+        }
+      };
+      const workers = Array.from({ length: Math.min(limit, taskFns.length) }, () => worker());
+      await Promise.all(workers);
+      return results;
+    };
+
+    const fastTaskFns = [
+      () => fetchJsonWithTimeout('https://validators.narwallets.com/metrics_json', {}, 6000),
+      () => viewNearContractCall('lst.rhealab.near', 'get_summary', {}),
+      () => viewNearContractCall('lst.rhealab.near', 'get_number_of_accounts', {}),
+      () => fetchJsonWithTimeout('https://api.ref.finance/get-rnear-apy', {}, 6000),
+      () => viewNearContractCall('xtoken.rhealab.near', 'get_virtual_price', {}),
+      () => viewNearContractCall('xtoken.rhealab.near', 'contract_metadata', {}),
+      () => viewNearContractCall('orhea-conv.rhealab.near', 'get_conversion_strategy_infos', {}),
+      () => viewNearContractCall('orhea-conv.rhealab.near', 'get_converted_source_token_amounts', {}),
+      () => viewNearContractCall('orhea-conv.rhealab.near', 'get_accounts_count', {}),
+      () => viewNearContractCall('meta-pool.near', 'get_contract_state', {}),
+      () => viewNearContractCall('linear-protocol.near', 'get_summary', {}),
+      () => viewNearContractCall('linear-protocol.near', 'get_number_of_accounts', {}),
+      () => viewNearContractCall('v2-nearx.stader-labs.near', 'get_nearx_price', {}),
+      () => viewNearContractCall('v2-nearx.stader-labs.near', 'get_total_staked_balance', {}),
+      () => viewNearContractCall('v2-nearx.stader-labs.near', 'get_number_of_accounts', {}),
+      () => fetchJsonWithTimeout('https://extra-api.sanctum.so/v1/sol-value/current?lst=INF&lst=jupSOL&lst=mSOL&lst=JitoSOL', {}, 6000),
+      () => fetchJsonWithTimeout('https://kobe.mainnet.jito.network/api/v1/stake_pool_stats', {}, 6000),
+      () => fetchJsonWithTimeout(
         `${JUPITER_API_URL}/quote?inputMint=${WSOL_MINT}&outputMint=J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn&amount=1000000000&slippageBps=50`,
         {},
         6000
       ),
-      Promise.race([
+      () => Promise.race([
         callSolanaRpc('getAccountInfo', ['CVMdMd79no569tjc5Sq7kzz8isbfCcFyBS5TLGsrZ5dN', { encoding: 'base64' }], 4000),
         new Promise((resolve) => setTimeout(() => resolve(null), 4000))
       ]),
-      fetchJsonWithTimeout(
+      () => fetchJsonWithTimeout(
         'https://datapi.jup.ag/v1/assets/search?query=JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN,jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v,J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn,mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So,5oVNBeEEQvYi1cX3ir8Dx5n1P7pdxydbGF2X4TxVusJm',
         {},
         6000
       ),
-      fetchJsonWithTimeout('https://api.marinade.finance/msol/apy/30d', {}, 6000),
-      fetchJsonWithTimeout('https://eth-api.lido.fi/v1/protocol/steth/apr/sma', {}, 6000),
-      ethReadCall('arc', '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', '0xef8b30f700000000000000000000000000000000000000000000000000000000000f4240'),
-      ethReadCall('eth', '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', '0x07a2d13a0000000000000000000000000000000000000000000000000de0b6b3a7640000'),
-      fetchJsonWithTimeout(
+      () => fetchJsonWithTimeout('https://api.marinade.finance/msol/apy/30d', {}, 6000),
+      () => fetchJsonWithTimeout('https://eth-api.lido.fi/v1/protocol/steth/apr/sma', {}, 6000),
+      () => ethReadCall('arc', '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', '0xef8b30f700000000000000000000000000000000000000000000000000000000000f4240'),
+      () => ethReadCall('eth', '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', '0x07a2d13a0000000000000000000000000000000000000000000000000de0b6b3a7640000'),
+      () => fetchJsonWithTimeout(
         'https://aggregator-api.kyberswap.com/hyperevm/api/v1/routes?tokenIn=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&tokenOut=0xfD739d4e423301CE9385c1fb8850539D657C296D&amountIn=1000000000000000000',
         {},
         6000
       ),
-      fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', {}, 6000),
-      fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', {}, 6000),
-      ethReadCall('eth', '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', '0x01e1d114'),
-      fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/base/tokens/0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB/info', {}, 6000),
-      ethReadCall('base', '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', '0x18160ddd'),
-      ethReadCall('arc', '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', '0x01e1d114'),
-      ethReadCall('hype', '0xfD739d4e423301CE9385c1fb8850539D657C296D', '0x18160ddd'),
-      viewNearContractCall('contract.main.burrow.near', 'get_asset', { token_id: 'wrap.near' }),
-      viewNearContractCall('contract.main.burrow.near', 'get_asset', { token_id: 'usdt.tether-token.near' }),
-      viewNearContractCall('contract.main.burrow.near', 'get_num_accounts', {}),
-      fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c', {}, 6000),
-      fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', {}, 6000),
-      fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/arbitrum/tokens/0x724dc807b04555b71ed48a6896b6f41593b8c637/info', {}, 6000),
-      fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/hyperevm/tokens/0xfd739d4e423301ce9385c1fb8850539d657c296d/info', {}, 6000),
-      fetchJsonWithTimeout('https://explorer.arc.io/api/v2/tokens/0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', {}, 5000)
-    ]);
+      () => fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', {}, 6000),
+      () => fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', {}, 6000),
+      () => ethReadCall('eth', '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', '0x01e1d114'),
+      () => fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/base/tokens/0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB/info', {}, 6000),
+      () => ethReadCall('base', '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', '0x18160ddd'),
+      () => ethReadCall('arc', '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', '0x01e1d114'),
+      () => ethReadCall('hype', '0xfD739d4e423301CE9385c1fb8850539D657C296D', '0x18160ddd'),
+      () => viewNearContractCall('contract.main.burrow.near', 'get_asset', { token_id: 'wrap.near' }),
+      () => viewNearContractCall('contract.main.burrow.near', 'get_asset', { token_id: 'usdt.tether-token.near' }),
+      () => viewNearContractCall('contract.main.burrow.near', 'get_num_accounts', {}),
+      () => fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c', {}, 6000),
+      () => fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', {}, 6000),
+      () => fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/arbitrum/tokens/0x724dc807b04555b71ed48a6896b6f41593b8c637/info', {}, 6000),
+      () => fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/hyperevm/tokens/0xfd739d4e423301ce9385c1fb8850539d657c296d/info', {}, 6000),
+      () => fetchJsonWithTimeout('https://explorer.arc.io/api/v2/tokens/0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', {}, 5000)
+    ];
 
-    const fastResults = await fastSettledPromise;
+    const fastResults = await runTasksWithLimit(fastTaskFns, 6);
     const [
       narRes,
       rnearSummaryRes,
@@ -496,11 +514,7 @@
           const lockedJup = Number(lockedRaw) / 1e6;
           if (Number.isFinite(lockedJup) && lockedJup > 0) {
             const tvlText = formatTvlToken(lockedJup, 'JUP');
-            const rawAsrApy = (200_000_000 / lockedJup) * 100;
-            const asrApy = Number.isFinite(rawAsrApy) && rawAsrApy > 0
-              ? Number(rawAsrApy.toFixed(2))
-              : null;
-            setPool('jupiter_jup', { rate: 1.0, apy: asrApy, isAsrEstimated: true, tvlText, tvlTokenAmount: lockedJup });
+            setPool('jupiter_jup', { rate: 1.0, apy: null, isAsrEstimated: false, tvlText, tvlTokenAmount: lockedJup });
           }
         }
       } catch (_) {}

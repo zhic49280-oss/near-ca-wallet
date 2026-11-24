@@ -366,7 +366,10 @@
         try {
           const lamports = BigInt(item.account.lamports || 0);
           if (lamports > 1000000n) {
-            const voter = item.account?.data?.parsed?.info?.stake?.delegation?.voter || 'Solana Validator';
+            const delegation = item.account?.data?.parsed?.info?.stake?.delegation || {};
+            const voter = delegation.voter || 'Solana Validator';
+            const deactEpoch = String(delegation.deactivationEpoch || '');
+            const isDeactivating = Boolean(deactEpoch && deactEpoch !== '18446744073709551615');
             const solAmt = Number(lamports) / 1e9;
             positions.push({
               type: 'sol_validator',
@@ -374,7 +377,9 @@
               symbol: 'SOL',
               title: voter,
               subtitle: item.pubkey || '',
-              amount: solAmt
+              amount: solAmt,
+              lamports: lamports.toString(),
+              isDeactivating
             });
           }
         } catch (_) {}

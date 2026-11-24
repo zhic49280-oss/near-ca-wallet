@@ -580,6 +580,10 @@
       if (liveWrapBig < neededBig) {
         const shortfallBig = neededBig - liveWrapBig;
         await wrapNearForLimit({ wallet: resolvedWallet, amountRaw: shortfallBig.toString() });
+        const wrappedNearNum = Number(fromBaseUnits(shortfallBig.toString(), 24));
+        if (resolvedWallet.nativeBalances && typeof resolvedWallet.nativeBalances.near === 'number') {
+          resolvedWallet.nativeBalances.near = Math.max(0, resolvedWallet.nativeBalances.near - wrappedNearNum - 0.005);
+        }
       }
     }
 
@@ -629,30 +633,45 @@
     }
 
     const txHashes = [];
-    for (const leg of legs) {
-      const txHash = await contracts.signAndSendNearFunctionCall({
-        accountId: sender,
-        publicKeyStr: resolvedWallet.nearPublicKey,
-        privateKeyStr: resolvedWallet.nearPrivateKey,
-        receiverId: sellId,
-        methodName: 'ft_transfer_call',
-        argsJson: JSON.stringify({
-          receiver_id: DCL_CONTRACT_ID,
-          amount: leg.amount,
-          msg: JSON.stringify({
-            LimitOrderWithSwap: {
-              pool_id: targetPoolId,
-              buy_token: buyId,
-              point: leg.point,
-              client_id: '',
-              referral_id: ''
-            }
-          })
-        }),
-        gas: '180000000000000',
-        depositYocto: '1'
-      });
-      if (txHash) txHashes.push(txHash);
+    for (let idx = 0; idx < legs.length; idx++) {
+      const leg = legs[idx];
+      try {
+        const txHash = await contracts.signAndSendNearFunctionCall({
+          accountId: sender,
+          publicKeyStr: resolvedWallet.nearPublicKey,
+          privateKeyStr: resolvedWallet.nearPrivateKey,
+          receiverId: sellId,
+          methodName: 'ft_transfer_call',
+          argsJson: JSON.stringify({
+            receiver_id: DCL_CONTRACT_ID,
+            amount: leg.amount,
+            msg: JSON.stringify({
+              LimitOrderWithSwap: {
+                pool_id: targetPoolId,
+                buy_token: buyId,
+                point: leg.point,
+                client_id: '',
+                referral_id: ''
+              }
+            })
+          }),
+          gas: '180000000000000',
+          depositYocto: '1'
+        });
+        if (txHash) txHashes.push(txHash);
+      } catch (legErr) {
+        if (txHashes.length > 0) {
+          const partialErr = new Error(
+            t(
+              `第 1 档已上链 (${txHashes[0].slice(0, 8)}...)，第 ${idx + 1} 档失败: ${legErr?.message || '未知错误'}`,
+              `Leg 1 placed (${txHashes[0].slice(0, 8)}...), leg ${idx + 1} failed: ${legErr?.message || 'Unknown'}`
+            )
+          );
+          partialErr.partialTxHashes = txHashes;
+          throw partialErr;
+        }
+        throw legErr;
+      }
     }
 
     return {

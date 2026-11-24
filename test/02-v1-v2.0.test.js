@@ -833,8 +833,8 @@ test('v1.9 Requirement #6: Rhea 3 pools + 16-pool Staking Hub live rates, tx sig
     assert.equal(byId.jupiter_jup.inSymbol, 'JUP');
     assert.equal(byId.jupiter_jup.outSymbol, 'Staked JUP');
     assert.equal(byId.jupiter_jup.rate, 1.0);
-    assert.equal(byId.jupiter_jup.apy, 17.02);
-    assert.equal(byId.jupiter_jup.isAsrEstimated, true);
+    assert.equal(byId.jupiter_jup.apy, null);
+    assert.equal(byId.jupiter_jup.isAsrEstimated, false);
     assert.equal(byId.jupiter_jup.stakersCount, 836170);
     assert.ok(byId.jupiter_jup.tvlText && byId.jupiter_jup.tvlText.includes('JUP'));
     assert.equal(byId.jupiter_sol.apy, 5.15);
@@ -964,6 +964,7 @@ test('v1.9 Requirement #6: Rhea 3 pools + 16-pool Staking Hub live rates, tx sig
         uiController.handleEarnPoolSearch('');
         uiController.selectStakingPool('rhea_orhea_convert');
         assert.equal(domNodes['earn-lock-row'].classList.has('hidden'), false, 'Lock period selector must appear for oRHEA Convert');
+        domNodes['earn-amount-in'].value = '10';
         uiController.selectEarnLockTier(91);
         assert.equal(domNodes['earn-live-rate'].textContent, '1 oRHEA = 0.7000 RHEA');
         assert.ok(domNodes['earn-est-out'].textContent.startsWith('7 RHEA'));

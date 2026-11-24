@@ -262,14 +262,17 @@
       showToast(t('原生 Gas 币不可直接挂单卖出', 'Native gas coin cannot be sold directly'));
       return;
     }
-    const prevRate = Number(st.limit.targetRate);
     st.limit.sellContract = buyToken.contractAddress;
     st.limit.buyContract = sellToken.contractAddress;
+    st.limit.amountIn = '';
+    st.limit.targetRate = '';
     st.limit.priceInverted = null;
     st.limit.snappedPoint = null;
     st.limit.evmAllowanceRaw = null;
+    st.limit.evmAllowanceFailed = false;
     st.limit.liveMarketRate = st.limit.liveMarketRate && st.limit.liveMarketRate > 0 ? (1 / st.limit.liveMarketRate) : null;
-    st.limit.targetRate = Number.isFinite(prevRate) && prevRate > 0 ? Number((1 / prevRate).toPrecision(6)).toString() : '';
+    if ($('limit-amount-in')) $('limit-amount-in').value = '';
+    if ($('limit-target-rate')) $('limit-target-rate').value = '';
     renderLimitOrderView();
     refreshLimitMarketContextAsync().catch(() => {});
   }
@@ -442,6 +445,9 @@
     }
 
     if (chain === 'sol' && lo) {
+      if (st.limit.solUnavailable) {
+        return { disabled: true, action: 'submit', text: t('Solana 限价单服务暂不可用', 'Solana limit service unavailable'), error: '' };
+      }
       if (!Number.isFinite(amt) || amt <= 0 || !Number.isFinite(rate) || rate <= 0) {
         return { disabled: true, action: 'submit', text: t('请输入数量与目标价', 'Enter amount & target price'), error: '' };
       }
@@ -479,6 +485,9 @@
       if (sellBal < amt) {
         return { disabled: true, action: 'submit', text: t(`${sellToken.symbol} 余额不足`, `Insufficient ${sellToken.symbol}`), error: '' };
       }
+      if (st.limit.evmAllowanceFailed) {
+        return { disabled: false, action: 'retry_allowance', text: t('授权检查失败 · 点击重试', 'Allowance check failed · Retry'), error: '' };
+      }
       if (st.limit.evmAllowanceRaw === null || st.limit.evmAllowanceRaw === undefined) {
         return { disabled: true, action: 'submit', text: t('正在检查授权...', 'Checking allowance...'), error: '' };
       }
@@ -486,8 +495,8 @@
         const sellBase = BigInt(contracts.toBaseUnits(String(amt), sellToken.decimals));
         if (BigInt(st.limit.evmAllowanceRaw) < sellBase) {
           const nativeBal = Number((wallet.nativeBalances && wallet.nativeBalances[chain]) ?? 0);
-          if (nativeBal <= 0) {
-            return { disabled: true, action: 'approve', text: t(`${String(chain).toUpperCase()} Gas 不足，无法授权`, `Insufficient ${String(chain).toUpperCase()} gas to approve`), error: '' };
+          if (nativeBal + 1e-12 < Number(cfg.gasReserve || 0.0015)) {
+            return { disabled: true, action: 'approve', text: t(`${String(chain).toUpperCase()} Gas 不足 (需 >= ${cfg.gasReserve})`, `Insufficient ${String(chain).toUpperCase()} gas (>= ${cfg.gasReserve})`), error: '' };
           }
           return { disabled: false, action: 'approve', text: t(`授权 ${sellToken.symbol}`, `Approve ${sellToken.symbol}`), error: '' };
         }

@@ -1041,3 +1041,88 @@
     return { ok: true, txHashes, closedCount, burnedCount, reclaimedSol };
   }
 
+  const SOLANA_STAKE_PROGRAM_ID = 'Stake11111111111111111111111111111111111111';
+  const SOLANA_SYSVAR_CLOCK = 'SysvarC1ock11111111111111111111111111111111';
+  const SOLANA_SYSVAR_STAKE_HISTORY = 'SysvarStakeHistory1111111111111111111111111';
+
+  function buildSolanaStakeDeactivateInstruction({ stakeAccount, authority } = {}) {
+    const data = new Uint8Array(4);
+    new DataView(data.buffer).setUint32(0, 5, true); // StakeInstruction::Deactivate
+    return {
+      programId: SOLANA_STAKE_PROGRAM_ID,
+      keys: [
+        { pubkey: stakeAccount, isSigner: false, isWritable: true },
+        { pubkey: SOLANA_SYSVAR_CLOCK, isSigner: false, isWritable: false },
+        { pubkey: authority, isSigner: true, isWritable: false }
+      ],
+      data
+    };
+  }
+
+  function buildSolanaStakeWithdrawInstruction({ stakeAccount, recipient, authority, lamports } = {}) {
+    const data = new Uint8Array(12);
+    const view = new DataView(data.buffer);
+    view.setUint32(0, 4, true); // StakeInstruction::Withdraw
+    view.setBigUint64(4, BigInt(lamports || 0), true);
+    return {
+      programId: SOLANA_STAKE_PROGRAM_ID,
+      keys: [
+        { pubkey: stakeAccount, isSigner: false, isWritable: true },
+        { pubkey: recipient, isSigner: false, isWritable: true },
+        { pubkey: SOLANA_SYSVAR_CLOCK, isSigner: false, isWritable: false },
+        { pubkey: SOLANA_SYSVAR_STAKE_HISTORY, isSigner: false, isWritable: false },
+        { pubkey: authority, isSigner: true, isWritable: false }
+      ],
+      data
+    };
+  }
+
+  async function deactivateSolanaStakeAccount({ wallet, stakeAccount } = {}) {
+    if (!wallet || !wallet.solAddress || !stakeAccount) {
+      throw new Error(t('缺少 Solana 质押账户地址', 'Missing Solana stake account address'));
+    }
+    await ensureWalletSigningKeysAsync(wallet);
+    validateSufficientChainBalance({
+      wallet,
+      chain: 'sol',
+      tokenSymbol: 'SOL',
+      amount: 0.00001,
+      isNative: false,
+      tokenBalance: resolveWalletChainBalance(wallet, 'sol')
+    });
+    const ix = buildSolanaStakeDeactivateInstruction({ stakeAccount, authority: wallet.solAddress });
+    const res = await buildAndBroadcastSolanaInstructionsAsync({ wallet, instructions: [ix] });
+    return { ok: true, txHash: res.txHash, explorerUrl: `${SOLANA_EXPLORER_TX}${res.txHash}` };
+  }
+
+  async function withdrawSolanaStakeAccount({ wallet, stakeAccount, lamports } = {}) {
+    if (!wallet || !wallet.solAddress || !stakeAccount) {
+      throw new Error(t('缺少 Solana 质押账户地址', 'Missing Solana stake account address'));
+    }
+    await ensureWalletSigningKeysAsync(wallet);
+    let withdrawLamports = lamports ? BigInt(lamports) : 0n;
+    if (withdrawLamports <= 0n) {
+      const info = await callSolanaRpc('getAccountInfo', [stakeAccount, { encoding: 'base64' }], 5000).catch(() => null);
+      withdrawLamports = BigInt(info?.value?.lamports || 0);
+    }
+    if (withdrawLamports <= 0n) {
+      throw new Error(t('该质押账户可提取 SOL 为 0', 'Stake account has 0 withdrawable lamports'));
+    }
+    validateSufficientChainBalance({
+      wallet,
+      chain: 'sol',
+      tokenSymbol: 'SOL',
+      amount: 0.00001,
+      isNative: false,
+      tokenBalance: resolveWalletChainBalance(wallet, 'sol')
+    });
+    const ix = buildSolanaStakeWithdrawInstruction({
+      stakeAccount,
+      recipient: wallet.solAddress,
+      authority: wallet.solAddress,
+      lamports: withdrawLamports.toString()
+    });
+    const res = await buildAndBroadcastSolanaInstructionsAsync({ wallet, instructions: [ix] });
+    return { ok: true, txHash: res.txHash, explorerUrl: `${SOLANA_EXPLORER_TX}${res.txHash}` };
+  }
+

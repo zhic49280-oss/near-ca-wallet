@@ -55,8 +55,8 @@
       if (wrappedBal >= Number(amount)) {
         effectiveIsNative = false;
         effectiveTokenBal = wrappedBal;
-      } else if (pool.isAaveV3 && wrappedBal > 0) {
-        const nativeAvail = Number(wallet.nativeBalances?.[pool.chain] || 0);
+      } else if ((pool.isAaveV3 || pool.isBurrowSupply) && wrappedBal > 0) {
+        const nativeAvail = Number(wallet.nativeBalances?.[pool.chain] ?? (pool.chain === 'near' ? wallet.nearBalance : 0) ?? 0);
         if (wrappedBal + nativeAvail >= Number(amount)) {
           effectiveIsNative = false;
           effectiveTokenBal = wrappedBal + nativeAvail;
