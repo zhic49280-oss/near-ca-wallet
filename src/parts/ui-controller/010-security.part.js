@@ -454,6 +454,9 @@
           overrides
         );
         if (res && res.ok) {
+          if (wallet.encryptedVault && !wallet.mnemonic && !wallet.nearPrivateKey && hasConfiguredWalletPin(wallet)) {
+            return unlockAppLockWithPin();
+          }
           clearAppLock();
           return true;
         }
@@ -704,6 +707,9 @@
         ? await st.verifyWalletPinAsync(w, candidate)
         : candidate === String(w.pin);
       if (ok) {
+        if (w.encryptedVault && typeof st.unlockWalletVaultSecretsAsync === 'function') {
+          await st.unlockWalletVaultSecretsAsync(w, candidate).catch(() => false);
+        }
         if (!w.pinLen || w.pinLen !== candidate.length) {
           w.pinLen = candidate.length;
           if (typeof st.saveWallets === 'function') st.saveWallets();

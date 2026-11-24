@@ -554,6 +554,11 @@
       wallet.pin = nextPin;
       wallet.pinLen = nextPin ? nextPin.length : 0;
     }
+    if (nextPin && typeof st.encryptWalletSecretsToVaultAsync === 'function') {
+      await st.encryptWalletSecretsToVaultAsync(wallet, nextPin);
+    } else if (!nextPin && wallet.encryptedVault) {
+      wallet.encryptedVault = null;
+    }
     st.saveWallets();
     closeAllSheets();
     renderHubBiometricCardAsync();
