@@ -2136,8 +2136,11 @@ html.nexus-locked #app-lock-overlay {
 
 .perp-chart-svg {
   width: 100%;
-  height: 168px;
+  height: 248px;
   display: block;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .perp-coin-icon-slot {
@@ -2769,20 +2772,31 @@ html.nexus-locked #app-lock-overlay {
   min-width: 0;
 }
 
-/* Interactive K-Line Candle Inspector Bar */
+/* Interactive K-Line Candle Inspector Bar (Always-On Zero-Jitter) */
 .perp-candle-inspect-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 4px 10px;
+  gap: 2px 8px;
+  min-height: 36px;
   padding: 5px 8px;
   margin-bottom: 5px;
   border-radius: 8px;
-  background: rgba(56, 189, 248, 0.08);
-  border: 1px solid rgba(56, 189, 248, 0.24);
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   font-size: 10.5px;
   color: var(--text-secondary);
+}
+
+.perp-candle-inspect-bar.is-inspecting {
+  background: rgba(56, 189, 248, 0.09);
+  border-color: rgba(56, 189, 248, 0.28);
+}
+
+.perp-ob-power-wrap > .flex {
+  white-space: nowrap;
+  gap: 4px;
 }
 
 .perp-candle-hit {

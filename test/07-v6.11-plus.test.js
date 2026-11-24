@@ -1234,7 +1234,8 @@ test('v6.30 Perps Search Clear & K-Line Inspect, wNEAR Auto-Unwrap/Rollback, and
       assert.ok(getOrMake('perp-chart-svg').innerHTML.includes('data-action="inspect-perp-candle"'));
       uiController.inspectPerpCandle(0);
       assert.equal(state.perp.inspectedCandleIdx, null);
-      assert.equal(getOrMake('perp-candle-detail').classList.contains('hidden'), true);
+      assert.equal(getOrMake('perp-candle-detail').classList.contains('hidden'), false, 'Always-on candle detail bar must remain visible in summary mode');
+      assert.equal(getOrMake('perp-candle-detail').classList.contains('is-inspecting'), false);
 
       // 2. NEAR Ref Swap: Buying NEAR auto-unwraps wNEAR -> NEAR
       let wrapBalanceReads = 0;
