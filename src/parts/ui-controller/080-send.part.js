@@ -233,9 +233,21 @@
     return res;
   }
 
+  function checkChainAddressValid(crypto, net, addr) {
+    if (!net) return { valid: false, error: t('无法识别地址格式，请核对', 'Unrecognized address format') };
+    if (!crypto || typeof crypto.validateChainAddress !== 'function') return { valid: true, error: '' };
+    const res = crypto.validateChainAddress(net, addr);
+    if (res && typeof res === 'object') {
+      return { valid: Boolean(res.valid), error: res.error || '' };
+    }
+    return { valid: Boolean(res), error: '' };
+  }
+
   function handleSendAssetChange() {
     const sym = ($('send-asset-select')?.value || '').toUpperCase();
     populateSendSourceSelect(sym);
+    const amtInput = $('send-amount-input');
+    if (amtInput) amtInput.value = '';
     updateSendAvailabilityUI();
     const asset = getSelectedSendAsset();
     if (asset && EVM_CHAIN_KEYS.includes(asset.blockchain)) {
@@ -289,8 +301,8 @@
       return;
     }
     const net = crypto.detectAddressNetwork(addr);
-    const addrValid = net && (typeof crypto.validateChainAddress !== 'function' || crypto.validateChainAddress(net, addr));
-    if (!net || !addrValid) {
+    const addrCheck = checkChainAddressValid(crypto, net, addr);
+    if (!net || !addrCheck.valid) {
       previewEl.classList.add('hidden');
       previewEl.textContent = '';
       return;
@@ -467,11 +479,11 @@
       return;
     }
     const net = crypto.detectAddressNetwork(addr);
-    const addrValid = net && (typeof crypto.validateChainAddress !== 'function' || crypto.validateChainAddress(net, addr));
-    if (net && !addrValid) {
+    const addrCheck = checkChainAddressValid(crypto, net, addr);
+    if (net && !addrCheck.valid) {
       if (evmRow) evmRow.classList.add('hidden');
       labelEl.style.color = 'var(--rose-alert)';
-      labelEl.textContent = t('地址校验和无效，请仔细核对大小写或字符', 'Address checksum invalid, please verify');
+      labelEl.textContent = addrCheck.error || t('地址校验和无效，请仔细核对大小写或字符', 'Address checksum invalid, please verify');
       updateSendRoutePreview();
       return;
     }
@@ -541,8 +553,9 @@
       return;
     }
     const detectedNet = crypto.detectAddressNetwork(recipient);
-    if (!detectedNet || (typeof crypto.validateChainAddress === 'function' && !crypto.validateChainAddress(detectedNet, recipient))) {
-      showToast(t('收款地址格式或校验和无效', 'Invalid recipient address or checksum'));
+    const recCheck = checkChainAddressValid(crypto, detectedNet, recipient);
+    if (!detectedNet || !recCheck.valid) {
+      showToast(recCheck.error || t('收款地址格式或校验和无效', 'Invalid recipient address or checksum'));
       return;
     }
     if (!Number.isFinite(amountNum) || amountNum <= 0) {
@@ -551,6 +564,10 @@
     }
 
     const avail = getSendSourceAvailable();
+    if (avail === null || avail === undefined) {
+      showToast(t('余额同步中，请稍候重试', 'Balance syncing, please wait'));
+      return;
+    }
     const gasPlan = resolveEffectiveSendGasPlan(wallet, asset);
     const isNativeGas = gasPlan.isNative;
     const gasBuf = isNativeGas ? gasPlan.gasBuffer : null;
@@ -641,11 +658,12 @@
 
       // Case 1: Same-chain direct on-chain transfer
       if (isSameChain) {
+        const exactAmt = rawAmtStr || amountNum;
         if (asset.blockchain === 'near' && asset.kind !== 'nep141' && asset.symbol === 'NEAR') {
           const res = await contracts.signAndSendNearTransfer({
             wallet,
             receiverId: recipient.toLowerCase(),
-            amountNear: amountNum,
+            amountNear: exactAmt,
             gasBuffer: gasBuf
           });
           recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
@@ -660,7 +678,7 @@
             wallet,
             tokenContract: asset.contractAddress,
             receiverId: recipient.toLowerCase(),
-            amount: amountNum,
+            amount: exactAmt,
             decimals: asset.decimals || 8,
             tokenSymbol: asset.symbol,
             tokenBalance: avail
@@ -674,7 +692,7 @@
 
         if (asset.blockchain === 'sol') {
           if (!asset.contractAddress || asset.contractAddress === 'So11111111111111111111111111111111111111112') {
-            const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: recipient, amountSol: amountNum, gasBuffer: gasBuf });
+            const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: recipient, amountSol: exactAmt, gasBuffer: gasBuf });
             recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
             showToast(`✅ SOL ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
             closeAllSheets();
@@ -685,7 +703,7 @@
             wallet,
             mintAddress: asset.contractAddress,
             toAddress: recipient,
-            amount: amountNum,
+            amount: exactAmt,
             decimals: asset.decimals || 6,
             tokenBalance: avail
           });
@@ -701,7 +719,7 @@
             wallet,
             chainKey: asset.blockchain,
             toAddress: recipient,
-            amount: amountNum,
+            amount: exactAmt,
             tokenContract: asset.contractAddress,
             decimals: asset.decimals,
             tokenBalance: avail,
@@ -720,7 +738,7 @@
           const res = await contracts.executePearlTransfer({
             wallet,
             toAddress: recipient,
-            amountPrl: amountNum,
+            amountPrl: exactAmt,
             feeDeductMode: 'extra',
             feePerKbPrl: gasMeta.feePerKbPrl ?? null,
             gasBuffer: gasBuf

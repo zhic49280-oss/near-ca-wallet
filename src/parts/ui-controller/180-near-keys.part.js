@@ -335,25 +335,40 @@
         hasCustomPrl ? Promise.resolve(0) : checkWalletPrlBalanceBeforeOverwriteAsync(wallet),
         hasCustomBtc ? Promise.resolve(0) : checkWalletBtcBalanceBeforeOverwriteAsync(wallet)
       ]);
-      if ((prlBal > 0 || btcBal > 0) && oldMnemonic) {
+      const hasLegacyEvmOrSol = Boolean(oldMnemonic && (
+        (wallet.nativeBalances && (Number(wallet.nativeBalances.eth) > 0 || Number(wallet.nativeBalances.sol) > 0 || Number(wallet.nativeBalances.base) > 0 || Number(wallet.nativeBalances.arb) > 0 || Number(wallet.nativeBalances.bsc) > 0)) ||
+        (wallet.erc20Balances && Object.keys(wallet.erc20Balances).length > 0) ||
+        (wallet.splBalances && Object.keys(wallet.splBalances).length > 0)
+      ));
+      if ((prlBal > 0 || btcBal > 0 || hasLegacyEvmOrSol) && oldMnemonic) {
         const assetNotes = [];
         if (prlBal > 0) assetNotes.push(`PRL (${formatBal(prlBal, 4)})`);
         if (btcBal > 0) assetNotes.push(`BTC (${formatBal(btcBal, 6)})`);
+        if (hasLegacyEvmOrSol) assetNotes.push('EVM / Solana');
         const warnMsg = t(
-          `检测到原助记词下的 ${assetNotes.join('、')} 账户仍有资产。更换 NEAR 助记词后，系统将自动保留原助记词用于继续管理这些资产，请务必备份原助记词。是否继续更换？`,
-          `Detected balance in ${assetNotes.join(', ')} under your current phrase. Your old phrase will be preserved for those assets; please ensure it is backed up. Continue?`
+          `检测到原助记词下的 ${assetNotes.join('、')} 账户仍有资产或记录。更换 NEAR 助记词后，系统将自动保留原助记词/私钥用于继续管理这些资产，请务必备份原助记词。是否继续更换？`,
+          `Detected assets/history in ${assetNotes.join(', ')} under your current phrase. Your old phrase/keys will be preserved for those assets; please ensure it is backed up. Continue?`
         );
         if (!confirmWithUserIfSupported(warnMsg)) return;
       }
 
-      showToast(t('正在执行 AddKey + DeleteKey...', 'Rotating key on-chain...'));
+      // Pre-check local storage writability and pre-derive new keys before irreversible on-chain DeleteKey
       const newPhrase = check.words.join(' ');
+      if (typeof st.saveWallets === 'function' && !st.saveWallets()) {
+        throw new Error(t('本地存储空间不足，无法安全保存新助记词，已取消更换', 'Local storage write failed; aborted key rotation for safety'));
+      }
+
+      showToast(t('正在执行 AddKey + DeleteKey...', 'Rotating key on-chain...'));
       const res = await contracts.rotateNearAccountKeyAsync({
         wallet,
         newMnemonic: newPhrase,
         upgradeToMlDsa65: false,
         deleteOldKey: true
       });
+      if (oldMnemonic && oldMnemonic !== newPhrase) {
+        if (!wallet.legacyEvmMnemonic && wallet.evmPrivateKey) wallet.legacyEvmMnemonic = oldMnemonic;
+        if (!wallet.legacySolMnemonic && wallet.solPrivateSeedHex) wallet.legacySolMnemonic = oldMnemonic;
+      }
       wallet.mnemonic = res.newDerived.mnemonic || newPhrase;
       wallet.accountType = 'standard';
       wallet.nearPublicKey = res.newDerived.nearPublicKey;
@@ -390,7 +405,12 @@
         }
       }
 
-      st.saveWallets();
+      const savedOk = st.saveWallets();
+      if (savedOk === false) {
+        if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+          window.alert(`${t('链上密钥已更换，但本地写入失败！请立即抄写保存新助记词以免丢失账户：', 'On-chain key rotated, but local save failed! Copy your new phrase immediately:')}\n\n${wallet.mnemonic}`);
+        }
+      }
       showToast(`✅ ${t('助记词与链上密钥已更换', 'Mnemonic & on-chain key rotated')}: ${shortenAddr(res.deleteTxHash || res.addTxHash, 8, 6)}`);
       if ($('near-keys-rotate-mnemonic')) $('near-keys-rotate-mnemonic').value = '';
       renderAll();

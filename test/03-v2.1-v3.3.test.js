@@ -304,10 +304,14 @@ test('v2.1 Native Capacitor Auth, WebAuthn Passkey & Interactive #sheet-security
       assert.equal(await uiController.verifySecurityAuthAsync(w, 'Confirm Transfer'), true);
       assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), false);
 
-      // Native failure never falls back to wallet PIN (phone passcode is handled natively)
+      // Native failure falls back to wallet PIN when wallet has a PIN configured
       const nativeAuthFn = globalThis.window.Capacitor.Plugins.NativeSecurity.authenticateWithBiometrics;
       globalThis.window.Capacitor.Plugins.NativeSecurity.authenticateWithBiometrics = async () => ({ authenticated: false, error: 'fail' });
-      assert.equal(await uiController.verifySecurityAuthAsync(w, 'x'), false);
+      const nativeFallbackPromise = uiController.verifySecurityAuthAsync(w, 'Fallback PIN');
+      await new Promise((r) => setTimeout(r, 15));
+      assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), true);
+      for (const d of ['1', '2', '3', '4', '5', '6']) await uiController.pressSecurityPinDigit(d);
+      assert.equal(await nativeFallbackPromise, true);
       assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), false);
       globalThis.window.Capacitor.Plugins.NativeSecurity.authenticateWithBiometrics = nativeAuthFn;
 

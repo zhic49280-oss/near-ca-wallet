@@ -723,13 +723,12 @@
     const signAndBroadcastOne = async (txTo, txData, txVal, useOverrideFee = false) => {
       const valBig = BigInt(txVal || '0');
       const normalizedTxTo = txTo ? String(txTo).trim() : null;
-      const { unsignedTx, serialized } = await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
-        let txFields;
+      const txFields = await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
         const nonce = await provider.getTransactionCount(fromAddr, 'pending');
         if (useOverrideFee && gasPriceWei !== null && gasPriceWei !== undefined) {
           const estOverride = await provider.estimateGas({ from: fromAddr, to: normalizedTxTo, data: txData || '0x', value: valBig }).catch(() => null);
           const safeGasLimit = estOverride !== null ? ((estOverride * 120n) / 100n) : BigInt(gasLimit || 21000);
-          txFields = {
+          return {
             type: 0,
             chainId: cfg.chainId,
             nonce,
@@ -739,62 +738,71 @@
             gasLimit: safeGasLimit > BigInt(gasLimit || 21000) ? safeGasLimit : BigInt(gasLimit || 21000),
             gasPrice: BigInt(gasPriceWei)
           };
-        } else {
-          const [feeData, est] = await Promise.all([
-            provider.getFeeData(),
-            provider.estimateGas({ from: fromAddr, to: normalizedTxTo, data: txData, value: valBig }).catch(() => null)
-          ]);
-          const resolvedGasLimit = est !== null ? ((est * 125n) / 100n) : (txData && txData !== '0x' ? 350000n : 21000n);
-          const useEip1559 = Boolean(feeData.maxFeePerGas);
-          const maxFee = feeData.maxFeePerGas || 1000000000n;
-          const prioFeeRaw = feeData.maxPriorityFeePerGas || (maxFee / 4n) || 1000000n;
-          const prioFee = prioFeeRaw > maxFee ? maxFee : prioFeeRaw;
-          txFields = useEip1559
-            ? {
-                type: 2,
-                chainId: cfg.chainId,
-                nonce,
-                to: normalizedTxTo,
-                data: txData || '0x',
-                value: valBig,
-                gasLimit: resolvedGasLimit,
-                maxFeePerGas: maxFee,
-                maxPriorityFeePerGas: prioFee
-              }
-            : {
-                type: 0,
-                chainId: cfg.chainId,
-                nonce,
-                to: normalizedTxTo,
-                data: txData || '0x',
-                value: valBig,
-                gasLimit: resolvedGasLimit,
-                gasPrice: feeData.gasPrice || 1000000000n
-              };
         }
-        const uTx = ethersLib.Transaction.from(txFields);
-        const digestBytes = hexToBytes(uTx.unsignedHash.replace(/^0x/i, ''));
-        const mpcRes = await api.requestNearMpcChainSignature({
-          wallet,
-          payloadHash32Bytes: digestBytes,
-          path,
-          domainId: 0
-        });
-        const sigObj = mpcRes && mpcRes.mpcSignature;
-        if (!sigObj || !sigObj.big_r || !sigObj.big_r.affine_point || !sigObj.s || !sigObj.s.scalar) {
-          throw new Error(t('NEAR MPC 未返回有效的 Secp256k1 签名', 'NEAR MPC did not return a valid Secp256k1 signature'));
-        }
-        const rHex = sigObj.big_r.affine_point.slice(2, 66);
-        const sHex = sigObj.s.scalar.padStart(64, '0');
-        const yParity = Number(sigObj.recovery_id || 0) & 1;
-        uTx.signature = ethersLib.Signature.from({ r: `0x${rHex}`, s: `0x${sHex}`, yParity });
-        if (uTx.from && uTx.from.toLowerCase() !== fromAddr.toLowerCase()) {
-          throw new Error(t('MPC 签名恢复地址与发送地址不匹配', 'MPC signature recovered address mismatch'));
-        }
-        return { unsignedTx: uTx, serialized: uTx.serialized };
+        const [feeData, est] = await Promise.all([
+          provider.getFeeData(),
+          provider.estimateGas({ from: fromAddr, to: normalizedTxTo, data: txData, value: valBig }).catch(() => null)
+        ]);
+        const resolvedGasLimit = est !== null ? ((est * 125n) / 100n) : (txData && txData !== '0x' ? 350000n : 21000n);
+        const useEip1559 = Boolean(feeData.maxFeePerGas);
+        const maxFee = feeData.maxFeePerGas || 1000000000n;
+        const prioFeeRaw = feeData.maxPriorityFeePerGas || (maxFee / 4n) || 1000000n;
+        const prioFee = prioFeeRaw > maxFee ? maxFee : prioFeeRaw;
+        return useEip1559
+          ? {
+              type: 2,
+              chainId: cfg.chainId,
+              nonce,
+              to: normalizedTxTo,
+              data: txData || '0x',
+              value: valBig,
+              gasLimit: resolvedGasLimit,
+              maxFeePerGas: maxFee,
+              maxPriorityFeePerGas: prioFee
+            }
+          : {
+              type: 0,
+              chainId: cfg.chainId,
+              nonce,
+              to: normalizedTxTo,
+              data: txData || '0x',
+              value: valBig,
+              gasLimit: resolvedGasLimit,
+              gasPrice: feeData.gasPrice || 1000000000n
+            };
       });
+
+      const uTx = ethersLib.Transaction.from(txFields);
+      const digestBytes = hexToBytes(uTx.unsignedHash.replace(/^0x/i, ''));
+      const mpcRes = await api.requestNearMpcChainSignature({
+        wallet,
+        payloadHash32Bytes: digestBytes,
+        path,
+        domainId: 0
+      });
+      const sigObj = mpcRes && mpcRes.mpcSignature;
+      if (!sigObj || !sigObj.big_r || !sigObj.big_r.affine_point || !sigObj.s || !sigObj.s.scalar) {
+        throw new Error(t('NEAR MPC 未返回有效的 Secp256k1 签名', 'NEAR MPC did not return a valid Secp256k1 signature'));
+      }
+      const rHex = sigObj.big_r.affine_point.slice(2, 66);
+      const sHex = sigObj.s.scalar.padStart(64, '0');
+      const baseParity = Number(sigObj.recovery_id || 0) & 1;
+      let matched = false;
+      for (const yParity of [baseParity, baseParity ^ 1]) {
+        uTx.signature = ethersLib.Signature.from({ r: `0x${rHex}`, s: `0x${sHex}`, yParity });
+        if (!uTx.from || uTx.from.toLowerCase() === fromAddr.toLowerCase()) {
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        throw new Error(t('MPC 签名恢复地址与发送地址不匹配', 'MPC signature recovered address mismatch'));
+      }
+      const serialized = uTx.serialized;
       return withEvmProviderFailover(chainKey, ethersLib, (provider) => provider.broadcastTransaction(serialized));
     };
+
+    const ZERO_RESET_APPROVE_TOKENS = new Set(['0xdac17f958d2ee523a2206206994597c13d831ec7']);
 
     if (approvalToken && approvalToken.toLowerCase() !== NATIVE_EVM_SENTINEL && spender && amountRaw) {
       const curAllow = await withEvmProviderFailover(chainKey, ethersLib, (provider) => {
@@ -807,7 +815,7 @@
       });
       if (curAllow < BigInt(amountRaw)) {
         const approveIface = new ethersLib.Interface(['function approve(address spender, uint256 amount) returns (bool)']);
-        if (curAllow > 0n) {
+        if (curAllow > 0n && ZERO_RESET_APPROVE_TOKENS.has(approvalToken.toLowerCase())) {
           const resetData = approveIface.encodeFunctionData('approve', [spender, '0']);
           const resetResp = await signAndBroadcastOne(approvalToken, resetData, '0');
           await resetResp.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, resetResp.hash, 45000));
@@ -894,27 +902,34 @@
     const cfg = EVM_CHAINS[String(chainKey || '').toLowerCase()];
     if (!cfg) throw new Error(t(`不支持的 EVM 链: ${chainKey}`, `Unsupported EVM chain: ${chainKey}`));
 
+    const ZERO_RESET_APPROVE_TOKENS = new Set(['0xdac17f958d2ee523a2206206994597c13d831ec7']);
+
     if (approvalToken && approvalToken.toLowerCase() !== NATIVE_EVM_SENTINEL && spender && amountRaw) {
-      await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
-        const signer = new ethersLib.Wallet(privateKey, provider);
+      const signerAddr = new ethersLib.Wallet(privateKey).address;
+      const curAllow = await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
         const erc20 = new ethersLib.Contract(
           approvalToken,
-          [
-            'function allowance(address owner, address spender) view returns (uint256)',
-            'function approve(address spender, uint256 amount) returns (bool)'
-          ],
-          signer
+          ['function allowance(address owner, address spender) view returns (uint256)'],
+          provider
         );
-        const curAllow = await erc20.allowance(signer.address, spender);
-        if (curAllow < BigInt(amountRaw)) {
-          if (curAllow > 0n) {
-            const resetTx = await erc20.approve(spender, '0');
-            await resetTx.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, resetTx.hash, 45000));
-          }
-          const approveTx = await erc20.approve(spender, amountRaw);
-          await approveTx.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, approveTx.hash, 45000));
-        }
+        return erc20.allowance(signerAddr, spender);
       });
+      if (curAllow < BigInt(amountRaw)) {
+        if (curAllow > 0n && ZERO_RESET_APPROVE_TOKENS.has(approvalToken.toLowerCase())) {
+          const resetTx = await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
+            const signer = new ethersLib.Wallet(privateKey, provider);
+            const erc20 = new ethersLib.Contract(approvalToken, ['function approve(address spender, uint256 amount) returns (bool)'], signer);
+            return erc20.approve(spender, '0');
+          });
+          await resetTx.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, resetTx.hash, 45000));
+        }
+        const approveTx = await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
+          const signer = new ethersLib.Wallet(privateKey, provider);
+          const erc20 = new ethersLib.Contract(approvalToken, ['function approve(address spender, uint256 amount) returns (bool)'], signer);
+          return erc20.approve(spender, amountRaw);
+        });
+        await approveTx.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, approveTx.hash, 45000));
+      }
     }
 
     const signedRaw = await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
@@ -1234,7 +1249,9 @@
     }
 
     await ensureWalletSigningKeysAsync(wallet);
-    const isNative = !tokenContract || String(tokenContract).toLowerCase() === NATIVE_EVM_SENTINEL;
+    const isNative = !tokenContract ||
+      String(tokenContract).toLowerCase() === NATIVE_EVM_SENTINEL ||
+      String(tokenContract).toLowerCase() === ARC_USDC_PRECOMPILE;
     const hasNearMpc = Boolean((wallet.nearNamedAccount || wallet.nearAddress) && wallet.nearPublicKey && wallet.nearPrivateKey);
 
     if (isNative) {

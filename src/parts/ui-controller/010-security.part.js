@@ -455,9 +455,12 @@
           return unlockAppLockWithPin();
         }
         if (bioUnavailable && !hasConfiguredWalletPin(wallet)) {
-          clearAppLock();
-          showToast(t('设备锁屏或生物识别不可用，建议设置安全 PIN 密码', 'Device lock unavailable; please set a wallet PIN in Settings'));
-          return true;
+          if (statusEl) {
+            statusEl.textContent = t('设备生物识别不可用且未设置 PIN，请先设置安全 PIN', 'Device biometrics unavailable and no PIN set. Please set a security PIN.');
+          }
+          showToast(t('设备生物识别不可用，请先设置安全 PIN', 'Biometrics unavailable, please set a security PIN first'));
+          if (typeof openSetWalletPinPrompt === 'function') openSetWalletPinPrompt();
+          return false;
         }
         if (statusEl) {
           statusEl.textContent = (res && res.cancelled)
@@ -792,10 +795,10 @@
         bioRes.code === 'AUTH_UNAVAILABLE' ||
         /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(String(bioRes.error || ''))
       );
-      if (!bioUnavailable && (!hasPin || nativeAuth)) {
+      if (!bioUnavailable && !hasPin) {
         if (bioRes.cancelled) {
           showToast(t('已取消验证', 'Verification cancelled'));
-        } else if (!hasPin && !nativeAuth) {
+        } else if (!nativeAuth) {
           showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
           if (typeof openSetWalletPinPrompt === 'function') openSetWalletPinPrompt();
         } else {

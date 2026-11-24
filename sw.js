@@ -1,24 +1,24 @@
-﻿const CACHE_NAME = 'nexus-wallet-v6.44';
+﻿const CACHE_NAME = 'nexus-wallet-v6.45';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './style.css?v=6.44',
-  './assets/favicon.png?v=6.44',
-  './assets/nexus-logo-192.png?v=6.44',
-  './bip39-wordlist.js?v=6.44',
-  './src/crypto-engine.js?v=6.44',
-  './src/token-registry.js?v=6.44',
-  './src/near-intents.js?v=6.44',
-  './src/chain-contracts.js?v=6.44',
-  './src/limit-orders.js?v=6.44',
-  './src/hyperliquid-perps.js?v=6.44',
-  './src/state.js?v=6.44',
-  './src/dapp-browser.js?v=6.44',
-  './src/framework-ui.js?v=6.44',
-  './src/ui-controller.js?v=6.44',
-  './src/mining-pro.js?v=6.44',
-  './ethers.umd.min.js?v=6.44',
-  './qrcode.min.js?v=6.44'
+  './style.css?v=6.45',
+  './assets/favicon.png?v=6.45',
+  './assets/nexus-logo-192.png?v=6.45',
+  './bip39-wordlist.js?v=6.45',
+  './src/crypto-engine.js?v=6.45',
+  './src/token-registry.js?v=6.45',
+  './src/near-intents.js?v=6.45',
+  './src/chain-contracts.js?v=6.45',
+  './src/limit-orders.js?v=6.45',
+  './src/hyperliquid-perps.js?v=6.45',
+  './src/state.js?v=6.45',
+  './src/dapp-browser.js?v=6.45',
+  './src/framework-ui.js?v=6.45',
+  './src/ui-controller.js?v=6.45',
+  './src/mining-pro.js?v=6.45',
+  './ethers.umd.min.js?v=6.45',
+  './qrcode.min.js?v=6.45'
 ];
 
 self.addEventListener('install', (event) => {

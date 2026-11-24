@@ -137,6 +137,8 @@
     }
   }
 
+  let _pendingPostRefresh = false;
+
   async function refreshAllBalancesAsync(showFeedback = false) {
     const st = getState();
     const intents = getIntents();
@@ -178,7 +180,11 @@
           wallet.discoveredNearAccounts = discovered;
           contracts.ensureWalletSigningKeysAsync(wallet).then(() => {
             if (!isStaleRefresh() && (String(wallet.solAddress || '') !== initialSolAddr || String(wallet.evmAddress || '') !== initialEvmAddr)) {
-              refreshAllBalancesAsync(false).catch(() => {});
+              if (_isRefreshing) {
+                _pendingPostRefresh = true;
+              } else {
+                refreshAllBalancesAsync(false).catch(() => {});
+              }
             }
           }).catch(() => {});
           if (typeof st.saveWalletsDebounced === 'function') st.saveWalletsDebounced();
@@ -565,6 +571,10 @@
         const spinnerEl = ptrInd && ptrInd.querySelector ? ptrInd.querySelector('.ptr-spinner') : null;
         if (spinnerEl) spinnerEl.style.transform = '';
         if (ptrTxt) ptrTxt.textContent = t('下拉刷新链上余额', 'Pull down to refresh');
+        if (_pendingPostRefresh) {
+          _pendingPostRefresh = false;
+          refreshAllBalancesAsync(false).catch(() => {});
+        }
       }
     }
   }

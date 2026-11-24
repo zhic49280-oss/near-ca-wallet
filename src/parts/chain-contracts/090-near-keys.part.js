@@ -189,6 +189,32 @@
       actionsBytes: addAction
     });
 
+    // Verify new key is visible on-chain before deleting the old key
+    let newKeyVerified = false;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const keyRes = await nearRpcPostAsync({
+          jsonrpc: '2.0',
+          id: `verify-new-key-${attempt}`,
+          method: 'query',
+          params: {
+            request_type: 'view_access_key',
+            finality: 'final',
+            account_id: creds.accountId,
+            public_key: newPubKey
+          }
+        }, 6000);
+        if (keyRes && keyRes.result && keyRes.result.permission) {
+          newKeyVerified = true;
+          break;
+        }
+      } catch (_) {}
+      await new Promise((r) => setTimeout(r, 900));
+    }
+    if (!newKeyVerified) {
+      throw new Error(t('新密钥已提交但尚未在链上确认，已中止删除旧密钥以确保安全', 'New key not yet confirmed on-chain; aborted DeleteKey for safety'));
+    }
+
     let deleteTxHash = '';
     if (deleteOldKey && creds.publicKeyStr !== newPubKey) {
       const delAction = buildDeleteKeyActionBytes({ targetPublicKeyStr: creds.publicKeyStr });

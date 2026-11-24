@@ -24,7 +24,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.44');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.45');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -85,7 +85,12 @@
         const meta = (p.params && p.params.proposer && p.params.proposer.metadata) || {};
         if ($('wc-proposal-name')) $('wc-proposal-name').textContent = meta.name || 'DApp';
         if ($('wc-proposal-url')) $('wc-proposal-url').textContent = meta.url || '--';
-        if ($('wc-proposal-chains')) $('wc-proposal-chains').textContent = 'eip155:1, 8453, 56, 42161';
+        if ($('wc-proposal-chains')) {
+          const reqChains = (p.params && p.params.requiredNamespaces && p.params.requiredNamespaces.eip155 && p.params.requiredNamespaces.eip155.chains) || [];
+          const optChains = (p.params && p.params.optionalNamespaces && p.params.optionalNamespaces.eip155 && p.params.optionalNamespaces.eip155.chains) || [];
+          const merged = Array.from(new Set([...reqChains, ...optChains]));
+          $('wc-proposal-chains').textContent = merged.length ? merged.join(', ') : 'eip155:1, eip155:8453, eip155:56, eip155:42161';
+        }
         pCard.classList.remove('hidden');
       }
     }
@@ -119,7 +124,13 @@
               const tx = req.params[0];
               const weiBig = tx.value ? BigInt(tx.value) : 0n;
               const ethStr = (Number(weiBig) / 1e18).toFixed(6).replace(/\.?0+$/, '') || '0';
-              preview = `${t('收款地址', 'To')}: ${tx.to || '--'}\n${t('金额', 'Value')}: ${ethStr} ETH\n${t('数据', 'Data')}: ${tx.data && tx.data !== '0x' ? `${String(tx.data).slice(0, 42)}...` : t('无', 'None')}`;
+              const cidNum = Number(String(ev.params?.chainId || 'eip155:1').split(':')[1] || 1);
+              const contractsMod = getContracts();
+              const chainEntry = contractsMod && contractsMod.EVM_CHAINS
+                ? Object.values(contractsMod.EVM_CHAINS).find((c) => c && c.chainId === cidNum)
+                : null;
+              const nativeSym = (chainEntry && chainEntry.symbol) || 'ETH';
+              preview = `${t('收款地址', 'To')}: ${tx.to || '--'}\n${t('金额', 'Value')}: ${ethStr} ${nativeSym}\n${t('数据', 'Data')}: ${tx.data && tx.data !== '0x' ? `${String(tx.data).slice(0, 42)}...` : t('无', 'None')}`;
             } else {
               preview = JSON.stringify(req.params || {}, null, 2);
             }
@@ -260,7 +271,7 @@
       const chains = Array.from(chainsSet);
       const evmSender = (typeof contracts.resolveWalletEvmSender === 'function' ? contracts.resolveWalletEvmSender(wallet) : '')
         || wallet.mpcEvmAddress || wallet.evmAddress;
-      await client.approveSession({
+      const approvedSess = await client.approveSession({
         id: p.id,
         namespaces: {
           eip155: {
@@ -271,6 +282,9 @@
           }
         }
       });
+      if (approvedSess && approvedSess.topic) {
+        _wcSessionWallets[approvedSess.topic] = wallet.id;
+      }
       st.wc.pendingProposal = null;
       renderWcCards();
       renderWcSessions();
@@ -291,7 +305,11 @@
     renderWcCards();
   }
 
+  let _wcApprovingRequest = false;
+  const _wcSessionWallets = {};
+
   async function approveWcRequest() {
+    if (_wcApprovingRequest) return;
     const st = getState();
     const crypto = getCrypto();
     const contracts = getContracts();
@@ -299,7 +317,35 @@
     const client = st.wc.client;
     const wallet = st.getActiveWallet();
     if (!ev || !client || !wallet) return;
+
+    const reqTopic = ev.topic;
+    const sess = reqTopic && client.session && typeof client.session.get === 'function'
+      ? client.session.get(reqTopic)
+      : null;
+    const activeEvm = ((typeof contracts.resolveWalletEvmSender === 'function' ? contracts.resolveWalletEvmSender(wallet) : '') || wallet.mpcEvmAddress || wallet.evmAddress || '').toLowerCase();
+    const sessAccounts = sess && sess.namespaces && sess.namespaces.eip155 && Array.isArray(sess.namespaces.eip155.accounts)
+      ? sess.namespaces.eip155.accounts.map((a) => String(a).split(':')[2]?.toLowerCase()).filter(Boolean)
+      : [];
+    const boundWalletId = _wcSessionWallets[reqTopic];
+    if ((boundWalletId && boundWalletId !== wallet.id) || (sessAccounts.length > 0 && activeEvm && !sessAccounts.includes(activeEvm))) {
+      showToast(t('当前钱包与该 DApp 会话绑定的账户不一致，请切换回原钱包或断开重连', 'Active wallet does not match this DApp session account. Switch back or reconnect.'));
+      await client.respondSessionRequest({
+        topic: ev.topic,
+        response: { id: ev.id, jsonrpc: '2.0', error: { code: 4100, message: 'Active wallet account mismatch' } }
+      }).catch(() => {});
+      if (typeof client._nexusShiftNextRequest === 'function') client._nexusShiftNextRequest();
+      else { st.wc.pendingRequest = null; renderWcCards(); }
+      return;
+    }
+
     if (!(await verifySecurityAuthAsync(wallet, t('批准 WalletConnect DApp 请求', 'Approve WalletConnect request')))) return;
+    _wcApprovingRequest = true;
+    const approveBtn = typeof document !== 'undefined' ? document.querySelector('#wc-request-card .btn-primary') : null;
+    const prevBtnText = approveBtn ? approveBtn.textContent : '';
+    if (approveBtn) {
+      approveBtn.disabled = true;
+      approveBtn.textContent = t('处理中...', 'Signing...');
+    }
     try {
       await contracts.ensureWalletSigningKeysAsync(wallet);
       const ethersLib = await ensureEthersLoaded();
@@ -321,11 +367,17 @@
         if (!sigObj || !sigObj.big_r || !sigObj.big_r.affine_point || !sigObj.s || !sigObj.s.scalar) {
           throw new Error(t('NEAR MPC 未返回有效的 Secp256k1 签名', 'NEAR MPC did not return a valid Secp256k1 signature'));
         }
-        return ethersLib.Signature.from({
-          r: `0x${sigObj.big_r.affine_point.slice(2, 66)}`,
-          s: `0x${sigObj.s.scalar.padStart(64, '0')}`,
-          yParity: Number(sigObj.recovery_id || 0) & 1
-        }).serialized;
+        const rHex = `0x${sigObj.big_r.affine_point.slice(2, 66)}`;
+        const sHex = `0x${sigObj.s.scalar.padStart(64, '0')}`;
+        const baseParity = Number(sigObj.recovery_id || 0) & 1;
+        const expectedAddr = (wallet.mpcEvmAddress || wallet.evmAddress || '').toLowerCase();
+        for (const yParity of [baseParity, baseParity ^ 1]) {
+          const sig = ethersLib.Signature.from({ r: rHex, s: sHex, yParity });
+          if (!expectedAddr || typeof ethersLib.recoverAddress !== 'function') return sig.serialized;
+          const rec = ethersLib.recoverAddress(`0x${String(digestHex).replace(/^0x/i, '')}`, sig);
+          if (rec && rec.toLowerCase() === expectedAddr) return sig.serialized;
+        }
+        return ethersLib.Signature.from({ r: rHex, s: sHex, yParity: baseParity }).serialized;
       };
 
       if (method === 'personal_sign' || method === 'eth_sign') {
@@ -367,6 +419,7 @@
         if (!cfg) throw new Error(t(`不支持的网络 chainId: ${cid}`, `Unsupported chainId: ${cid}`));
         const valWei = txReq.value ? BigInt(txReq.value) : 0n;
         const valNative = Number(valWei) / 1e18;
+        const reqGasLimit = (txReq.gasLimit || txReq.gas) ? BigInt(txReq.gasLimit || txReq.gas).toString() : null;
         if (typeof contracts.validateSufficientChainBalance === 'function') {
           contracts.validateSufficientChainBalance({
             wallet,
@@ -382,7 +435,8 @@
             privateKey: wallet.evmPrivateKey,
             to: txReq.to || null,
             data: txReq.data || '0x',
-            value: valWei.toString()
+            value: valWei.toString(),
+            gasLimit: reqGasLimit
           });
           result = txRes.txHash;
         } else {
@@ -392,11 +446,20 @@
             to: txReq.to || null,
             data: txReq.data || '0x',
             value: valWei.toString(),
+            gasLimit: reqGasLimit,
             path: 'ethereum-1'
           });
           result = txRes.txHash;
         }
       } else if (method === 'wallet_switchEthereumChain') {
+        const targetHex = (reqParams[0] && reqParams[0].chainId) || '';
+        const targetCid = Number(targetHex);
+        const supported = Object.values(contracts.EVM_CHAINS || {}).some((c) => c && c.chainId === targetCid);
+        if (!Number.isFinite(targetCid) || !supported) {
+          const err = new Error(t(`不支持切换到网络 chainId: ${targetHex}`, `Unsupported target chainId: ${targetHex}`));
+          err.code = 4902;
+          throw err;
+        }
         result = null;
       } else {
         throw new Error(`Unsupported method: ${method}`);
@@ -410,28 +473,35 @@
       if (client && ev && ev.topic) {
         await client.respondSessionRequest({
           topic: ev.topic,
-          response: { id: ev.id, jsonrpc: '2.0', error: { code: 4001, message: (e && e.message) || 'Execution failed' } }
+          response: { id: ev.id, jsonrpc: '2.0', error: { code: Number(e && e.code) || 4001, message: (e && e.message) || 'Execution failed' } }
         }).catch(() => {});
       }
-      st.wc.pendingRequest = null;
-      renderWcCards();
+      if (client && typeof client._nexusShiftNextRequest === 'function') client._nexusShiftNextRequest();
+      else { st.wc.pendingRequest = null; renderWcCards(); }
       showToast(e && e.message ? e.message : t('签名失败', 'Sign failed'));
+    } finally {
+      _wcApprovingRequest = false;
+      if (approveBtn) {
+        approveBtn.disabled = false;
+        approveBtn.textContent = prevBtnText;
+      }
     }
   }
 
   async function rejectWcRequest() {
     const st = getState();
     const ev = st.wc.pendingRequest;
-    if (ev && st.wc.client) {
+    const client = st.wc.client;
+    if (ev && client) {
       try {
-        await st.wc.client.respondSessionRequest({
+        await client.respondSessionRequest({
           topic: ev.topic,
           response: { id: ev.id, jsonrpc: '2.0', error: { code: 4001, message: 'User rejected' } }
         });
       } catch (_) {}
     }
-    st.wc.pendingRequest = null;
-    renderWcCards();
+    if (client && typeof client._nexusShiftNextRequest === 'function') client._nexusShiftNextRequest();
+    else { st.wc.pendingRequest = null; renderWcCards(); }
   }
 
   async function disconnectWcSession(topic) {
