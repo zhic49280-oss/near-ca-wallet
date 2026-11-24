@@ -284,12 +284,10 @@ test('v6.13 Top-3 Compact History, Full History Sheet & In-App Tx Detail Sheet (
         assert.equal(domMap.get('sheet-tx-detail').classList.contains('open'), true);
         await new Promise((r) => setTimeout(r, 40));
         const detailHtml = domMap.get('tx-detail-body').innerHTML;
-        assert.ok(detailHtml.includes(realPrlTxId));
-        assert.ok(detailHtml.includes(`https://prlscan.com/tx/${realPrlTxId}`));
-        assert.ok(detailHtml.includes('146022'));
-        assert.ok(detailHtml.includes('0.00100646 PRL'));
-        assert.ok(detailHtml.includes('-1.00100646 PRL'));
-        assert.ok(detailHtml.includes('1.08368275 PRL'));
+        assert.ok(detailHtml.includes(realPrlTxId.slice(0, 10)), 'OKX Tx Detail must display shortened TxHash');
+        assert.ok(detailHtml.includes(`data-val="${realPrlTxId}"`), 'OKX Tx Detail must allow copying full TxHash');
+        assert.ok(detailHtml.includes(`https://prlscan.com/tx/${realPrlTxId}`), 'OKX Tx Detail must render Explorer link');
+        assert.ok(detailHtml.includes('-1 PRL'), 'OKX Tx Detail must display signed transfer amount');
 
         // Verify Mining telemetry payouts also fold to top-3 + All > button
         state.mining.minerAddress = activePrlAddr;
@@ -1878,4 +1876,101 @@ test('v6.35: DApp auto-connect (EVM/Solana/NEAR), PRL 0-NEAR-gas quoting & recip
   const css = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
   assert.ok(css.includes('border-right-color: var(--near-emerald);'), 'PTR spinner must have dual-arc border for smooth circle');
   assert.ok(css.includes('0% {') && css.includes('transform: rotate(0deg);'), 'PTR keyframes must define explicit 0% start');
+});
+
+test('v6.66: FEATURES_SPEC.md, OKX Web3 Tx Detail style, Preact Perp/Icon parity, and NEAR Limit Auto-Wrap button', async () => {
+  // 1. FEATURES_SPEC.md exists and documents OKX Web3 transaction style & Preact architecture
+  const specPath = path.join(ROOT_DIR, 'docs', 'FEATURES_SPEC.md');
+  assert.ok(fs.existsSync(specPath), 'docs/FEATURES_SPEC.md must exist');
+  const specText = fs.readFileSync(specPath, 'utf8');
+  assert.ok(specText.includes('OKX Web3') && specText.includes('TokenIconBadge'), 'FEATURES_SPEC.md must document OKX Web3 tx style and Preact components');
+
+  // 2. Dead home drawer code removed from uiController
+  assert.equal(typeof uiController.toggleAssetExpand, 'undefined', 'Deprecated toggleAssetExpand must be removed');
+  assert.equal(typeof uiController.fetchChainTransactionDetailAsync, 'undefined', 'Deprecated UTXO fetchChainTransactionDetailAsync must be removed');
+
+  // 3. Preact component source checks: text-emerald (no text-mint), 6-cell perp-pos-metrics-grid, badgeSvg, and limit picker support
+  const perpPosJsx = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'components', 'PerpOrderbookAndPositions.jsx'), 'utf8');
+  assert.equal(perpPosJsx.includes('text-mint'), false, 'PerpOrderbookAndPositions.jsx must not use non-existent text-mint class');
+  assert.ok(perpPosJsx.includes('text-emerald'), 'PerpOrderbookAndPositions.jsx must use text-emerald for positive PnL');
+  assert.ok(perpPosJsx.includes('perp-pos-metrics-grid'), 'PerpOrderbookAndPositions.jsx must render full 6-cell metrics grid');
+  assert.ok(perpPosJsx.includes('isTrigger') && perpPosJsx.includes('closedPnl'), 'PerpOrderbookAndPositions.jsx must support trigger orders and fill closedPnl');
+
+  const iconBadgeJsx = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'components', 'TokenIconBadge.jsx'), 'utf8');
+  assert.ok(iconBadgeJsx.includes('PearlIridescentSvg') && iconBadgeJsx.includes('badgeSvg'), 'TokenIconBadge.jsx must render 3D Pearl SVG and chain vector badgeSvg');
+
+  const pickerJsx = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'components', 'TokenPickerPanel.jsx'), 'utf8');
+  assert.ok(pickerJsx.includes('showFavoriteBtn') && pickerJsx.includes('useContractAsAssetId'), 'TokenPickerPanel.jsx must support both Swap and Limit token picker modes');
+
+  // 4. OKX Web3 transaction detail sheet & NEAR limit auto-wrap button state
+  const prevWallets = state.wallets;
+  const prevActiveId = state.activeWalletId;
+  const prevLimit = { ...state.limit };
+  const prevDoc = globalThis.document;
+
+  const domMap = new Map();
+  const getOrMake = (id) => {
+    if (!domMap.has(id)) domMap.set(id, createMockDomElement(id));
+    return domMap.get(id);
+  };
+  globalThis.document = {
+    documentElement: { lang: 'zh-CN', classList: createMockClassList() },
+    getElementById: (id) => getOrMake(id),
+    querySelectorAll: () => [],
+    querySelector: () => null,
+    activeElement: null
+  };
+
+  try {
+    const keys = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+    const w = state.normalizeWalletRecord({
+      id: 'w_v666_test',
+      mnemonic: TEST_MNEMONIC,
+      nearAddress: keys.nearAddress,
+      nearPublicKey: keys.nearPublicKey,
+      nearPrivateKey: keys.nearPrivateKey,
+      nativeBalances: { near: 5 },
+      nearNep141Balances: { 'wrap.near': { raw: '1000000000000000000000000', formatted: 1 } }
+    });
+    state.wallets = [w];
+    state.activeWalletId = w.id;
+
+    // Test OKX Web3 style tx detail sheet
+    uiController.openTxDetailSheet({
+      id: 'tx_okx_1',
+      type: 'swap',
+      symbol: 'NEAR',
+      toSymbol: 'USDC',
+      chain: 'near',
+      amount: 12.5,
+      txHash: '8f9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a',
+      status: 'confirmed',
+      timestamp: 1710000000
+    });
+    const detailHtml = getOrMake('tx-detail-body').innerHTML;
+    assert.ok(detailHtml.includes('NEAR ➔ USDC'), 'OKX Tx Detail must show action pair');
+    assert.ok(detailHtml.includes('-12.5 NEAR'), 'OKX Tx Detail must show signed amount');
+    assert.ok(detailHtml.includes('https://nearblocks.io/txns/8f9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a'), 'OKX Tx Detail must render direct block explorer button');
+    assert.equal(detailHtml.includes('输出总额'), false, 'Legacy UTXO Total Output row must not appear');
+
+    // Test NEAR Limit Order auto-wrap button state when wNEAR=1, native NEAR=5, and selling 3 wNEAR
+    state.limit.chain = 'near';
+    state.limit.sellContract = 'wrap.near';
+    state.limit.buyContract = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
+    state.limit.amountIn = '3';
+    state.limit.targetRate = '4.5';
+    state.limit.dclStorageRegistered = true;
+
+    const limState = uiController.evaluateLimitOrderState();
+    assert.equal(limState.disabled, false, 'NEAR limit order must be enabled when wNEAR + native NEAR covers amount + gas');
+    assert.ok(
+      limState.text.includes('自动封装 2 NEAR') || limState.text.includes('Auto-Wrap 2 NEAR'),
+      `Expected auto-wrap prompt in button text, got: ${limState.text}`
+    );
+  } finally {
+    state.wallets = prevWallets;
+    state.activeWalletId = prevActiveId;
+    Object.assign(state.limit, prevLimit);
+    globalThis.document = prevDoc;
+  }
 });

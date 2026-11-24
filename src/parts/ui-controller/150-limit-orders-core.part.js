@@ -438,10 +438,21 @@
       }
       const nearAvail = Number(contracts?.resolveWalletChainBalance(wallet, 'near') || 0);
       const minNear = st.limit.dclStorageRegistered === false ? (lo.DCL_STORAGE_DEPOSIT_NEAR + lo.DCL_GAS_RESERVE_NEAR) : lo.DCL_GAS_RESERVE_NEAR;
-      if (nearAvail < minNear) {
-        return { disabled: true, action: 'submit', text: t(`NEAR 余额不足 (需 ${minNear.toFixed(2)} NEAR)`, `Need ${minNear.toFixed(2)} NEAR`), error: '' };
+      const wnearEntry = wallet.nearNep141Balances && wallet.nearNep141Balances['wrap.near'];
+      const wnearOnly = Number((wnearEntry && typeof wnearEntry === 'object') ? (wnearEntry.formatted ?? 0) : (wnearEntry || 0));
+      const needsAutoWrap = sellToken.contractAddress === 'wrap.near' && amt > wnearOnly + 1e-8;
+      const wrapShortfall = needsAutoWrap ? (amt - wnearOnly) : 0;
+      if (nearAvail < minNear + wrapShortfall) {
+        return { disabled: true, action: 'submit', text: t(`NEAR 余额不足 (需 ${(minNear + wrapShortfall).toFixed(2)} NEAR)`, `Need ${(minNear + wrapShortfall).toFixed(2)} NEAR`), error: '' };
       }
-      return { disabled: false, action: 'submit', text: t('提交限价单', 'Place Limit Order'), error: '' };
+      return {
+        disabled: false,
+        action: 'submit',
+        text: needsAutoWrap
+          ? t(`自动封装 ${formatBal(wrapShortfall, 4)} NEAR 并提交限价单`, `Auto-Wrap ${formatBal(wrapShortfall, 4)} NEAR & Place Limit Order`)
+          : t('提交限价单', 'Place Limit Order'),
+        error: ''
+      };
     }
 
     if (chain === 'sol' && lo) {

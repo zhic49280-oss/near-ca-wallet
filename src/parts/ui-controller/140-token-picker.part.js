@@ -103,6 +103,19 @@
         });
       const listEl = $('token-picker-list');
       if (!listEl) return;
+      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+      if (fw && typeof fw.mountTokenPicker === 'function') {
+        fw.mountTokenPicker(listEl, {
+          rows,
+          emptyText: t('未找到匹配的代币', 'No matching tokens found'),
+          showFavoriteBtn: false,
+          useContractAsAssetId: true,
+          formatBal,
+          formatTokenPrice,
+          getSymbolPrice
+        });
+        return;
+      }
       listEl.innerHTML = rows.map(({ tok, bal }) => {
         const liveP = (typeof tok.price === 'number' && tok.price > 0) ? tok.price : getSymbolPrice(tok.symbol);
         return `

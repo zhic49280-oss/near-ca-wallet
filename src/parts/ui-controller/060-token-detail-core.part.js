@@ -180,15 +180,10 @@
 
   function formatTxConfirmBadgeText(it) {
     if (!it) return '';
-    const conf = Number(it.confirmations);
-    if (Number.isFinite(conf) && conf > 0) {
-      return `${conf} ${t('确认', 'Conf')}`;
-    }
     const statusLow = String(it.status || '').toLowerCase();
-    if (statusLow === 'pending' || statusLow === 'unconfirmed') return t('待确认', 'Pending');
-    if (statusLow === 'failed') return t('失败', 'Failed');
-    if (statusLow === 'confirmed' || (it.blockHeight && Number(it.blockHeight) > 0)) return t('已确认', 'Confirmed');
-    return '';
+    if (statusLow === 'pending' || statusLow === 'unconfirmed') return t('确认中', 'Pending');
+    if (statusLow === 'failed' || it.type === 'failed') return t('失败', 'Failed');
+    return t('已确认', 'Confirmed');
   }
 
   function resolveTxDisplayParts(it, fallbackSym = '') {
@@ -206,18 +201,22 @@
     const dirClass = it.type === 'failed'
       ? 'failed'
       : (sign === '-' ? (it.type === 'swap' ? 'swap' : 'send') : (sign === '+' ? 'receive' : 'swap'));
-    const dirGlyph = it.type === 'failed' ? '✕' : (sign === '-' ? '↑' : (sign === '+' ? '↓' : '⇄'));
+    const dirGlyph = it.type === 'failed' ? '✕' : (it.type === 'swap' ? '⇄' : (sign === '-' ? '↑' : (sign === '+' ? '↓' : '⇄')));
     const labelMap = {
-      receive: t('收到', 'Receive'),
-      send: t('发出', 'Send'),
+      receive: t('接收', 'Receive'),
+      send: t('发送', 'Send'),
       swap: t('闪兑', 'Swap'),
       stake: t('质押', 'Stake'),
       unstake: t('解质押', 'Unstake'),
       mine: t('挖矿收款', 'Mining Payout'),
-      tx: t('链上交易', 'On-Chain'),
-      failed: t('失败', 'Failed')
+      tx: t('合约交互', 'Contract Interaction'),
+      failed: t('交易失败', 'Failed')
     };
     const label = labelMap[it.type] || labelMap.tx;
+    const pairLabel = it.type === 'swap' && toSymUpper ? `${fromSymUpper} ➔ ${toSymUpper}` : '';
+    const actionTitle = pairLabel
+      ? `${label} ${pairLabel}`
+      : (symKey ? `${label} ${symKey}` : label);
     const displayAmt = isSwapIn && typeof it.toAmount === 'number' && Number.isFinite(it.toAmount)
       ? it.toAmount
       : it.amount;
@@ -227,36 +226,33 @@
     const amtText = (typeof displayAmt === 'number' && Number.isFinite(displayAmt) && displayAmt > 0)
       ? (isSwapIn && displaySym !== symKey && symKey
           ? `${formatBal(displayAmt, 6)} ${displaySym} ➔ ${symKey}`
-          : `${sign}${formatBal(displayAmt, 8)} ${displaySym}`)
+          : `${sign}${formatBal(displayAmt, 6)} ${displaySym}`)
       : '--';
-    const pairLabel = it.type === 'swap' && toSymUpper ? `${fromSymUpper} ➔ ${toSymUpper}` : '';
-    return { label, sign, amtColor, dirClass, dirGlyph, amtText, pairLabel };
+    return { label, actionTitle, sign, amtColor, dirClass, dirGlyph, amtText, pairLabel };
   }
 
   function renderCompactTxPreviewHtml(items, sourceTag, fallbackSym = '') {
     return items.slice(0, 3).map((it, idx) => {
       const parts = resolveTxDisplayParts(it, fallbackSym);
-      const confBadge = formatTxConfirmBadgeText(it);
-      const relTime = formatRelativeActivityTime(it.timestamp);
+      const relTime = formatRelativeActivityTime(it.timestamp) || formatActivityTime(it.timestamp) || '--';
       const tokens = getTokens();
       const chainMeta = it.chain && tokens ? tokens.getChainMeta(it.chain) : null;
       const netTag = chainMeta ? chainMeta.shortName : (it.chain ? it.chain.toUpperCase() : '');
-      const titleLine = parts.pairLabel || it.title || parts.label;
-      const subMeta = [netTag, titleLine !== parts.label ? titleLine : ''].filter(Boolean).join(' · ');
+      const subLine = [relTime, netTag].filter(Boolean).join(' · ');
       return `
         <button type="button" class="tx-compact-row" data-action="open-tx-detail" data-tx-source="${escapeHtml(sourceTag)}" data-tx-idx="${idx}" data-tx-hash="${escapeHtml(it.txHash || '')}" data-chain="${escapeHtml(it.chain || '')}">
           <div class="flex items-center gap-2" style="min-width:0;flex:1;">
             <span class="tx-dir-circle ${parts.dirClass}">${parts.dirGlyph}</span>
             <div class="flex flex-col" style="min-width:0;flex:1;gap:2px;">
-              <div class="flex items-center gap-1" style="flex-wrap:wrap;">
-                <span class="mono" style="font-size:12.5px;font-weight:700;color:${parts.amtColor};">${escapeHtml(parts.amtText)}</span>
-                ${confBadge ? `<span class="tx-conf-pill">${escapeHtml(confBadge)}</span>` : ''}
-              </div>
-              <span class="mono" style="font-size:10.5px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(subMeta || parts.label)}</span>
+              <span style="font-size:13px;font-weight:700;color:#f8fafc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(parts.actionTitle)}</span>
+              <span class="mono" style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(subLine)}</span>
             </div>
           </div>
-          <div class="flex items-center gap-1" style="flex-shrink:0;">
-            ${relTime ? `<span style="font-size:11px;color:var(--text-muted);">${escapeHtml(relTime)}</span>` : ''}
+          <div class="flex items-center gap-2" style="flex-shrink:0;">
+            <div class="flex flex-col" style="text-align:right;gap:2px;">
+              <span class="mono" style="font-size:13px;font-weight:700;color:${parts.amtColor};">${escapeHtml(parts.amtText)}</span>
+              <span style="font-size:10.5px;color:var(--text-muted);">${escapeHtml(formatTxConfirmBadgeText(it))}</span>
+            </div>
             <span style="font-size:13px;color:var(--text-muted);">›</span>
           </div>
         </button>
@@ -393,22 +389,23 @@
       return;
     }
 
+    const tokens = getTokens();
     listEl.innerHTML = items.slice(0, 40).map((it, idx) => {
       const parts = resolveTxDisplayParts(it, it.symbol || _tokenDetailState.symbolKey || '');
       const confBadge = formatTxConfirmBadgeText(it);
-      const timeStr = formatActivityTime(it.timestamp);
-      const counterpartyAddr = String(it.counterparty || '').trim();
-      const cpLabel = it.type === 'send' ? t('发送至', 'To') : t('收款地址', 'Address');
-      const cpShort = counterpartyAddr ? shortenAddr(counterpartyAddr, 12, 12) : '';
-      const txShort = it.txHash ? shortenAddr(it.txHash, 14, 12) : '';
+      const timeStr = formatActivityTime(it.timestamp) || '--';
+      const chainMeta = it.chain && tokens ? tokens.getChainMeta(it.chain) : null;
+      const netTag = chainMeta ? chainMeta.shortName : (it.chain ? it.chain.toUpperCase() : '');
+      const rawUrl = it.txHash ? getExplorerTxUrl(it.chain, it.txHash) : '';
+      const explorerUrl = isValidHttpsUrl(rawUrl) ? rawUrl : '';
       return `
         <div class="tx-card-full">
           <button type="button" class="tx-card-full-top" data-action="open-tx-detail" data-tx-source="modal" data-tx-idx="${idx}" data-tx-hash="${escapeHtml(it.txHash || '')}">
             <div class="flex items-center gap-2" style="min-width:0;flex:1;">
               <span class="tx-dir-circle ${parts.dirClass}">${parts.dirGlyph}</span>
-              <div class="flex flex-col" style="min-width:0;">
-                <span style="font-weight:700;font-size:13.5px;color:#fff;">${escapeHtml(parts.label)}</span>
-                <span style="font-size:11px;color:var(--text-muted);">${escapeHtml(timeStr || '--')}</span>
+              <div class="flex flex-col" style="min-width:0;gap:2px;">
+                <span style="font-weight:700;font-size:13.5px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(parts.actionTitle)}</span>
+                <span class="mono" style="font-size:11px;color:var(--text-muted);">${escapeHtml([timeStr, netTag].filter(Boolean).join(' · '))}</span>
               </div>
             </div>
             <div class="flex items-center gap-2" style="flex-shrink:0;">
@@ -419,16 +416,10 @@
               <span style="font-size:14px;color:var(--text-muted);">›</span>
             </div>
           </button>
-          ${counterpartyAddr ? `
+          ${explorerUrl ? `
             <div class="tx-meta-inline">
-              <span class="mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(cpLabel)}: ${escapeHtml(cpShort)}</span>
-              <button type="button" class="tx-copy-icon-btn" data-action="copy-text" data-val="${escapeHtml(counterpartyAddr)}" data-label="${escapeHtml(cpLabel)}">${escapeHtml(t('复制', 'Copy'))}</button>
-            </div>
-          ` : ''}
-          ${it.txHash ? `
-            <div class="tx-meta-inline">
-              <span class="mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(t('交易 ID', 'Tx ID'))}: ${escapeHtml(txShort)}</span>
-              <button type="button" class="tx-copy-icon-btn" data-action="copy-text" data-val="${escapeHtml(it.txHash)}" data-label="Tx ID">${escapeHtml(t('复制', 'Copy'))}</button>
+              <span class="mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(shortenAddr(it.txHash, 10, 8))}</span>
+              <a href="${escapeHtml(explorerUrl)}" target="_blank" rel="noopener noreferrer" class="tx-copy-icon-btn" style="text-decoration:none;color:var(--cyan-glow);">${escapeHtml(t('区块浏览器 ↗', 'Explorer ↗'))}</a>
             </div>
           ` : ''}
         </div>
@@ -436,257 +427,74 @@
     }).join('');
   }
 
-  async function fetchChainTransactionDetailAsync(chainKey, txHash, wallet, fallbackItem = {}) {
-    const cleanChain = String(chainKey || fallbackItem.chain || '').toLowerCase();
-    const cleanHash = String(txHash || fallbackItem.txHash || '').trim();
-    if (!cleanHash) return null;
-
-    if (cleanChain === 'prl') {
-      const myAddr = wallet && wallet.address ? wallet.address : '';
-      let data = await fetchJsonWithTimeout(`https://api.prlscan.com/v1/txs/${encodeURIComponent(cleanHash)}`, {}, 6500);
-      if (data && data.transaction) {
-        const tx = data.transaction;
-        const rawInputs = Array.isArray(data.inputs) ? data.inputs : [];
-        const rawOutputs = Array.isArray(data.outputs) ? data.outputs : [];
-        const inputs = rawInputs.map((inp) => ({
-          address: inp.prev_address || '',
-          amount: Number.isFinite(Number(inp.prev_value_grains)) ? Number(inp.prev_value_grains) / 1e8 : null,
-          isMine: Boolean(myAddr && inp.prev_address === myAddr)
-        }));
-        const outputs = rawOutputs.map((out) => {
-          const addr = out.address || (Array.isArray(out.addresses) && out.addresses[0]) || '';
-          return {
-            address: addr,
-            amount: Number.isFinite(Number(out.value_grains)) ? Number(out.value_grains) / 1e8 : null,
-            isMine: Boolean(myAddr && addr === myAddr)
-          };
-        });
-        let mineIn = 0;
-        let mineOut = 0;
-        for (const inp of inputs) if (inp.isMine && inp.amount !== null) mineIn += inp.amount;
-        for (const out of outputs) if (out.isMine && out.amount !== null) mineOut += out.amount;
-        const netDelta = myAddr && (mineIn > 0 || mineOut > 0) ? (mineOut - mineIn) : (fallbackItem.netAmount ?? null);
-        const tsNum = tx.confirmed_at ? Math.floor(Date.parse(tx.confirmed_at) / 1000) : (fallbackItem.timestamp || null);
-        return {
-          status: tx.status || (Number(tx.confirmations) > 0 ? 'confirmed' : 'pending'),
-          confirmations: tx.confirmations ?? fallbackItem.confirmations ?? null,
-          blockHeight: tx.block_height ?? fallbackItem.blockHeight ?? null,
-          timestamp: Number.isFinite(tsNum) ? tsNum : null,
-          outputTotal: Number.isFinite(Number(tx.output_grains)) ? Number(tx.output_grains) / 1e8 : null,
-          fee: Number.isFinite(Number(tx.fee_grains)) ? Number(tx.fee_grains) / 1e8 : (fallbackItem.fee ?? null),
-          netDelta,
-          symbol: 'PRL',
-          inputs,
-          outputs
-        };
-      }
-      // Fallback to Blockbook v2 tx lookup if prlscan v1 tx endpoint fails
-      const contracts = getContracts();
-      if (contracts && typeof contracts.pearlBlockbookRequest === 'function') {
-        const bb = await contracts.pearlBlockbookRequest(`/api/v2/tx/${encodeURIComponent(cleanHash)}`).catch(() => null);
-        if (bb && bb.txid) {
-          const inputs = (bb.vin || []).map((v) => {
-            const addr = (v.addresses && v.addresses[0]) || '';
-            const amt = Number.isFinite(Number(v.value)) ? Number(v.value) / 1e8 : null;
-            return { address: addr, amount: amt, isMine: Boolean(myAddr && addr === myAddr) };
-          });
-          const outputs = (bb.vout || []).map((o) => {
-            const addr = (o.addresses && o.addresses[0]) || '';
-            const amt = Number.isFinite(Number(o.value)) ? Number(o.value) / 1e8 : null;
-            return { address: addr, amount: amt, isMine: Boolean(myAddr && addr === myAddr) };
-          });
-          let mineIn = 0;
-          let mineOut = 0;
-          for (const inp of inputs) if (inp.isMine && inp.amount !== null) mineIn += inp.amount;
-          for (const out of outputs) if (out.isMine && out.amount !== null) mineOut += out.amount;
-          const netDelta = myAddr && (mineIn > 0 || mineOut > 0) ? (mineOut - mineIn) : (fallbackItem.netAmount ?? null);
-          return {
-            status: Number(bb.confirmations) > 0 ? 'confirmed' : 'pending',
-            confirmations: Number.isFinite(Number(bb.confirmations)) ? Number(bb.confirmations) : null,
-            blockHeight: bb.blockHeight > 0 ? bb.blockHeight : null,
-            timestamp: bb.blockTime || fallbackItem.timestamp || null,
-            outputTotal: Number.isFinite(Number(bb.value)) ? Number(bb.value) / 1e8 : null,
-            fee: Number.isFinite(Number(bb.fees)) ? Number(bb.fees) / 1e8 : (fallbackItem.fee ?? null),
-            netDelta,
-            symbol: 'PRL',
-            inputs,
-            outputs
-          };
-        }
-      }
-      return null;
-    }
-
-    if (cleanChain === 'btc') {
-      const myBtc = wallet && wallet.btcAddress ? wallet.btcAddress : '';
-      const tx = await fetchJsonWithTimeout(`https://mempool.space/api/tx/${encodeURIComponent(cleanHash)}`, {}, 6500);
-      if (!tx || !tx.txid) return null;
-      const inputs = (tx.vin || []).map((v) => {
-        const addr = v?.prevout?.scriptpubkey_address || '';
-        const amt = Number.isFinite(Number(v?.prevout?.value)) ? Number(v.prevout.value) / 1e8 : null;
-        return { address: addr, amount: amt, isMine: Boolean(myBtc && addr === myBtc) };
-      });
-      const outputs = (tx.vout || []).map((o) => {
-        const addr = o?.scriptpubkey_address || '';
-        const amt = Number.isFinite(Number(o?.value)) ? Number(o.value) / 1e8 : null;
-        return { address: addr, amount: amt, isMine: Boolean(myBtc && addr === myBtc) };
-      });
-      let mineIn = 0;
-      let mineOut = 0;
-      let totalOut = 0;
-      for (const inp of inputs) if (inp.isMine && inp.amount !== null) mineIn += inp.amount;
-      for (const out of outputs) {
-        if (out.amount !== null) totalOut += out.amount;
-        if (out.isMine && out.amount !== null) mineOut += out.amount;
-      }
-      return {
-        status: tx.status && tx.status.confirmed ? 'confirmed' : 'pending',
-        confirmations: tx.status && tx.status.confirmed ? 1 : 0,
-        blockHeight: tx.status && tx.status.block_height ? tx.status.block_height : null,
-        timestamp: tx.status && tx.status.block_time ? tx.status.block_time : (fallbackItem.timestamp || null),
-        outputTotal: totalOut > 0 ? totalOut : null,
-        fee: Number.isFinite(Number(tx.fee)) ? Number(tx.fee) / 1e8 : (fallbackItem.fee ?? null),
-        netDelta: myBtc && (mineIn > 0 || mineOut > 0) ? (mineOut - mineIn) : (fallbackItem.netAmount ?? null),
-        symbol: 'BTC',
-        inputs,
-        outputs
-      };
-    }
-
-    return null;
-  }
-
   function renderTxDetailSheet() {
     const body = $('tx-detail-body');
     if (!body) return;
     const st = getState();
+    const tokens = getTokens();
     const modal = st.txModal || {};
     const it = modal.currentItem;
     if (!it) {
       body.innerHTML = '';
       return;
     }
-    const detail = modal.detailData;
-    const sym = String((detail && detail.symbol) || it.symbol || _tokenDetailState.symbolKey || '').toUpperCase();
-    const statusRaw = String((detail && detail.status) || it.status || 'confirmed').toLowerCase();
+    const sym = String(it.symbol || _tokenDetailState.symbolKey || '').toUpperCase();
+    const parts = resolveTxDisplayParts(it, sym);
+    const statusRaw = String(it.status || 'confirmed').toLowerCase();
     const isFailed = it.type === 'failed' || statusRaw === 'failed';
     const isPending = !isFailed && (statusRaw === 'pending' || statusRaw === 'unconfirmed');
     const statusCls = isFailed ? 'failed' : (isPending ? 'pending' : 'confirmed');
     const statusIcon = isFailed ? '✕' : (isPending ? '⏳' : '✓');
     const statusText = isFailed ? t('交易失败', 'Failed') : (isPending ? t('确认中', 'Pending') : t('已确认', 'Confirmed'));
 
-    const confVal = detail && detail.confirmations !== null && detail.confirmations !== undefined
-      ? String(detail.confirmations)
-      : (it.confirmations !== null && it.confirmations !== undefined ? String(it.confirmations) : '--');
-    const blockVal = detail && detail.blockHeight
-      ? String(detail.blockHeight)
-      : (it.blockHeight ? String(it.blockHeight) : '--');
-    const timeVal = formatFullActivityTime((detail && detail.timestamp) || it.timestamp);
-    const outTotalVal = detail && typeof detail.outputTotal === 'number' && Number.isFinite(detail.outputTotal)
-      ? `${formatBal(detail.outputTotal, 8)} ${sym}`
-      : null;
-    const feeNum = detail && typeof detail.fee === 'number' && Number.isFinite(detail.fee)
-      ? detail.fee
-      : (typeof it.fee === 'number' && Number.isFinite(it.fee) ? it.fee : null);
-    const feeVal = feeNum !== null ? `${formatBal(feeNum, 8)} ${sym}` : '--';
-
-    let netDeltaNum = detail && typeof detail.netDelta === 'number' && Number.isFinite(detail.netDelta)
-      ? detail.netDelta
-      : (typeof it.netAmount === 'number' && Number.isFinite(it.netAmount) ? it.netAmount : null);
-    if (netDeltaNum === null && typeof it.amount === 'number' && Number.isFinite(it.amount)) {
-      if (it.type === 'send' || it.type === 'stake') netDeltaNum = -(it.amount + (feeNum || 0));
-      else if (it.type === 'receive' || it.type === 'mine' || it.type === 'unstake') netDeltaNum = it.amount;
-    }
-    const netDeltaStr = netDeltaNum !== null
-      ? `${netDeltaNum > 0 ? '+' : (netDeltaNum < 0 ? '-' : '')}${formatBal(Math.abs(netDeltaNum), 8)} ${sym}`
-      : '--';
-    const netCls = netDeltaNum !== null ? (netDeltaNum >= 0 ? 'text-emerald' : 'text-rose') : '';
-
+    const timeVal = formatFullActivityTime(it.timestamp);
+    const chainMeta = it.chain && tokens ? tokens.getChainMeta(it.chain) : null;
+    const netName = chainMeta ? chainMeta.name : (it.chain ? String(it.chain).toUpperCase() : '--');
     const rawUrl = it.txHash ? getExplorerTxUrl(it.chain, it.txHash) : '';
     const explorerUrl = isValidHttpsUrl(rawUrl) ? rawUrl : '';
-    const loadingHint = modal.detailLoading
-      ? `<div style="font-size:11px;color:var(--text-muted);text-align:center;">${escapeHtml(t('正在同步链上确认明细...', 'Syncing on-chain confirmation details...'))}</div>`
-      : '';
-
-    const renderIoSection = (titleText, rows) => {
-      if (!Array.isArray(rows) || rows.length === 0) return '';
-      const rowHtml = rows.slice(0, 12).map((r) => `
-        <div class="tx-io-row">
-          <span class="mono" style="color:${r.isMine ? 'var(--near-emerald)' : 'var(--text-secondary)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">
-            ${escapeHtml(shortenAddr(r.address || '--', 10, 8))}${r.isMine ? ` (${escapeHtml(t('本人', 'You'))})` : ''}
-          </span>
-          <span class="mono" style="font-weight:700;color:#fff;flex-shrink:0;">${r.amount !== null ? `${formatBal(r.amount, 8)} ${escapeHtml(sym)}` : '--'}</span>
-        </div>
-      `).join('');
-      return `
-        <div class="ios-glass-card flex flex-col gap-2">
-          <div class="flex items-center justify-between">
-            <span style="font-size:12.5px;font-weight:700;">${escapeHtml(titleText)}</span>
-            <span class="mono" style="font-size:11.5px;color:var(--text-muted);">${rows.length}</span>
-          </div>
-          <div>${rowHtml}</div>
-        </div>
-      `;
-    };
+    const noteText = it.title && it.title !== parts.actionTitle ? it.title : '';
 
     body.innerHTML = `
-      <div class="ios-glass-card flex flex-col gap-3">
-        <div class="flex items-center justify-between gap-2">
-          <span class="tx-status-pill ${statusCls}">
-            <span class="tx-dir-circle ${isFailed ? 'failed' : (isPending ? 'send' : 'receive')}" style="width:22px;height:22px;font-size:11px;">${statusIcon}</span>
-            <span>${escapeHtml(statusText)}</span>
-          </span>
-          ${explorerUrl ? `<a id="tx-detail-explorer-link" href="${escapeHtml(explorerUrl)}" target="_blank" rel="noopener noreferrer" class="btn-ghost-sm" style="color:var(--cyan-glow);text-decoration:none;">${escapeHtml(t('↗ 区块浏览器', '↗ Explorer'))}</a>` : ''}
-        </div>
+      <div class="ios-glass-card flex flex-col items-center gap-2" style="padding:18px 14px;text-align:center;">
+        <span class="tx-dir-circle ${parts.dirClass}" style="width:42px;height:42px;font-size:18px;">${parts.dirGlyph}</span>
+        <span style="font-size:13px;font-weight:700;color:var(--text-secondary);">${escapeHtml(parts.actionTitle)}</span>
+        <strong class="mono" style="font-size:22px;font-weight:800;color:${parts.amtColor};">${escapeHtml(parts.amtText)}</strong>
+        <span class="tx-status-pill ${statusCls}" style="margin-top:2px;">
+          <span>${statusIcon}</span>
+          <span>${escapeHtml(statusText)}</span>
+        </span>
+      </div>
+      <div class="ios-glass-card meta-list">
+        <div class="meta-row"><span class="meta-key">${escapeHtml(t('交易动作', 'Action'))}</span><span class="meta-val" style="font-weight:700;">${escapeHtml(parts.actionTitle)}</span></div>
+        <div class="meta-row"><span class="meta-key">${escapeHtml(t('网络', 'Network'))}</span><span class="meta-val">${escapeHtml(netName)}</span></div>
+        <div class="meta-row"><span class="meta-key">${escapeHtml(t('时间', 'Time'))}</span><span class="meta-val mono">${escapeHtml(timeVal)}</span></div>
+        ${noteText ? `<div class="meta-row"><span class="meta-key">${escapeHtml(t('详情', 'Details'))}</span><span class="meta-val mono">${escapeHtml(noteText)}</span></div>` : ''}
         ${it.txHash ? `
-          <div class="flex flex-col gap-1">
-            <span style="font-size:11.5px;color:var(--text-muted);">${escapeHtml(t('交易 ID', 'Transaction ID'))}</span>
-            <div class="mono" style="font-size:12px;word-break:break-all;color:#f8fafc;line-height:1.45;">${escapeHtml(it.txHash)}</div>
-            <div>
-              <button type="button" class="btn-ghost-sm" style="margin-top:4px;padding-left:0;color:var(--cyan-glow);" data-action="copy-text" data-val="${escapeHtml(it.txHash)}" data-label="Tx ID">${escapeHtml(t('复制交易 ID', 'Copy Tx ID'))}</button>
-            </div>
+          <div class="meta-row">
+            <span class="meta-key">${escapeHtml(t('交易哈希', 'Tx Hash'))}</span>
+            <span class="meta-val flex items-center gap-2">
+              <span class="mono">${escapeHtml(shortenAddr(it.txHash, 10, 8))}</span>
+              <button type="button" class="btn-ghost-sm" style="padding:2px 6px;color:var(--cyan-glow);" data-action="copy-text" data-val="${escapeHtml(it.txHash)}" data-label="Tx Hash">${escapeHtml(t('复制', 'Copy'))}</button>
+            </span>
           </div>
         ` : ''}
       </div>
-      ${loadingHint}
-      <div class="ios-glass-card meta-list">
-        <div class="meta-row"><span class="meta-key">${escapeHtml(t('确认数', 'Confirmations'))}</span><span class="meta-val mono">${escapeHtml(confVal)}</span></div>
-        <div class="meta-row"><span class="meta-key">${escapeHtml(t('区块', 'Block'))}</span><span class="meta-val mono">${escapeHtml(blockVal)}</span></div>
-        <div class="meta-row"><span class="meta-key">${escapeHtml(t('时间', 'Time'))}</span><span class="meta-val mono">${escapeHtml(timeVal)}</span></div>
-        ${outTotalVal ? `<div class="meta-row"><span class="meta-key">${escapeHtml(t('输出总额', 'Total Output'))}</span><span class="meta-val mono">${escapeHtml(outTotalVal)}</span></div>` : ''}
-        <div class="meta-row"><span class="meta-key">${escapeHtml(t('网络手续费', 'Network Fee'))}</span><span class="meta-val mono">${escapeHtml(feeVal)}</span></div>
-        <div class="meta-row"><span class="meta-key">${escapeHtml(t('你的地址净收支', 'Your Net Change'))}</span><span class="meta-val mono ${netCls}" style="font-weight:800;">${escapeHtml(netDeltaStr)}</span></div>
-      </div>
-      ${detail ? renderIoSection(t('输入', 'Inputs'), detail.inputs) : ''}
-      ${detail ? renderIoSection(t('输出', 'Outputs'), detail.outputs) : ''}
+      ${explorerUrl ? `
+        <a id="tx-detail-explorer-link" href="${escapeHtml(explorerUrl)}" target="_blank" rel="noopener noreferrer" class="btn-primary" style="display:flex;align-items:center;justify-content:center;gap:6px;text-decoration:none;text-align:center;">
+          <span>${escapeHtml(t('在区块浏览器中查看 ↗', 'View on Block Explorer ↗'))}</span>
+        </a>
+      ` : ''}
     `;
   }
 
   function openTxDetailSheet(txItem, backSheetId = 'sheet-token-detail') {
     const st = getState();
-    const wallet = st.getActiveWallet();
     if (!txItem) return;
     st.txModal.currentItem = txItem;
     st.txModal.detailBackSheetId = backSheetId || 'sheet-token-detail';
     st.txModal.detailData = null;
-    st.txModal.detailLoading = Boolean(txItem.txHash && (txItem.chain === 'prl' || txItem.chain === 'btc'));
+    st.txModal.detailLoading = false;
     renderTxDetailSheet();
     openSheet('sheet-tx-detail');
-
-    const seq = ++_txDetailFetchSeq;
-    if (st.txModal.detailLoading) {
-      fetchChainTransactionDetailAsync(txItem.chain, txItem.txHash, wallet, txItem)
-        .then((res) => {
-          if (seq !== _txDetailFetchSeq) return;
-          st.txModal.detailLoading = false;
-          if (res) st.txModal.detailData = res;
-          renderTxDetailSheet();
-        })
-        .catch(() => {
-          if (seq !== _txDetailFetchSeq) return;
-          st.txModal.detailLoading = false;
-          renderTxDetailSheet();
-        });
-    }
   }
 

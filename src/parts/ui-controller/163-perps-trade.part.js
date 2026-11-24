@@ -569,6 +569,33 @@
       filtered = q ? [...top, ...rest] : [...top, ...rest.slice(0, 45)];
     }
 
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    const favList = getPerpFavoriteCoins();
+    const favsExact = new Set(favList);
+    const favsUpper = new Set(favList.map((x) => String(x || '').toUpperCase()));
+    if (fw && typeof fw.mountPerpOverview === 'function') {
+      const vmRows = filtered.slice(0, 120).map((m) => {
+        const vol = Number(m.dayNtlVlm || 0);
+        const volText = vol >= 1e9 ? `$${(vol / 1e9).toFixed(2)}B` : (vol >= 1e6 ? `$${(vol / 1e6).toFixed(2)}M` : (vol >= 1e3 ? `$${(vol / 1e3).toFixed(1)}K` : `$${vol.toFixed(0)}`));
+        const dexTag = m.dex ? String(m.dex).toUpperCase() : (typeof extractPerpDexBadge === 'function' ? extractPerpDexBadge(m.name) : '');
+        const coinKey = String(m.name || '');
+        return {
+          ...m,
+          pair: m.pairLabel || formatPerpDisplayPair(m.name),
+          dexTag,
+          volText: `${t('24h量', '24h Vol')} ${volText}`,
+          isFav: favsExact.has(coinKey) || favsUpper.has(coinKey.toUpperCase()),
+          rowAction: 'select-perp-market'
+        };
+      });
+      fw.mountPerpOverview(listEl, {
+        rows: vmRows,
+        emptyText: t('未找到匹配市场', 'No matching market'),
+        formatPerpPx,
+        rowAction: 'select-perp-market'
+      });
+      return;
+    }
     if (filtered.length === 0) {
       listEl.innerHTML = `<div style="font-size: 12px; color: var(--text-muted); text-align:center; padding: 18px 0;">${escapeHtml(t('未找到匹配市场', 'No matching market'))}</div>`;
       return;
@@ -580,13 +607,15 @@
       const chgCls = chg !== null ? (chg >= 0 ? 'text-emerald' : 'text-rose') : '';
       const pairLabel = m.pairLabel || formatPerpDisplayPair(m.name);
       const dexTag = m.dex || extractPerpDexBadge(m.name);
+      const isFav = favsExact.has(String(m.name || '')) || favsUpper.has(String(m.name || '').toUpperCase());
       const iconHtml = tokens && typeof tokens.renderTokenIconWithBadge === 'function'
         ? tokens.renderTokenIconWithBadge({ symbol: m.name, blockchain: 'hype' }, 28, false)
         : '';
       const volText = typeof m.dayNtlVlm === 'number' && m.dayNtlVlm > 0 ? `${t('量', 'Vol')} ${formatCompactUsd(m.dayNtlVlm)}` : '';
       return `
-        <button type="button" class="perp-market-item ${m.name === selCoin ? 'active' : ''}" data-action="select-perp-market" data-coin="${escapeHtml(m.name)}">
+        <div role="button" tabindex="0" class="perp-market-item ${m.name === selCoin ? 'active' : ''}" data-action="select-perp-market" data-coin="${escapeHtml(m.name)}">
           <div class="flex items-center gap-2">
+            <button type="button" class="btn-ghost-sm" data-action="toggle-perp-fav" data-stop="1" data-coin="${escapeHtml(m.name)}" style="padding:2px 4px;font-size:13px;color:${isFav ? '#fbbf24' : 'var(--text-muted)'};">${isFav ? '★' : '☆'}</button>
             ${iconHtml}
             <div class="flex flex-col" style="gap:1px;">
               <div class="flex items-center gap-1">
@@ -601,7 +630,7 @@
             <strong style="color: #fff;">${m.markPx ? `$${escapeHtml(formatPerpPx(m.markPx))}` : '--'}</strong>
             <span class="${chgCls}" style="font-size: 11px;">${escapeHtml(chgStr)}</span>
           </div>
-        </button>
+        </div>
       `;
     }).join('');
   }

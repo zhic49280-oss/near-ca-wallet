@@ -1623,7 +1623,7 @@ test('Module 7: Parent-token aggregation filters zero-balance spam, keeps core t
     // USDC (0 balance across all chains) is hidden completely
     assert.equal(bySym.USDC, undefined);
 
-    // Verify expand / collapse UI drawer rendering with ZERO intents.near or '存入 Intents'
+    // Verify Home Unified Asset List renders parent rows that open Token Detail sheet directly (no legacy intents.near or home sub-drawer)
     const prevDoc = globalThis.document;
     const domNodes = {
       'home-unified-asset-list': { innerHTML: '' },
@@ -1635,19 +1635,14 @@ test('Module 7: Parent-token aggregation filters zero-balance spam, keeps core t
       }
     };
     try {
-      uiController.toggleAssetExpand('PRL');
-      assert.equal(state.expandedSymbol, 'PRL');
+      uiController.renderUnifiedAssetList();
       const html = domNodes['home-unified-asset-list'].innerHTML;
-      assert.ok(html.includes('asset-group-card expanded'));
-      assert.ok(html.includes('asset-drawer'));
-      assert.ok(html.includes('asset-sub-row'));
-      assert.ok(html.includes('prl.omft.near'));
-      assert.equal(html.includes('intents.near'), false, 'Home asset drawer must NEVER display intents.near');
-      assert.equal(html.includes('存入 Intents'), false, 'Home asset drawer must NEVER display Deposit to Intents');
-
-      uiController.toggleAssetExpand('PRL');
-      assert.equal(state.expandedSymbol, null);
-      assert.equal(domNodes['home-unified-asset-list'].innerHTML.includes('asset-drawer'), false);
+      assert.ok(html.includes('asset-group-card'));
+      assert.ok(html.includes('data-action="open-token-detail"'));
+      assert.ok(html.includes('data-symbol="PRL"'));
+      assert.equal(html.includes('intents.near'), false, 'Home asset list must NEVER display intents.near');
+      assert.equal(html.includes('存入 Intents'), false, 'Home asset list must NEVER display Deposit to Intents');
+      assert.equal(html.includes('asset-drawer'), false, 'Home asset list must open token detail directly instead of legacy drawer');
     } finally {
       if (prevDoc === undefined) {
         delete globalThis.document;

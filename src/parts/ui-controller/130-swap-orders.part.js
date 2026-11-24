@@ -82,10 +82,19 @@
     card.classList.remove('hidden');
     if ($('swap-order-deposit-addr')) $('swap-order-deposit-addr').textContent = order.depositAddress;
     const friendlyStatus = getSwapOrderStatusLabel(order.status);
+    const pendingFollow = typeof hasPendingSwapFollowUp === 'function' && hasPendingSwapFollowUp(order);
+    const upperSt = String(order.status || '').toUpperCase();
+    const isStage1Done = ['SUCCESS', 'COMPLETED'].includes(upperSt);
     if ($('swap-order-status')) {
-      $('swap-order-status').textContent = order.followUpFailed && order.followUpError
-        ? `${friendlyStatus} · ⚠️ ${order.followUpError}`
-        : friendlyStatus;
+      if (order.followUpFailed && order.followUpError) {
+        $('swap-order-status').textContent = `${friendlyStatus} · ⚠️ ${order.followUpError} (${t('请点击下方按钮继续完成第二阶段兑换', 'Tap Resume below to complete stage 2')})`;
+      } else if (pendingFollow && isStage1Done) {
+        $('swap-order-status').textContent = `${t('阶段 1 已到账 · 正在自动执行阶段 2 兑换...', 'Stage 1 arrived · Executing stage 2 swap...')}`;
+      } else if (pendingFollow) {
+        $('swap-order-status').textContent = `${t('阶段 1/2', 'Stage 1/2')}: ${friendlyStatus} (${t('请保持页面开启，到账后自动执行阶段 2', 'Keep open; stage 2 runs automatically on arrival')})`;
+      } else {
+        $('swap-order-status').textContent = friendlyStatus;
+      }
     }
 
     const txRow = $('swap-order-tx-row');
@@ -115,7 +124,8 @@
 
     const resumeBtn = $('btn-resume-swap-stage');
     if (resumeBtn) {
-      resumeBtn.classList.toggle('hidden', !order.followUpFailed);
+      const showResume = Boolean(order.followUpFailed || (pendingFollow && isStage1Done && !order._followUpInFlight));
+      resumeBtn.classList.toggle('hidden', !showResume);
     }
   }
 

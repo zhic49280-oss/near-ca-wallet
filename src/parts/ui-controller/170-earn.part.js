@@ -756,12 +756,15 @@
 
   let _earnActionInFlight = false;
 
-  async function executeEarnPositionAction(actionType, actionTarget) {
+  async function executeEarnPositionAction(actionType, actionTarget, customAmount = null) {
     if (_earnActionInFlight) return;
     const st = getState();
     const contracts = getContracts();
     const wallet = st.getActiveWallet();
     if (!wallet) return;
+    const parsedCustom = customAmount !== null && customAmount !== undefined && Number.isFinite(Number(customAmount)) && Number(customAmount) > 0
+      ? Number(customAmount)
+      : null;
     const actionLabelMap = {
       near_unstake: `${t('解质押 NEAR', 'Unstake NEAR')} (${actionTarget})`,
       near_withdraw: `${t('提取 NEAR', 'Withdraw NEAR')} (${actionTarget})`,
@@ -781,7 +784,8 @@
       erc4626_unstake: `${t('提取已冷却 sUSDe', 'Unstake sUSDe')}`,
       erc4626_redeem: `${t('赎回金库资产', 'Redeem Vault')}`
     };
-    const authLabel = actionLabelMap[actionType] || t('确认质押赎回操作', 'Confirm Stake Redemption');
+    const baseAuthLabel = actionLabelMap[actionType] || t('确认质押赎回操作', 'Confirm Stake Redemption');
+    const authLabel = parsedCustom ? `${baseAuthLabel} · ${formatBal(parsedCustom, 4)}` : baseAuthLabel;
     const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     if (!(await verifySecurityAuthAsync(wallet, authLabel))) return;
 
@@ -845,20 +849,20 @@
       } else if (actionType === 'aave_withdraw') {
         await ensureEthersLoaded();
         const poolCfg = contracts.findStakingPool ? contracts.findStakingPool(actionTarget) : null;
-        const posAmt = poolCfg ? Number(contracts.resolveWalletPoolTokenBalance?.(wallet, poolCfg) || 0) : 0;
-        res = await contracts.withdrawFromAaveV3({ wallet, poolId: actionTarget, amount: 'max' });
+        const posAmt = parsedCustom || (poolCfg ? Number(contracts.resolveWalletPoolTokenBalance?.(wallet, poolCfg) || 0) : 0);
+        res = await contracts.withdrawFromAaveV3({ wallet, poolId: actionTarget, amount: parsedCustom ? String(parsedCustom) : 'max' });
         recordWalletActivity(wallet, {
           type: 'unstake',
           symbol: poolCfg?.inSymbol || 'USDC',
           chain: poolCfg?.chain || 'eth',
           amount: posAmt,
           txHash: res.txHash,
-          title: `${t('Aave V3 全额提取', 'Aave V3 Withdraw')} · ${actionTarget}`
+          title: `${t('Aave V3 提取', 'Aave V3 Withdraw')} · ${actionTarget}`
         });
         showToast(`✅ ${t('Aave 本息提取已广播', 'Aave V3 withdraw broadcast')}: ${shortenAddr(res.txHash)}`);
       } else if (actionType === 'burrow_withdraw') {
         const [tokContract, decStr] = String(actionTarget || '').split('|');
-        res = await contracts.withdrawFromBurrow({ wallet, tokenContract: tokContract, amount: 'max', decimals: Number(decStr) || 24 });
+        res = await contracts.withdrawFromBurrow({ wallet, tokenContract: tokContract, amount: parsedCustom ? String(parsedCustom) : 'max', decimals: Number(decStr) || 24 });
         const sym = tokContract === 'wrap.near'
           ? 'NEAR'
           : (tokContract.includes('usdt') ? 'USDT' : (tokContract.includes('17208628') ? 'USDC' : 'NEAR'));
@@ -866,9 +870,9 @@
           type: 'unstake',
           symbol: sym,
           chain: 'near',
-          amount: Number(res?.amount || 0),
+          amount: parsedCustom || Number(res?.amount || 0),
           txHash: res.txHash,
-          title: `${t('Burrow 全额提取', 'Burrow Withdraw')} · ${sym}`
+          title: `${t('Burrow 提取', 'Burrow Withdraw')} · ${sym}`
         });
         showToast(`✅ ${t('Burrow 存款提取已广播', 'Burrow withdraw broadcast')}: ${shortenAddr(res.txHash)}`);
       } else if (actionType === 'orhea_claim') {
@@ -885,17 +889,18 @@
         showToast(`✅ ${t('RHEA 领取交易已广播', 'RHEA claim broadcast')}: ${shortenAddr(res.txHash)}`);
       } else if (actionType === 'xrhea_unstake') {
         const [cid, amtStr] = String(actionTarget || '').split('|');
+        const unstakeAmt = parsedCustom || Number(amtStr);
         res = await contracts.unstakeFromNearLst({
           wallet,
           contractId: cid || 'xtoken.rhealab.near',
-          amount: Number(amtStr),
+          amount: unstakeAmt,
           action: 'unstake'
         });
         recordWalletActivity(wallet, {
           type: 'unstake',
           symbol: 'RHEA',
           chain: 'near',
-          amount: Number(amtStr) || 0,
+          amount: unstakeAmt || 0,
           txHash: res.txHash,
           title: t('xRHEA 解质押', 'xRHEA Unstake')
         });
@@ -918,17 +923,18 @@
         showToast(`✅ ${t('RHEA 领取交易已广播', 'RHEA claim broadcast')}: ${shortenAddr(res.txHash)}`);
       } else if (actionType === 'near_lst_unstake') {
         const [cid, amtStr] = String(actionTarget || '').split('|');
+        const unstakeAmt = parsedCustom || Number(amtStr);
         res = await contracts.unstakeFromNearLst({
           wallet,
           contractId: cid,
-          amount: Number(amtStr),
+          amount: unstakeAmt,
           action: 'unstake'
         });
         recordWalletActivity(wallet, {
           type: 'unstake',
           symbol: 'NEAR',
           chain: 'near',
-          amount: Number(amtStr) || 0,
+          amount: unstakeAmt || 0,
           txHash: res.txHash,
           title: `${t('解质押', 'Unstake')} · ${cid}`
         });
@@ -969,17 +975,18 @@
         );
       } else if (actionType === 'lst_exit') {
         const [poolId, amtStr] = String(actionTarget || '').split('|');
+        const exitAmt = parsedCustom || Number(amtStr);
         const poolCfg = contracts.findStakingPool ? contracts.findStakingPool(poolId) : null;
         if (poolCfg && poolCfg.chain !== 'near' && poolCfg.chain !== 'sol') {
           await ensureEthersLoaded();
         }
-        res = await contracts.exitLiquidStakingToken({ wallet, poolId, amount: Number(amtStr) });
+        res = await contracts.exitLiquidStakingToken({ wallet, poolId, amount: exitAmt });
         recordWalletActivity(wallet, {
           type: 'unstake',
           symbol: poolCfg?.outSymbol || 'LST',
           toSymbol: poolCfg?.inSymbol || '',
           chain: poolCfg?.chain || 'sol',
-          amount: Number(amtStr) || 0,
+          amount: exitAmt || 0,
           txHash: res.txHash,
           title: `${t('流动性质押换回', 'Exit LST')} · ${poolCfg?.name || poolId}`
         });
@@ -988,12 +995,12 @@
         await ensureEthersLoaded();
         const poolCfg = contracts.findStakingPool ? contracts.findStakingPool(actionTarget) : null;
         const mode = actionType === 'erc4626_cooldown' ? 'cooldown' : (actionType === 'erc4626_unstake' ? 'unstake' : 'auto');
-        res = await contracts.redeemErc4626Vault({ wallet, poolId: actionTarget, shares: 'max', mode });
+        res = await contracts.redeemErc4626Vault({ wallet, poolId: actionTarget, shares: parsedCustom ? String(parsedCustom) : 'max', mode });
         recordWalletActivity(wallet, {
           type: 'unstake',
           symbol: poolCfg?.inSymbol || 'USDC',
           chain: poolCfg?.chain || 'eth',
-          amount: Number(res?.amount || 0),
+          amount: parsedCustom || Number(res?.amount || 0),
           txHash: res.txHash,
           title: `${poolCfg?.name || actionTarget} (${mode})`
         });

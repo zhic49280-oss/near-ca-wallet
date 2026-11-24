@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { TokenIconBadge } from './TokenIconBadge.jsx';
 
-export function PerpOverviewPanel({ rows = [], emptyText = '', formatPerpPx }) {
+export function PerpOverviewPanel({ rows = [], emptyText = '', formatPerpPx, rowAction = 'open-perp-trade' }) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return (
       <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '14px 0' }}>
@@ -18,7 +18,9 @@ export function PerpOverviewPanel({ rows = [], emptyText = '', formatPerpPx }) {
         const chgStr = Number.isFinite(chg) ? `${isUp ? '+' : ''}${chg.toFixed(2)}%` : '--';
         const px = Number(m.markPx);
         const prev = Number(m.prevDayPx);
-        const delta = (Number.isFinite(px) && Number.isFinite(prev) && prev > 0) ? (px - prev) : null;
+        const delta = (typeof m.priceChange24h === 'number' && Number.isFinite(m.priceChange24h))
+          ? m.priceChange24h
+          : ((Number.isFinite(px) && Number.isFinite(prev) && prev > 0) ? (px - prev) : null);
         const deltaStr = delta !== null && typeof formatPerpPx === 'function'
           ? `${delta >= 0 ? '+' : '-'}$${formatPerpPx(Math.abs(delta))}`
           : '--';
@@ -30,7 +32,7 @@ export function PerpOverviewPanel({ rows = [], emptyText = '', formatPerpPx }) {
             className="perp-overview-row"
             role="button"
             tabIndex={0}
-            data-action="open-perp-trade"
+            data-action={m.rowAction || rowAction}
             data-coin={m.name}
           >
             <div className="flex items-center gap-2 min-w-0 flex-1">

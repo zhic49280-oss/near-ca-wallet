@@ -42,6 +42,9 @@
     else list.unshift(c);
     savePerpFavoriteCoins(list);
     renderPerpView();
+    if ($('sheet-perp-markets')?.classList?.contains('open') && typeof renderPerpMarketsSheet === 'function') {
+      renderPerpMarketsSheet();
+    }
   }
 
   function toggleCurrentPerpFavorite() {

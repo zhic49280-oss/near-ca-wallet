@@ -23,9 +23,15 @@
       midEl.textContent = market && market.markPx ? `$${formatPerpPx(market.markPx)}` : '--';
     }
 
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (!ob || (!ob.bids.length && !ob.asks.length)) {
-      bidsEl.innerHTML = `<div class="perp-ob-row"><span>--</span><span>--</span></div>`;
-      asksEl.innerHTML = `<div class="perp-ob-row"><span>--</span><span>--</span></div>`;
+      if (fw && typeof fw.mountPerpOrderbookSide === 'function') {
+        fw.mountPerpOrderbookSide(bidsEl, { rows: [], side: 'bid', maxSz: 0, fmtObSz: () => '--', formatPerpPx });
+        fw.mountPerpOrderbookSide(asksEl, { rows: [], side: 'ask', maxSz: 0, fmtObSz: () => '--', formatPerpPx });
+      } else {
+        bidsEl.innerHTML = `<div class="perp-ob-row"><span>--</span><span>--</span></div>`;
+        asksEl.innerHTML = `<div class="perp-ob-row"><span>--</span><span>--</span></div>`;
+      }
       if (bidSumEl) bidSumEl.textContent = '--';
       if (askSumEl) askSumEl.textContent = '--';
       if (bidBarEl) bidBarEl.style.width = '50%';
@@ -57,7 +63,6 @@
       const dec = Number.isFinite(szDec) ? Math.max(0, Math.min(5, szDec)) : 3;
       return Number(v || 0).toFixed(v >= 1000 ? Math.min(2, dec) : dec);
     };
-    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (fw && typeof fw.mountPerpOrderbookSide === 'function') {
       fw.mountPerpOrderbookSide(bidsEl, { rows: bidRows, side: 'bid', maxSz: maxBidSz, fmtObSz, formatPerpPx });
       fw.mountPerpOrderbookSide(asksEl, { rows: askRows, side: 'ask', maxSz: maxAskSz, fmtObSz, formatPerpPx });
@@ -114,7 +119,15 @@
         return;
       }
       if (tab === 'positions') {
-        const items = (acct.positions || []).map((p) => ({ ...p, pair: formatPerpDisplayPair(p.coin || '') }));
+        const mktByName = new Map((st.perp.markets || []).map((m) => [m.name, m]));
+        const items = (acct.positions || []).map((p) => {
+          const mkt = mktByName.get(p.coin);
+          return {
+            ...p,
+            pair: formatPerpDisplayPair(p.coin || ''),
+            markPx: (mkt && mkt.markPx) ? mkt.markPx : p.markPx
+          };
+        });
         fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无持仓', 'No open positions'), isEn: st.lang === 'en', formatPerpPx });
         return;
       }
@@ -339,8 +352,14 @@
     if (!listEl) return;
 
     const mkts = Array.isArray(st.perp.markets) ? [...st.perp.markets] : [];
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (mkts.length === 0) {
-      listEl.innerHTML = `<div style="font-size:12px;color:var(--text-muted);text-align:center;padding:20px 0;">${escapeHtml(t('正在加载 Hyperliquid 实时合约...', 'Loading Hyperliquid markets...'))}</div>`;
+      const loadingTxt = t('正在加载 Hyperliquid 实时合约...', 'Loading Hyperliquid markets...');
+      if (fw && typeof fw.mountPerpOverview === 'function') {
+        fw.mountPerpOverview(listEl, { rows: [], emptyText: loadingTxt, formatPerpPx });
+      } else {
+        listEl.innerHTML = `<div style="font-size:12px;color:var(--text-muted);text-align:center;padding:20px 0;">${escapeHtml(loadingTxt)}</div>`;
+      }
       return;
     }
 
@@ -374,7 +393,12 @@
     });
 
     if (filtered.length === 0) {
-      listEl.innerHTML = `<div style="font-size:12px;color:var(--text-muted);text-align:center;padding:20px 0;">${escapeHtml(t('暂无匹配合约', 'No matching contracts'))}</div>`;
+      const emptyTxt = t('暂无匹配合约', 'No matching contracts');
+      if (fw && typeof fw.mountPerpOverview === 'function') {
+        fw.mountPerpOverview(listEl, { rows: [], emptyText: emptyTxt, formatPerpPx });
+      } else {
+        listEl.innerHTML = `<div style="font-size:12px;color:var(--text-muted);text-align:center;padding:20px 0;">${escapeHtml(emptyTxt)}</div>`;
+      }
       return;
     }
 
@@ -417,19 +441,21 @@
         </div>
       `;
     };
-    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (fw && typeof fw.mountPerpOverview === 'function') {
-      const favs = new Set(getPerpFavoriteCoins());
+      const favList = getPerpFavoriteCoins();
+      const favsExact = new Set(favList);
+      const favsUpper = new Set(favList.map((x) => String(x || '').toUpperCase()));
       const vmRows = visibleRows.map((m) => {
         const vol = Number(m.dayNtlVlm || 0);
         const volText = vol >= 1e9 ? `$${(vol / 1e9).toFixed(2)}B` : (vol >= 1e6 ? `$${(vol / 1e6).toFixed(2)}M` : (vol >= 1e3 ? `$${(vol / 1e3).toFixed(1)}K` : `$${vol.toFixed(0)}`));
         const dexTag = m.dex ? String(m.dex).toUpperCase() : (typeof extractPerpDexBadge === 'function' ? extractPerpDexBadge(m.name) : '');
+        const coinKey = String(m.name || '');
         return {
           ...m,
           pair: formatPerpDisplayPair(m.name),
           dexTag,
           volText: `${t('24h量', '24h Vol')} ${volText}`,
-          isFav: favs.has(String(m.name || '').toUpperCase())
+          isFav: favsExact.has(coinKey) || favsUpper.has(coinKey.toUpperCase())
         };
       });
       fw.mountPerpOverview(listEl, {

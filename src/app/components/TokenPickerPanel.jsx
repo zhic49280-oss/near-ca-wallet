@@ -5,6 +5,8 @@ export function TokenPickerPanel({
   rows = [],
   emptyText = '',
   favSet = new Set(),
+  showFavoriteBtn = true,
+  useContractAsAssetId = false,
   formatBal,
   formatTokenPrice,
   getSymbolPrice
@@ -22,11 +24,12 @@ export function TokenPickerPanel({
         const tok = row && row.tok ? row.tok : row;
         const bal = row ? row.bal : null;
         const key = (tok && (tok.assetId || tok.contractAddress || `${tok.blockchain}_${tok.symbol}`)) || idx;
+        const selectId = useContractAsAssetId ? (tok.contractAddress || tok.assetId) : tok.assetId;
         const liveP = (typeof tok.price === 'number' && tok.price > 0)
           ? tok.price
           : (typeof getSymbolPrice === 'function' ? getSymbolPrice(tok.symbol) : null);
         const priceText = typeof formatTokenPrice === 'function' ? formatTokenPrice(liveP) : '--';
-        const isFav = favSet && typeof favSet.has === 'function' && favSet.has(String(tok.assetId || '').toLowerCase());
+        const isFav = showFavoriteBtn && favSet && typeof favSet.has === 'function' && favSet.has(String(tok.assetId || '').toLowerCase());
         return (
           <div
             key={key}
@@ -35,7 +38,7 @@ export function TokenPickerPanel({
             tabIndex={0}
             style={{ width: '100%', cursor: 'pointer', textAlign: 'left' }}
             data-action="select-swap-token"
-            data-asset-id={tok.assetId}
+            data-asset-id={selectId}
           >
             <div className="asset-sub-info">
               <TokenIconBadge
@@ -56,24 +59,26 @@ export function TokenPickerPanel({
                 <span className="asset-sub-bal">{typeof formatBal === 'function' ? formatBal(bal, 5) : '--'}</span>
                 <span className="asset-sub-tag">{priceText}</span>
               </div>
-              <button
-                type="button"
-                style={{
-                  color: isFav ? '#F59E0B' : 'var(--text-muted)',
-                  fontSize: '16px',
-                  padding: '4px 6px',
-                  background: 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
-                  lineHeight: 1
-                }}
-                data-action="toggle-fav-token"
-                data-stop="1"
-                data-asset-id={tok.assetId}
-                aria-label="Favorite"
-              >
-                {isFav ? '★' : '☆'}
-              </button>
+              {showFavoriteBtn && (
+                <button
+                  type="button"
+                  style={{
+                    color: isFav ? '#F59E0B' : 'var(--text-muted)',
+                    fontSize: '16px',
+                    padding: '4px 6px',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    lineHeight: 1
+                  }}
+                  data-action="toggle-fav-token"
+                  data-stop="1"
+                  data-asset-id={tok.assetId}
+                  aria-label="Favorite"
+                >
+                  {isFav ? '★' : '☆'}
+                </button>
+              )}
             </div>
           </div>
         );

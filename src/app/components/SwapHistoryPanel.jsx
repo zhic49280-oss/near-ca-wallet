@@ -15,12 +15,6 @@ function formatBalShort(val, dp = 6) {
   return Number(n.toFixed(dp)).toString();
 }
 
-function shortenHash(hStr) {
-  const s = String(hStr || '');
-  if (s.length <= 12) return s;
-  return `${s.slice(0, 4)}...${s.slice(-4)}`;
-}
-
 function formatRelTime(tsSec, isEn) {
   if (!tsSec || !Number.isFinite(Number(tsSec))) return '';
   const diff = Math.floor(Date.now() / 1000) - Number(tsSec);
@@ -60,14 +54,16 @@ export function SwapHistoryPanel({ getStatusLabel }) {
   return (
     <div className="flex flex-col gap-2">
       {items.map((it, idx) => {
-        const pairLabel = it.toSymbol ? `${it.symbol || ''} ➔ ${it.toSymbol}` : (it.title || (isEn ? 'Swap' : '闪兑'));
+        const pairLabel = it.toSymbol
+          ? `${isEn ? 'Swap' : '闪兑'} ${it.symbol || ''} ➔ ${it.toSymbol}`
+          : (it.title || (isEn ? 'Swap' : '闪兑'));
         const amtText = (typeof it.amount === 'number' && Number.isFinite(it.amount))
-          ? `${formatBalShort(it.amount, 6)} ${it.symbol || ''}`
+          ? `-${formatBalShort(it.amount, 6)} ${it.symbol || ''}`
           : '--';
         const chainMeta = it.chain && typeof tokens.getChainMeta === 'function' ? tokens.getChainMeta(it.chain) : null;
         const netTag = chainMeta ? chainMeta.shortName : (it.chain ? String(it.chain).toUpperCase() : '');
         const relTime = formatRelTime(it.timestamp, isEn);
-        let statusText = isEn ? 'Broadcast' : '已广播';
+        let statusText = isEn ? 'Confirmed' : '已确认';
         if (activeOrder && it.txHash && activeOrder.originTxHash === it.txHash && activeOrder.status) {
           statusText = typeof getStatusLabel === 'function'
             ? getStatusLabel(activeOrder.status)
@@ -85,18 +81,20 @@ export function SwapHistoryPanel({ getStatusLabel }) {
             <div className="flex items-center gap-2" style={{ minWidth: 0, flex: 1 }}>
               <span className="tx-dir-circle swap">⇄</span>
               <div className="flex flex-col" style={{ minWidth: 0, flex: 1, gap: '2px' }}>
-                <div className="flex items-center gap-1" style={{ flexWrap: 'wrap' }}>
-                  <span className="mono" style={{ fontSize: '12.5px', fontWeight: 700, color: '#f8fafc' }}>{pairLabel}</span>
-                  <span className="tx-conf-pill">{statusText}</span>
-                </div>
-                <span className="mono" style={{ fontSize: '10.5px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {[amtText, netTag].filter(Boolean).join(' · ')}
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {pairLabel}
+                </span>
+                <span className="mono" style={{ fontSize: '11px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {[relTime, netTag].filter(Boolean).join(' · ')}
                 </span>
               </div>
             </div>
-            <div className="flex flex-col" style={{ textAlign: 'right', flexShrink: 0, gap: '2px' }}>
-              <span style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>{relTime}</span>
-              <span style={{ fontSize: '10.5px', color: 'var(--near-emerald)' }}>{it.txHash ? shortenHash(it.txHash) : ''}</span>
+            <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+              <div className="flex flex-col" style={{ textAlign: 'right', gap: '2px' }}>
+                <span className="mono" style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc' }}>{amtText}</span>
+                <span style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>{statusText}</span>
+              </div>
+              <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>›</span>
             </div>
           </button>
         );

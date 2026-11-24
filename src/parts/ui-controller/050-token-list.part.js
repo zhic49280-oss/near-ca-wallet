@@ -387,52 +387,19 @@
   }
 
   function renderAssetGroupCard(g) {
-    const st = getState();
     const tokens = getTokens();
-    const isExpanded = st.expandedSymbol === g.symbolKey;
     const parentIconHtml = tokens.renderTokenIconWithBadge(
       { symbol: g.symbol, blockchain: g.primaryToken ? g.primaryToken.blockchain : '' },
       38,
       false
     );
 
-    const pillsHtml = '';
     const priceText = g.price !== null ? formatTokenPrice(g.price) : '--';
     const totalAmtText = formatBal(g.totalBalance, 5);
     const totalUsdText = g.totalUsd !== null ? formatUsd(g.totalUsd) : '--';
 
-    let drawerHtml = '';
-    if (isExpanded) {
-      drawerHtml = `
-        <div class="asset-drawer">
-          ${g.entries.map((e) => {
-            const iconHtml = tokens.renderTokenIconWithBadge(e.token, 28, true);
-            const cleanNetName = e.blockchain ? (tokens.getChainMeta(e.blockchain)?.name || e.networkName) : e.networkName;
-            const balStr = formatBal(e.balance, 6);
-            return `
-              <div class="asset-sub-row">
-                <div class="asset-sub-info">
-                  ${iconHtml}
-                  <div class="asset-sub-meta">
-                    <span class="asset-sub-name">${escapeHtml(cleanNetName)}</span>
-                  </div>
-                </div>
-                <div class="asset-sub-right">
-                  <span class="asset-sub-bal">${escapeHtml(balStr)} ${escapeHtml(g.symbol)}</span>
-                  <div class="asset-sub-actions">
-                    <button type="button" class="mini-action-btn primary" data-action="quick-swap" data-stop="1" data-asset-id="${escapeHtml(e.assetId)}" data-chain="${escapeHtml(e.blockchain)}" data-contract="${escapeHtml(e.contractAddress || '')}">${t('闪兑', 'Swap')}</button>
-                    <button type="button" class="mini-action-btn" data-action="quick-send" data-stop="1" data-symbol="${escapeHtml(g.symbol)}" data-chain="${escapeHtml(e.blockchain)}" data-asset-id="${escapeHtml(e.assetId)}" data-contract="${escapeHtml(e.contractAddress || '')}">${t('转账', 'Send')}</button>
-                  </div>
-                </div>
-              </div>
-            `;
-          }).join('')}
-        </div>
-      `;
-    }
-
     return `
-      <div class="asset-group-card ${isExpanded ? 'expanded' : ''}">
+      <div class="asset-group-card">
         <button type="button" class="asset-parent-row" data-action="open-token-detail" data-symbol="${escapeHtml(g.symbolKey)}">
           <div class="asset-left">
             ${parentIconHtml}
@@ -441,7 +408,7 @@
                 <span class="asset-symbol">${escapeHtml(g.symbol)}</span>
                 <span class="asset-price">${escapeHtml(priceText)}</span>
               </div>
-              <div class="network-pills-row">${pillsHtml}</div>
+              <div class="network-pills-row"></div>
             </div>
           </div>
           <div class="asset-right">
@@ -449,7 +416,6 @@
             <span class="asset-total-usd">${escapeHtml(totalUsdText)}</span>
           </div>
         </button>
-        ${drawerHtml}
       </div>
     `;
   }
@@ -479,17 +445,14 @@
     const { mainGroups, dustGroups, dustTotalUsd } = partitionDustAssetGroups(groups, HOME_DUST_USD_THRESHOLD);
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (fw && typeof fw.mountAssetList === 'function') {
-      const tokensMod = getTokens();
       fw.mountAssetList(listEl, {
         mainGroups,
         dustGroups,
         dustTotalUsd,
         showDust: Boolean(st.showDustAssets),
-        expandedSymbol: st.expandedSymbol || '',
         formatBal,
         formatTokenPrice,
         formatUsd,
-        getChainName: (e) => (e.blockchain ? (tokensMod.getChainMeta(e.blockchain)?.name || e.networkName) : e.networkName),
         isEn: st.lang === 'en'
       });
       return;
@@ -522,12 +485,6 @@
   function toggleHomeDustAssets() {
     const st = getState();
     st.showDustAssets = !Boolean(st.showDustAssets);
-    renderUnifiedAssetList();
-  }
-
-  function toggleAssetExpand(symbolKey) {
-    const st = getState();
-    st.expandedSymbol = st.expandedSymbol === symbolKey ? null : symbolKey;
     renderUnifiedAssetList();
   }
 

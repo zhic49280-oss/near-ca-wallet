@@ -217,9 +217,6 @@
   }
 
   function confirmWithUserIfSupported(message) {
-    if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      return window.confirm(message);
-    }
     const sig = String(message || '').slice(0, 80);
     const now = Date.now();
     if (_pendingConfirmSig === sig && (now - _pendingConfirmTs) < 8000) {

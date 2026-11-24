@@ -49,6 +49,7 @@
 - **严禁全仓搜索**：`node_modules/`、`dist/`、`android/app/src/main/assets/public/`、`ios/App/App/public/`、生成的 `index.html`、生成的 7 个 `src/*.js`，以及第三方单行压缩库（`ethers.umd.min.js`、`walletconnect.umd.min.js`、`qrcode.min.js`、`bip39-wordlist.js`）。
 
 ### 8.2 项目架构与分片索引（直达目标文件）
+- **权威功能规范文档**：`docs/FEATURES_SPEC.md`（全功能与交互逻辑唯一真相源，任何功能与交互修改必须同步更新此文档并清理废弃僵尸代码）。
 - **运行入口与构建**：`index.html` 按序加载全局 IIFE 脚本与 `src/framework-ui.js`；`scripts/build-parts.js` 拼接分片，`vite.config.mjs` 编译 Preact 组件，`scripts/sync-assets.js` 使用 `esbuild` 压缩并同步 22 个资源到 `dist/`、`android/`、`ios/`；`server.js` 提供本地静态服务与 `/pearl-proxy`、`/kryptex-proxy`；`sw.js` 管理 PWA 离线缓存；`style.css` 存放全局样式。
 - **Preact 框架目录（`src/app/` -> `src/framework-ui.js`）**：`main.jsx`（入口挂载与全局桥接 `window.NearCAFramework`）、`store/useWalletStore.js`（响应式状态订阅）、`components/SwapHistoryPanel.jsx`（闪兑历史组件）。
 - **原生插件（受保护，勿误删）**：Android (`android/app/src/main/{AndroidManifest.xml,java/io/nexus/wallet/{MainActivity,NativeSecurityPlugin}.java}`)；iOS (`ios/App/App/{Info.plist,MainViewController,NativeSecurityPlugin}.swift`)。CI 编译流在 `.github/workflows/{build-android-apk,build-ios-ipa}.yml`。

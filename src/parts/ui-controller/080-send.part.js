@@ -293,9 +293,62 @@
     handleSendAmountInput();
   }
 
-  function updateSendRoutePreview() {
+  let _sendCrossQuoteTimer = null;
+  let _sendCrossQuoteSeq = 0;
+  let _sendCachedCrossQuote = null;
+
+  function scheduleSendCrossQuoteAsync({ wallet, asset, destAsset, recipient, rawAmtStr, feeBps }) {
+    if (_sendCrossQuoteTimer) {
+      clearTimeout(_sendCrossQuoteTimer);
+      _sendCrossQuoteTimer = null;
+    }
+    const intents = getIntents();
+    if (!wallet || !asset || !destAsset || !recipient || !intents || typeof intents.quoteIntentSwapOrWithdraw !== 'function') return;
+    const amountRaw = intents.toBaseUnits(rawAmtStr, asset.decimals || 8);
+    if (!amountRaw || amountRaw === '0') return;
+    const cacheKey = `${wallet.id || ''}|${asset.assetId}|${destAsset.assetId}|${amountRaw}|${recipient}`;
+    if (_sendCachedCrossQuote && _sendCachedCrossQuote.key === cacheKey && (Date.now() - _sendCachedCrossQuote.ts < 15_000)) {
+      return;
+    }
+    const seq = ++_sendCrossQuoteSeq;
+    _sendCrossQuoteTimer = setTimeout(async () => {
+      _sendCrossQuoteTimer = null;
+      const refundTo = getWalletDefaultRecipientForChain(wallet, asset.blockchain) || (wallet.nearNamedAccount || wallet.nearAddress);
+      const q = await intents.quoteIntentSwapOrWithdraw({
+        originAsset: asset.assetId,
+        destinationAsset: destAsset.assetId,
+        amountRaw,
+        slippageBps: 100,
+        recipient,
+        refundTo,
+        depositType: 'ORIGIN_CHAIN',
+        recipientType: 'DESTINATION_CHAIN',
+        appFeeBps: feeBps,
+        dry: true
+      }).catch(() => null);
+      if (seq !== _sendCrossQuoteSeq) return;
+      if (q && q.ok) {
+        const outHuman = q.amountOutFormatted || intents.fromBaseUnits(String(q.amountOut || '0'), destAsset.decimals || 8);
+        _sendCachedCrossQuote = {
+          key: cacheKey,
+          ts: Date.now(),
+          quote: q,
+          destAsset,
+          outHuman: Number(outHuman)
+        };
+        updateSendRoutePreview(false);
+      }
+    }, 350);
+    if (_sendCrossQuoteTimer && typeof _sendCrossQuoteTimer.unref === 'function') {
+      _sendCrossQuoteTimer.unref();
+    }
+  }
+
+  function updateSendRoutePreview(triggerAsyncQuote = true) {
     const previewEl = $('send-route-preview');
     if (!previewEl) return;
+    const st = getState();
+    const wallet = st.getActiveWallet();
     const crypto = getCrypto();
     const intents = getIntents();
     const asset = getSelectedSendAsset();
@@ -340,9 +393,20 @@
     }
     const feeBps = (intents && intents.APP_FEE_CONFIG && Number(intents.APP_FEE_CONFIG.SEND_CROSS_CHAIN_BPS)) ?? 25;
     const feePctText = `${(feeBps / 100).toFixed(2)}%`;
-    const amt = Number($('send-amount-input')?.value || 0);
-    const estText = Number.isFinite(amt) && amt > 0
-      ? ` · ${t('预估到账', 'Est. Receive')}: ~${formatBal(amt * (1 - feeBps / 10000), 6)} ${destAsset.symbol || asset.symbol}`
+    const rawAmtStr = String($('send-amount-input')?.value || '').trim();
+    const amt = Number(rawAmtStr || 0);
+    let estOutNum = Number.isFinite(amt) && amt > 0 ? amt * (1 - feeBps / 10000) : null;
+    if (Number.isFinite(amt) && amt > 0 && wallet && intents && typeof intents.toBaseUnits === 'function') {
+      const amountRaw = intents.toBaseUnits(rawAmtStr, asset.decimals || 8);
+      const cacheKey = `${wallet.id || ''}|${asset.assetId}|${destAsset.assetId}|${amountRaw}|${addr}`;
+      if (_sendCachedCrossQuote && _sendCachedCrossQuote.key === cacheKey && (Date.now() - _sendCachedCrossQuote.ts < 15_000) && Number.isFinite(_sendCachedCrossQuote.outHuman) && _sendCachedCrossQuote.outHuman > 0) {
+        estOutNum = _sendCachedCrossQuote.outHuman;
+      } else if (triggerAsyncQuote) {
+        scheduleSendCrossQuoteAsync({ wallet, asset, destAsset, recipient: addr, rawAmtStr, feeBps });
+      }
+    }
+    const estText = estOutNum !== null && estOutNum > 0
+      ? ` · ${t('预估到账', 'Est. Receive')}: ~${formatBal(estOutNum, 6)} ${destAsset.symbol || asset.symbol}`
       : '';
     previewEl.classList.remove('hidden');
     previewEl.textContent = `${String(asset.blockchain || '').toUpperCase()} ➔ ${String(destAsset.blockchain || targetEvmChain).toUpperCase()} · ${t('跨链服务费', 'Cross-Chain Fee')}: ${feePctText}${estText}`;
@@ -685,18 +749,23 @@
         await contracts.ensureWalletSigningKeysAsync(wallet);
         const amountRaw = intents.toBaseUnits(exactAmt, asset.decimals || 8);
         const refundTo = getWalletDefaultRecipientForChain(wallet, asset.blockchain) || (wallet.nearNamedAccount || wallet.nearAddress);
-        preQuotedCross = await intents.quoteIntentSwapOrWithdraw({
-          originAsset: asset.assetId,
-          destinationAsset: preDestAsset.assetId,
-          amountRaw,
-          slippageBps: 100,
-          recipient,
-          refundTo,
-          depositType: 'ORIGIN_CHAIN',
-          recipientType: 'DESTINATION_CHAIN',
-          appFeeBps: (intents.APP_FEE_CONFIG && intents.APP_FEE_CONFIG.SEND_CROSS_CHAIN_BPS) ?? 25,
-          dry: true
-        });
+        const cacheKey = `${wallet.id || ''}|${asset.assetId}|${preDestAsset.assetId}|${amountRaw}|${recipient}`;
+        if (_sendCachedCrossQuote && _sendCachedCrossQuote.key === cacheKey && (Date.now() - _sendCachedCrossQuote.ts < 15_000) && _sendCachedCrossQuote.quote && _sendCachedCrossQuote.quote.ok) {
+          preQuotedCross = _sendCachedCrossQuote.quote;
+        } else {
+          preQuotedCross = await intents.quoteIntentSwapOrWithdraw({
+            originAsset: asset.assetId,
+            destinationAsset: preDestAsset.assetId,
+            amountRaw,
+            slippageBps: 100,
+            recipient,
+            refundTo,
+            depositType: 'ORIGIN_CHAIN',
+            recipientType: 'DESTINATION_CHAIN',
+            appFeeBps: (intents.APP_FEE_CONFIG && intents.APP_FEE_CONFIG.SEND_CROSS_CHAIN_BPS) ?? 25,
+            dry: true
+          });
+        }
         if (!preQuotedCross.ok) {
           throw new Error(preQuotedCross.error || t('获取跨链转账路由失败', 'Failed to obtain cross-chain route'));
         }
