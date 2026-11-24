@@ -415,7 +415,7 @@
       if (posItems.length > 0) {
         myPosCard.classList.remove('hidden');
         if (myPosCount) myPosCount.textContent = String(posItems.length);
-        myPosList.innerHTML = posItems.map((it) => `
+        setHtmlIfChanged(myPosList, posItems.map((it) => `
           <div class="flex items-center justify-between gap-2" style="padding:6px 8px;border-radius:10px;background:rgba(255,255,255,0.03);">
             <div class="flex items-center gap-2">
               ${tokens.renderTokenIconWithBadge({ symbol: it.symbol, blockchain: it.chain }, 28, true)}
@@ -429,19 +429,19 @@
               ${it.actionType && it.actionTarget ? `<button type="button" class="mini-action-btn" style="padding:4px 8px;font-size:11px;" data-action="earn-pos-action" data-type="${escapeHtml(it.actionType)}" data-target="${escapeHtml(it.actionTarget)}">${escapeHtml(it.actionLabel)}</button>` : ''}
             </div>
           </div>
-        `).join('');
+        `).join(''));
       } else {
         myPosCard.classList.add('hidden');
-        myPosList.innerHTML = '';
+        setHtmlIfChanged(myPosList, '');
       }
     }
 
     const listEl = $('staking-pools-list');
     if (listEl) {
       if (filteredPools.length === 0) {
-        listEl.innerHTML = `<div class="ios-glass-card text-center" style="font-size:12.5px;color:var(--text-secondary);">${escapeHtml(t('未找到匹配的质押池或合约', 'No matching staking pools found'))}</div>`;
+        setHtmlIfChanged(listEl, `<div class="ios-glass-card text-center" style="font-size:12.5px;color:var(--text-secondary);">${escapeHtml(t('未找到匹配的质押池或合约', 'No matching staking pools found'))}</div>`);
       } else {
-        listEl.innerHTML = filteredPools.map((p) => {
+        setHtmlIfChanged(listEl, filteredPools.map((p) => {
           const selected = st.staking.selectedPoolId === p.id;
           const apyStr = formatPoolApyText(p);
           const avail = getEarnPoolAvailableBalance(wallet, p);
@@ -469,7 +469,7 @@
               </div>
             </div>
           `;
-        }).join('');
+        }).join(''));
       }
     }
 

@@ -200,7 +200,15 @@
       _dappSession.pendingApproval = {
         resolve: async (accepted) => {
           _dappSession.pendingApproval = null;
-          closeAllSheets();
+          const approveSheet = $('sheet-dapp-approve');
+          if (approveSheet) {
+            approveSheet.classList.remove('open');
+            approveSheet.setAttribute('aria-hidden', 'true');
+          }
+          const backdrop = $('sheet-backdrop');
+          const stillOpen = typeof document !== 'undefined' && document.querySelector('.bottom-sheet.open');
+          if (backdrop && !stillOpen) backdrop.classList.remove('open');
+          if (typeof syncSheetScrollLock === 'function') syncSheetScrollLock();
           if (!accepted && _dappSession.nativeOpen) {
             await setNativeBrowserOverlayVisible(true);
           }
@@ -255,6 +263,12 @@
 
     try {
       const ethersLib = await ensureEthersLoaded().catch(() => null);
+      const originUrl = (() => {
+        try { return new URL(msg.origin || msg.url || '').origin; } catch (_) { return String(msg.origin || ''); }
+      })();
+      const isTrustedCatalogOrigin = Array.isArray(browserMod.DAPP_CATALOG) && browserMod.DAPP_CATALOG.some((d) => {
+        try { return new URL(d.url).origin === originUrl; } catch (_) { return false; }
+      });
       const result = await browserMod.handleDAppRpcRequest(msg, {
         wallet,
         contracts,
@@ -264,7 +278,7 @@
         url: msg.url || '',
         title: msg.title || '',
         activeEvmChainKey: _dappSession.activeEvmChainKey,
-        autoConnectOrigin: true,
+        autoConnectOrigin: isTrustedCatalogOrigin,
         isOriginConnected: isDAppOriginConnected,
         markOriginConnected: markDAppOriginConnected,
         markOriginDisconnected: markDAppOriginDisconnected,
@@ -335,7 +349,10 @@
 
     try {
       const originUrl = new URL(safeUrl).origin;
-      if (originUrl) {
+      const isCatalogOrigin = Array.isArray(browserMod.DAPP_CATALOG) && browserMod.DAPP_CATALOG.some((d) => {
+        try { return new URL(d.url).origin === originUrl; } catch (_) { return false; }
+      });
+      if (originUrl && isCatalogOrigin) {
         markDAppOriginConnected(originUrl, 'evm');
         markDAppOriginConnected(originUrl, 'solana');
         markDAppOriginConnected(originUrl, 'near');

@@ -733,6 +733,24 @@
       let authReason = `${t('确认发送', 'Confirm send')} ${exactAmt} ${asset.symbol}`;
 
       if (!isSameChain) {
+        const existingOrder = st.swap && st.swap.activeOrder;
+        const hasPendingMultiStage = existingOrder && existingOrder.walletId === wallet.id && (
+          existingOrder.followUpConfidentialSwap ||
+          existingOrder.followUpRefSwap ||
+          existingOrder.followUpDclSwap ||
+          existingOrder.followUpSolDexSwap ||
+          existingOrder.followUpEvmDexSwap ||
+          existingOrder.followUpArcRelay ||
+          existingOrder.followUpArcDexSwap ||
+          existingOrder.followUpBaseOneClick ||
+          existingOrder.followUpBridgeOut
+        ) && !existingOrder.followUpExecuted && (
+          existingOrder.followUpFailed ||
+          !['SUCCESS', 'COMPLETED', 'FAILED', 'REFUNDED'].includes(String(existingOrder.status || '').toUpperCase())
+        );
+        if (hasPendingMultiStage) {
+          throw new Error(t('当前有一笔多段闪兑正在执行，请等待完成后再发起跨链发送', 'A multi-step swap is in progress. Please wait for it to finish before sending cross-chain.'));
+        }
         const canBroadcastOrigin =
           asset.blockchain === 'near' ||
           asset.blockchain === 'sol' ||

@@ -51,6 +51,7 @@
     }
     const envelope = await cryptoLib.encryptVaultJsonAsync(secrets, cleanPin);
     wallet.encryptedVault = envelope;
+    wallet._vaultUnlockedInSession = true;
     return envelope;
   }
 
@@ -63,6 +64,7 @@
       for (const k of VAULT_SECRET_FIELDS) {
         if (secrets[k]) wallet[k] = secrets[k];
       }
+      wallet._vaultUnlockedInSession = true;
       return true;
     }
     return false;
@@ -82,6 +84,7 @@
       delete copy.nearBalance;
       delete copy.balance;
       delete copy._needsSelfHealSave;
+      delete copy._vaultUnlockedInSession;
       if (copy.encryptedVault && typeof copy.encryptedVault === 'object' && copy.encryptedVault.ctBase64) {
         for (const k of VAULT_SECRET_FIELDS) {
           delete copy[k];

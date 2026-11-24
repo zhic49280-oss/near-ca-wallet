@@ -1974,3 +1974,125 @@ test('v6.66: FEATURES_SPEC.md, OKX Web3 Tx Detail style, Preact Perp/Icon parity
     globalThis.document = prevDoc;
   }
 });
+
+test('v6.67: Security Auth overlay sheet preservation, DApp MPC yParity recovery & atomic NEAR batch actions, and Send multi-stage swap guard', async () => {
+  const dappBrowser = require('../src/dapp-browser.js');
+  const ethersLib = require('../ethers.umd.min.js');
+  const prevWallets = state.wallets;
+  const prevActiveId = state.activeWalletId;
+  const prevSwap = { ...state.swap };
+  const prevDoc = globalThis.document;
+
+  const domMap = new Map();
+  const getOrMake = (id) => {
+    if (!domMap.has(id)) domMap.set(id, createMockDomElement(id));
+    return domMap.get(id);
+  };
+  globalThis.document = {
+    documentElement: { lang: 'zh-CN', classList: createMockClassList() },
+    getElementById: (id) => getOrMake(id),
+    querySelectorAll: (sel) => {
+      if (sel === '.bottom-sheet.open') {
+        return Array.from(domMap.values()).filter((el) => el.classList && el.classList.contains('open'));
+      }
+      return [];
+    },
+    querySelector: (sel) => {
+      if (sel === '.bottom-sheet.open') {
+        return Array.from(domMap.values()).find((el) => el.classList && el.classList.contains('open')) || null;
+      }
+      return null;
+    },
+    activeElement: null
+  };
+
+  try {
+    // 1. Opening sheet-security-auth overlays on top of an active business sheet without closing it
+    const sendSheet = getOrMake('sheet-send');
+    const authSheet = getOrMake('sheet-security-auth');
+    const backdrop = getOrMake('sheet-backdrop');
+    uiController.openSheet('sheet-send');
+    assert.equal(sendSheet.classList.contains('open'), true);
+    uiController.openSheet('sheet-security-auth');
+    assert.equal(sendSheet.classList.contains('open'), true, 'PIN verification sheet must not close underlying sheet-send');
+    assert.equal(authSheet.classList.contains('open'), true);
+    assert.equal(backdrop.classList.contains('auth-top'), true);
+
+    // 2. DApp Browser MPC personal_sign recovers exact wallet EVM address even if recovery_id is inverted
+    const wallet = new ethersLib.Wallet('0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef');
+    const msg = 'Sign in to Nexus DApp';
+    const digestHex = ethersLib.hashMessage(msg);
+    const rawSig = ethersLib.Signature.from(wallet.signingKey.sign(digestHex));
+    const flippedParity = (rawSig.yParity ^ 1);
+
+    const mockContracts = {
+      ...chainContracts,
+      resolveWalletEvmSender: () => wallet.address,
+      ensureWalletSigningKeysAsync: async (w) => w,
+      requestNearMpcChainSignature: async () => ({
+        mpcSignature: {
+          big_r: { affine_point: `02${rawSig.r.slice(2)}` },
+          s: { scalar: rawSig.s.slice(2) },
+          recovery_id: flippedParity
+        }
+      })
+    };
+
+    const signedHex = await dappBrowser.handleDAppRpcRequest(
+      { namespace: 'evm', method: 'personal_sign', params: [msg, wallet.address], origin: 'https://near.com' },
+      {
+        wallet: { id: 'w_mpc_test', mpcEvmAddress: wallet.address },
+        contracts: mockContracts,
+        crypto: cryptoEngine,
+        ethers: ethersLib,
+        autoConnectOrigin: true,
+        requestApprovalAsync: async () => true,
+        verifyAuthAsync: async () => true
+      }
+    );
+    const recovered = ethersLib.recoverAddress(digestHex, signedHex);
+    assert.equal(recovered.toLowerCase(), wallet.address.toLowerCase(), 'MPC personal_sign must recover exact MPC EVM address even when recovery_id is flipped');
+
+    // 3. DApp Browser NEAR signAndSendTransaction batches multiple actions into a single atomic transaction
+    let batchCalledWith = null;
+    const nearBatchContracts = {
+      ...chainContracts,
+      ensureWalletSigningKeysAsync: async (w) => w,
+      getWalletNearSignerCredentials: () => ({ accountId: 'alice.near', publicKeyStr: 'ed25519:111', privateKeyStr: 'ed25519:222' }),
+      signAndSendNearActionsBatch: async (args) => {
+        batchCalledWith = args;
+        return 'atomic_near_tx_hash_123';
+      }
+    };
+    const nearTxRes = await dappBrowser.handleDAppRpcRequest(
+      {
+        namespace: 'near',
+        method: 'signAndSendTransaction',
+        params: [{
+          receiverId: 'v2.ref-finance.near',
+          actions: [
+            { type: 'FunctionCall', params: { methodName: 'storage_deposit', args: {}, gas: '30000000000000', deposit: '1250000000000000000000' } },
+            { type: 'FunctionCall', params: { methodName: 'swap', args: { actions: [] }, gas: '100000000000000', deposit: '1' } }
+          ]
+        }],
+        origin: 'https://app.rhea.finance'
+      },
+      {
+        wallet: { id: 'w_near_batch', nearNamedAccount: 'alice.near' },
+        contracts: nearBatchContracts,
+        crypto: cryptoEngine,
+        autoConnectOrigin: true,
+        requestApprovalAsync: async () => true,
+        verifyAuthAsync: async () => true
+      }
+    );
+    assert.ok(batchCalledWith, 'signAndSendTransaction must invoke atomic signAndSendNearActionsBatch');
+    assert.equal(batchCalledWith.actions.length, 2, 'Both actions must be bundled in a single NEAR transaction');
+    assert.equal(nearTxRes.txHash, 'atomic_near_tx_hash_123');
+  } finally {
+    state.wallets = prevWallets;
+    state.activeWalletId = prevActiveId;
+    Object.assign(state.swap, prevSwap);
+    globalThis.document = prevDoc;
+  }
+});

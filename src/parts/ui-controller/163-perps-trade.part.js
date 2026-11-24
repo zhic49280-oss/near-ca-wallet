@@ -962,6 +962,7 @@
     const hl = getHyperliquid();
     const wallet = st.getActiveWallet();
     if (!hl || !wallet || !coin || !oid) return;
+    if (!(await verifySecurityAuthAsync(wallet, `${t('撤销合约挂单', 'Cancel perp order')} ${coin} #${oid}`))) return;
     _perpTradeActionBusy = true;
     const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     const prevTxt = btn ? btn.textContent : '';
@@ -994,6 +995,7 @@
     if (!hl || !wallet || !st.perp.account) return;
     const amt = Number(st.perp.account.spotUsdc || 0);
     if (amt <= 0) return;
+    if (!(await verifySecurityAuthAsync(wallet, `${t('现货划转至合约账户', 'Transfer Spot to Perp')} ${formatBal(amt, 4)} USDC`))) return;
     _perpTradeActionBusy = true;
     const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     const prevTxt = btn ? btn.textContent : '';

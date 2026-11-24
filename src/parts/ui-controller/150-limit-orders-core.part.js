@@ -266,13 +266,12 @@
     st.limit.buyContract = sellToken.contractAddress;
     st.limit.amountIn = '';
     st.limit.targetRate = '';
+    resetFormFields(['limit-amount-in', 'limit-target-rate'], st.limit, { amountIn: '', targetRate: '' });
     st.limit.priceInverted = null;
     st.limit.snappedPoint = null;
     st.limit.evmAllowanceRaw = null;
     st.limit.evmAllowanceFailed = false;
     st.limit.liveMarketRate = st.limit.liveMarketRate && st.limit.liveMarketRate > 0 ? (1 / st.limit.liveMarketRate) : null;
-    if ($('limit-amount-in')) $('limit-amount-in').value = '';
-    if ($('limit-target-rate')) $('limit-target-rate').value = '';
     renderLimitOrderView();
     refreshLimitMarketContextAsync().catch(() => {});
   }

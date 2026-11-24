@@ -347,6 +347,16 @@
       if ($('swap-amount-in')) $('swap-amount-in').value = '';
       if (typeof stopOrderStatusPolling === 'function') stopOrderStatusPolling();
       st.swap.activeOrder = null;
+      if (nextWallet && typeof st.loadActiveSwapOrder === 'function') {
+        const resumedOrder = st.loadActiveSwapOrder();
+        if (resumedOrder && resumedOrder.depositAddress) {
+          const upper = String(resumedOrder.status || '').toUpperCase();
+          const pendingFollow = typeof hasPendingSwapFollowUp === 'function' && hasPendingSwapFollowUp(resumedOrder) && !resumedOrder.followUpFailed;
+          if ((!['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper) || pendingFollow) && typeof startOrderStatusPolling === 'function') {
+            startOrderStatusPolling();
+          }
+        }
+      }
     }
     if (st.mining) {
       st.mining.minerAddress = (nextWallet && nextWallet.address) || '';
@@ -554,8 +564,14 @@
       showToast(t('请输入 4-6 位数字密码', 'Enter a 4-6 digit PIN'));
       return;
     }
-    if (hadPin && !(await verifySecurityAuthAsync(wallet, t('修改钱包安全密码', 'Update wallet PIN')))) return;
-    if (wallet.encryptedVault && wallet.encryptedVault.ctBase64 && !wallet.mnemonic && !wallet.nearPrivateKey) {
+    if (hadPin) {
+      const needVaultDecrypt = Boolean(wallet.encryptedVault && wallet.encryptedVault.ctBase64 && !wallet._vaultUnlockedInSession);
+      const authOk = needVaultDecrypt
+        ? await openPinModalForWalletAsync(wallet, t('请输入旧 PIN 解锁并修改安全密码', 'Enter current PIN to unlock and update'), false)
+        : await verifySecurityAuthAsync(wallet, t('修改钱包安全密码', 'Update wallet PIN'));
+      if (!authOk) return;
+    }
+    if (wallet.encryptedVault && wallet.encryptedVault.ctBase64 && !wallet._vaultUnlockedInSession && !wallet.mnemonic && !wallet.nearPrivateKey) {
       showToast(t('请先输入旧 PIN 解锁钱包密钥后再修改密码', 'Unlock wallet secrets with current PIN before updating'));
       return;
     }

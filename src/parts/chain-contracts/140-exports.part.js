@@ -60,6 +60,7 @@
     signEvmTypedDataUnified,
     viewNearContractCall,
     signAndSendNearFunctionCall,
+    signAndSendNearActionsBatch,
     signAndSendNearTransfer,
     executeNearNep141Transfer,
     getWalletNearSignerCredentials,

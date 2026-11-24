@@ -1062,10 +1062,22 @@
       if (!sigObj || !sigObj.big_r || !sigObj.big_r.affine_point || !sigObj.s || !sigObj.s.scalar) {
         throw buildRpcError(-32603, 'Invalid NEAR MPC signature');
       }
+      const rHex = `0x${sigObj.big_r.affine_point.slice(2, 66)}`;
+      const sHex = `0x${sigObj.s.scalar.padStart(64, '0')}`;
+      const baseParity = Number(sigObj.recovery_id || 0) & 1;
+      const expectedAddr = String(addr || wallet.mpcEvmAddress || wallet.evmAddress || '').toLowerCase();
+      for (const yParity of [baseParity, baseParity ^ 1]) {
+        const sig = ethersLib.Signature.from({ r: rHex, s: sHex, yParity });
+        if (!expectedAddr || typeof ethersLib.recoverAddress !== 'function') return sig.serialized;
+        try {
+          const rec = ethersLib.recoverAddress(`0x${String(digestHex).replace(/^0x/i, '')}`, sig);
+          if (rec && rec.toLowerCase() === expectedAddr) return sig.serialized;
+        } catch (_) {}
+      }
       return ethersLib.Signature.from({
-        r: `0x${sigObj.big_r.affine_point.slice(2, 66)}`,
-        s: `0x${sigObj.s.scalar.padStart(64, '0')}`,
-        yParity: Number(sigObj.recovery_id || 0) & 1
+        r: rHex,
+        s: sHex,
+        yParity: baseParity
       }).serialized;
     }
 
@@ -1296,6 +1308,17 @@
     const actions = Array.isArray(txObj && txObj.actions) ? txObj.actions : [];
     if (!receiverId || !actions.length) {
       throw buildRpcError(-32602, 'NEAR transaction requires receiverId and actions');
+    }
+    if (typeof contracts.signAndSendNearActionsBatch === 'function') {
+      const txHash = await contracts.signAndSendNearActionsBatch({
+        accountId: creds.accountId,
+        publicKeyStr: creds.publicKeyStr,
+        privateKeyStr: creds.privateKeyStr,
+        receiverId,
+        actions,
+        wallet
+      });
+      return { txHash: txHash || '', transactionHashes: txHash ? [txHash] : [] };
     }
     const hashes = [];
     for (const act of actions) {

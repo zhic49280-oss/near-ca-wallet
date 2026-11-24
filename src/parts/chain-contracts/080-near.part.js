@@ -259,6 +259,109 @@
     return out.txHash;
   }
 
+  async function signAndSendNearActionsBatch({
+    accountId,
+    publicKeyStr,
+    privateKeyStr,
+    receiverId,
+    actions = [],
+    wallet = null
+  } = {}) {
+    const resolvedWallet = wallet ? await ensureWalletSigningKeysAsync(wallet) : null;
+    const creds = getWalletNearSignerCredentials(resolvedWallet);
+    const sender = accountId || creds.accountId;
+    const pub = publicKeyStr || creds.publicKeyStr;
+    const priv = privateKeyStr || creds.privateKeyStr;
+    if (!sender || !pub || !priv || !receiverId) {
+      throw new Error(t('缺少 NEAR 交易签名参数', 'Missing NEAR transaction signing parameters'));
+    }
+    const list = Array.isArray(actions) ? actions : [];
+    if (!list.length) {
+      throw new Error(t('NEAR 交易至少需要一个 Action', 'NEAR transaction requires at least one action'));
+    }
+    const encodedList = [];
+    for (const act of list) {
+      const kind = String((act && (act.type || (act.functionCall ? 'FunctionCall' : (act.transfer ? 'Transfer' : (act.addKey ? 'AddKey' : (act.deleteKey ? 'DeleteKey' : (act.deleteAccount ? 'DeleteAccount' : (act.stake ? 'Stake' : '')))))))) || '').toLowerCase();
+      const body = (act && (act.params || act.functionCall || act.transfer || act.addKey || act.deleteKey || act.deleteAccount || act.stake || act)) || {};
+      if (kind === 'transfer') {
+        const yocto = body.deposit !== undefined || body.amountYocto !== undefined
+          ? String(body.deposit ?? body.amountYocto ?? '0')
+          : toBaseUnits(String(body.amountNear || '0'), 24);
+        encodedList.push(concatUint8Arrays([
+          new Uint8Array([3]), // Action::Transfer
+          encodeU128LE(yocto)
+        ]));
+      } else if (kind === 'addkey') {
+        const newPub = String(body.publicKey || body.newPublicKeyStr || '');
+        const accessKey = body.accessKey || {};
+        const perm = accessKey.permission;
+        if (!perm || perm === 'FullAccess' || perm.fullAccess !== undefined) {
+          encodedList.push(buildAddKeyActionBytes({ newPublicKeyStr: newPub, permission: 'FullAccess' }));
+        } else {
+          const fnPerm = perm.FunctionCall || perm.functionCall || perm;
+          const allowanceStr = fnPerm.allowance !== undefined && fnPerm.allowance !== null ? String(fnPerm.allowance) : null;
+          const allowanceBytes = allowanceStr !== null && BigInt(allowanceStr) > 0n
+            ? concatUint8Arrays([new Uint8Array([1]), encodeU128LE(allowanceStr)])
+            : new Uint8Array([0]);
+          const recvBytes = encodeBorshString(String(fnPerm.receiverId || fnPerm.receiver_id || receiverId));
+          const mNames = Array.isArray(fnPerm.methodNames || fnPerm.method_names) ? (fnPerm.methodNames || fnPerm.method_names) : [];
+          const mChunks = [encodeU32LE(mNames.length)];
+          for (const m of mNames) mChunks.push(encodeBorshString(String(m)));
+          encodedList.push(concatUint8Arrays([
+            new Uint8Array([5]), // Action::AddKey
+            encodeNearPublicKeyBorsh(newPub),
+            encodeU64LE(0n),
+            new Uint8Array([0]), // AccessKeyPermission::FunctionCall
+            allowanceBytes,
+            recvBytes,
+            concatUint8Arrays(mChunks)
+          ]));
+        }
+      } else if (kind === 'deletekey') {
+        const targetPub = String(body.publicKey || body.targetPublicKeyStr || '');
+        encodedList.push(buildDeleteKeyActionBytes({ targetPublicKeyStr: targetPub }));
+      } else if (kind === 'deleteaccount') {
+        encodedList.push(buildDeleteAccountActionBytes({ beneficiaryId: body.beneficiaryId || body.beneficiary_id }));
+      } else if (kind === 'stake') {
+        const stakeYocto = String(body.stake || body.deposit || '0');
+        const stakePub = String(body.publicKey || pub);
+        encodedList.push(concatUint8Arrays([
+          new Uint8Array([4]), // Action::Stake
+          encodeU128LE(stakeYocto),
+          encodeNearPublicKeyBorsh(stakePub)
+        ]));
+      } else if (kind === 'createaccount') {
+        encodedList.push(new Uint8Array([0])); // Action::CreateAccount
+      } else {
+        const methodName = String(body.methodName || '');
+        if (!methodName) {
+          throw new Error(t('不支持的无方法名 NEAR Action', 'Unsupported NEAR action without methodName'));
+        }
+        const argsVal = body.args !== undefined ? body.args : (body.argsJson || '{}');
+        const argsBytes = argsVal instanceof Uint8Array
+          ? argsVal
+          : new TextEncoder().encode(typeof argsVal === 'string' ? argsVal : JSON.stringify(argsVal || {}));
+        encodedList.push(concatUint8Arrays([
+          new Uint8Array([2]), // Action::FunctionCall
+          encodeBorshString(methodName),
+          encodeU32LE(argsBytes.length),
+          argsBytes,
+          encodeU64LE(String(body.gas || '50000000000000')),
+          encodeU128LE(String(body.deposit || '0'))
+        ]));
+      }
+    }
+    const out = await buildSignAndBroadcastNearActionsWithOutcome({
+      accountId: sender,
+      publicKeyStr: pub,
+      privateKeyStr: priv,
+      receiverId,
+      actionsBytes: concatUint8Arrays(encodedList),
+      actionCount: encodedList.length
+    });
+    return out.txHash;
+  }
+
   async function signAndSendNearTransfer({
     accountId,
     publicKeyStr,

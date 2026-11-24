@@ -250,16 +250,16 @@
     };
 
     if (st.limit.rateLimited && items.length === 0) {
-      listEl.innerHTML = `<div class="text-center" style="padding: 14px; font-size: 12px; color: var(--text-secondary);">${t('CoW API 请求频繁，请稍后刷新', 'CoW API rate limited; refresh shortly')}</div>`;
+      setHtmlIfChanged(listEl, `<div class="text-center" style="padding: 14px; font-size: 12px; color: var(--text-secondary);">${t('CoW API 请求频繁，请稍后刷新', 'CoW API rate limited; refresh shortly')}</div>`);
       return;
     }
     if (!Array.isArray(items) || items.length === 0) {
-      listEl.innerHTML = `<div class="text-center" style="padding: 14px; font-size: 12px; color: var(--text-secondary);">${isHistory ? t('暂无历史挂单', 'No order history') : t('暂无进行中的限价单', 'No active limit orders')}</div>`;
+      setHtmlIfChanged(listEl, `<div class="text-center" style="padding: 14px; font-size: 12px; color: var(--text-secondary);">${isHistory ? t('暂无历史挂单', 'No order history') : t('暂无进行中的限价单', 'No active limit orders')}</div>`);
       return;
     }
 
     if (chain === 'near') {
-      listEl.innerHTML = items.slice(0, 20).map((o) => {
+      setHtmlIfChanged(listEl, items.slice(0, 20).map((o) => {
         const sellMeta = findMeta(o.sell_token);
         const buyMeta = findMeta(o.buy_token);
         const orig = Number(contracts.fromBaseUnits(o.original_amount || o.original_deposit_amount || '0', sellMeta.decimals));
@@ -291,12 +291,12 @@
             ` : ''}
           </div>
         `;
-      }).join('');
+      }).join(''));
       return;
     }
 
     if (chain === 'sol') {
-      listEl.innerHTML = items.slice(0, 20).map((o) => {
+      setHtmlIfChanged(listEl, items.slice(0, 20).map((o) => {
         const sellMeta = findMeta(o.inputMint);
         const buyMeta = findMeta(o.outputMint);
         const make = Number(contracts.fromBaseUnits(o.makingAmount || '0', sellMeta.decimals));
@@ -323,11 +323,11 @@
             ` : ''}
           </div>
         `;
-      }).join('');
+      }).join(''));
       return;
     }
 
-    listEl.innerHTML = items.slice(0, 20).map((o) => {
+    setHtmlIfChanged(listEl, items.slice(0, 20).map((o) => {
       const sellMeta = findMeta(o.sellToken);
       const buyMeta = findMeta(o.buyToken);
       const sellAmt = Number(contracts.fromBaseUnits(o.sellAmount || '0', sellMeta.decimals));
@@ -353,7 +353,7 @@
           ` : ''}
         </div>
       `;
-    }).join('');
+    }).join(''));
   }
 
   async function wrapNativeForLimitUI() {

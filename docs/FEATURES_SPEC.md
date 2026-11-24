@@ -116,4 +116,7 @@
 2. **存储押金与租金回收**：
    - **Solana 租金回收 (`sheet-sol-rent`)**：扫描 0 余额闲置 SPL 代币账户 (ATA)，勾选一键关闭并退回 `~0.00204 SOL/个`；
    - **NEAR 存储押金回收 (`sheet-near-storage`)**：扫描 0 余额且无 DCL 挂单的 NEP-141 合约，一键注销退回存储 NEAR。
-3. **矿机遥测 (`sheet-mining-pro`)、DApp 浏览器 (`sheet-dapp-browser`)、联系人地址簿 (`sheet-contacts`) 与生物识别/PIN 锁 (`010-security.part.js`)**。
+3. **矿机遥测 (`sheet-mining-pro`)、DApp 浏览器 (`sheet-dapp-browser`)、联系人地址簿 (`sheet-contacts`) 与生物识别/PIN 锁 (`010-security.part.js`)**：
+   - **安全验证弹窗叠加机制 (`sheet-security-auth`)**：在任意业务底部弹窗（如发送、质押、合约出入金、止盈止损、WalletConnect、DApp 审批）内触发交易 PIN 码验证时，`sheet-security-auth` 以高层级 (`z-index: 10010`) 叠加在原业务弹窗上方，验证完成或取消后仅关闭 PIN 弹窗，严禁销毁底层正在操作的业务弹窗；
+   - **密钥金库 (`encryptedVault`) 会话解锁校验**：修改或清除 PIN 码前，若当前会话尚未通过旧 PIN 解密 `encryptedVault`，必须强制要求输入旧 PIN 码完整解密全部链私钥至内存后方可重加密或清除金库；
+   - **内置 DApp 浏览器安全边界**：内置生态白名单 (`DAPP_CATALOG`) 支持免弹窗快速连接；手动输入的外部未知域名必须经过 `sheet-dapp-approve` 明确授权后方可获取钱包地址；NEAR `signAndSendTransaction` 多 Action 请求通过 `signAndSendNearActionsBatch` 原子打包进单笔链上交易签名广播；EVM `personal_sign` 通过 NEAR MPC 签名后自动执行 `yParity` 地址恢复校验。

@@ -377,7 +377,9 @@
   }
 
   function isWalletVaultLocked(wallet) {
-    return Boolean(wallet && wallet.encryptedVault && wallet.encryptedVault.ctBase64 && !wallet.mnemonic && !wallet.nearPrivateKey);
+    if (!wallet || !wallet.encryptedVault || !wallet.encryptedVault.ctBase64) return false;
+    if (wallet._vaultUnlockedInSession) return false;
+    return Boolean(!wallet.mnemonic && !wallet.nearPrivateKey);
   }
 
   function isAppLocked() {

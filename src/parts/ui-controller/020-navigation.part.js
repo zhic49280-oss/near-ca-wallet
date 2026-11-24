@@ -77,7 +77,7 @@
       _secAuthState = { resolve: null, wallet: null, reason: '', pinBuffer: '', expectedLen: 6 };
       pending(false);
     }
-    if (typeof document !== 'undefined') {
+    if (typeof document !== 'undefined' && sheetId !== 'sheet-security-auth') {
       document.querySelectorAll('.bottom-sheet.open').forEach((s) => {
         if (s.id !== sheetId) {
           s.classList.remove('open');
@@ -85,7 +85,12 @@
         }
       });
     }
-    if (backdrop) backdrop.classList.add('open');
+    if (backdrop) {
+      backdrop.classList.add('open');
+      if (sheetId === 'sheet-security-auth') {
+        backdrop.classList.add('auth-top');
+      }
+    }
     if (sheet) {
       sheet.classList.add('open');
       sheet.setAttribute('aria-hidden', 'false');
@@ -98,9 +103,14 @@
     const st = getState();
     if (st && st.limit) st.limit.pickerSide = null;
     if (typeof _secAuthState.resolve === 'function') {
-      const pending = _secAuthState.resolve;
-      _secAuthState = { resolve: null, wallet: null, reason: '', pinBuffer: '', expectedLen: 6, verifying: false };
-      pending(false);
+      if (typeof cancelSecurityAuthModal === 'function') {
+        cancelSecurityAuthModal();
+      } else {
+        const pending = _secAuthState.resolve;
+        _secAuthState = { resolve: null, wallet: null, reason: '', pinBuffer: '', expectedLen: 6, verifying: false };
+        pending(false);
+      }
+      return;
     }
     _backupRevealActive = false;
     const backupContent = $('backup-keys-content');
