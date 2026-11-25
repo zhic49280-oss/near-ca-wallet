@@ -99,6 +99,7 @@
     const breakdownCard = $('token-detail-breakdown-card');
     const breakdownList = $('token-detail-breakdown-list');
     if (breakdownCard && breakdownList) {
+      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
       if (chainFilter === 'all') {
         breakdownCard.classList.remove('hidden');
         const sortedEntries = [...group.entries].sort((a, b) => {
@@ -106,29 +107,43 @@
           const bb = typeof b.balance === 'number' ? b.balance : -1;
           return bb - ba;
         });
-        breakdownList.innerHTML = sortedEntries.map((e) => {
-          const meta = tokens.getChainMeta(e.blockchain);
-          const cleanNetName = meta.name || e.networkName;
-          const balStr = formatBal(e.balance, 6);
-          return `
-            <div class="detail-row-item">
-              <div class="flex items-center gap-2" style="min-width:0;flex:1;">
-                ${tokens.renderTokenIconWithBadge(e.token, 28, true)}
-                <div class="flex flex-col" style="min-width:0;">
-                  <span style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(cleanNetName)}</span>
-                  <span class="mono" style="font-size:11.5px;color:var(--text-secondary);">${escapeHtml(balStr)} ${escapeHtml(group.symbol)}</span>
+        if (fw && typeof fw.mountTokenBreakdownPanel === 'function') {
+          fw.mountTokenBreakdownPanel(breakdownList, {
+            entries: sortedEntries,
+            symbol: group.symbol,
+            isEn: st.lang === 'en',
+            formatBal,
+            getChainMeta: (bc) => tokens.getChainMeta(bc)
+          });
+        } else {
+          breakdownList.innerHTML = sortedEntries.map((e) => {
+            const meta = tokens.getChainMeta(e.blockchain);
+            const cleanNetName = meta.name || e.networkName;
+            const balStr = formatBal(e.balance, 6);
+            return `
+              <div class="detail-row-item">
+                <div class="flex items-center gap-2" style="min-width:0;flex:1;">
+                  ${tokens.renderTokenIconWithBadge(e.token, 28, true)}
+                  <div class="flex flex-col" style="min-width:0;">
+                    <span style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(cleanNetName)}</span>
+                    <span class="mono" style="font-size:11.5px;color:var(--text-secondary);">${escapeHtml(balStr)} ${escapeHtml(group.symbol)}</span>
+                  </div>
+                </div>
+                <div class="flex gap-1" style="flex-shrink:0;">
+                  <button type="button" class="mini-action-btn primary" data-action="detail-swap" data-asset-id="${escapeHtml(e.assetId)}" data-chain="${escapeHtml(e.blockchain)}" data-contract="${escapeHtml(e.contractAddress || '')}">${escapeHtml(t('闪兑', 'Swap'))}</button>
+                  <button type="button" class="mini-action-btn" data-action="detail-send" data-symbol="${escapeHtml(group.symbol)}" data-chain="${escapeHtml(e.blockchain)}" data-asset-id="${escapeHtml(e.assetId)}" data-contract="${escapeHtml(e.contractAddress || '')}">${escapeHtml(t('转账', 'Send'))}</button>
                 </div>
               </div>
-              <div class="flex gap-1" style="flex-shrink:0;">
-                <button type="button" class="mini-action-btn primary" data-action="detail-swap" data-asset-id="${escapeHtml(e.assetId)}" data-chain="${escapeHtml(e.blockchain)}" data-contract="${escapeHtml(e.contractAddress || '')}">${escapeHtml(t('闪兑', 'Swap'))}</button>
-                <button type="button" class="mini-action-btn" data-action="detail-send" data-symbol="${escapeHtml(group.symbol)}" data-chain="${escapeHtml(e.blockchain)}" data-asset-id="${escapeHtml(e.assetId)}" data-contract="${escapeHtml(e.contractAddress || '')}">${escapeHtml(t('转账', 'Send'))}</button>
-              </div>
-            </div>
-          `;
-        }).join('');
+            `;
+          }).join('');
+        }
       } else {
         breakdownCard.classList.add('hidden');
-        breakdownList.innerHTML = '';
+        if (fw && typeof fw.mountTokenBreakdownPanel === 'function') {
+          fw.mountTokenBreakdownPanel(breakdownList, { entries: [], symbol: group.symbol, isEn: st.lang === 'en' });
+        } else {
+          breakdownList.innerHTML = '';
+        }
       }
     }
 

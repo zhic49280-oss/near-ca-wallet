@@ -115,13 +115,29 @@
     }
   }
 
+  function renderSwapRouteDisplay(routeText = '--', quoting = false, errorText = '') {
+    const routeEl = $('swap-quote-route');
+    if (!routeEl) return;
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountSwapRouteInfoPanel === 'function') {
+      fw.mountSwapRouteInfoPanel(routeEl, {
+        routeText,
+        quoting,
+        errorText,
+        isEn: getState().lang === 'en'
+      });
+      return;
+    }
+    routeEl.textContent = errorText || (quoting ? t('多池比价中...', 'Comparing pools...') : (routeText || '--'));
+  }
+
   function resetSwapQuoteDisplay() {
     const st = getState();
     st.swap.amountOut = '';
     st.swap.quoteData = null;
     st.swap._quoteRateOutPerIn = null;
     if ($('swap-amount-out')) $('swap-amount-out').value = '';
-    if ($('swap-quote-route')) $('swap-quote-route').textContent = '--';
+    renderSwapRouteDisplay('--', false, '');
     if ($('swap-quote-fee')) $('swap-quote-fee').textContent = '--';
     if ($('swap-usd-out')) $('swap-usd-out').textContent = '--';
     const wallet = st.getActiveWallet();
@@ -255,7 +271,7 @@
     }
     st.swap._lastError = text;
     if (text && routeEl && (!routeEl.textContent || routeEl.textContent === '--' || routeEl.textContent.includes('比价') || routeEl.textContent.includes('Comparing'))) {
-      routeEl.textContent = text;
+      renderSwapRouteDisplay('--', false, text);
     }
     updateSwapPrimaryButtonState();
   }
@@ -349,7 +365,7 @@
         ? cached.rateOutPerIn
         : (amt > 0 && cached.grossOutNum > 0 ? cached.grossOutNum / amt : null);
       if ($('swap-amount-out')) $('swap-amount-out').value = netOutText;
-      if ($('swap-quote-route')) $('swap-quote-route').textContent = cached.quoteSource;
+      renderSwapRouteDisplay(cached.quoteSource, false, '');
       if ($('swap-auto-route-badge')) {
         $('swap-auto-route-badge').textContent = cached.quoteSource;
         $('swap-auto-route-badge').title = cached.quoteSource;
@@ -402,7 +418,7 @@
       st.swap.amountOut = amtOutText;
       st.swap._quoteRateOutPerIn = rateOutPerIn;
       if ($('swap-amount-out')) $('swap-amount-out').value = amtOutText;
-      if ($('swap-quote-route')) $('swap-quote-route').textContent = quoteSource;
+      renderSwapRouteDisplay(quoteSource, false, '');
       if ($('swap-auto-route-badge')) {
         $('swap-auto-route-badge').textContent = quoteSource;
         $('swap-auto-route-badge').title = quoteSource;
@@ -420,7 +436,7 @@
 
     st.swap._quoting = true;
     st.swap._lastError = '';
-    if ($('swap-quote-route')) $('swap-quote-route').textContent = t('多池比价中...', 'Comparing pools...');
+    renderSwapRouteDisplay('--', true, '');
     updateSwapPrimaryButtonState();
 
     try {

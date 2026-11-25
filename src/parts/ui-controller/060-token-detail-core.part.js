@@ -391,12 +391,27 @@
     if (!listEl) return;
 
     const items = Array.isArray(modal.items) ? modal.items : [];
+    const tokens = getTokens();
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountTxHistorySheetPanel === 'function') {
+      fw.mountTxHistorySheetPanel(listEl, {
+        items,
+        fallbackSym: _tokenDetailState.symbolKey || '',
+        isEn: st.lang === 'en',
+        resolveTxDisplayParts,
+        formatActivityTime,
+        formatTxConfirmBadgeText,
+        getChainMeta: (bc) => (tokens && typeof tokens.getChainMeta === 'function' ? tokens.getChainMeta(bc) : null),
+        getExplorerTxUrl,
+        isValidHttpsUrl,
+        shortenAddr
+      });
+      return;
+    }
     if (items.length === 0) {
       listEl.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:24px 0;">${escapeHtml(t('暂无交易记录', 'No transactions found'))}</div>`;
       return;
     }
-
-    const tokens = getTokens();
     listEl.innerHTML = items.slice(0, 40).map((it, idx) => {
       const parts = resolveTxDisplayParts(it, it.symbol || _tokenDetailState.symbolKey || '');
       const confBadge = formatTxConfirmBadgeText(it);
@@ -441,6 +456,21 @@
     const tokens = getTokens();
     const modal = st.txModal || {};
     const it = modal.currentItem;
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountTxDetailPanel === 'function') {
+      fw.mountTxDetailPanel(body, {
+        item: it || null,
+        fallbackSym: _tokenDetailState.symbolKey || '',
+        isEn: st.lang === 'en',
+        resolveTxDisplayParts,
+        formatFullActivityTime,
+        getChainMeta: (bc) => (tokens && typeof tokens.getChainMeta === 'function' ? tokens.getChainMeta(bc) : null),
+        getExplorerTxUrl,
+        isValidHttpsUrl,
+        shortenAddr
+      });
+      return;
+    }
     if (!it) {
       body.innerHTML = '';
       return;

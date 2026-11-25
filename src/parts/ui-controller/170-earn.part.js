@@ -427,10 +427,14 @@
           });
         }
       }
+      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
       if (posItems.length > 0) {
         myPosCard.classList.remove('hidden');
         if (myPosCount) myPosCount.textContent = String(posItems.length);
-        setHtmlIfChanged(myPosList, posItems.map((it) => `
+        if (fw && typeof fw.mountEarnValidatorsPanel === 'function') {
+          fw.mountEarnValidatorsPanel(myPosList, { items: posItems, isEn: st.lang === 'en' });
+        } else {
+          setHtmlIfChanged(myPosList, posItems.map((it) => `
           <div class="flex items-center justify-between gap-2" style="padding:6px 8px;border-radius:10px;background:rgba(255,255,255,0.03);">
             <div class="flex items-center gap-2">
               ${tokens.renderTokenIconWithBadge({ symbol: it.symbol, blockchain: it.chain }, 28, true)}
@@ -445,9 +449,14 @@
             </div>
           </div>
         `).join(''));
+        }
       } else {
         myPosCard.classList.add('hidden');
-        setHtmlIfChanged(myPosList, '');
+        if (fw && typeof fw.mountEarnValidatorsPanel === 'function') {
+          fw.mountEarnValidatorsPanel(myPosList, { items: [], isEn: st.lang === 'en' });
+        } else {
+          setHtmlIfChanged(myPosList, '');
+        }
       }
     }
 
@@ -529,11 +538,20 @@
     const lockRow = $('earn-lock-row');
     const lockTiersEl = $('earn-lock-tiers');
     if (lockRow && lockTiersEl) {
+      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
       if (activePool.isLockConvert) {
         lockRow.classList.remove('hidden');
         const tiers = Array.isArray(activePool.lockTiers) ? activePool.lockTiers : [];
-        if (tiers.length > 0) {
-          const curDays = Number(st.staking.lockDays || 181);
+        const curDays = Number(st.staking.lockDays || 181);
+        if (fw && typeof fw.mountEarnStakeSheetPanel === 'function') {
+          fw.mountEarnStakeSheetPanel(lockTiersEl, {
+            mode: 'lock-tiers',
+            tiers,
+            selectedDays: curDays,
+            isEn: st.lang === 'en',
+            formatLockTierLabel
+          });
+        } else if (tiers.length > 0) {
           lockTiersEl.innerHTML = tiers.map((tier) => `
             <button type="button" class="filter-pill ${Number(tier.days) === curDays ? 'active' : ''}" data-action="select-earn-lock" data-days="${Number(tier.days)}">${escapeHtml(formatLockTierLabel(tier))}</button>
           `).join('');
@@ -542,7 +560,11 @@
         }
       } else {
         lockRow.classList.add('hidden');
-        lockTiersEl.innerHTML = '';
+        if (fw && typeof fw.mountEarnStakeSheetPanel === 'function') {
+          fw.mountEarnStakeSheetPanel(lockTiersEl, { mode: 'lock-tiers', tiers: [], isEn: st.lang === 'en' });
+        } else {
+          lockTiersEl.innerHTML = '';
+        }
       }
     }
 
@@ -618,7 +640,12 @@
     const rec = $('earn-tx-receipt');
     if (rec) {
       rec.classList.add('hidden');
-      rec.innerHTML = '';
+      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+      if (fw && typeof fw.mountEarnStakeSheetPanel === 'function') {
+        fw.mountEarnStakeSheetPanel(rec, { mode: 'receipt', receipt: null, isEn: st.lang === 'en' });
+      } else {
+        rec.innerHTML = '';
+      }
     }
     const contracts = getContracts();
     const pool = contracts?.findStakingPool?.(poolId) || (st.staking.pools || []).find((p) => p.id === poolId);
@@ -775,10 +802,20 @@
       const rec = $('earn-tx-receipt');
       if (rec) {
         rec.classList.remove('hidden');
-        rec.innerHTML = `
+        const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+        if (fw && typeof fw.mountEarnStakeSheetPanel === 'function') {
+          fw.mountEarnStakeSheetPanel(rec, {
+            mode: 'receipt',
+            receipt: { txHash: res.txHash, explorerUrl: res.explorerUrl || '' },
+            isEn: st.lang === 'en',
+            shortenAddr
+          });
+        } else {
+          rec.innerHTML = `
           <div class="meta-row"><span class="meta-key">TxHash</span><span class="mono text-emerald">${escapeHtml(shortenAddr(res.txHash, 10, 8))}</span></div>
           ${res.explorerUrl && isValidHttpsUrl(res.explorerUrl) ? `<a href="${escapeHtml(res.explorerUrl)}" target="_blank" rel="noopener noreferrer" class="text-cyan" style="font-size:11.5px;">${t('在区块浏览器查看 ↗', 'View on Explorer ↗')}</a>` : ''}
         `;
+        }
       }
       recordWalletActivity(wallet, {
         type: 'stake',

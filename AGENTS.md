@@ -51,7 +51,7 @@
 ### 8.2 项目架构与分片索引（直达目标文件）
 - **权威功能规范文档**：`docs/FEATURES_SPEC.md`（全功能与交互逻辑唯一真相源，任何功能与交互修改必须同步更新此文档并清理废弃僵尸代码）。
 - **运行入口与构建**：`index.html` 按序加载全局 IIFE 脚本与 `src/framework-ui.js`；`scripts/build-parts.js` 拼接分片，`vite.config.mjs` 编译 Preact 组件，`scripts/sync-assets.js` 使用 `esbuild` 压缩并同步 22 个资源到 `dist/`、`android/`、`ios/`；`server.js` 提供本地静态服务与 `/pearl-proxy`、`/kryptex-proxy`；`sw.js` 管理 PWA 离线缓存；`style.css` 存放全局样式。
-- **Preact 框架目录（`src/app/` -> `src/framework-ui.js`）**：`main.jsx`（入口挂载与全局桥接 `window.NearCAFramework`，含 13 个挂载/共享组件）、`store/useWalletStore.js`（微任务合并响应式状态订阅、`useLang` / `useActiveWallet`）、`components/ui/`（`ActionButton`、`EmptyState`、`StatusBadge`）及业务面板组件；`jsQR` 由 `scripts/build-jsqr.js` 单独打包为 `src/jsqr-lazy.js` 按需懒加载。
+- **Preact 框架目录（`src/app/` -> `src/framework-ui.js`）**：`main.jsx`（入口挂载与全局桥接 `window.NearCAFramework`，含 35 个挂载入口与共享组件，覆盖全部主视图与弹窗）、`store/useWalletStore.js`（微任务合并响应式状态订阅、`useLang` / `useActiveWallet`）、`components/ui/`（`ActionButton`、`EmptyState`、`StatusBadge`、`ToastBanner`）及业务面板组件；`jsQR` 由 `scripts/build-jsqr.js` 单独打包为 `src/jsqr-lazy.js` 按需懒加载。
 - **原生插件（受保护，勿误删）**：Android (`android/app/src/main/{AndroidManifest.xml,java/io/nexus/wallet/{MainActivity,NativeSecurityPlugin}.java}`)；iOS (`ios/App/App/{Info.plist,MainViewController,NativeSecurityPlugin}.swift`)。CI 编译流在 `.github/workflows/{build-android-apk,build-ios-ipa}.yml`。
 - **`src/parts/index-html/`（10 个 HTML 片段 -> `index.html`）**：
   - `000-head-shell` 锁屏/隐私遮罩与顶栏；`010-view-onboarding-wallet` 引导与资产首页；`020-view-swap-limit` 闪兑与限价单；`030-view-perp` 永续合约；`040-view-earn` 质押理财；`050-view-hub-nav` 枢纽设置与底栏；

@@ -41,6 +41,15 @@
     const el = $('mining-network-bar');
     if (!el) return;
     const net = st.mining.networkStats && st.mining.networkStats.network;
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountMiningTelemetryPanel === 'function') {
+      fw.mountMiningTelemetryPanel(el, {
+        mode: 'network',
+        network: net || null,
+        isEn: st.lang === 'en'
+      });
+      return;
+    }
     if (!net) {
       el.innerHTML = `<div class="meta-row"><span class="meta-key">Pearl Mainnet</span><span class="meta-val">--</span></div>`;
       return;
@@ -72,6 +81,16 @@
     const wrap = $('mining-watchlist');
     if (!wrap || !mining) return;
     const list = mining.getSavedMinerAddresses();
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountMiningTelemetryPanel === 'function') {
+      fw.mountMiningTelemetryPanel(wrap, {
+        mode: 'watchlist',
+        watchlist: list,
+        isEn: getState().lang === 'en',
+        shortenAddr
+      });
+      return;
+    }
     if (list.length === 0) {
       wrap.innerHTML = '';
       return;
@@ -183,10 +202,17 @@
         : '--';
     }
 
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const tbody = $('mining-workers-tbody');
     if (tbody) {
       const workers = tel && Array.isArray(tel.workers) ? tel.workers : [];
-      if (workers.length === 0) {
+      if (fw && typeof fw.mountMiningWorkersPanel === 'function') {
+        fw.mountMiningWorkersPanel(tbody, {
+          workers,
+          loading: Boolean(st && st.mining && st.mining.loading),
+          isEn: st.lang === 'en'
+        });
+      } else if (workers.length === 0) {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">${t('暂无矿机记录', 'No active rigs')}</td></tr>`;
       } else {
         tbody.innerHTML = workers.map((w) => `
@@ -227,7 +253,14 @@
         };
       });
       if (payoutsAllBtn) payoutsAllBtn.classList.toggle('hidden', _lastMiningNormalizedPayouts.length === 0);
-      if (_lastMiningNormalizedPayouts.length === 0) {
+      if (fw && typeof fw.mountMiningTelemetryPanel === 'function') {
+        fw.mountMiningTelemetryPanel(payoutsEl, {
+          mode: 'payouts',
+          payouts: _lastMiningNormalizedPayouts,
+          isOnChainMode,
+          isEn: st.lang === 'en'
+        });
+      } else if (_lastMiningNormalizedPayouts.length === 0) {
         payoutsEl.innerHTML = `<div class="text-muted" style="font-size:11.5px;text-align:center;padding:8px;">${isOnChainMode ? t('暂无链上转入记录', 'No incoming transfers') : t('暂无打款记录', 'No payout history')}</div>`;
       } else {
         payoutsEl.innerHTML = renderCompactTxPreviewHtml(_lastMiningNormalizedPayouts, 'mining', 'PRL');

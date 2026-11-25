@@ -24,7 +24,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.70');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.71');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -76,11 +76,24 @@
 
   function renderWcCards() {
     const st = getState();
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const pCard = $('wc-proposal-card');
     const p = st.wc.pendingProposal;
     if (pCard) {
       if (!p) {
         pCard.classList.add('hidden');
+        if (fw && typeof fw.mountWcProposalPanel === 'function') {
+          fw.mountWcProposalPanel(pCard, { proposal: null, approving: _wcApprovingProposal, isEn: st.lang === 'en' });
+        }
+      } else if (fw && typeof fw.mountWcProposalPanel === 'function') {
+        fw.mountWcProposalPanel(pCard, {
+          proposal: p,
+          approving: _wcApprovingProposal,
+          isEn: st.lang === 'en',
+          onApprove: approveWcProposal,
+          onReject: rejectWcProposal
+        });
+        pCard.classList.remove('hidden');
       } else {
         const meta = (p.params && p.params.proposer && p.params.proposer.metadata) || {};
         if ($('wc-proposal-name')) $('wc-proposal-name').textContent = meta.name || 'DApp';
@@ -152,6 +165,11 @@
     const listEl = $('wc-sessions-list');
     if (!listEl) return;
     const sessions = st.wc.client ? Object.values(st.wc.client.getActiveSessions() || {}) : [];
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountWcSessionsPanel === 'function') {
+      fw.mountWcSessionsPanel(listEl, { sessions, isEn: st.lang === 'en' });
+      return;
+    }
     if (sessions.length === 0) {
       listEl.innerHTML = `<div class="text-muted" style="text-align:center;padding:10px;font-size:12px;">${t('暂无已连接 DApp', 'No active sessions')}</div>`;
       return;
@@ -273,6 +291,10 @@
     if (!p || !client || !wallet) return;
     if (!(await verifySecurityAuthAsync(wallet, t('授权 WalletConnect 连接', 'Authorize WalletConnect')))) return;
     _wcApprovingProposal = true;
+    const fwLoading = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fwLoading && typeof fwLoading.mountWcProposalPanel === 'function') {
+      renderWcCards();
+    }
     const approveBtn = typeof document !== 'undefined' ? document.querySelector('#wc-proposal-card .btn-primary') : null;
     const prevBtnTxt = approveBtn ? approveBtn.textContent : '';
     if (approveBtn) {
@@ -318,6 +340,9 @@
       showToast(toUserFriendlyError(e, '批准失败', 'Approve failed'));
     } finally {
       _wcApprovingProposal = false;
+      if (fwLoading && typeof fwLoading.mountWcProposalPanel === 'function' && st.wc.pendingProposal) {
+        renderWcCards();
+      }
       if (approveBtn) {
         approveBtn.disabled = false;
         if (prevBtnTxt) approveBtn.textContent = prevBtnTxt;
@@ -630,7 +655,7 @@
     const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
     if (existing) return existing;
     if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
-      await loadScriptOnce('src/jsqr-lazy.js?v=6.70').catch(() => false);
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.71').catch(() => false);
       return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     }
     return null;

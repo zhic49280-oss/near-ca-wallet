@@ -325,6 +325,16 @@
     const st = getState();
     const listEl = $('wallets-switcher-list');
     if (!listEl) return;
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountWalletListPanel === 'function') {
+      fw.mountWalletListPanel(listEl, {
+        wallets: st.wallets,
+        activeWalletId: st.activeWalletId,
+        isEn: st.lang === 'en',
+        shortenAddr
+      });
+      return;
+    }
     if (st.wallets.length === 0) {
       listEl.innerHTML = `<div class="text-muted" style="text-align:center;padding:12px;">${t('暂无钱包', 'No wallets')}</div>`;
       return;
@@ -459,6 +469,7 @@
 
   let _backupRevealActive = false;
   let _backupAutoHideTimer = null;
+  let _lastBackupRows = null;
 
   function setBackupRevealState(revealed) {
     _backupRevealActive = Boolean(revealed);
@@ -470,6 +481,17 @@
       _backupAutoHideTimer = setTimeout(() => {
         setBackupRevealState(false);
       }, 30000);
+    }
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    const container = $('backup-keys-content');
+    if (fw && typeof fw.mountBackupSecretsPanel === 'function' && container && _lastBackupRows) {
+      fw.mountBackupSecretsPanel(container, {
+        rows: _lastBackupRows,
+        revealed: _backupRevealActive,
+        isEn: getState().lang === 'en',
+        onToggleReveal: toggleBackupKeysReveal
+      });
+      return;
     }
     const btn = $('btn-backup-reveal-toggle');
     if (btn) {
@@ -533,7 +555,17 @@
     const container = $('backup-keys-content');
     if (container) {
       _backupRevealActive = false;
-      const warnBox = `
+      _lastBackupRows = rows;
+      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+      if (fw && typeof fw.mountBackupSecretsPanel === 'function') {
+        fw.mountBackupSecretsPanel(container, {
+          rows,
+          revealed: false,
+          isEn: st.lang === 'en',
+          onToggleReveal: toggleBackupKeysReveal
+        });
+      } else {
+        const warnBox = `
         <div class="ios-glass-card flex flex-col gap-1" style="padding:10px 12px;border-color:rgba(251,113,133,0.45);background:rgba(251,113,133,0.08);">
           <div style="font-size:12.5px;font-weight:700;color:var(--rose-alert);">⚠️ ${escapeHtml(t('最高安全等级提醒：切勿截图或泄露', 'High Security Warning: Never Screenshot or Share'))}</div>
           <div style="font-size:11.5px;color:var(--text-secondary);line-height:1.5;">
@@ -543,8 +575,8 @@
           <button type="button" id="btn-backup-reveal-toggle" class="btn-secondary" style="margin-top:6px;padding:7px 12px;font-size:12px;" data-action="toggle-backup-reveal">${escapeHtml(t('显示助记词与私钥', 'Reveal Phrase & Keys'))}</button>
         </div>
       `;
-      const hint = `<div style="font-size:11.5px;color:var(--text-secondary);padding:4px 2px;">${escapeHtml(t('EVM、Solana 由当前主账户安全派生管理；Pearl (PRL) 与 Bitcoin (BTC) 由助记词本地独立派生。', 'EVM & Solana are securely managed by this master account; Pearl (PRL) & Bitcoin (BTC) are locally derived from your phrase.'))}</div>`;
-      container.innerHTML = warnBox + hint + rows.map((r) => `
+        const hint = `<div style="font-size:11.5px;color:var(--text-secondary);padding:4px 2px;">${escapeHtml(t('EVM、Solana 由当前主账户安全派生管理；Pearl (PRL) 与 Bitcoin (BTC) 由助记词本地独立派生。', 'EVM & Solana are securely managed by this master account; Pearl (PRL) & Bitcoin (BTC) are locally derived from your phrase.'))}</div>`;
+        container.innerHTML = warnBox + hint + rows.map((r) => `
         <div class="meta-list">
           <div class="meta-row">
             <span class="meta-key">${escapeHtml(r.label)}</span>
@@ -553,6 +585,7 @@
           <div class="mono ${r.secret ? 'backup-secret-val' : ''}" data-secret="${escapeHtml(r.val || '')}" style="font-size:11px;word-break:break-all;color:#fff;${r.secret ? 'filter:blur(4px);user-select:none;' : ''}">${escapeHtml(r.secret ? (r.val ? '•••• •••• •••• •••• •••• ••••' : '--') : (r.val || '--'))}</div>
         </div>
       `).join('');
+      }
     }
     openSheet('sheet-backup');
   }

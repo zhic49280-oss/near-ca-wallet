@@ -355,6 +355,15 @@
     }
   }
 
+  function renderSendRouteSummary(previewEl, props, fallbackText) {
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountSendFeeSummaryPanel === 'function') {
+      fw.mountSendFeeSummaryPanel(previewEl, props);
+      return;
+    }
+    previewEl.textContent = fallbackText || '';
+  }
+
   function updateSendRoutePreview(triggerAsyncQuote = true) {
     const previewEl = $('send-route-preview');
     if (!previewEl) return;
@@ -366,14 +375,14 @@
     const addr = ($('send-recipient-input')?.value || '').trim();
     if (!asset || !addr) {
       previewEl.classList.add('hidden');
-      previewEl.textContent = '';
+      renderSendRouteSummary(previewEl, { visible: false }, '');
       return;
     }
     const net = crypto.detectAddressNetwork(addr);
     const addrCheck = checkChainAddressValid(crypto, net, addr);
     if (!net || !addrCheck.valid) {
       previewEl.classList.add('hidden');
-      previewEl.textContent = '';
+      renderSendRouteSummary(previewEl, { visible: false }, '');
       return;
     }
     const isEvmOrigin = EVM_CHAIN_KEYS.includes(asset.blockchain);
@@ -388,18 +397,20 @@
       (asset.blockchain === 'btc' && net === 'btc');
     if (isSameChain) {
       previewEl.classList.add('hidden');
-      previewEl.textContent = '';
+      renderSendRouteSummary(previewEl, { visible: false }, '');
       return;
     }
     if (asset.blockchain === 'arc' || asset.blockchain === 'hype' || !isOneClickAsset(asset, asset.blockchain)) {
       previewEl.classList.remove('hidden');
-      previewEl.textContent = t('该网络或代币暂不支持跨链直转，请使用闪兑', 'Cross-chain send is unavailable for this network/token; please use Swap');
+      const msg = t('该网络或代币暂不支持跨链直转，请使用闪兑', 'Cross-chain send is unavailable for this network/token; please use Swap');
+      renderSendRouteSummary(previewEl, { visible: true, errorText: msg, isEn: st.lang === 'en' }, msg);
       return;
     }
     const destAsset = resolveDestinationAssetForNetwork(asset.symbol, net, asset.assetId, targetEvmChain);
     if (!destAsset) {
       previewEl.classList.remove('hidden');
-      previewEl.textContent = t('该代币暂不支持跨链直转到目标网络，请使用闪兑', 'This token cannot be sent directly to the target network; please use Swap');
+      const msg = t('该代币暂不支持跨链直转到目标网络，请使用闪兑', 'This token cannot be sent directly to the target network; please use Swap');
+      renderSendRouteSummary(previewEl, { visible: true, errorText: msg, isEn: st.lang === 'en' }, msg);
       return;
     }
     const feeBps = (intents && intents.APP_FEE_CONFIG && Number(intents.APP_FEE_CONFIG.SEND_CROSS_CHAIN_BPS)) ?? 25;
@@ -422,11 +433,26 @@
         scheduleSendCrossQuoteAsync({ wallet, asset, destAsset, recipient: addr, rawAmtStr, feeBps });
       }
     }
-    const estText = estOutNum !== null && estOutNum > 0
-      ? ` · ${t('预估到账', 'Est. Receive')}: ~${formatBal(estOutNum, 6)} ${destAsset.symbol || asset.symbol}`
-      : warnText;
+    const estOutLabel = estOutNum !== null && estOutNum > 0
+      ? `${t('预估到账', 'Est. Receive')}: ~${formatBal(estOutNum, 6)} ${destAsset.symbol || asset.symbol}`
+      : '';
+    const estText = estOutLabel ? ` · ${estOutLabel}` : warnText;
+    const fromChain = String(asset.blockchain || '').toUpperCase();
+    const toChain = String(destAsset.blockchain || targetEvmChain).toUpperCase();
     previewEl.classList.remove('hidden');
-    previewEl.textContent = `${String(asset.blockchain || '').toUpperCase()} ➔ ${String(destAsset.blockchain || targetEvmChain).toUpperCase()} · ${t('跨链服务费', 'Cross-Chain Fee')}: ${feePctText}${estText}`;
+    renderSendRouteSummary(
+      previewEl,
+      {
+        visible: true,
+        fromChain,
+        toChain,
+        feePctText,
+        estOutText: estOutLabel,
+        warnText: warnText ? warnText.replace(/^ · /, '') : '',
+        isEn: st.lang === 'en'
+      },
+      `${fromChain} ➔ ${toChain} · ${t('跨链服务费', 'Cross-Chain Fee')}: ${feePctText}${estText}`
+    );
   }
 
   function handleSendAmountInput() {

@@ -9,6 +9,16 @@ import { EarnPoolsPanel } from './components/EarnPoolsPanel.jsx';
 import { TokenHistoryPanel } from './components/TokenHistoryPanel.jsx';
 import { ContactsPanel } from './components/ContactsPanel.jsx';
 import { NearKeysPanel, SolRentPanel, NearStoragePanel } from './components/HubToolsPanels.jsx';
+import { WalletListPanel, BackupSecretsPanel, WalletAddressesPanel } from './components/WalletManagerPanels.jsx';
+import { SendFeeSummaryPanel, ReceiveAddressListPanel } from './components/SendReceivePanels.jsx';
+import { TokenBreakdownPanel, TxDetailPanel, TxHistorySheetPanel } from './components/TokenDetailPanels.jsx';
+import { SwapActiveOrderPanel, SwapRouteInfoPanel } from './components/SwapQuoteStatusPanel.jsx';
+import { PerpMarketsSheetPanel, PerpFundingInfoPanel, PerpChartHudPanel } from './components/PerpDetailPanels.jsx';
+import { EarnStakeSheetPanel, EarnValidatorsPanel } from './components/EarnStakeSheetPanel.jsx';
+import { MiningTelemetryPanel, MiningWorkersPanel } from './components/MiningProPanel.jsx';
+import { WcSessionsPanel, WcProposalPanel } from './components/WalletConnectPanel.jsx';
+import { DAppBookmarksPanel, DAppApprovePanel } from './components/DAppBrowserPanels.jsx';
+import { ToastBanner } from './components/ui/ToastBanner.jsx';
 import { useWalletState, notifyFrameworkState, useLang, useActiveWallet } from './store/useWalletStore.js';
 
 export function mountSwapHistory(containerEl, opts = {}) {
@@ -90,6 +100,138 @@ export function mountNearStoragePanel(containerEl, props = {}) {
   return true;
 }
 
+export function mountWalletListPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(WalletListPanel, props), containerEl);
+  return true;
+}
+
+export function mountBackupSecretsPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(BackupSecretsPanel, props), containerEl);
+  return true;
+}
+
+export function mountWalletAddressesPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(WalletAddressesPanel, props), containerEl);
+  return true;
+}
+
+export function mountSendFeeSummaryPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(SendFeeSummaryPanel, props), containerEl);
+  return true;
+}
+
+export function mountReceiveAddressListPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(ReceiveAddressListPanel, props), containerEl);
+  return true;
+}
+
+export function mountTokenBreakdownPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(TokenBreakdownPanel, props), containerEl);
+  return true;
+}
+
+export function mountTxDetailPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(TxDetailPanel, props), containerEl);
+  return true;
+}
+
+export function mountTxHistorySheetPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(TxHistorySheetPanel, props), containerEl);
+  return true;
+}
+
+export function mountSwapActiveOrderPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(SwapActiveOrderPanel, props), containerEl);
+  return true;
+}
+
+export function mountSwapRouteInfoPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(SwapRouteInfoPanel, props), containerEl);
+  return true;
+}
+
+export function mountPerpMarketsSheetPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(PerpMarketsSheetPanel, props), containerEl);
+  return true;
+}
+
+export function mountPerpFundingInfoPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(PerpFundingInfoPanel, props), containerEl);
+  return true;
+}
+
+export function mountPerpChartHudPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(PerpChartHudPanel, props), containerEl);
+  return true;
+}
+
+export function mountEarnStakeSheetPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(EarnStakeSheetPanel, props), containerEl);
+  return true;
+}
+
+export function mountEarnValidatorsPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(EarnValidatorsPanel, props), containerEl);
+  return true;
+}
+
+export function mountMiningTelemetryPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(MiningTelemetryPanel, props), containerEl);
+  return true;
+}
+
+export function mountMiningWorkersPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(MiningWorkersPanel, props), containerEl);
+  return true;
+}
+
+export function mountWcSessionsPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(WcSessionsPanel, props), containerEl);
+  return true;
+}
+
+export function mountWcProposalPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(WcProposalPanel, props), containerEl);
+  return true;
+}
+
+export function mountDAppBookmarksPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(DAppBookmarksPanel, props), containerEl);
+  return true;
+}
+
+export function mountDAppApprovePanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(DAppApprovePanel, props), containerEl);
+  return true;
+}
+
+export function mountToastBanner(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(ToastBanner, props), containerEl);
+  return true;
+}
+
 const NearCAFramework = {
   h,
   render,
@@ -109,7 +251,29 @@ const NearCAFramework = {
   mountContactsPanel,
   mountNearKeysPanel,
   mountSolRentPanel,
-  mountNearStoragePanel
+  mountNearStoragePanel,
+  mountWalletListPanel,
+  mountBackupSecretsPanel,
+  mountWalletAddressesPanel,
+  mountSendFeeSummaryPanel,
+  mountReceiveAddressListPanel,
+  mountTokenBreakdownPanel,
+  mountTxDetailPanel,
+  mountTxHistorySheetPanel,
+  mountSwapActiveOrderPanel,
+  mountSwapRouteInfoPanel,
+  mountPerpMarketsSheetPanel,
+  mountPerpFundingInfoPanel,
+  mountPerpChartHudPanel,
+  mountEarnStakeSheetPanel,
+  mountEarnValidatorsPanel,
+  mountMiningTelemetryPanel,
+  mountMiningWorkersPanel,
+  mountWcSessionsPanel,
+  mountWcProposalPanel,
+  mountDAppBookmarksPanel,
+  mountDAppApprovePanel,
+  mountToastBanner
 };
 
 if (typeof globalThis !== 'undefined') {

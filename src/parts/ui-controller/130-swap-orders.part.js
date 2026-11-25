@@ -85,15 +85,27 @@
     const pendingFollow = typeof hasPendingSwapFollowUp === 'function' && hasPendingSwapFollowUp(order);
     const upperSt = String(order.status || '').toUpperCase();
     const isStage1Done = ['SUCCESS', 'COMPLETED'].includes(upperSt);
-    if ($('swap-order-status')) {
-      if (order.followUpFailed && order.followUpError) {
-        $('swap-order-status').textContent = `${friendlyStatus} · ⚠️ ${order.followUpError} (${t('请点击下方按钮继续完成第二阶段兑换', 'Tap Resume below to complete stage 2')})`;
+    const statusEl = $('swap-order-status');
+    if (statusEl) {
+      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+      if (fw && typeof fw.mountSwapActiveOrderPanel === 'function') {
+        fw.mountSwapActiveOrderPanel(statusEl, {
+          status: order.status || '',
+          statusLabel: friendlyStatus,
+          pendingFollow: Boolean(pendingFollow),
+          isStage1Done: Boolean(isStage1Done),
+          followUpFailed: Boolean(order.followUpFailed),
+          followUpError: order.followUpError || '',
+          isEn: st.lang === 'en'
+        });
+      } else if (order.followUpFailed && order.followUpError) {
+        statusEl.textContent = `${friendlyStatus} · ⚠️ ${order.followUpError} (${t('请点击下方按钮继续完成第二阶段兑换', 'Tap Resume below to complete stage 2')})`;
       } else if (pendingFollow && isStage1Done) {
-        $('swap-order-status').textContent = `${t('阶段 1 已到账 · 正在自动执行阶段 2 兑换...', 'Stage 1 arrived · Executing stage 2 swap...')}`;
+        statusEl.textContent = `${t('阶段 1 已到账 · 正在自动执行阶段 2 兑换...', 'Stage 1 arrived · Executing stage 2 swap...')}`;
       } else if (pendingFollow) {
-        $('swap-order-status').textContent = `${t('阶段 1/2', 'Stage 1/2')}: ${friendlyStatus} (${t('请保持页面开启，到账后自动执行阶段 2', 'Keep open; stage 2 runs automatically on arrival')})`;
+        statusEl.textContent = `${t('阶段 1/2', 'Stage 1/2')}: ${friendlyStatus} (${t('请保持页面开启，到账后自动执行阶段 2', 'Keep open; stage 2 runs automatically on arrival')})`;
       } else {
-        $('swap-order-status').textContent = friendlyStatus;
+        statusEl.textContent = friendlyStatus;
       }
     }
 

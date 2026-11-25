@@ -85,11 +85,21 @@
       { key: 'qtc', label: t('QTC (Quantus 跨链收款)', 'QTC (Quantus Deposit)'), addr: isQtcDepositExpired(wallet) ? '' : (wallet.qtcDepositAddress || '') }
     ];
 
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const pillsEl = $('receive-network-pills');
     if (pillsEl) {
-      pillsEl.innerHTML = options.map((o) => `
-        <button type="button" class="filter-pill ${st.receive.selectedNetwork === o.key ? 'active' : ''}" data-action="select-receive-network" data-net="${escapeHtml(o.key)}">${escapeHtml(o.label)}</button>
-      `).join('');
+      if (fw && typeof fw.mountReceiveAddressListPanel === 'function') {
+        fw.mountReceiveAddressListPanel(pillsEl, {
+          options,
+          selectedNetwork: st.receive.selectedNetwork,
+          mode: 'pills',
+          isEn: st.lang === 'en'
+        });
+      } else {
+        pillsEl.innerHTML = options.map((o) => `
+          <button type="button" class="filter-pill ${st.receive.selectedNetwork === o.key ? 'active' : ''}" data-action="select-receive-network" data-net="${escapeHtml(o.key)}">${escapeHtml(o.label)}</button>
+        `).join('');
+      }
     }
 
     const active = options.find((o) => o.key === st.receive.selectedNetwork) || options[0];
@@ -107,6 +117,8 @@
         }
         if (isFetching) {
           valEl.textContent = t('正在获取 QTC 收款地址...', 'Fetching QTC deposit address...');
+        } else if (fw && typeof fw.mountReceiveAddressListPanel === 'function') {
+          fw.mountReceiveAddressListPanel(valEl, { mode: 'qtc-error', isEn: st.lang === 'en' });
         } else {
           valEl.innerHTML = `<span>${escapeHtml(t('获取 QTC 收款地址失败', 'Failed to fetch QTC deposit address'))}</span> <button type="button" class="mini-action-btn primary" style="margin-left:6px;" data-action="select-receive-network" data-net="qtc">${escapeHtml(t('重试', 'Retry'))}</button>`;
         }

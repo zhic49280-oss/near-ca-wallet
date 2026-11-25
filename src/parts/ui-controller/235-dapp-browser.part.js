@@ -90,16 +90,28 @@
       if (!byOrigin.has(origin)) byOrigin.set(origin, new Set());
       byOrigin.get(origin).add(ns === 'SOLANA' ? 'SOL' : ns);
     }
+    const connectedList = Array.from(byOrigin.entries()).map(([origin, nsSet]) => {
+      let host = origin;
+      try { host = new URL(origin).hostname || origin; } catch (_) {}
+      return { origin, host, badges: Array.from(nsSet).join(' · ') };
+    });
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountDAppBookmarksPanel === 'function') {
+      sec.classList.toggle('hidden', connectedList.length === 0);
+      fw.mountDAppBookmarksPanel(sec, {
+        mode: 'connected',
+        connected: connectedList,
+        isEn: getState().lang === 'en'
+      });
+      return;
+    }
     if (byOrigin.size === 0) {
       sec.classList.add('hidden');
       sec.innerHTML = '';
       return;
     }
     sec.classList.remove('hidden');
-    const rows = Array.from(byOrigin.entries()).map(([origin, nsSet]) => {
-      let host = origin;
-      try { host = new URL(origin).hostname || origin; } catch (_) {}
-      const badges = Array.from(nsSet).join(' · ');
+    const rows = connectedList.map(({ origin, host, badges }) => {
       return `
         <div class="dapp-connected-row">
           <div style="min-width:0;flex:1;">
@@ -127,6 +139,8 @@
     if (!browserMod) return;
 
     const filter = _dappSession.chainFilter || 'ALL';
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    const isEn = getState().lang === 'en';
     const filters = [
       { key: 'ALL', label: t('全部', 'All') },
       { key: 'NEAR', label: 'NEAR' },
@@ -135,32 +149,49 @@
     ];
 
     if (filterEl) {
-      filterEl.innerHTML = filters.map((f) => `
-        <button type="button" class="filter-pill ${filter === f.key ? 'active' : ''}" data-action="set-dapp-filter" data-chain="${escapeHtml(f.key)}">${escapeHtml(f.label)}</button>
-      `).join('');
+      if (fw && typeof fw.mountDAppBookmarksPanel === 'function') {
+        fw.mountDAppBookmarksPanel(filterEl, {
+          mode: 'filters',
+          chainFilter: filter,
+          isEn
+        });
+      } else {
+        filterEl.innerHTML = filters.map((f) => `
+          <button type="button" class="filter-pill ${filter === f.key ? 'active' : ''}" data-action="set-dapp-filter" data-chain="${escapeHtml(f.key)}">${escapeHtml(f.label)}</button>
+        `).join('');
+      }
     }
 
     if (listEl) {
       const catalog = Array.isArray(browserMod.DAPP_CATALOG) ? browserMod.DAPP_CATALOG : [];
-      const rows = catalog.filter((d) => filter === 'ALL' || d.chain === filter);
-      listEl.innerHTML = rows.map((d) => {
-        const desc = t(d.descZh || '', d.descEn || '');
-        let host = d.url;
-        try { host = new URL(d.url).hostname; } catch (_) {}
-        return `
-          <button type="button" class="dapp-catalog-card" data-action="launch-dapp" data-url="${escapeHtml(d.url)}">
-            <div style="min-width:0;flex:1;">
-              <div class="flex items-center gap-2">
-                <span style="font-size:13.5px;font-weight:700;color:#fff;">${escapeHtml(d.name)}</span>
-                <span class="dapp-badge-pill">${escapeHtml(d.badge || d.chain)}</span>
+      if (fw && typeof fw.mountDAppBookmarksPanel === 'function') {
+        fw.mountDAppBookmarksPanel(listEl, {
+          mode: 'catalog',
+          catalog,
+          chainFilter: filter,
+          isEn
+        });
+      } else {
+        const rows = catalog.filter((d) => filter === 'ALL' || d.chain === filter);
+        listEl.innerHTML = rows.map((d) => {
+          const desc = t(d.descZh || '', d.descEn || '');
+          let host = d.url;
+          try { host = new URL(d.url).hostname; } catch (_) {}
+          return `
+            <button type="button" class="dapp-catalog-card" data-action="launch-dapp" data-url="${escapeHtml(d.url)}">
+              <div style="min-width:0;flex:1;">
+                <div class="flex items-center gap-2">
+                  <span style="font-size:13.5px;font-weight:700;color:#fff;">${escapeHtml(d.name)}</span>
+                  <span class="dapp-badge-pill">${escapeHtml(d.badge || d.chain)}</span>
+                </div>
+                <div style="font-size:11px;color:var(--text-secondary);margin-top:3px;">${escapeHtml(desc)}</div>
+                <div class="mono" style="font-size:10.5px;color:var(--text-muted);margin-top:2px;">${escapeHtml(host)}</div>
               </div>
-              <div style="font-size:11px;color:var(--text-secondary);margin-top:3px;">${escapeHtml(desc)}</div>
-              <div class="mono" style="font-size:10.5px;color:var(--text-muted);margin-top:2px;">${escapeHtml(host)}</div>
-            </div>
-            <span style="color:var(--text-muted);font-size:16px;">›</span>
-          </button>
-        `;
-      }).join('');
+              <span style="color:var(--text-muted);font-size:16px;">›</span>
+            </button>
+          `;
+        }).join('');
+      }
     }
   }
 
@@ -187,11 +218,28 @@
         return;
       }
 
-      if ($('dapp-approve-origin')) $('dapp-approve-origin').textContent = details.origin || '--';
-      if ($('dapp-approve-chain')) $('dapp-approve-chain').textContent = details.chainLabel || details.namespace || '--';
-      if ($('dapp-approve-method')) $('dapp-approve-method').textContent = details.method || '--';
-      if ($('dapp-approve-account')) $('dapp-approve-account').textContent = details.account || '--';
-      if ($('dapp-approve-detail')) $('dapp-approve-detail').textContent = details.summary || '--';
+      const approveSheet = $('sheet-dapp-approve');
+      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+      const approveBody = approveSheet && typeof approveSheet.querySelector === 'function' ? approveSheet.querySelector('.sheet-body') : null;
+      if (fw && typeof fw.mountDAppApprovePanel === 'function' && approveBody) {
+        fw.mountDAppApprovePanel(approveBody, {
+          origin: details.origin || '--',
+          chainLabel: details.chainLabel || details.namespace || '--',
+          method: details.method || '--',
+          account: details.account || '--',
+          summary: details.summary || '--',
+          approving: false,
+          isEn: getState().lang === 'en',
+          onConfirm: confirmDAppApproval,
+          onReject: rejectDAppApproval
+        });
+      } else {
+        if ($('dapp-approve-origin')) $('dapp-approve-origin').textContent = details.origin || '--';
+        if ($('dapp-approve-chain')) $('dapp-approve-chain').textContent = details.chainLabel || details.namespace || '--';
+        if ($('dapp-approve-method')) $('dapp-approve-method').textContent = details.method || '--';
+        if ($('dapp-approve-account')) $('dapp-approve-account').textContent = details.account || '--';
+        if ($('dapp-approve-detail')) $('dapp-approve-detail').textContent = details.summary || '--';
+      }
 
       if (_dappSession.nativeOpen) {
         await setNativeBrowserOverlayVisible(false);

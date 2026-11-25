@@ -30,8 +30,15 @@
   9. `mountTokenHistoryPanel` (`#token-detail-history-list`)：渲染代币详情交易历史记录；
   10. `mountContactsPanel` (`#contacts-list`)：渲染地址簿联系人列表；
   11. `mountNearKeysPanel` / `mountSolRentPanel` / `mountNearStoragePanel`：渲染 NEAR 密钥管理、Solana 租金回收与 NEAR 存储退押金面板；
-  12. `TokenIconBadge` 与 `components/ui/`（`ActionButton`、`EmptyState`、`StatusBadge`）：共享 UI 原语与图标徽章；
-  13. `useWalletStore.js`：微任务合并通知（`notifyFrameworkState`）与 `useLang` / `useActiveWallet` hooks；`jsQR` 通过 `src/jsqr-lazy.js` 按需懒加载。
+  12. `mountWalletListPanel` / `mountBackupSecretsPanel` / `mountWalletAddressesPanel`：渲染多钱包切换列表、助记词/私钥安全备份与全链地址列表；
+  13. `mountSendFeeSummaryPanel` / `mountReceiveAddressListPanel`：渲染跨链发送路由费用预览与收款网络/QTC 充值地址状态；
+  14. `mountTokenBreakdownPanel` / `mountTxDetailPanel` / `mountTxHistorySheetPanel`：渲染代币多链分布、交易详情弹窗与完整交易记录列表；
+  15. `mountSwapActiveOrderPanel` / `mountSwapRouteInfoPanel`：渲染闪兑进行中订单状态与路由/报价提示；
+  16. `mountPerpMarketsSheetPanel` / `mountPerpFundingInfoPanel` / `mountPerpChartHudPanel`：渲染永续选币弹窗、资金费率说明与 K 线交互 HUD；
+  17. `mountEarnStakeSheetPanel` / `mountEarnValidatorsPanel`：渲染质押锁仓档位/回执与验证节点列表；
+  18. `mountMiningTelemetryPanel` / `mountMiningWorkersPanel` / `mountWcSessionsPanel` / `mountWcProposalPanel` / `mountDAppBookmarksPanel` / `mountDAppApprovePanel`：渲染 Pearl 矿机遥测与矿工、WalletConnect 会话与审批、DApp 浏览器书签与签名审批；
+  19. `TokenIconBadge` 与 `components/ui/`（`ActionButton`、`EmptyState`、`StatusBadge`、`ToastBanner`）：共享 UI 原语与图标徽章（共 35 个 Preact 挂载入口与共享组件，覆盖全部视图与弹窗）；
+  20. `useWalletStore.js`：微任务合并通知（`notifyFrameworkState`）与 `useLang` / `useActiveWallet` hooks；`jsQR` 通过 `src/jsqr-lazy.js` 按需懒加载。
 
 ---
 

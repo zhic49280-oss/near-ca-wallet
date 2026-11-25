@@ -605,15 +605,24 @@
         { k: t('Bitcoin (BTC 主网)', 'Bitcoin (BTC Mainnet)'), v: wallet.btcAddress },
         { k: t('Pearl (PRL 主网)', 'Pearl (PRL Mainnet)'), v: wallet.address }
       ];
-      addrList.innerHTML = items.map((x) => `
-        <div class="meta-row hub-addr-row">
-          <span class="meta-key">${escapeHtml(x.k)}</span>
-          <div class="flex items-center gap-2" style="flex-shrink:0;">
-            <span class="mono" style="font-size:11px;">${escapeHtml(shortenAddr(x.v, 8, 6))}</span>
-            <button type="button" class="btn-ghost-sm hub-addr-copy-btn" data-action="copy-text" data-val="${escapeHtml(x.v || '')}" data-label="${escapeHtml(x.k)}">${t('复制', 'Copy')}</button>
+      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+      if (fw && typeof fw.mountWalletAddressesPanel === 'function') {
+        fw.mountWalletAddressesPanel(addrList, {
+          items,
+          isEn: st.lang === 'en',
+          shortenAddr
+        });
+      } else {
+        addrList.innerHTML = items.map((x) => `
+          <div class="meta-row hub-addr-row">
+            <span class="meta-key">${escapeHtml(x.k)}</span>
+            <div class="flex items-center gap-2" style="flex-shrink:0;">
+              <span class="mono" style="font-size:11px;">${escapeHtml(shortenAddr(x.v, 8, 6))}</span>
+              <button type="button" class="btn-ghost-sm hub-addr-copy-btn" data-action="copy-text" data-val="${escapeHtml(x.v || '')}" data-label="${escapeHtml(x.k)}">${t('复制', 'Copy')}</button>
+            </div>
           </div>
-        </div>
-      `).join('');
+        `).join('');
+      }
     }
     const isCustomPrl = Boolean(wallet.prlMnemonic && wallet.prlMnemonic !== wallet.mnemonic);
     const prlModeBadge = $('prl-bind-mode-badge');

@@ -610,7 +610,7 @@
     const favList = getPerpFavoriteCoins();
     const favsExact = new Set(favList);
     const favsUpper = new Set(favList.map((x) => String(x || '').toUpperCase()));
-    if (fw && typeof fw.mountPerpOverview === 'function') {
+    if (fw && typeof fw.mountPerpMarketsSheetPanel === 'function') {
       const vmRows = filtered.slice(0, 120).map((m) => {
         const vol = Number(m.dayNtlVlm || 0);
         const volText = vol >= 1e9 ? `$${(vol / 1e9).toFixed(2)}B` : (vol >= 1e6 ? `$${(vol / 1e6).toFixed(2)}M` : (vol >= 1e3 ? `$${(vol / 1e3).toFixed(1)}K` : `$${vol.toFixed(0)}`));
@@ -621,16 +621,15 @@
           pair: m.pairLabel || formatPerpDisplayPair(m.name),
           dexTag,
           volText: `${t('24h量', '24h Vol')} ${volText}`,
-          isFav: favsExact.has(coinKey) || favsUpper.has(coinKey.toUpperCase()),
-          rowAction: 'select-perp-market'
+          isFav: favsExact.has(coinKey) || favsUpper.has(coinKey.toUpperCase())
         };
       });
-      fw.mountPerpOverview(listEl, {
-        rows: vmRows,
+      fw.mountPerpMarketsSheetPanel(listEl, {
+        markets: vmRows,
+        selectedCoin: st.perp.selectedCoin || 'BTC',
         emptyText: t('未找到匹配市场', 'No matching market'),
-        formatPerpPx,
-        rowAction: 'select-perp-market',
-        selectedCoin: st.perp.selectedCoin || 'BTC'
+        isEn: st.lang === 'en',
+        formatPerpPx
       });
       return;
     }

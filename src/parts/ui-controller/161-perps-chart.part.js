@@ -30,7 +30,22 @@
     if (!el) return;
     el.classList.remove('hidden');
     const list = getVisiblePerpCandles(candles);
-    if (Number.isInteger(selectedIdx) && selectedIdx >= 0 && selectedIdx < list.length) {
+    const isInspecting = Number.isInteger(selectedIdx) && selectedIdx >= 0 && selectedIdx < list.length;
+    el.classList.toggle('is-inspecting', isInspecting);
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountPerpChartHudPanel === 'function') {
+      fw.mountPerpChartHudPanel(el, {
+        candles: list,
+        selectedIdx: isInspecting ? selectedIdx : null,
+        isEn: getState().lang === 'en',
+        formatPerpPx,
+        formatBal,
+        formatCompactUsd,
+        formatPerpCandleTime
+      });
+      return;
+    }
+    if (isInspecting) {
       const c = list[selectedIdx];
       const open = Number(c.o || 0);
       const close = Number(c.c || 0);

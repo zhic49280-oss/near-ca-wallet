@@ -271,14 +271,19 @@
     $('perp-oc-form')?.classList.toggle('hidden', entries.length === 0);
 
     const sel = $('perp-oc-origin-select');
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (sel && entries.length > 0) {
       const prevVal = st.perp.fundingOriginAssetId || sel.value;
       const optSig = entries.map((e) => `${e.key}:${formatBal(e.balance, 4)}`).join('|');
       if (!sel.dataset || sel.dataset.optSig !== optSig) {
         if (sel.dataset) sel.dataset.optSig = optSig;
-        sel.innerHTML = entries.map((e) =>
-          `<option value="${escapeHtml(e.key)}">${escapeHtml(`${e.symbol} · ${e.chainLabel} (${formatBal(e.balance, 4)})`)}</option>`
-        ).join('');
+        if (fw && typeof fw.mountPerpFundingInfoPanel === 'function') {
+          fw.mountPerpFundingInfoPanel(sel, { entries, formatBal });
+        } else {
+          sel.innerHTML = entries.map((e) =>
+            `<option value="${escapeHtml(e.key)}">${escapeHtml(`${e.symbol} · ${e.chainLabel} (${formatBal(e.balance, 4)})`)}</option>`
+          ).join('');
+        }
       }
       if (entries.some((e) => e.key === prevVal)) sel.value = prevVal;
       const chosen = entries.find((e) => e.key === sel.value) || entries[0] || null;
@@ -286,7 +291,11 @@
       const availEl = $('perp-oc-origin-avail');
       if (availEl) availEl.textContent = chosen ? `${formatBal(chosen.balance, 4)} ${chosen.symbol}` : '--';
     } else if (sel) {
-      sel.innerHTML = '';
+      if (fw && typeof fw.mountPerpFundingInfoPanel === 'function') {
+        fw.mountPerpFundingInfoPanel(sel, { entries: [], formatBal });
+      } else {
+        sel.innerHTML = '';
+      }
     }
 
     const hlAddr = contracts.resolveWalletEvmSender(wallet);
