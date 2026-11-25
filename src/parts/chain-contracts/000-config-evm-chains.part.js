@@ -77,7 +77,7 @@
     return wallet.mpcEvmAddress || wallet.evmAddress || '';
   }
   const NEAR_EXPLORER_TX = 'https://nearblocks.io/txns/';
-  const SOLANA_RPC_ENDPOINTS = ['https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com'];
+  const SOLANA_RPC_ENDPOINTS = ['https://api.mainnet-beta.solana.com', 'https://solana-rpc.publicnode.com'];
   const SOLSCAN_TX = 'https://solscan.io/tx/';
   const JUPITER_API_URL = 'https://lite-api.jup.ag/swap/v1';
   const RAYDIUM_API_URL = 'https://transaction-v1.raydium.io';

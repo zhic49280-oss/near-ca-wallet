@@ -26,10 +26,15 @@
 
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const refreshBtn = $('btn-refresh-sol-rent');
+    const execBtn = $('btn-execute-sol-rent');
     const prevRefreshTxt = refreshBtn ? refreshBtn.textContent : '';
     if (refreshBtn) {
       refreshBtn.disabled = true;
       refreshBtn.textContent = t('扫描中...', 'Scanning...');
+    }
+    if (execBtn) {
+      execBtn.disabled = true;
+      execBtn.textContent = t('扫描中...', 'Scanning...');
     }
     if (sumEl) sumEl.textContent = t('扫描中...', 'Scanning...');
     if (listEl) {
@@ -54,7 +59,7 @@
         }
       });
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(t('Solana 网络响应超时，请点击刷新重试', 'Solana network timed out, please tap Refresh'))), 7000)
+        setTimeout(() => reject(new Error(t('Solana 网络响应超时，请点击刷新重试', 'Solana network timed out, please tap Refresh'))), 10000)
       );
       const res = await Promise.race([scanPromise, timeoutPromise]);
       _solRentScanAccounts = (res.accounts || []).map((acc) => {
@@ -72,6 +77,10 @@
       renderSolRentList();
     } catch (err) {
       if (sumEl) sumEl.textContent = '--';
+      if (execBtn) {
+        execBtn.disabled = true;
+        execBtn.textContent = t('暂不可回收', 'Unavailable');
+      }
       if (listEl) {
         const errText = toUserFriendlyError(err, '扫描失败', 'Scan failed');
         if (fw && typeof fw.mountSolRentPanel === 'function') {

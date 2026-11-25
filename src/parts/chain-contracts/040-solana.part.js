@@ -930,7 +930,7 @@
                 params: [addr, { programId: progId }, { encoding: 'jsonParsed' }]
               })
             },
-            4500
+            6500
           );
           if (res && !res.error && res.result !== undefined) return res.result;
           throw new Error((res && res.error && res.error.message) || 'Solana RPC error');

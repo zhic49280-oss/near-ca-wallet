@@ -199,3 +199,16 @@ test('FW-3.4: ui-controller part integrations exist, preserve fallback, and stay
     assert.ok(src.includes(`fw.${fnName}`), `${file} must wire fw.${fnName}`);
   }
 });
+
+test('FW-3.5: scanSolRentReclaimUI disables #btn-execute-sol-rent during scan and on failure & prioritizes working Solana RPC', () => {
+  const solRentSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/200-solana-rent.part.js'), 'utf8');
+  const fnIdx = solRentSrc.indexOf('async function scanSolRentReclaimUI');
+  const nextIdx = solRentSrc.indexOf('function renderSolRentList', fnIdx);
+  assert.ok(fnIdx !== -1 && nextIdx !== -1, 'scanSolRentReclaimUI must exist');
+  const fnBody = solRentSrc.slice(fnIdx, nextIdx);
+  assert.ok(fnBody.includes("const execBtn = $('btn-execute-sol-rent')"), 'scanSolRentReclaimUI must grab execBtn');
+  assert.ok(fnBody.includes("execBtn.disabled = true;") && fnBody.includes("t('暂不可回收', 'Unavailable')"), 'scanSolRentReclaimUI must disable execBtn on scan and error');
+
+  const cfgSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/chain-contracts/000-config-evm-chains.part.js'), 'utf8');
+  assert.ok(cfgSrc.includes("const SOLANA_RPC_ENDPOINTS = ['https://api.mainnet-beta.solana.com'"), 'SOLANA_RPC_ENDPOINTS must prioritize working api.mainnet-beta.solana.com');
+});
