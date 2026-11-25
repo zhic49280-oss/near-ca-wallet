@@ -25,6 +25,16 @@
     const st = getState();
     const listEl = $('contacts-list');
     if (!listEl) return;
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountContactsPanel === 'function') {
+      fw.mountContactsPanel(listEl, {
+        contacts: Array.isArray(st.contacts) ? st.contacts : [],
+        pickerTarget: _contactsPickerTarget,
+        isEn: st.lang === 'en',
+        shortenAddr
+      });
+      return;
+    }
     if (!st.contacts || st.contacts.length === 0) {
       listEl.innerHTML = `<div class="text-muted" style="text-align:center;padding:12px;">${t('暂无保存地址', 'No saved contacts')}</div>`;
       return;

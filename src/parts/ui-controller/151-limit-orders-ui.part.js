@@ -257,6 +257,25 @@
     const isHistory = st.limit.ordersTab === 'history';
     const items = isHistory ? (st.limit.ordersHistory || []) : (st.limit.ordersActive || []);
     const tokenList = getLimitTokenListForChain(chain);
+    const fw = typeof window !== 'undefined' ? window.NearCAFramework : null;
+    if (fw && typeof fw.mountLimitOrdersPanel === 'function') {
+      fw.mountLimitOrdersPanel(listEl, {
+        chain,
+        isHistory,
+        items,
+        tokenList,
+        rateLimited: Boolean(st.limit.rateLimited),
+        ordersLoading: Boolean(st.limit.ordersLoading),
+        cancellingOrderId: st.limit.cancellingOrderId || '',
+        claimingOrderId: st.limit.claimingOrderId || '',
+        isEn: st.lang === 'en',
+        formatBal,
+        fromBaseUnits: contracts.fromBaseUnits,
+        dclPointToPrice: lo.dclPointToPrice
+      });
+      return;
+    }
+
     const findMeta = (addr) => {
       const low = String(addr || '').toLowerCase();
       return tokenList.find((tk) => String(tk.contractAddress || '').toLowerCase() === low) || { symbol: (addr || '').slice(0, 6), decimals: 18 };
@@ -639,6 +658,8 @@
     const authed = await verifySecurityAuthAsync(wallet, t('领取已成交限价单资产', 'Claim filled limit order'));
     if (!authed) return;
     _limitOrderActionInFlight = true;
+    st.limit.claimingOrderId = String(orderId);
+    renderLimitOrdersList();
     const prevTxt = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = t('领取中...', 'Claiming...'); }
     try {
@@ -650,7 +671,9 @@
       showToast(toUserFriendlyError(err, t('领取失败，请稍后重试', 'Claim failed. Please try again.')));
     } finally {
       _limitOrderActionInFlight = false;
+      st.limit.claimingOrderId = '';
       if (btn) { btn.disabled = false; btn.textContent = prevTxt; }
+      renderLimitOrdersList();
     }
   }
 
@@ -664,6 +687,8 @@
     const authed = await verifySecurityAuthAsync(wallet, t('撤销限价单', 'Cancel limit order'));
     if (!authed) return;
     _limitOrderActionInFlight = true;
+    st.limit.cancellingOrderId = String(orderId);
+    renderLimitOrdersList();
     const prevTxt = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = t('撤单中...', 'Cancelling...'); }
     try {
@@ -682,7 +707,9 @@
       showToast(toUserFriendlyError(err, t('撤单失败，请稍后重试', 'Cancel failed. Please try again.')));
     } finally {
       _limitOrderActionInFlight = false;
+      st.limit.cancellingOrderId = '';
       if (btn) { btn.disabled = false; btn.textContent = prevTxt; }
+      renderLimitOrdersList();
     }
   }
 

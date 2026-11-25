@@ -453,7 +453,26 @@
 
     const listEl = $('staking-pools-list');
     if (listEl) {
-      if (filteredPools.length === 0) {
+      const fw = typeof window !== 'undefined' ? window.NearCAFramework : null;
+      if (fw && typeof fw.mountEarnPoolsPanel === 'function') {
+        fw.mountEarnPoolsPanel(listEl, {
+          pools: filteredPools,
+          selectedPoolId: st.staking.selectedPoolId || '',
+          loading: Boolean(st.staking.loading),
+          isEn: st.lang === 'en',
+          getPoolData: (p) => ({
+            apyText: formatPoolApyText(p),
+            availBalance: getEarnPoolAvailableBalance(wallet, p),
+            tvlText: formatPoolTvlDisplay(p),
+            stakersText: (typeof p.stakersCount === 'number' && Number.isFinite(p.stakersCount) && p.stakersCount > 0)
+              ? p.stakersCount.toLocaleString('en-US')
+              : '--',
+            catMeta: getPoolCategoryMeta(p),
+            iconUrl: getPoolIconUrl(p)
+          }),
+          formatBal
+        });
+      } else if (filteredPools.length === 0) {
         setHtmlIfChanged(listEl, `<div class="ios-glass-card text-center" style="font-size:12.5px;color:var(--text-secondary);">${escapeHtml(t('未找到匹配的质押池或合约', 'No matching staking pools found'))}</div>`);
       } else {
         setHtmlIfChanged(listEl, filteredPools.map((p) => {

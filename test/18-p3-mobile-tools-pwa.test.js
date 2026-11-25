@@ -12,14 +12,14 @@ const {
   withMockedStorage
 } = require('./helpers.js');
 
-test('P3.1: jsqr is installed and bundled into src/framework-ui.js for offline iOS QR scan', () => {
+test('P3.1: jsqr is installed and code-split into src/jsqr-lazy.js for offline iOS QR scan', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
   assert.ok(
     (pkg.devDependencies && pkg.devDependencies.jsqr) || (pkg.dependencies && pkg.dependencies.jsqr),
     'jsqr must be installed in package.json'
   );
-  const fwBundle = fs.readFileSync(path.join(ROOT_DIR, 'src/framework-ui.js'), 'utf8');
-  assert.ok(fwBundle.includes('jsQR'), 'Vite build must bundle jsQR into src/framework-ui.js');
+  const jsqrBundle = fs.readFileSync(path.join(ROOT_DIR, 'src/jsqr-lazy.js'), 'utf8');
+  assert.ok(jsqrBundle.includes('jsQR'), 'scripts/build-jsqr.js must bundle jsQR into src/jsqr-lazy.js');
 });
 
 test('P3.2: QTC deposit address expires after 20 min & copyReceiveAddress blocks error state', async () => {

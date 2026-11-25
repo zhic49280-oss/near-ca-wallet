@@ -71,8 +71,13 @@
     const statusBadge = $('near-acct-status-badge');
     const guideEl = $('near-acct-unactivated-guide');
     const listEl = $('near-keys-list');
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (listEl) {
-      listEl.innerHTML = `<div class="text-muted" style="font-size:12px;padding:8px;">${t('正在查询链上密钥...', 'Loading on-chain keys...')}</div>`;
+      if (fw && typeof fw.mountNearKeysPanel === 'function') {
+        fw.mountNearKeysPanel(listEl, { keys: [], loading: true, isEn: st.lang === 'en', shortenAddr });
+      } else {
+        listEl.innerHTML = `<div class="text-muted" style="font-size:12px;padding:8px;">${t('正在查询链上密钥...', 'Loading on-chain keys...')}</div>`;
+      }
     }
 
     const refreshBtn = $('btn-refresh-near-keys');
@@ -92,7 +97,11 @@
           statusBadge.className = 'badge badge-cyan';
         }
         if (listEl) {
-          listEl.innerHTML = `<div class="text-muted" style="font-size:12px;padding:8px;">${t('账户尚未在链上激活（首次收款或激活后可见密钥）', 'Account not yet active on-chain')}</div>`;
+          if (fw && typeof fw.mountNearKeysPanel === 'function') {
+            fw.mountNearKeysPanel(listEl, { keys: [], loading: false, unactivated: true, isEn: st.lang === 'en', shortenAddr });
+          } else {
+            listEl.innerHTML = `<div class="text-muted" style="font-size:12px;padding:8px;">${t('账户尚未在链上激活（首次收款或激活后可见密钥）', 'Account not yet active on-chain')}</div>`;
+          }
         }
         return;
       }
@@ -108,30 +117,52 @@
       if (!listEl) return;
 
       const fullCount = res.keys.filter((k) => k.access_key && k.access_key.permission === 'FullAccess').length;
-      listEl.innerHTML = res.keys.map((k) => {
-        const pk = String(k.public_key || '');
-        const isFull = Boolean(k.access_key && k.access_key.permission === 'FullAccess');
-        const isCurrent = pk === creds.publicKeyStr || (creds.publicKeyHandleStr && pk === creds.publicKeyHandleStr);
-        const canDelete = !isCurrent && (!isFull || fullCount > 1);
-        return `
-          <div class="ios-glass-card flex items-center justify-between gap-2" style="padding:10px 12px;">
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-1" style="flex-wrap:wrap;">
-                <span class="badge ${isFull ? 'badge-emerald' : 'badge-cyan'}">${isFull ? t('完全权限密钥', 'Full Key') : t('应用授权密钥', 'App Key')}</span>
-                ${isCurrent ? `<span class="ca-badge">${t('当前使用', 'In Use')}</span>` : ''}
+      if (fw && typeof fw.mountNearKeysPanel === 'function') {
+        const normalizedKeys = res.keys.map((k) => {
+          const pk = String(k.public_key || '');
+          const isFull = Boolean(k.access_key && k.access_key.permission === 'FullAccess');
+          const isCurrent = pk === creds.publicKeyStr || (creds.publicKeyHandleStr && pk === creds.publicKeyHandleStr);
+          const canDelete = !isCurrent && (!isFull || fullCount > 1);
+          return { publicKey: pk, isFull, isCurrent, canDelete };
+        });
+        fw.mountNearKeysPanel(listEl, {
+          keys: normalizedKeys,
+          loading: false,
+          unactivated: false,
+          isEn: st.lang === 'en',
+          shortenAddr
+        });
+      } else {
+        listEl.innerHTML = res.keys.map((k) => {
+          const pk = String(k.public_key || '');
+          const isFull = Boolean(k.access_key && k.access_key.permission === 'FullAccess');
+          const isCurrent = pk === creds.publicKeyStr || (creds.publicKeyHandleStr && pk === creds.publicKeyHandleStr);
+          const canDelete = !isCurrent && (!isFull || fullCount > 1);
+          return `
+            <div class="ios-glass-card flex items-center justify-between gap-2" style="padding:10px 12px;">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-1" style="flex-wrap:wrap;">
+                  <span class="badge ${isFull ? 'badge-emerald' : 'badge-cyan'}">${isFull ? t('完全权限密钥', 'Full Key') : t('应用授权密钥', 'App Key')}</span>
+                  ${isCurrent ? `<span class="ca-badge">${t('当前使用', 'In Use')}</span>` : ''}
+                </div>
+                <div class="mono" style="font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;margin-top:4px;">${escapeHtml(shortenAddr(pk, 14, 8))}</div>
               </div>
-              <div class="mono" style="font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;margin-top:4px;">${escapeHtml(shortenAddr(pk, 14, 8))}</div>
+              ${canDelete
+                ? `<button type="button" class="btn-danger" data-action="delete-near-key" data-pk="${escapeHtml(pk)}">${t('删除', 'Delete')}</button>`
+                : ''}
             </div>
-            ${canDelete
-              ? `<button type="button" class="btn-danger" data-action="delete-near-key" data-pk="${escapeHtml(pk)}">${t('删除', 'Delete')}</button>`
-              : ''}
-          </div>
-        `;
-      }).join('');
+          `;
+        }).join('');
+      }
     } catch (e) {
       if (rotateCard) rotateCard.classList.add('hidden');
       if (listEl) {
-        listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:8px;">${escapeHtml(toUserFriendlyError(e, '查询失败', 'Query failed'))}</div>`;
+        const errText = toUserFriendlyError(e, '查询失败', 'Query failed');
+        if (fw && typeof fw.mountNearKeysPanel === 'function') {
+          fw.mountNearKeysPanel(listEl, { keys: [], loading: false, errorMsg: errText, isEn: st.lang === 'en', shortenAddr });
+        } else {
+          listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:8px;">${escapeHtml(errText)}</div>`;
+        }
       }
     } finally {
       if (refreshBtn) {

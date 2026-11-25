@@ -1,14 +1,15 @@
 import { h, render } from 'preact';
-import jsQR from 'jsqr';
 import { SwapHistoryPanel } from './components/SwapHistoryPanel.jsx';
 import { AssetListPanel } from './components/AssetListPanel.jsx';
 import { TokenPickerPanel } from './components/TokenPickerPanel.jsx';
 import { PerpOverviewPanel } from './components/PerpOverviewPanel.jsx';
 import { PerpOrderbookSidePanel, PerpBottomListPanel } from './components/PerpOrderbookAndPositions.jsx';
-import { useWalletState, notifyFrameworkState } from './store/useWalletStore.js';
-
-if (typeof window !== 'undefined' && !window.jsQR) window.jsQR = jsQR;
-if (typeof globalThis !== 'undefined' && !globalThis.jsQR) globalThis.jsQR = jsQR;
+import { LimitOrdersPanel } from './components/LimitOrdersPanel.jsx';
+import { EarnPoolsPanel } from './components/EarnPoolsPanel.jsx';
+import { TokenHistoryPanel } from './components/TokenHistoryPanel.jsx';
+import { ContactsPanel } from './components/ContactsPanel.jsx';
+import { NearKeysPanel, SolRentPanel, NearStoragePanel } from './components/HubToolsPanels.jsx';
+import { useWalletState, notifyFrameworkState, useLang, useActiveWallet } from './store/useWalletStore.js';
 
 export function mountSwapHistory(containerEl, opts = {}) {
   if (!containerEl) return false;
@@ -47,17 +48,68 @@ export function mountPerpBottomList(containerEl, props = {}) {
   return true;
 }
 
+export function mountLimitOrdersPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(LimitOrdersPanel, props), containerEl);
+  return true;
+}
+
+export function mountEarnPoolsPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(EarnPoolsPanel, props), containerEl);
+  return true;
+}
+
+export function mountTokenHistoryPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(TokenHistoryPanel, props), containerEl);
+  return true;
+}
+
+export function mountContactsPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(ContactsPanel, props), containerEl);
+  return true;
+}
+
+export function mountNearKeysPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(NearKeysPanel, props), containerEl);
+  return true;
+}
+
+export function mountSolRentPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(SolRentPanel, props), containerEl);
+  return true;
+}
+
+export function mountNearStoragePanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(NearStoragePanel, props), containerEl);
+  return true;
+}
+
 const NearCAFramework = {
   h,
   render,
   useWalletState,
   notifyFrameworkState,
+  useLang,
+  useActiveWallet,
   mountSwapHistory,
   mountAssetList,
   mountTokenPicker,
   mountPerpOverview,
   mountPerpOrderbookSide,
-  mountPerpBottomList
+  mountPerpBottomList,
+  mountLimitOrdersPanel,
+  mountEarnPoolsPanel,
+  mountTokenHistoryPanel,
+  mountContactsPanel,
+  mountNearKeysPanel,
+  mountSolRentPanel,
+  mountNearStoragePanel
 };
 
 if (typeof globalThis !== 'undefined') {

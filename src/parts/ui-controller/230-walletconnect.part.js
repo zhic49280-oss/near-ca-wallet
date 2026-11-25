@@ -24,7 +24,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.69');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.70');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -626,6 +626,16 @@
     }
   }
 
+  async function ensureJsQrLoaded() {
+    const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
+    if (existing) return existing;
+    if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.70').catch(() => false);
+      return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
+    }
+    return null;
+  }
+
   async function openQrScannerSheet(target = 'wc') {
     _qrScanTarget = target === 'send' ? 'send' : 'wc';
     _qrScanHandling = false;
@@ -660,6 +670,9 @@
 
       const DetectorCtor = (typeof window !== 'undefined' && window.BarcodeDetector) || (typeof globalThis !== 'undefined' && globalThis.BarcodeDetector);
       const getJsQrFn = () => (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
+      if (typeof DetectorCtor !== 'function' && !getJsQrFn()) {
+        await ensureJsQrLoaded();
+      }
       if (typeof DetectorCtor === 'function') {
         const detector = new DetectorCtor({ formats: ['qr_code'] });
         if (statusEl) {
@@ -731,7 +744,10 @@
     const file = event && event.target && event.target.files && event.target.files[0];
     if (!file) return;
     const DetectorCtor = (typeof window !== 'undefined' && window.BarcodeDetector) || (typeof globalThis !== 'undefined' && globalThis.BarcodeDetector);
-    const jsQrFn = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
+    let jsQrFn = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
+    if (typeof DetectorCtor !== 'function' && typeof jsQrFn !== 'function') {
+      jsQrFn = await ensureJsQrLoaded();
+    }
     if (typeof DetectorCtor !== 'function' && typeof jsQrFn !== 'function') {
       showToast(t('当前设备不支持图片二维码识别，请直接复制 wc: 链接粘贴', 'Image QR decoding is unsupported on this device; paste the wc: link instead'));
       return;

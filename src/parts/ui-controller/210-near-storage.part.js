@@ -26,6 +26,7 @@
     const sumEl = $('near-storage-summary');
     if (!wallet || !nearAcct || !contracts || typeof contracts.scanNearReclaimableStorageAsync !== 'function') return;
 
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const refreshBtn = $('btn-refresh-near-storage');
     const prevRefreshTxt = refreshBtn ? refreshBtn.textContent : '';
     if (refreshBtn) {
@@ -33,7 +34,13 @@
       refreshBtn.textContent = t('扫描中...', 'Scanning...');
     }
     if (sumEl) sumEl.textContent = t('扫描中...', 'Scanning...');
-    if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:12px;text-align:center;">${t('正在扫描 NEAR 代币合约存储押金...', 'Scanning NEAR token storage deposits...')}</div>`;
+    if (listEl) {
+      if (fw && typeof fw.mountNearStoragePanel === 'function') {
+        fw.mountNearStoragePanel(listEl, { accounts: [], selectedContracts: [], loading: true, isEn: st.lang === 'en', formatBal });
+      } else {
+        listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:12px;text-align:center;">${t('正在扫描 NEAR 代币合约存储押金...', 'Scanning NEAR token storage deposits...')}</div>`;
+      }
+    }
 
     try {
       const scanPromise = contracts.scanNearReclaimableStorageAsync(nearAcct);
@@ -50,7 +57,14 @@
       renderNearStorageList();
     } catch (err) {
       if (sumEl) sumEl.textContent = '--';
-      if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:12px;text-align:center;">${escapeHtml(toUserFriendlyError(err, '扫描失败', 'Scan failed'))}</div>`;
+      if (listEl) {
+        const errText = toUserFriendlyError(err, '扫描失败', 'Scan failed');
+        if (fw && typeof fw.mountNearStoragePanel === 'function') {
+          fw.mountNearStoragePanel(listEl, { accounts: [], selectedContracts: [], loading: false, errorMsg: errText, isEn: st.lang === 'en', formatBal });
+        } else {
+          listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:12px;text-align:center;">${escapeHtml(errText)}</div>`;
+        }
+      }
     } finally {
       if (refreshBtn) {
         refreshBtn.disabled = false;
@@ -78,6 +92,19 @@
       execBtn.textContent = selectedList.length > 0
         ? `${t('一键回收存储押金', 'Reclaim Storage Deposits')} (+${selectedNear.toFixed(5)} NEAR)`
         : t('无可回收合约', 'Nothing Selected');
+    }
+
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountNearStoragePanel === 'function') {
+      const st = getState();
+      fw.mountNearStoragePanel(listEl, {
+        accounts: _nearStorageScanAccounts,
+        selectedContracts: Array.from(_nearStorageSelectedContracts),
+        loading: false,
+        isEn: st.lang === 'en',
+        formatBal
+      });
+      return;
     }
 
     if (_nearStorageScanAccounts.length === 0) {

@@ -42,6 +42,29 @@
     );
   }
 
+  function emitStateTopic(topic = '*') {
+    try {
+      const fw = (typeof window !== 'undefined' && window.NearCAFramework) ||
+        (typeof globalThis !== 'undefined' && globalThis.NearCAFramework) ||
+        null;
+      if (fw && typeof fw.notifyFrameworkState === 'function') {
+        fw.notifyFrameworkState(topic);
+      }
+    } catch (_) {}
+  }
+
+  const STORAGE_TOPIC_MAP = {
+    [WALLETS_STORAGE_KEY]: 'wallet',
+    [CONTACTS_STORAGE_KEY]: 'contacts',
+    [FAV_TOKENS_STORAGE_KEY]: 'balances',
+    [LIVE_TOKENS_STORAGE_KEY]: 'balances',
+    [STAKING_METRICS_STORAGE_KEY]: 'earn',
+    [PERP_SNAPSHOT_STORAGE_KEY]: 'perp',
+    [SWAP_PAIR_STORAGE_KEY]: 'swap',
+    [ACTIVE_SWAP_ORDER_STORAGE_KEY]: 'swap',
+    [LANG_STORAGE_KEY]: 'lang'
+  };
+
   function safeStorageGet(key) {
     try {
       if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function') {
@@ -55,6 +78,8 @@
     try {
       if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.removeItem === 'function') {
         localStorage.removeItem(key);
+        const topic = STORAGE_TOPIC_MAP[key];
+        if (topic) emitStateTopic(topic);
       }
     } catch (_) {}
   }
@@ -63,6 +88,8 @@
     try {
       if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.setItem === 'function') {
         localStorage.setItem(key, val);
+        const topic = STORAGE_TOPIC_MAP[key];
+        if (topic) emitStateTopic(topic);
         return true;
       }
     } catch (err) {
@@ -74,6 +101,8 @@
           safeStorageRemove(PERP_SNAPSHOT_STORAGE_KEY);
           safeStorageRemove('near_ca_near_ft_icons_v1');
           localStorage.setItem(key, val);
+          const topic = STORAGE_TOPIC_MAP[key];
+          if (topic) emitStateTopic(topic);
           return true;
         } catch (_) {}
       }
@@ -165,6 +194,7 @@
       wallet.erc20Balances[cKey] = {};
     }
     wallet.erc20Balances[cKey][addrLower] = val;
+    emitStateTopic('balances');
   }
 
   function getWalletErc20Balance(wallet, chainKey, contractAddress) {

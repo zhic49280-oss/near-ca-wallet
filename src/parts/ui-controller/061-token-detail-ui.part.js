@@ -207,6 +207,52 @@
       $('token-detail-price-val').textContent = group.price !== null ? formatTokenPrice(group.price) : '--';
     }
 
+    renderTokenDetailHistoryWithFramework();
+  }
+
+  function renderTokenDetailHistoryWithFramework() {
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    const listEl = $('token-detail-history-list');
+    const allBtn = $('token-detail-history-all-btn');
+    if (fw && typeof fw.mountTokenHistoryPanel === 'function' && listEl) {
+      const st = getState();
+      const wallet = st.getActiveWallet();
+      const symKey = _tokenDetailState.symbolKey;
+      const chainFilter = _tokenDetailState.chainFilter || 'all';
+      if (!wallet || !symKey) {
+        _lastTokenDetailMergedItems = [];
+        _lastDetailHistorySig = '';
+        if (allBtn) allBtn.classList.add('hidden');
+        fw.mountTokenHistoryPanel(listEl, {
+          items: [],
+          symKey: '',
+          loading: false,
+          partialUnavailable: false,
+          isEn: st.lang === 'en'
+        });
+        return;
+      }
+      const items = getMergedTokenHistoryItems(wallet, symKey, chainFilter);
+      _lastTokenDetailMergedItems = items;
+      if (allBtn) allBtn.classList.toggle('hidden', items.length === 0);
+      const nextSig = `${wallet.id}|${symKey}|${chainFilter}|${_tokenDetailState.historyLoading ? 1 : 0}|${_tokenDetailState.historyPartialUnavailable ? 1 : 0}|${st.lang}|${items.slice(0, 6).map((x) => `${x.id || x.txHash || ''}:${x.status || ''}:${x.timestamp || ''}`).join(',')}`;
+      if (nextSig === _lastDetailHistorySig && listEl.innerHTML) return;
+      _lastDetailHistorySig = nextSig;
+      const tokens = getTokens();
+      fw.mountTokenHistoryPanel(listEl, {
+        items,
+        symKey,
+        loading: Boolean(_tokenDetailState.historyLoading),
+        partialUnavailable: Boolean(_tokenDetailState.historyPartialUnavailable),
+        isEn: st.lang === 'en',
+        resolveTxDisplayParts,
+        formatRelativeActivityTime,
+        formatActivityTime,
+        formatTxConfirmBadgeText,
+        getChainMeta: (bc) => (tokens && typeof tokens.getChainMeta === 'function' ? tokens.getChainMeta(bc) : null)
+      });
+      return;
+    }
     renderTokenDetailHistoryList();
   }
 
@@ -379,7 +425,7 @@
     const seq = ++_tokenDetailState.fetchSeq;
     _tokenDetailState.historyLoading = true;
     _tokenDetailState.historyPartialUnavailable = false;
-    renderTokenDetailHistoryList();
+    renderTokenDetailHistoryWithFramework();
 
     const targetChains = chainFilter !== 'all'
       ? [chainFilter]
@@ -666,7 +712,7 @@
     _tokenDetailState.historyItems = chunks.flat().filter(Boolean);
     _tokenDetailState.historyPartialUnavailable = partialUnavailable;
     _tokenDetailState.historyLoading = false;
-    renderTokenDetailHistoryList();
+    renderTokenDetailHistoryWithFramework();
   }
 
   let _autoSyncTimer = null;

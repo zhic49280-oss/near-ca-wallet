@@ -24,6 +24,7 @@
     const sumEl = $('sol-rent-summary');
     if (!wallet || !wallet.solAddress || !contracts || typeof contracts.scanSolanaReclaimableAccounts !== 'function') return;
 
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const refreshBtn = $('btn-refresh-sol-rent');
     const prevRefreshTxt = refreshBtn ? refreshBtn.textContent : '';
     if (refreshBtn) {
@@ -31,7 +32,13 @@
       refreshBtn.textContent = t('扫描中...', 'Scanning...');
     }
     if (sumEl) sumEl.textContent = t('扫描中...', 'Scanning...');
-    if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:12px;text-align:center;">${t('正在扫描 Solana 代币账户...', 'Scanning Solana token accounts...')}</div>`;
+    if (listEl) {
+      if (fw && typeof fw.mountSolRentPanel === 'function') {
+        fw.mountSolRentPanel(listEl, { accounts: [], selectedAtas: [], loading: true, isEn: st.lang === 'en', formatBal });
+      } else {
+        listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:12px;text-align:center;">${t('正在扫描 Solana 代币账户...', 'Scanning Solana token accounts...')}</div>`;
+      }
+    }
 
     const solTokens = getSwapTokenCatalog().filter((tk) => String(tk.blockchain || '').toLowerCase() === 'sol' && tk.contractAddress);
     const tokenByMint = new Map();
@@ -65,7 +72,14 @@
       renderSolRentList();
     } catch (err) {
       if (sumEl) sumEl.textContent = '--';
-      if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:12px;text-align:center;">${escapeHtml(toUserFriendlyError(err, '扫描失败', 'Scan failed'))}</div>`;
+      if (listEl) {
+        const errText = toUserFriendlyError(err, '扫描失败', 'Scan failed');
+        if (fw && typeof fw.mountSolRentPanel === 'function') {
+          fw.mountSolRentPanel(listEl, { accounts: [], selectedAtas: [], loading: false, errorMsg: errText, isEn: st.lang === 'en', formatBal });
+        } else {
+          listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:12px;text-align:center;">${escapeHtml(errText)}</div>`;
+        }
+      }
     } finally {
       if (refreshBtn) {
         refreshBtn.disabled = false;
@@ -93,6 +107,19 @@
       execBtn.textContent = selectedList.length > 0
         ? `${t('一键回收并领取', 'Reclaim Selected')} (+${selectedSol.toFixed(4)} SOL)`
         : t('无可回收账户', 'Nothing Selected');
+    }
+
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.mountSolRentPanel === 'function') {
+      const st = getState();
+      fw.mountSolRentPanel(listEl, {
+        accounts: _solRentScanAccounts,
+        selectedAtas: Array.from(_solRentSelectedAtas),
+        loading: false,
+        isEn: st.lang === 'en',
+        formatBal
+      });
+      return;
     }
 
     if (_solRentScanAccounts.length === 0) {

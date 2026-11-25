@@ -38,7 +38,7 @@
 ## 7. 源码分片与 Vite + Preact 框架开发规范
 - **生成文件由分片自动拼接**：`index.html` 与 `src/{ui-controller,chain-contracts,near-intents,token-registry,state,crypto-engine}.js` 由 `scripts/build-parts.js` 按文件名顺序拼接 `src/parts/<name>/` 生成；`src/framework-ui.js` 由 `vite.config.mjs` 从 `src/app/main.jsx` 编译生成。**只改分片与 `src/app/`，禁止直接编辑生成文件**；改完运行 `npm run build`，`test/08-build-parts.test.js` 会校验分片同步。
 - **渐进式 Preact 框架层（`src/app/`）**：新增独立 UI 面板与交互组件优先写入 `src/app/components/*.jsx`，通过 `src/app/store/useWalletStore.js` 订阅 `NearCAState` 并由 `src/app/main.jsx` 挂载到对应容器，保持 Node 单测兼容降级。
-- **产物已移出 Git（`.gitignore`）**：上述 7 个拼接产物、`src/framework-ui.js` 以及 `dist/`、`android/app/src/main/assets/public/`、`ios/App/App/public/` 均在 `.gitignore` 中排除，由本地及 GitHub Actions CI（`npm ci && npm run build`）自动生成并压缩。
+- **产物已移出 Git（`.gitignore`）**：上述 7 个拼接产物、`src/framework-ui.js`、`src/jsqr-lazy.js` 以及 `dist/`、`android/app/src/main/assets/public/`、`ios/App/App/public/` 均在 `.gitignore` 中排除，由本地及 GitHub Actions CI（`npm ci && npm run build`）自动生成并压缩。
 - **按需读取与分片上限**：定位代码后只读相关分片，禁止整读生成的大文件。新增页面/模块/链时新建分片（如 `125-xxx.part.js`），**单分片软上限 50 KB（硬上限 60 KB）**，禁止再出现百 KB 巨型分片；`globalHandlers` 与 `NearCAUI` 严禁重复键名。
 - **测试分文件**：公共工具在 `test/helpers.js`，新版本测试写入对应 `test/NN-*.test.js`（或新建），禁止再堆回单文件。
 
@@ -51,7 +51,7 @@
 ### 8.2 项目架构与分片索引（直达目标文件）
 - **权威功能规范文档**：`docs/FEATURES_SPEC.md`（全功能与交互逻辑唯一真相源，任何功能与交互修改必须同步更新此文档并清理废弃僵尸代码）。
 - **运行入口与构建**：`index.html` 按序加载全局 IIFE 脚本与 `src/framework-ui.js`；`scripts/build-parts.js` 拼接分片，`vite.config.mjs` 编译 Preact 组件，`scripts/sync-assets.js` 使用 `esbuild` 压缩并同步 22 个资源到 `dist/`、`android/`、`ios/`；`server.js` 提供本地静态服务与 `/pearl-proxy`、`/kryptex-proxy`；`sw.js` 管理 PWA 离线缓存；`style.css` 存放全局样式。
-- **Preact 框架目录（`src/app/` -> `src/framework-ui.js`）**：`main.jsx`（入口挂载与全局桥接 `window.NearCAFramework`）、`store/useWalletStore.js`（响应式状态订阅）、`components/SwapHistoryPanel.jsx`（闪兑历史组件）。
+- **Preact 框架目录（`src/app/` -> `src/framework-ui.js`）**：`main.jsx`（入口挂载与全局桥接 `window.NearCAFramework`，含 13 个挂载/共享组件）、`store/useWalletStore.js`（微任务合并响应式状态订阅、`useLang` / `useActiveWallet`）、`components/ui/`（`ActionButton`、`EmptyState`、`StatusBadge`）及业务面板组件；`jsQR` 由 `scripts/build-jsqr.js` 单独打包为 `src/jsqr-lazy.js` 按需懒加载。
 - **原生插件（受保护，勿误删）**：Android (`android/app/src/main/{AndroidManifest.xml,java/io/nexus/wallet/{MainActivity,NativeSecurityPlugin}.java}`)；iOS (`ios/App/App/{Info.plist,MainViewController,NativeSecurityPlugin}.swift`)。CI 编译流在 `.github/workflows/{build-android-apk,build-ios-ipa}.yml`。
 - **`src/parts/index-html/`（10 个 HTML 片段 -> `index.html`）**：
   - `000-head-shell` 锁屏/隐私遮罩与顶栏；`010-view-onboarding-wallet` 引导与资产首页；`020-view-swap-limit` 闪兑与限价单；`030-view-perp` 永续合约；`040-view-earn` 质押理财；`050-view-hub-nav` 枢纽设置与底栏；

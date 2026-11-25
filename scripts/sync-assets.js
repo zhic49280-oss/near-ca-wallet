@@ -26,6 +26,7 @@ const FILES_TO_SYNC = [
   'src/state.js',
   'src/dapp-browser.js',
   'src/framework-ui.js',
+  'src/jsqr-lazy.js',
   'src/ui-controller.js'
 ];
 
