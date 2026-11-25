@@ -201,6 +201,10 @@
     const chain = st.limit.chain || 'near';
     st.limit.ordersLoading = true;
     st.limit.rateLimited = false;
+    if ((!Array.isArray(st.limit.ordersActive) || st.limit.ordersActive.length === 0)
+      && (!Array.isArray(st.limit.ordersHistory) || st.limit.ordersHistory.length === 0)) {
+      renderLimitOrdersList();
+    }
     const refreshBtn = $('btn-refresh-limit-orders');
     const prevRefreshText = refreshBtn ? refreshBtn.textContent : '';
     if (refreshBtn && showFeedback) {
@@ -228,6 +232,7 @@
           showToast(res.error || t('当前链限价单接口暂不可用', 'Limit order service unavailable on this chain'));
         }
       }
+      if (reqSeq === _limitOrdSeq) st.limit.ordersLoading = false;
       renderLimitOrdersList();
       if (showFeedback && !(res && res.unavailable)) {
         const rateLimitMsg = chain === 'bsc'
@@ -238,7 +243,11 @@
     } catch (_) {
       if (showFeedback) showToast(t('获取挂单失败', 'Failed to load orders'));
     } finally {
-      if (reqSeq === _limitOrdSeq) st.limit.ordersLoading = false;
+      if (reqSeq === _limitOrdSeq) {
+        const wasLoading = Boolean(st.limit.ordersLoading);
+        st.limit.ordersLoading = false;
+        if (wasLoading) renderLimitOrdersList();
+      }
       if (refreshBtn && showFeedback) {
         refreshBtn.disabled = false;
         refreshBtn.textContent = prevRefreshText || t('刷新', 'Refresh');
