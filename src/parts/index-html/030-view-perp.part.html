@@ -21,7 +21,7 @@
             <div class="flex items-center gap-2">
               <button type="button" class="mini-action-btn primary flex-1" onclick="openPerpFundingSheet('deposit')" data-i18n="perp.depositBtn">充值</button>
               <button type="button" class="mini-action-btn flex-1" onclick="openPerpFundingSheet('withdraw')" data-i18n="perp.withdrawBtn">提现</button>
-              <button type="button" class="btn-ghost-sm" onclick="refreshPerpDataAsync(true)" data-i18n="common.refresh">刷新</button>
+              <button type="button" id="btn-perp-overview-refresh" class="btn-ghost-sm" onclick="refreshPerpDataAsync(true)" data-i18n="common.refresh">刷新</button>
             </div>
 
             <div id="perp-spot-banner" class="perp-spot-banner hidden">
@@ -209,7 +209,7 @@
 
             <!-- Right: Compact Live Orderbook -->
             <div class="ios-glass-card flex flex-col gap-2" style="padding: 10px;">
-              <div id="perp-ls-ratio-wrap" class="perp-ob-power-wrap hidden">
+              <div id="perp-ls-ratio-wrap" class="perp-ob-power-wrap" style="min-height: 22px; opacity: 0.55;">
                 <div class="flex items-center justify-between" style="font-size: 9.5px;">
                   <span id="perp-ls-long-label" class="mono text-emerald">--</span>
                   <span id="perp-ls-short-label" class="mono text-rose">--</span>

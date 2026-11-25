@@ -22,7 +22,7 @@
             <span id="near-acct-status-badge" class="badge badge-cyan">--</span>
           </div>
         </div>
-        <div id="near-acct-unactivated-guide" class="hidden" style="font-size: 11.5px; color: var(--text-secondary); line-height: 1.45; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06);" data-i18n="near.unactivatedGuide">向隐式地址转入 ≥ 0.055 NEAR 后即可一键注册 .near，系统将自动销毁空隐式账户并将 100% 余额与存储押金无损归集至新域名。</div>
+        <div id="near-acct-unactivated-guide" class="hidden" style="font-size: 11.5px; color: var(--text-secondary); line-height: 1.45; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06);" data-i18n="near.unactivatedGuide">向当前 NEAR 地址转入 ≥ 0.055 NEAR 后即可一键注册 .near，系统将自动清理旧账户并将 100% 余额与存储押金无损归集至新域名。</div>
       </div>
 
       <!-- .near Registration & Collapsible Binding -->
@@ -30,7 +30,7 @@
         <div style="font-size: 13px; font-weight: 700;" data-i18n="hub.nearDomainTitle">NEAR .near 账户注册与绑定</div>
         <div class="flex gap-2">
           <input id="hub-near-domain-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="hub.nearDomainPlaceholder" placeholder="输入期望域名，如 alice.near" />
-          <button type="button" class="btn-secondary" style="width: auto; padding: 0 12px; white-space: nowrap;" onclick="checkNearDomainAvailabilityUI()" data-i18n="near.checkAvailBtn">检测</button>
+          <button type="button" id="btn-check-near-domain" class="btn-secondary" style="width: auto; padding: 0 12px; white-space: nowrap;" onclick="checkNearDomainAvailabilityUI()" data-i18n="near.checkAvailBtn">检测</button>
         </div>
         <div id="near-domain-avail-status" class="hidden" style="font-size: 11.5px;"></div>
         <button type="button" id="btn-register-near-domain" class="btn-primary" onclick="registerNearDomainFromHub()" data-i18n="hub.nearDomainRegisterBtn">无损注册 .near (0.05 NEAR)</button>
@@ -45,7 +45,7 @@
       <div class="ios-glass-card flex flex-col gap-2" style="padding: 12px;">
         <div class="flex items-center justify-between">
           <span style="font-size: 12.5px; font-weight: 700;" data-i18n="sheet.keysListTitle">链上访问密钥</span>
-          <button type="button" class="btn-ghost-sm" onclick="refreshNearAccessKeysSheet()" data-i18n="common.refresh">刷新</button>
+          <button type="button" id="btn-refresh-near-keys" class="btn-ghost-sm" onclick="refreshNearAccessKeysSheet()" data-i18n="common.refresh">刷新</button>
         </div>
         <div id="near-keys-list" class="flex flex-col gap-2"></div>
       </div>
@@ -75,7 +75,7 @@
         <span class="meta-key" data-i18n="sheet.solRentSummaryLabel">扫描结果</span>
         <div class="flex items-center gap-2">
           <span id="sol-rent-summary" class="meta-val">--</span>
-          <button type="button" class="btn-ghost-sm" onclick="scanSolRentReclaimUI()" data-i18n="common.refresh">刷新</button>
+          <button type="button" id="btn-refresh-sol-rent" class="btn-ghost-sm" onclick="scanSolRentReclaimUI()" data-i18n="common.refresh">刷新</button>
         </div>
       </div>
       <div id="sol-rent-list" class="flex flex-col gap-2" style="max-height: 290px; overflow-y: auto;"></div>
@@ -96,11 +96,11 @@
         <span class="meta-key" data-i18n="sheet.nearStorageSummaryLabel">扫描结果</span>
         <div class="flex items-center gap-2">
           <span id="near-storage-summary" class="meta-val">--</span>
-          <button type="button" class="btn-ghost-sm" onclick="scanNearStorageReclaimUI()" data-i18n="common.refresh">刷新</button>
+          <button type="button" id="btn-refresh-near-storage" class="btn-ghost-sm" onclick="scanNearStorageReclaimUI()" data-i18n="common.refresh">刷新</button>
         </div>
       </div>
       <div id="near-storage-list" class="flex flex-col gap-2" style="max-height: 290px; overflow-y: auto;"></div>
-      <div style="font-size: 11.5px; color: var(--text-secondary);" data-i18n="sheet.nearStorageNote">仅对当前代币余额为 0 的 NEP-141 合约注销空账本并退回 NEAR 存储押金（每笔约消耗 0.00018 NEAR Gas）。</div>
+      <div style="font-size: 11.5px; color: var(--text-secondary);" data-i18n="sheet.nearStorageNote">仅对当前代币余额为 0 的合约注销空账本并退回 NEAR 存储押金（每笔约消耗 0.00018 NEAR 手续费）。</div>
       <button type="button" id="btn-execute-near-storage" class="btn-primary" onclick="executeNearStorageReclaimUI()" data-i18n="sheet.nearStorageExecuteBtn">一键回收存储押金</button>
     </div>
   </div>
@@ -204,7 +204,7 @@
             <input id="perp-arb-amount" type="number" step="any" min="5" class="amount-input-lg" placeholder="5.00" oninput="evaluatePerpArbDepositUI()" />
           </div>
           <div id="perp-arb-error" class="swap-error-banner hidden"></div>
-          <div style="font-size: 11px; color: #fbbf24; line-height: 1.45; background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.22); border-radius: 8px; padding: 6px 8px;" data-i18n="perp.arbBridgeNotice">Arbitrum Bridge2 充值最低 5 USDC（低于 5 USDC 将永久丢失），链上确认约需 1~2 分钟。</div>
+          <div style="font-size: 11px; color: #fbbf24; line-height: 1.45; background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.22); border-radius: 8px; padding: 6px 8px;" data-i18n="perp.arbBridgeNotice">Arbitrum 跨链充值最低 5 USDC（低于 5 USDC 将无法找回），链上确认约需 1~2 分钟。</div>
         <button type="button" id="btn-perp-arb-deposit" class="btn-primary" onclick="executePerpArbBridgeDepositUI()" data-i18n="perp.arbDepositBtn">确认 Arbitrum 充值</button>
         </div>
       </div>
@@ -418,7 +418,7 @@
     <div class="sheet-body">
       <div class="meta-list">
         <div class="meta-row">
-          <span class="meta-key" data-i18n="perp.colContractVol">合约</span>
+          <span class="meta-key" data-i18n="perp.tpslPairLabel">合约</span>
           <span id="perp-tpsl-sheet-pair" class="meta-val mono">--</span>
         </div>
         <div class="meta-row">
@@ -428,11 +428,11 @@
       </div>
       <div class="flex flex-col gap-1">
         <span class="meta-key" style="font-size: 11.5px;" data-i18n="perp.tpPlaceholder">止盈触发价</span>
-        <input id="perp-pos-tp-input" type="number" step="any" min="0" class="input-field mono" data-i18n-placeholder="perp.tpPlaceholder" placeholder="止盈触发价 (留空即不设或清除)" />
+        <input id="perp-pos-tp-input" type="number" step="any" min="0" class="input-field mono" data-i18n-placeholder="perp.tpInputPlaceholder" placeholder="留空即不设或清除" />
       </div>
       <div class="flex flex-col gap-1">
         <span class="meta-key" style="font-size: 11.5px;" data-i18n="perp.slPlaceholder">止损触发价</span>
-        <input id="perp-pos-sl-input" type="number" step="any" min="0" class="input-field mono" data-i18n-placeholder="perp.slPlaceholder" placeholder="止损触发价 (留空即不设或清除)" />
+        <input id="perp-pos-sl-input" type="number" step="any" min="0" class="input-field mono" data-i18n-placeholder="perp.slInputPlaceholder" placeholder="留空即不设或清除" />
       </div>
       <div class="flex gap-2">
         <button type="button" class="btn-secondary flex-1" onclick="submitPerpPositionTpSlUI(true)" data-i18n="perp.tpslClearBtn">清除止盈止损</button>

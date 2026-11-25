@@ -312,7 +312,7 @@
                   <button type="button" id="limit-tab-active" class="filter-pill active" onclick="setLimitOrdersTab('active')" data-i18n="limit.tabActive">当前挂单</button>
                   <button type="button" id="limit-tab-history" class="filter-pill" onclick="setLimitOrdersTab('history')" data-i18n="limit.tabHistory">历史挂单</button>
                 </div>
-                <button type="button" class="btn-ghost-sm" onclick="refreshLimitOrdersAsync(true)" data-i18n="common.refresh">刷新</button>
+                <button type="button" id="btn-refresh-limit-orders" class="btn-ghost-sm" onclick="refreshLimitOrdersAsync(true)" data-i18n="common.refresh">刷新</button>
               </div>
             </div>
             <div id="limit-orders-list" class="flex flex-col gap-2"></div>

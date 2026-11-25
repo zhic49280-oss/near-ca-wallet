@@ -53,6 +53,12 @@
           throw new Error(bridgeQuote.error || t('获取 PRL 跨链桥路由失败，请点击订单卡片中的“继续执行下一步”重试', 'Failed to get PRL bridge route; tap Resume in the order card'));
         }
         const prlHuman = intents.fromBaseUnits(prlOutRaw, 8);
+        const prlBalMap = await intents.fetchNearNep141Balances(nearId, { [intents.PRL_NEAR_CONTRACT]: 8 }).catch(() => null);
+        const realPrlBal = (prlBalMap && prlBalMap[intents.PRL_NEAR_CONTRACT] && prlBalMap[intents.PRL_NEAR_CONTRACT].formatted !== undefined)
+          ? Number(prlBalMap[intents.PRL_NEAR_CONTRACT].formatted)
+          : (wallet.nearNep141Balances && wallet.nearNep141Balances[intents.PRL_NEAR_CONTRACT]
+              ? Number(wallet.nearNep141Balances[intents.PRL_NEAR_CONTRACT].formatted)
+              : null);
         const sendBridge = await contracts.executeNearNep141Transfer({
           wallet,
           tokenContract: intents.PRL_NEAR_CONTRACT,
@@ -60,7 +66,7 @@
           amount: prlHuman,
           decimals: 8,
           tokenSymbol: 'PRL',
-          tokenBalance: Number(prlHuman)
+          tokenBalance: realPrlBal
         });
         await intents.submitExternalDepositTxHash({
           depositAddress: bridgeQuote.depositAddress,
@@ -239,7 +245,12 @@
           }).catch(() => null);
           if (dclCheck && dclCheck.ok) {
             try {
-              const usdcHuman = Number(intents.fromBaseUnits(sendUsdcRaw, 6));
+              const usdcBalMap = await intents.fetchNearNep141Balances(nearId, { [intents.NEAR_USDC_CONTRACT]: 6 }).catch(() => null);
+              const realUsdcBal = (usdcBalMap && usdcBalMap[intents.NEAR_USDC_CONTRACT] && usdcBalMap[intents.NEAR_USDC_CONTRACT].formatted !== undefined)
+                ? Number(usdcBalMap[intents.NEAR_USDC_CONTRACT].formatted)
+                : (wallet.nearNep141Balances && wallet.nearNep141Balances[intents.NEAR_USDC_CONTRACT]
+                    ? Number(wallet.nearNep141Balances[intents.NEAR_USDC_CONTRACT].formatted)
+                    : null);
               const dclRes = await contracts.executeNearDclPoolSwap({
                 wallet,
                 poolIds: dclCheck.poolIds,
@@ -248,7 +259,7 @@
                 amountRaw: sendUsdcRaw,
                 minAmountOut: dclCheck.minAmountOut,
                 slippageBps: st.swap.slippageBps,
-                tokenBalance: usdcHuman,
+                tokenBalance: realUsdcBal,
                 inputDecimals: 6,
                 tokenSymbol: 'USDC'
               });
@@ -324,6 +335,12 @@
             throw new Error(step2Live.error || t('创建 USDC 跨链第二步订单失败', 'Failed to create 1Click step 2 order'));
           }
           const usdcHuman = intents.fromBaseUnits(sendUsdcRaw, 6);
+          const step2BalMap = await intents.fetchNearNep141Balances(nearId, { [intents.NEAR_USDC_CONTRACT]: 6 }).catch(() => null);
+          const realStep2UsdcBal = (step2BalMap && step2BalMap[intents.NEAR_USDC_CONTRACT] && step2BalMap[intents.NEAR_USDC_CONTRACT].formatted !== undefined)
+            ? Number(step2BalMap[intents.NEAR_USDC_CONTRACT].formatted)
+            : (wallet.nearNep141Balances && wallet.nearNep141Balances[intents.NEAR_USDC_CONTRACT]
+                ? Number(wallet.nearNep141Balances[intents.NEAR_USDC_CONTRACT].formatted)
+                : null);
           sendTx = await contracts.executeNearNep141Transfer({
             wallet,
             tokenContract: intents.NEAR_USDC_CONTRACT,
@@ -331,7 +348,7 @@
             amount: usdcHuman,
             decimals: 6,
             tokenSymbol: 'USDC',
-            tokenBalance: Number(usdcHuman)
+            tokenBalance: realStep2UsdcBal
           });
         } catch (s2Err) {
           st.swap.activeOrder = {

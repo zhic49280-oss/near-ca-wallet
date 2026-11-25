@@ -5,6 +5,12 @@
     const contracts = getContracts();
     if (st.staking.loading && !showFeedback) return;
     st.staking.loading = true;
+    const refreshBtn = $('btn-earn-refresh');
+    const prevBtnTxt = refreshBtn ? refreshBtn.textContent : '';
+    if (refreshBtn && showFeedback) {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = t('刷新中...', 'Refreshing...');
+    }
     try {
       const pools = await contracts.fetchLiveStakingMetrics({
         useCache: !showFeedback && Boolean(st.staking.pools),
@@ -23,10 +29,19 @@
         renderTokenDetailSheet();
       }
       if (showFeedback) showToast(t('已同步实时质押年化', 'Staking APY synced'));
-    } catch (_) {
-      if (showFeedback) showToast(t('获取质押利率失败', 'Failed to fetch APY'));
+    } catch (err) {
+      if (showFeedback) {
+        const msg = contracts && typeof contracts.toUserFriendlyError === 'function'
+          ? contracts.toUserFriendlyError(err, '获取质押利率失败，请稍后重试', 'Failed to refresh APY. Please try again.')
+          : t('获取质押利率失败', 'Failed to fetch APY');
+        showToast(msg);
+      }
     } finally {
       st.staking.loading = false;
+      if (refreshBtn && showFeedback) {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = prevBtnTxt || t('刷新利率', 'Refresh APY');
+      }
     }
   }
   const refreshEarnMetricsAsync = refreshStakingMetrics;
@@ -562,7 +577,7 @@
       return t('⚠️ 注意：NEAR 流动性质押常规解押需 2~3 天（4 Epochs）冷却期。', '⚠️ Note: NEAR liquid staking unstake requires ~2-3 days (4 epochs) cooldown.');
     }
     if (pool.id === 'rhea_orhea_convert') {
-      return t('⚠️ 注意：oRHEA 转换按所选锁仓天数（30~180 天）到期后方可领取。', '⚠️ Note: oRHEA conversion is locked until the selected lock tier expires.');
+      return t('⚠️ 注意：oRHEA 转换按所选锁仓天数（15~181 天）到期后方可领取。', '⚠️ Note: oRHEA conversion is locked for the selected period (15–181 days) until maturity.');
     }
     return '';
   }
@@ -620,7 +635,8 @@
       ? (activePool.isBurrowSupply ? 0.12 : (activePool.chain === 'near' ? 0.05 : activePool.chain === 'sol' ? 0.002 : activePool.chain === 'arc' ? 0.02 : (activePool.chain === 'eth' ? 0.005 : 0.002)))
       : 0;
     const maxAmt = Math.max(0, avail - reserve);
-    if ($('earn-amount-in')) $('earn-amount-in').value = maxAmt > 0 ? Number(maxAmt.toFixed(6)).toString() : '0';
+    const floored = maxAmt > 0 ? Math.floor(maxAmt * 1e6) / 1e6 : 0;
+    if ($('earn-amount-in')) $('earn-amount-in').value = floored > 0 ? String(floored) : '0';
     updateEarnEstimatedOut();
   }
 
@@ -671,7 +687,7 @@
           tokenBalance: avail
         });
         const wrappedBal = contracts.resolveWalletPoolTokenBalance
-          ? (contracts.resolveWalletPoolTokenBalance(wallet, { ...pool, useNativeOrPrecompile: false }) || 0)
+          ? (contracts.resolveWalletPoolTokenBalance(wallet, { ...pool, isTokenStake: true, useNativeOrPrecompile: false }) || 0)
           : 0;
         const nativeShortfall = Math.max(0, amt - Math.max(0, Number(wrappedBal) || 0));
         const gasReserve = pool.chain === 'near' ? 0.12 : (pool.chain === 'eth' ? 0.005 : 0.002);
@@ -708,7 +724,10 @@
         }
       }
     } catch (err) {
-      showToast(err.message);
+      const msg = contracts && typeof contracts.toUserFriendlyError === 'function'
+        ? contracts.toUserFriendlyError(err, '无法发起质押，请检查余额后重试', 'Unable to stake. Please check your balance and try again.')
+        : (err && err.message ? err.message : t('无法发起质押', 'Unable to stake'));
+      showToast(msg);
       return;
     }
 
@@ -756,7 +775,10 @@
       setTimeout(() => refreshAllBalancesAsync(false).catch(() => {}), 5000).unref?.();
       setTimeout(() => refreshAllBalancesAsync(false).catch(() => {}), 15000).unref?.();
     } catch (err) {
-      showToast(err && err.message ? err.message : t('质押失败', 'Staking failed'));
+      const msg = contracts && typeof contracts.toUserFriendlyError === 'function'
+        ? contracts.toUserFriendlyError(err, '质押失败，请稍后重试', 'Staking failed. Please try again.')
+        : (err && err.message ? err.message : t('质押失败', 'Staking failed'));
+      showToast(msg);
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -807,7 +829,7 @@
       btn.textContent = t('处理中...', 'Processing...');
     }
     try {
-      showToast(t('正在签名并广播赎回交易...', 'Signing & broadcasting redemption...'));
+      showToast(t('正在签名并提交赎回交易...', 'Signing & submitting redemption...'));
       let res = null;
       if (actionType === 'sol_validator_deactivate') {
         const [stakeAcct, amtStr] = String(actionTarget || '').split('|');
@@ -1024,7 +1046,10 @@
       refreshAllBalancesAsync(false);
       setTimeout(() => refreshAllBalancesAsync(false).catch(() => {}), 5000).unref?.();
     } catch (err) {
-      showToast(err && err.message ? err.message : t('赎回失败', 'Redemption failed'));
+      const msg = contracts && typeof contracts.toUserFriendlyError === 'function'
+        ? contracts.toUserFriendlyError(err, '赎回失败，请稍后重试', 'Redemption failed. Please try again.')
+        : (err && err.message ? err.message : t('赎回失败', 'Redemption failed'));
+      showToast(msg);
     } finally {
       _earnActionInFlight = false;
       if (btn) {

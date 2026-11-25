@@ -1,6 +1,6 @@
   async function fetchJsonWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
     const fetchFn = (typeof globalThis !== 'undefined' && globalThis.fetch) || (typeof fetch !== 'undefined' ? fetch : null);
-    if (!fetchFn) throw new Error('fetch API unavailable');
+    if (!fetchFn) throw new Error(t('网络连接不可用，请检查网络环境', 'Network connection unavailable'));
     const extSignal = options && options.signal ? options.signal : null;
     if (extSignal && extSignal.aborted) {
       const abortErr = new Error(t('请求已取消', 'Request aborted'));
@@ -409,7 +409,7 @@
       const needsNear = !wallet.nearAddress || !wallet.nearPrivateKey || !wallet.nearPublicKey || !wallet.nearPrivateSeedHex;
       if (needsNear) {
         if (!cryptoEngine || typeof cryptoEngine.deriveNearFromSeedAsync !== 'function') {
-          throw new Error(t('加密派生引擎 NearCACrypto 不可用', 'NearCACrypto unavailable'));
+          throw new Error(t('钱包加密引擎不可用', 'Wallet signing engine unavailable'));
         }
         const near = await cryptoEngine.deriveNearFromSeedAsync(wallet.mnemonic, 0);
         if (near && near.nearAddress) {
@@ -480,27 +480,47 @@
     return wallet;
   }
 
+  function resolveCanonicalChainKey(chain) {
+    const raw = String(chain || '').trim().toLowerCase();
+    return Object.prototype.hasOwnProperty.call(GAS_CHAIN_ALIASES, raw) ? GAS_CHAIN_ALIASES[raw] : raw;
+  }
+
+  function hasOwnProp(obj, key) {
+    return Boolean(obj) && Object.prototype.hasOwnProperty.call(obj, key);
+  }
+
   function resolveWalletChainBalance(wallet, chain) {
     if (!wallet) return 0;
-    const c = String(chain || '').toLowerCase();
-    const nb = wallet.nativeBalances || {};
+    const c = resolveCanonicalChainKey(chain);
+    const nb = wallet.nativeBalances && typeof wallet.nativeBalances === 'object' ? wallet.nativeBalances : {};
     if (c === 'near') {
-      const rawNear = wallet.nearBalance !== undefined && wallet.nearBalance !== null ? wallet.nearBalance : nb.near;
+      const rawNear = wallet.nearBalance !== undefined && wallet.nearBalance !== null ? wallet.nearBalance : (hasOwnProp(nb, 'near') ? nb.near : undefined);
       const val = Number(rawNear);
       return Number.isFinite(val) ? val : 0;
     }
     if (c === 'prl') {
-      const rawPrl = wallet.balance !== undefined && wallet.balance !== null ? wallet.balance : nb.prl;
+      const rawPrl = wallet.balance !== undefined && wallet.balance !== null ? wallet.balance : (hasOwnProp(nb, 'prl') ? nb.prl : undefined);
       const val = Number(rawPrl);
       return Number.isFinite(val) ? val : 0;
     }
-    const mb = wallet.multiBalances || {};
+    const mb = wallet.multiBalances && typeof wallet.multiBalances === 'object' ? wallet.multiBalances : {};
     if (c === 'bsc') {
-      const rawBsc = mb.bnb !== undefined && mb.bnb !== null ? mb.bnb : (mb.bsc !== undefined && mb.bsc !== null ? mb.bsc : nb.bsc);
+      const rawBsc =
+        hasOwnProp(mb, 'bnb') && mb.bnb !== undefined && mb.bnb !== null
+          ? mb.bnb
+          : hasOwnProp(mb, 'bsc') && mb.bsc !== undefined && mb.bsc !== null
+            ? mb.bsc
+            : hasOwnProp(nb, 'bsc') && nb.bsc !== undefined && nb.bsc !== null
+              ? nb.bsc
+              : hasOwnProp(nb, 'bnb')
+                ? nb.bnb
+                : undefined;
       const val = Number(rawBsc);
       return Number.isFinite(val) ? val : 0;
     }
-    const rawVal = mb[c] !== undefined && mb[c] !== null ? mb[c] : nb[c];
+    const rawMb = hasOwnProp(mb, c) ? mb[c] : undefined;
+    const rawNb = hasOwnProp(nb, c) ? nb[c] : undefined;
+    const rawVal = rawMb !== undefined && rawMb !== null ? rawMb : rawNb;
     const val = Number(rawVal);
     return Number.isFinite(val) ? val : 0;
   }
@@ -524,7 +544,7 @@
       throw new Error(t('请输入有效金额', 'Enter a valid positive amount'));
     }
 
-    const chainKey = String(chain || '').toLowerCase();
+    const chainKey = resolveCanonicalChainKey(chain);
     const sym = tokenSymbol || chainKey.toUpperCase() || 'TOKEN';
     const available =
       tokenBalance !== null && tokenBalance !== undefined
@@ -536,7 +556,7 @@
       if (gasBuffer !== null && gasBuffer !== undefined && Number.isFinite(Number(gasBuffer))) {
         effectiveBuffer = Math.max(0, Number(gasBuffer));
       } else {
-        effectiveBuffer = DEFAULT_GAS_BUFFERS[chainKey] !== undefined ? DEFAULT_GAS_BUFFERS[chainKey] : 0;
+        effectiveBuffer = getNativeGasReserve(chainKey);
       }
     }
 
@@ -546,7 +566,7 @@
       const zhMsg = `${sym} 余额不足 (当前可用: ${availFormatted} ${sym})`;
       const enMsg = `Insufficient ${sym} (Available: ${availFormatted} ${sym})`;
       const lang = getConfiguredLang();
-      const message = lang === 'zh' ? zhMsg : lang === 'en' ? enMsg : `${zhMsg} / ${enMsg}`;
+      const message = lang === 'en' ? enMsg : zhMsg;
       const err = new Error(message);
       err.code = 'INSUFFICIENT_BALANCE';
       err.zhMessage = zhMsg;

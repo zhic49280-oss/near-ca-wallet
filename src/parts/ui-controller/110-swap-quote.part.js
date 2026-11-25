@@ -169,14 +169,24 @@
     if (!curFrom || curFrom.assetId !== tokenIdAtStart) return;
 
     const plan = resolveEffectiveSwapGasPlan(wallet, curFrom, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
+    const isArc6DecNative = String(curFrom.blockchain || '').toLowerCase() === 'arc' &&
+      String(curFrom.contractAddress || '').toLowerCase() === '0x3600000000000000000000000000000000000000' &&
+      Number(curFrom.decimals) === 6;
     let effectiveBal = bal;
     let rawUnits = null;
     if (liveGas && liveGas.liveBalanceBaseUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
-      const liveNum = Number(contracts.fromBaseUnits(liveGas.liveBalanceBaseUnits, curFrom.decimals || 18));
+      const scaledLiveRaw = isArc6DecNative && /^\d+$/.test(String(liveGas.liveBalanceBaseUnits))
+        ? (BigInt(String(liveGas.liveBalanceBaseUnits)) / 1000000000000n).toString()
+        : String(liveGas.liveBalanceBaseUnits);
+      const liveNum = Number(contracts.fromBaseUnits(scaledLiveRaw, curFrom.decimals || 18));
       if (Number.isFinite(liveNum) && liveNum > 0 && liveNum <= bal + 1e-12) {
         effectiveBal = liveNum;
-        rawUnits = liveGas.liveBalanceBaseUnits;
+        rawUnits = scaledLiveRaw;
       }
+    }
+    let effFeeBaseUnits = plan.exactFeeBaseUnits;
+    if (isArc6DecNative && effFeeBaseUnits && /^\d+$/.test(String(effFeeBaseUnits))) {
+      effFeeBaseUnits = ((BigInt(String(effFeeBaseUnits)) + 999999999999n) / 1000000000000n).toString();
     }
     const maxInfo = computeExactMaxSpendable({
       balance: effectiveBal,
@@ -184,7 +194,7 @@
       decimals: curFrom.decimals || 6,
       isNative: true,
       gasReserve: plan.gasBuffer || 0,
-      exactFeeBaseUnits: plan.exactFeeBaseUnits
+      exactFeeBaseUnits: effFeeBaseUnits
     });
     st.swap.amountIn = maxInfo.maxAmountStr || '0';
     if ($('swap-amount-in')) $('swap-amount-in').value = st.swap.amountIn;
@@ -238,7 +248,7 @@
     const st = getState();
     const el = $('swap-error-banner');
     const routeEl = $('swap-quote-route');
-    const text = msg ? String(msg) : '';
+    const text = msg ? toUserFriendlyError(msg, String(msg)) : '';
     if (el) {
       el.textContent = text;
       el.classList.toggle('hidden', !text);
@@ -448,7 +458,7 @@
         if (!evmQuote.ok) {
           st.swap._quoting = false;
           resetSwapQuoteDisplay();
-          setSwapError(evmQuote.error || t('暂无链上报价', 'No DEX quote'));
+          setSwapError(toUserFriendlyError(evmQuote.error, t('暂无可用报价，请稍后重试', 'No quote available. Please try again.')));
           return;
         }
         const routeText = evmQuote.routeLabel || evmQuote.label;
@@ -488,7 +498,7 @@
       if (!q || !q.ok) {
         st.swap._quoting = false;
         resetSwapQuoteDisplay();
-        setSwapError((q && q.error) || t('暂无报价', 'No quote'));
+        setSwapError(toUserFriendlyError(q && q.error, t('暂无可用报价，请稍后重试', 'No quote available. Please try again.')));
         return;
       }
       const outHuman = q.amountOutFormatted || intents.fromBaseUnits(q.amountOut || '0', toToken.decimals);
@@ -504,7 +514,7 @@
       if (isCancelledOrStale() || (e && (e.name === 'AbortError' || /abort|取消/i.test(String(e.message || ''))))) return;
       st.swap._quoting = false;
       resetSwapQuoteDisplay();
-      setSwapError(e && e.message ? e.message : t('询价失败', 'Quote failed'));
+      setSwapError(toUserFriendlyError(e, t('获取报价失败，请稍后重试', 'Failed to fetch quote. Please try again.')));
     } finally {
       if (st.swap._quoteAbortCtrl === abortCtrl) st.swap._quoteAbortCtrl = null;
     }

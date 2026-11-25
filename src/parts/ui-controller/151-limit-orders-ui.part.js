@@ -201,6 +201,12 @@
     const chain = st.limit.chain || 'near';
     st.limit.ordersLoading = true;
     st.limit.rateLimited = false;
+    const refreshBtn = $('btn-refresh-limit-orders');
+    const prevRefreshText = refreshBtn ? refreshBtn.textContent : '';
+    if (refreshBtn && showFeedback) {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = t('刷新中...', 'Refreshing...');
+    }
     try {
       let res;
       if (chain === 'near') {
@@ -224,12 +230,19 @@
       }
       renderLimitOrdersList();
       if (showFeedback && !(res && res.unavailable)) {
-        showToast(st.limit.rateLimited ? t('限价单服务请求频繁，请稍后刷新', 'Rate limited; retry shortly') : t('已刷新挂单列表', 'Orders refreshed'));
+        const rateLimitMsg = chain === 'bsc'
+          ? t('BSC 限价单服务当前请求频繁，请稍后刷新', 'BSC limit order service rate limited; refresh shortly')
+          : t('限价单服务请求频繁，请稍后刷新', 'Limit order service rate limited; refresh shortly');
+        showToast(st.limit.rateLimited ? rateLimitMsg : t('已刷新挂单列表', 'Orders refreshed'));
       }
     } catch (_) {
       if (showFeedback) showToast(t('获取挂单失败', 'Failed to load orders'));
     } finally {
       if (reqSeq === _limitOrdSeq) st.limit.ordersLoading = false;
+      if (refreshBtn && showFeedback) {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = prevRefreshText || t('刷新', 'Refresh');
+      }
     }
   }
 
@@ -250,7 +263,10 @@
     };
 
     if (st.limit.rateLimited && items.length === 0) {
-      setHtmlIfChanged(listEl, `<div class="text-center" style="padding: 14px; font-size: 12px; color: var(--text-secondary);">${t('CoW API 请求频繁，请稍后刷新', 'CoW API rate limited; refresh shortly')}</div>`);
+      const rateLimitText = chain === 'bsc'
+        ? t('BSC 限价单服务当前请求频繁，请稍后刷新', 'BSC limit order service rate limited; refresh shortly')
+        : t('限价单服务请求频繁，请稍后刷新', 'Limit order service rate limited; refresh shortly');
+      setHtmlIfChanged(listEl, `<div class="text-center" style="padding: 14px; font-size: 12px; color: var(--text-secondary);">${rateLimitText}</div>`);
       return;
     }
     if (!Array.isArray(items) || items.length === 0) {
@@ -476,7 +492,35 @@
       if (lo.isEvmChainLimitSupported(chain)) await ensureEthersLoaded();
       if (btnState.action === 'approve') {
         await lo.approveEvmCowToken({ wallet, chainKey: chain, tokenAddress: sellToken.contractAddress });
-        showToast(t(`${sellToken.symbol} 授权成功`, `${sellToken.symbol} approved`));
+        showToast(t(`${sellToken.symbol} 授权已提交，正在确认额度...`, `${sellToken.symbol} approval submitted, confirming...`));
+        const owner = (contracts.resolveWalletEvmSender && contracts.resolveWalletEvmSender(wallet)) || wallet.mpcEvmAddress || wallet.evmAddress;
+        const sellBaseNeeded = (() => {
+          try {
+            return BigInt(contracts.toBaseUnits(String(st.limit.amountIn || '0'), sellToken.decimals));
+          } catch (_) {
+            return 1n;
+          }
+        })();
+        if (owner && typeof lo.checkEvmCowAllowance === 'function') {
+          const pollDelays = [250, 350, 1000, 1500, 2000, 2000, 2000, 2000];
+          for (let i = 0; i < pollDelays.length; i++) {
+            await new Promise((r) => setTimeout(r, pollDelays[i]));
+            const nextAllow = await lo.checkEvmCowAllowance({
+              chainKey: chain,
+              owner,
+              tokenAddress: sellToken.contractAddress
+            }).catch(() => null);
+            if (nextAllow !== null) {
+              st.limit.evmAllowanceRaw = nextAllow.toString();
+              st.limit.evmAllowanceFailed = false;
+              renderLimitOrderCalculations();
+              if (BigInt(nextAllow) >= (sellBaseNeeded > 0n ? sellBaseNeeded : 1n)) {
+                showToast(t(`${sellToken.symbol} 授权已确认`, `${sellToken.symbol} allowance confirmed`));
+                break;
+              }
+            }
+          }
+        }
         await refreshLimitMarketContextAsync();
         return;
       }
@@ -575,7 +619,7 @@
       await refreshLimitMarketContextAsync().catch(() => {});
       await refreshLimitOrdersAsync(false).catch(() => {});
     } catch (err) {
-      st.limit.errorMsg = err && err.message ? err.message : t('限价单提交失败', 'Limit order failed');
+      st.limit.errorMsg = toUserFriendlyError(err, t('限价单提交失败，请稍后重试', 'Limit order failed. Please try again.'));
       showToast(st.limit.errorMsg);
     } finally {
       st.limit.submitting = false;
@@ -603,7 +647,7 @@
       await refreshAllBalancesAsync(true).catch(() => {});
       await refreshLimitOrdersAsync(false).catch(() => {});
     } catch (err) {
-      showToast((err && err.message) || t('领取失败', 'Claim failed'));
+      showToast(toUserFriendlyError(err, t('领取失败，请稍后重试', 'Claim failed. Please try again.')));
     } finally {
       _limitOrderActionInFlight = false;
       if (btn) { btn.disabled = false; btn.textContent = prevTxt; }
@@ -635,7 +679,7 @@
       await refreshAllBalancesAsync(true).catch(() => {});
       await refreshLimitOrdersAsync(false).catch(() => {});
     } catch (err) {
-      showToast((err && err.message) || t('撤单失败', 'Cancel failed'));
+      showToast(toUserFriendlyError(err, t('撤单失败，请稍后重试', 'Cancel failed. Please try again.')));
     } finally {
       _limitOrderActionInFlight = false;
       if (btn) { btn.disabled = false; btn.textContent = prevTxt; }

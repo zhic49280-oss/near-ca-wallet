@@ -353,9 +353,13 @@
       return { ok: true, method: 'webauthn', registered: true, credentialId: credId };
     } catch (err) {
       const name = err && err.name ? String(err.name) : '';
-      const msg = err && err.message ? String(err.message) : t('生物识别验证失败', 'Biometric verification failed');
-      const cancelled = name === 'NotAllowedError' || name === 'AbortError' || /cancel/i.test(msg);
-      return { ok: false, cancelled, error: msg };
+      const rawMsg = err && err.message ? String(err.message) : '';
+      const cancelled = name === 'NotAllowedError' || name === 'AbortError' || /cancel/i.test(rawMsg);
+      const unavailable = name === 'SecurityError' || name === 'NotSupportedError' || name === 'InvalidStateError' || /unavailable|not supported/i.test(rawMsg);
+      const msg = cancelled
+        ? t('已取消生物识别验证', 'Biometric verification cancelled')
+        : toUserFriendlyError(err, '生物识别验证失败，请重试或使用安全密码', 'Biometric verification failed. Please retry or use your PIN.');
+      return { ok: false, cancelled, unavailable, error: msg };
     }
   }
 
@@ -469,12 +473,14 @@
     if (statusEl) statusEl.textContent = t('正在验证身份...', 'Verifying identity...');
 
     const bioAllowed = isWalletBiometricAllowed(wallet);
+    const hasPin = hasConfiguredWalletPin(wallet);
+    const vaultLocked = isWalletVaultLocked(wallet);
     const nativePlugin = bioAllowed ? getNativeSecurityPlugin(overrides.nativePlugin) : null;
     const profile = !bioAllowed
       ? { supported: false }
       : (nativePlugin ? { supported: true } : (_cachedBioProfile || await detectDeviceBiometricProfileAsync(overrides)));
     try {
-      if (profile && profile.supported) {
+      if (profile && profile.supported && !(vaultLocked && hasPin)) {
         const res = await requestBiometricAuth(
           t('验证身份以解锁 Nexus Wallet', 'Verify identity to unlock Nexus Wallet'),
           wallet,
@@ -504,11 +510,11 @@
         if (statusEl) {
           statusEl.textContent = (res && res.cancelled)
             ? t('已取消验证，请点击下方按钮重试', 'Verification cancelled. Tap below to retry.')
-            : (res && res.error ? String(res.error) : t('验证未通过，请重试', 'Verification failed. Please retry.'));
+            : toUserFriendlyError(res && res.error, '验证未通过，请重试', 'Verification failed. Please retry.');
         }
         return false;
       }
-      if (hasConfiguredWalletPin(wallet)) {
+      if (hasPin) {
         return unlockAppLockWithPin();
       }
       clearAppLock();
@@ -561,8 +567,17 @@
     _appLockState.backgroundedAt = 0;
     if (leftAt > 0 && (Number(nowMs) - leftAt) >= APP_LOCK_TIMEOUT_MS && shouldEnableAppLockForWallet(wallet, overrides)) {
       engageAppLock(true, overrides);
-    } else if (!isAppLocked() && st && st.activeTab === 'perp' && st.perp && st.perp.subView === 'trade' && typeof startPerpLiveFeed === 'function') {
-      startPerpLiveFeed();
+    } else if (!isAppLocked() && st) {
+      if (st.activeTab === 'perp') {
+        if (st.perp && st.perp.subView === 'trade' && typeof startPerpLiveFeed === 'function') {
+          startPerpLiveFeed();
+        }
+        if (typeof refreshPerpDataAsync === 'function') {
+          refreshPerpDataAsync(false).catch(() => {});
+        }
+      } else if (st.activeTab === 'swap' && st.swap && st.swap.panelMode === 'limit' && typeof refreshLimitOrdersAsync === 'function') {
+        refreshLimitOrdersAsync(false).catch(() => {});
+      }
     }
     if (st && st.swap && st.swap.activeOrder && st.swap.activeOrder.depositAddress) {
       const ord = st.swap.activeOrder;
@@ -619,22 +634,32 @@
             };
           }
           const errCode = (res && res.code) ? String(res.code) : '';
-          const errMsg = (res && res.error) ? String(res.error) : t('生物识别未通过', 'Biometric authentication failed');
+          const rawErrMsg = (res && res.error) ? String(res.error) : '';
+          const unavailable = errCode === 'AUTH_UNAVAILABLE' || /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(rawErrMsg);
+          const cancelled = Boolean((res && res.cancelled) || errCode === 'AUTH_CANCELLED' || /AUTH_CANCELLED|取消|cancel|abort|dismiss/i.test(rawErrMsg));
+          const errMsg = cancelled
+            ? t('已取消生物识别验证', 'Biometric verification cancelled')
+            : toUserFriendlyError(rawErrMsg, '生物识别未通过', 'Biometric authentication failed');
           return {
             ok: false,
             code: errCode,
-            unavailable: errCode === 'AUTH_UNAVAILABLE' || /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(errMsg),
-            cancelled: Boolean((res && res.cancelled) || errCode === 'AUTH_CANCELLED' || /AUTH_CANCELLED|取消|cancel|abort|dismiss/i.test(errMsg)),
+            unavailable,
+            cancelled,
             error: errMsg
           };
         } catch (err) {
           const errCode = (err && err.code) ? String(err.code) : '';
-          const msg = err && err.message ? String(err.message) : t('生物识别验证异常', 'Native biometric error');
+          const rawMsg = err && err.message ? String(err.message) : '';
+          const unavailable = errCode === 'AUTH_UNAVAILABLE' || /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(rawMsg);
+          const cancelled = errCode === 'AUTH_CANCELLED' || /AUTH_CANCELLED|取消|cancel|abort|dismiss/i.test(rawMsg);
+          const msg = cancelled
+            ? t('已取消生物识别验证', 'Biometric verification cancelled')
+            : toUserFriendlyError(err, '生物识别验证异常，请重试或使用 PIN', 'Biometric verification failed; please retry or use PIN');
           return {
             ok: false,
             code: errCode,
-            unavailable: errCode === 'AUTH_UNAVAILABLE' || /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(msg),
-            cancelled: errCode === 'AUTH_CANCELLED' || /AUTH_CANCELLED|取消|cancel|abort|dismiss/i.test(msg),
+            unavailable,
+            cancelled,
             error: msg
           };
         }
@@ -722,7 +747,7 @@
       }
       showToast(res.cancelled
         ? t('已取消生物识别验证', 'Biometric verification cancelled')
-        : (res.error || t('生物识别验证未通过，请输入 PIN', 'Biometric failed; use PIN')));
+        : toUserFriendlyError(res.error, '生物识别验证未通过，请输入 PIN', 'Biometric failed; use PIN'));
       return false;
     } finally {
       if (btn) btn.disabled = false;
@@ -855,7 +880,7 @@
           showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
           openSetWalletPinPromptSafe();
         } else {
-          showToast(bioRes.error || t('验证未通过', 'Verification failed'));
+          showToast(toUserFriendlyError(bioRes.error, '验证未通过，请重试', 'Verification failed'));
         }
         return false;
       }

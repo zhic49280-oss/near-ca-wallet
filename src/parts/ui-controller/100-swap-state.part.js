@@ -573,7 +573,8 @@
   }
 
   function formatMaxDecimalString(amountNum, decimals = 6, rawBaseUnits = null) {
-    const dec = Math.max(0, Math.min(24, Math.floor(Number(decimals) || 6)));
+    const rawDec = (decimals === 0 || decimals === '0') ? 0 : (Number.isFinite(Number(decimals)) ? Number(decimals) : 6);
+    const dec = Math.max(0, Math.min(24, Math.floor(rawDec)));
     const contracts = getContracts();
     if (
       rawBaseUnits !== null &&

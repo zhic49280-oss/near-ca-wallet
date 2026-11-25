@@ -91,7 +91,7 @@
     if (explorerEl) {
       const url = getExplorerAddressUrl(activeChain, recvAddr);
       const valid = isValidHttpsUrl(url);
-      explorerEl.href = valid ? url : 'javascript:void(0)';
+      explorerEl.href = valid ? url : '#';
       explorerEl.classList.toggle('hidden', !valid);
     }
 
@@ -226,7 +226,7 @@
     }
     if (act === 'receive') {
       const bc = String(entry.blockchain || 'near').toLowerCase();
-      const receiveNet = ['eth', 'base', 'arb', 'bsc', 'op', 'pol', 'avax', 'hype', 'hood'].includes(bc) ? 'evm' : bc;
+      const receiveNet = ['eth', 'base', 'arb', 'bsc', 'op', 'pol', 'avax', 'hype', 'hood', 'arc'].includes(bc) ? 'evm' : bc;
       closeAllSheets();
       openReceiveSheet(receiveNet);
       return;
@@ -267,19 +267,103 @@
     }
   }
 
-  async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 6000) {
-    if (typeof fetch !== 'function') return null;
+  const _blockscoutBlockedUntil = {};
+  const EVM_LOGS_FALLBACK_RPCS = {
+    base: 'https://base-rpc.publicnode.com',
+    arb: 'https://arb1.arbitrum.io/rpc',
+    pol: 'https://polygon-bor-rpc.publicnode.com',
+    arc: 'https://rpc.mainnet.arc.io'
+  };
+  const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+  async function fetchExplorerJsonWithStatus(url, options = {}, timeoutMs = 6000) {
+    if (typeof fetch !== 'function') return { ok: false, status: 0, data: null };
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
     try {
       const resp = await fetch(url, controller ? { ...options, signal: controller.signal } : options);
-      if (!resp || !resp.ok) return null;
-      return await resp.json();
+      if (!resp) return { ok: false, status: 0, data: null };
+      if (!resp.ok) return { ok: false, status: resp.status || 0, data: null };
+      const data = await resp.json().catch(() => null);
+      if (!data) return { ok: false, status: 403, data: null };
+      return { ok: true, status: resp.status || 200, data };
     } catch (_) {
-      return null;
+      return { ok: false, status: 0, data: null };
     } finally {
       if (timer) clearTimeout(timer);
     }
+  }
+
+  async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 6000) {
+    const res = await fetchExplorerJsonWithStatus(url, options, timeoutMs);
+    return res.ok ? res.data : null;
+  }
+
+  async function fetchEvmTransferLogsFallbackAsync(evmChain, evmAddr, contractAddress, decimals, symKey) {
+    const rpcUrl = EVM_LOGS_FALLBACK_RPCS[evmChain];
+    if (!rpcUrl || !evmAddr || !contractAddress || !/^0x[0-9a-fA-F]{40}$/.test(evmAddr) || !/^0x[0-9a-fA-F]{40}$/.test(contractAddress)) {
+      return null;
+    }
+    const rpcCall = async (method, params) => {
+      const res = await fetchExplorerJsonWithStatus(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })
+      }, 6000);
+      return res.ok && res.data && res.data.result !== undefined ? res.data.result : null;
+    };
+    const latestHex = await rpcCall('eth_blockNumber', []);
+    if (!latestHex) return null;
+    const latestNum = parseInt(String(latestHex), 16);
+    if (!Number.isFinite(latestNum) || latestNum <= 0) return null;
+    const fromHex = '0x' + Math.max(0, latestNum - 2000).toString(16);
+    const paddedAddr = '0x' + evmAddr.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+    const [outLogs, inLogs] = await Promise.all([
+      rpcCall('eth_getLogs', [{ address: contractAddress, fromBlock: fromHex, toBlock: 'latest', topics: [ERC20_TRANSFER_TOPIC, paddedAddr] }]),
+      rpcCall('eth_getLogs', [{ address: contractAddress, fromBlock: fromHex, toBlock: 'latest', topics: [ERC20_TRANSFER_TOPIC, null, paddedAddr] }])
+    ]);
+    if (!Array.isArray(outLogs) && !Array.isArray(inLogs)) return null;
+    const partial = !Array.isArray(outLogs) || !Array.isArray(inLogs);
+    const allLogs = [...(Array.isArray(outLogs) ? outLogs : []), ...(Array.isArray(inLogs) ? inLogs : [])];
+    const uniqueBlocks = Array.from(new Set(allLogs.map((l) => l && l.blockNumber).filter(Boolean))).slice(0, 12);
+    const blockTsMap = {};
+    await Promise.all(uniqueBlocks.map(async (bn) => {
+      const blk = await rpcCall('eth_getBlockByNumber', [bn, false]).catch(() => null);
+      if (blk && blk.timestamp) {
+        const ts = parseInt(String(blk.timestamp), 16);
+        if (Number.isFinite(ts) && ts > 0) blockTsMap[bn] = ts;
+      }
+    }));
+    const addrLower = evmAddr.toLowerCase();
+    const seenLog = new Set();
+    const out = [];
+    for (const lg of allLogs) {
+      if (!lg || !lg.transactionHash) continue;
+      const logKey = `${lg.transactionHash}_${lg.logIndex || out.length}`;
+      if (seenLog.has(logKey)) continue;
+      seenLog.add(logKey);
+      const topics = Array.isArray(lg.topics) ? lg.topics : [];
+      const fromTopic = topics[1] ? ('0x' + String(topics[1]).slice(-40)).toLowerCase() : '';
+      const toTopic = topics[2] ? ('0x' + String(topics[2]).slice(-40)).toLowerCase() : '';
+      const isIn = fromTopic !== addrLower;
+      let amtVal = null;
+      try {
+        const rawBig = BigInt(lg.data && lg.data !== '0x' ? lg.data : '0x0');
+        amtVal = Number(rawBig) / (10 ** (decimals ?? 18));
+      } catch (_) {}
+      out.push({
+        id: `${evmChain}_log_${lg.transactionHash}_${lg.logIndex || out.length}`,
+        type: isIn ? 'receive' : 'send',
+        symbol: symKey,
+        chain: evmChain,
+        amount: Number.isFinite(amtVal) ? amtVal : null,
+        txHash: lg.transactionHash,
+        title: isIn ? `${t('来自', 'From')} ${shortenAddr(fromTopic)}` : `${t('至', 'To')} ${shortenAddr(toTopic)}`,
+        timestamp: lg.blockNumber && blockTsMap[lg.blockNumber] ? blockTsMap[lg.blockNumber] : null
+      });
+    }
+    if (partial) out._partial = true;
+    return out;
   }
 
   async function fetchTokenDetailHistoryAsync() {
@@ -294,6 +378,7 @@
 
     const seq = ++_tokenDetailState.fetchSeq;
     _tokenDetailState.historyLoading = true;
+    _tokenDetailState.historyPartialUnavailable = false;
     renderTokenDetailHistoryList();
 
     const targetChains = chainFilter !== 'all'
@@ -336,7 +421,7 @@
               chain: 'near',
               amount: amtVal,
               txHash: tx.transaction_hash || '',
-              title: tx.involved_account_id ? `${isIn ? t('来自', 'From') : t('发送至', 'To')} ${shortenAddr(tx.involved_account_id)}` : 'NEAR NEP-141',
+              title: tx.involved_account_id ? `${isIn ? t('来自', 'From') : t('发送至', 'To')} ${shortenAddr(tx.involved_account_id)}` : t('NEAR 代币转账', 'NEAR Token Transfer'),
               timestamp: ts
             });
           }
@@ -463,16 +548,46 @@
       pol: 'https://polygon.blockscout.com',
       arc: 'https://explorer.arc.io'
     };
+    let partialUnavailable = false;
     const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
     if (evmAddr) {
       for (const [evmChain, baseUrl] of Object.entries(BLOCKSCOUT_BASES)) {
         if (!targetChains.includes(evmChain)) continue;
         tasks.push((async () => {
           const isNativeOnChain = (evmChain === 'arc' && symKey === 'USDC') || (['eth', 'base', 'arb', 'op'].includes(evmChain) && symKey === 'ETH') || (evmChain === 'pol' && symKey === 'POL');
+          const tryLogsFallback = async () => {
+            if (evmChain === 'arc' && symKey === 'USDC') {
+              const arcLogs = await fetchEvmTransferLogsFallbackAsync('arc', evmAddr, '0x3600000000000000000000000000000000000000', 6, symKey);
+              if (arcLogs === null || arcLogs._partial) partialUnavailable = true;
+              return arcLogs || [];
+            }
+            const entry = group.entries.find((e) => e.blockchain === evmChain && e.contractAddress && e.contractAddress.toLowerCase() !== '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+            if (entry && !isNativeOnChain) {
+              const tokLogs = await fetchEvmTransferLogsFallbackAsync(evmChain, evmAddr, entry.contractAddress, entry.decimals ?? 18, symKey);
+              if (tokLogs === null || tokLogs._partial) partialUnavailable = true;
+              return tokLogs || [];
+            }
+            partialUnavailable = true;
+            return [];
+          };
+          if (_blockscoutBlockedUntil[evmChain] > Date.now()) {
+            return tryLogsFallback();
+          }
           const endpoint = isNativeOnChain
             ? `${baseUrl}/api/v2/addresses/${encodeURIComponent(evmAddr)}/transactions`
             : `${baseUrl}/api/v2/addresses/${encodeURIComponent(evmAddr)}/token-transfers`;
-          const data = await fetchJsonWithTimeout(endpoint);
+          const res = await fetchExplorerJsonWithStatus(endpoint);
+          if (!res.ok) {
+            if (res.status === 403 || res.status === 429) {
+              _blockscoutBlockedUntil[evmChain] = Date.now() + 10 * 60 * 1000;
+              return tryLogsFallback();
+            }
+            if (res.status === 0 || res.status >= 500) {
+              return tryLogsFallback();
+            }
+            return [];
+          }
+          const data = res.data;
           const items = Array.isArray(data && data.items) ? data.items : [];
           const addrLower = evmAddr.toLowerCase();
           const out = [];
@@ -480,7 +595,7 @@
             if (!isNativeOnChain) {
               const tokSym = String(it.token && it.token.symbol || '').toUpperCase();
               if (tokSym !== symKey) continue;
-              const dec = Number((it.token && it.token.decimals) || (it.total && it.total.decimals) || 18);
+              const dec = Number((it.token && it.token.decimals) ?? (it.total && it.total.decimals) ?? 18);
               const rawVal = Number((it.total && it.total.value) || 0);
               const fromHash = String(it.from && it.from.hash || '').toLowerCase();
               const isIn = fromHash !== addrLower;
@@ -546,9 +661,10 @@
     }
 
     const chunks = await Promise.all(tasks.map((p) => p.catch(() => [])));
-    if (seq !== _tokenDetailState.fetchSeq) return;
+    if (seq !== _tokenDetailState.fetchSeq || st.activeWalletId !== wallet.id) return;
 
     _tokenDetailState.historyItems = chunks.flat().filter(Boolean);
+    _tokenDetailState.historyPartialUnavailable = partialUnavailable;
     _tokenDetailState.historyLoading = false;
     renderTokenDetailHistoryList();
   }

@@ -44,7 +44,7 @@
   function copyActiveNearId() {
     const wallet = getState().getActiveWallet();
     if (!wallet) return;
-    copyText(wallet.nearNamedAccount || wallet.nearAddress, 'NEAR ID');
+    copyText(wallet.nearNamedAccount || wallet.nearAddress, t('NEAR 账户', 'NEAR Account'));
   }
 
   function jumpToNearDomainManager() {

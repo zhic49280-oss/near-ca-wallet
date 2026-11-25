@@ -222,49 +222,84 @@
     if (_perpPollTimer && typeof _perpPollTimer.unref === 'function') _perpPollTimer.unref();
   }
 
+  function formatPerpError(err, fallbackZh = '操作失败，请稍后重试', fallbackEn = 'Operation failed. Please try again.') {
+    const contracts = getContracts();
+    let msg = contracts && typeof contracts.toUserFriendlyError === 'function'
+      ? contracts.toUserFriendlyError(err, fallbackZh, fallbackEn)
+      : ((err && err.message) || t(fallbackZh, fallbackEn));
+    msg = String(msg || '')
+      .replace(/\bHyperliquid\s*(?:info\s*)?API\b/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    return msg || t(fallbackZh, fallbackEn);
+  }
+
   let _perpRefreshInFlight = null;
 
   async function refreshPerpDataAsync(force = false) {
     if (!force && _perpRefreshInFlight) {
       return _perpRefreshInFlight;
     }
+    const refreshBtns = force
+      ? ['btn-perp-overview-refresh', 'btn-perp-trade-refresh'].map((id) => $(id)).filter(Boolean)
+      : [];
+    const prevBtnTexts = refreshBtns.map((b) => b.textContent);
+    if (force) {
+      refreshBtns.forEach((b) => {
+        b.disabled = true;
+        b.textContent = t('刷新中...', 'Refreshing...');
+      });
+    }
     const run = (async () => {
-      const st = getState();
-      const hl = getHyperliquid();
-      const contracts = getContracts();
-      const wallet = st.getActiveWallet();
-      if (!hl || !contracts || !wallet) return;
-      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-      const hlAddr = contracts.resolveWalletEvmSender(wallet);
-      if ((!st.perp.markets.length || !st.perp.account) && typeof st.loadCachedPerpSnapshot === 'function') {
-        st.loadCachedPerpSnapshot(hlAddr);
-        renderPerpView();
-      }
-      const now = Date.now();
-      const needMarkets = force || !st.perp.markets.length || (now - st.perp.lastMarketSyncTs > 30_000);
-      const [mkts, acct] = await Promise.all([
-        needMarkets ? hl.fetchHlMarkets().catch(() => null) : Promise.resolve(null),
-        hlAddr ? hl.fetchHlAccountState(hlAddr).catch(() => null) : Promise.resolve(null)
-      ]);
-      if (Array.isArray(mkts) && mkts.length > 0) {
-        st.perp.markets = mkts;
-        st.perp.lastMarketSyncTs = Date.now();
-      }
-      if (acct) {
-        st.perp.account = acct;
-        st.perp.lastAccountSyncTs = Date.now();
-      }
-      if (typeof st.saveCachedPerpSnapshot === 'function') {
-        st.saveCachedPerpSnapshot({
-          markets: Array.isArray(mkts) && mkts.length > 0 ? mkts : undefined,
-          account: acct || undefined,
-          accountAddr: hlAddr
-        });
-      }
-      await refreshPerpOrderbookAndCandlesAsync();
-      if (force) {
-        refreshPerpLongShortAsync(st.perp.selectedCoin || 'BTC', true).catch(() => {});
-        showToast(t('合约数据已刷新', 'Perps synced'));
+      try {
+        const st = getState();
+        const hl = getHyperliquid();
+        const contracts = getContracts();
+        const wallet = st.getActiveWallet();
+        if (!hl || !contracts || !wallet) return;
+        await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+        const hlAddr = contracts.resolveWalletEvmSender(wallet);
+        if ((!st.perp.markets.length || !st.perp.account) && typeof st.loadCachedPerpSnapshot === 'function') {
+          st.loadCachedPerpSnapshot(hlAddr);
+          renderPerpView();
+        }
+        const now = Date.now();
+        const needMarkets = force || !st.perp.markets.length || (now - st.perp.lastMarketSyncTs > 30_000);
+        const [mkts, acct] = await Promise.all([
+          needMarkets ? hl.fetchHlMarkets().catch(() => null) : Promise.resolve(null),
+          hlAddr ? hl.fetchHlAccountState(hlAddr).catch(() => null) : Promise.resolve(null)
+        ]);
+        if (Array.isArray(mkts) && mkts.length > 0) {
+          st.perp.markets = mkts;
+          st.perp.lastMarketSyncTs = Date.now();
+        }
+        if (acct) {
+          st.perp.account = acct;
+          st.perp.lastAccountSyncTs = Date.now();
+        }
+        if (typeof st.saveCachedPerpSnapshot === 'function') {
+          st.saveCachedPerpSnapshot({
+            markets: Array.isArray(mkts) && mkts.length > 0 ? mkts : undefined,
+            account: acct || undefined,
+            accountAddr: hlAddr
+          });
+        }
+        await refreshPerpOrderbookAndCandlesAsync();
+        if (force) {
+          refreshPerpLongShortAsync(st.perp.selectedCoin || 'BTC', true).catch(() => {});
+          showToast(t('合约数据已刷新', 'Perps synced'));
+        }
+      } catch (err) {
+        if (force) {
+          showToast(formatPerpError(err, '刷新合约数据失败，请稍后重试', 'Failed to refresh Perps. Please try again.'));
+        }
+      } finally {
+        if (force) {
+          refreshBtns.forEach((b, idx) => {
+            b.disabled = false;
+            b.textContent = prevBtnTexts[idx] || t('刷新', 'Refresh');
+          });
+        }
       }
     })();
 
@@ -754,7 +789,7 @@
       const rawMsg = (err && err.message) || '';
       st.perp.errorMsg = /does not exist/i.test(rawMsg)
         ? t('合约账户尚未激活，请先充值 USDC', 'Perp account not activated; please deposit USDC first')
-        : (rawMsg || t('下单失败', 'Order failed'));
+        : formatPerpError(err, '下单失败，请稍后重试', 'Order failed. Please try again.');
       showToast(st.perp.errorMsg);
     } finally {
       st.perp.submitting = false;
@@ -771,11 +806,10 @@
     const pos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === coin);
     let market = (st.perp.markets || []).find((m) => m.name === coin);
     if (!pos) return;
-    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     if (!(await verifySecurityAuthAsync(wallet, `${t('确认市价平仓', 'Confirm Market Close')}: ${formatPerpDisplayPair(coin)}`))) return;
     _perpTradeActionBusy = true;
-    const prevTxt = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = t('平仓中...', 'Closing...'); }
+    st.perp.actionBusyKey = `close:${coin}`;
+    renderPerpBottomList();
     try {
       await ensureEthersLoaded();
       if (!market) {
@@ -788,10 +822,11 @@
       showToast(`✅ ${formatPerpDisplayPair(coin)} ${t('已市价平仓', 'position closed')}`);
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
-      showToast((err && err.message) || t('平仓失败', 'Close failed'));
+      showToast(formatPerpError(err, '平仓失败，请稍后重试', 'Close failed. Please try again.'));
     } finally {
       _perpTradeActionBusy = false;
-      if (btn) { btn.disabled = false; btn.textContent = prevTxt; }
+      st.perp.actionBusyKey = '';
+      renderPerpBottomList();
     }
   }
 
@@ -863,7 +898,7 @@
       showToast(`✅ ${clearOnly ? t('已清除止盈止损', 'TP/SL cleared') : t('止盈止损已更新', 'TP/SL updated')}`);
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
-      showToast((err && err.message) || t('更新止盈止损失败', 'TP/SL update failed'));
+      showToast(formatPerpError(err, '更新止盈止损失败，请稍后重试', 'TP/SL update failed. Please try again.'));
     } finally {
       _perpTradeActionBusy = false;
       if (btn) { btn.disabled = false; btn.textContent = prevTxt; }
@@ -878,11 +913,10 @@
     if (!hl || !wallet || !coin) return;
     const pos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === coin);
     if (!pos) return;
-    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     if (!(await verifySecurityAuthAsync(wallet, `${t('确认反手开仓', 'Confirm Reverse Position')}: ${formatPerpDisplayPair(coin)}`))) return;
     _perpTradeActionBusy = true;
-    const prevTxt = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = t('反手中...', 'Reversing...'); }
+    st.perp.actionBusyKey = `reverse:${coin}`;
+    renderPerpBottomList();
     try {
       await ensureEthersLoaded();
       let market = (st.perp.markets || []).find((m) => m.name === coin);
@@ -897,10 +931,11 @@
       showToast(`✅ ${formatPerpDisplayPair(coin)} ${t('已反手开仓', 'position reversed')}`);
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
-      showToast((err && err.message) || t('反手开仓失败', 'Reverse failed'));
+      showToast(formatPerpError(err, '反手开仓失败，请稍后重试', 'Reverse failed. Please try again.'));
     } finally {
       _perpTradeActionBusy = false;
-      if (btn) { btn.disabled = false; btn.textContent = prevTxt; }
+      st.perp.actionBusyKey = '';
+      renderPerpBottomList();
     }
   }
 
@@ -917,8 +952,8 @@
     const actionLabel = tab === 'orders' ? t('确认撤销全部委托', 'Confirm Cancel All Orders') : t('确认一键全平所有仓位', 'Confirm Close All Positions');
     if (!(await verifySecurityAuthAsync(wallet, actionLabel))) return;
     _perpBatchBusy = true;
-    const batchBtn = $('btn-perp-batch-action');
-    if (batchBtn) batchBtn.disabled = true;
+    st.perp.actionBusyKey = 'batch';
+    renderPerpBottomList();
     try {
       await ensureEthersLoaded();
       if ((!st.perp.markets || st.perp.markets.length === 0) && typeof hl.fetchHlMarkets === 'function') {
@@ -947,15 +982,17 @@
         if (closedCount === positions.length) {
           showToast(`✅ ${t('已全部市价平仓', 'All positions closed')}`);
         } else {
-          showToast(t(`已平仓 ${closedCount}/${positions.length} 个仓位`, `Closed ${closedCount}/${positions.length} positions`) + (lastErr?.message ? `: ${lastErr.message}` : ''));
+          const errHint = lastErr ? `: ${formatPerpError(lastErr, '部分仓位平仓失败', 'Some positions failed to close')}` : '';
+          showToast(t(`已平仓 ${closedCount}/${positions.length} 个仓位`, `Closed ${closedCount}/${positions.length} positions`) + errHint);
         }
       }
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
-      showToast((err && err.message) || t('批量操作失败', 'Batch action failed'));
+      showToast(formatPerpError(err, '批量操作失败，请稍后重试', 'Batch action failed. Please try again.'));
     } finally {
       _perpBatchBusy = false;
-      if (batchBtn) batchBtn.disabled = false;
+      st.perp.actionBusyKey = '';
+      renderPerpBottomList();
     }
   }
 
@@ -967,9 +1004,8 @@
     if (!hl || !wallet || !coin || !oid) return;
     if (!(await verifySecurityAuthAsync(wallet, `${t('撤销合约挂单', 'Cancel perp order')} ${coin} #${oid}`))) return;
     _perpTradeActionBusy = true;
-    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
-    const prevTxt = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = t('撤单中...', 'Cancelling...'); }
+    st.perp.actionBusyKey = `cancel:${coin}:${oid}`;
+    renderPerpBottomList();
     let market = (st.perp.markets || []).find((m) => m.name === coin);
     try {
       await ensureEthersLoaded();
@@ -983,10 +1019,11 @@
       showToast(t('已撤单', 'Order cancelled'));
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
-      showToast((err && err.message) || t('撤单失败', 'Cancel failed'));
+      showToast(formatPerpError(err, '撤单失败，请稍后重试', 'Cancel failed. Please try again.'));
     } finally {
       _perpTradeActionBusy = false;
-      if (btn) { btn.disabled = false; btn.textContent = prevTxt; }
+      st.perp.actionBusyKey = '';
+      renderPerpBottomList();
     }
   }
 
@@ -1009,7 +1046,7 @@
       showToast(`✅ ${t('已划转至合约账户', 'Moved to Perp account')}`);
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
-      showToast((err && err.message) || t('划转失败', 'Transfer failed'));
+      showToast(formatPerpError(err, '划转失败，请稍后重试', 'Transfer failed. Please try again.'));
     } finally {
       _perpTradeActionBusy = false;
       if (btn) { btn.disabled = false; btn.textContent = prevTxt; }

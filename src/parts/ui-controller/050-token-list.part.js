@@ -49,7 +49,7 @@
       { sym: 'BNB', chain: 'bsc', name: 'BNB Smart Chain', balKey: 'bsc', assetId: 'nep141:bnb.omdep.near', decimals: 18 },
       { sym: 'POL', chain: 'pol', name: 'Polygon', balKey: 'pol', assetId: 'pol:native:pol', decimals: 18 },
       { sym: 'AVAX', chain: 'avax', name: 'Avalanche', balKey: 'avax', assetId: 'avax:native:avax', decimals: 18 },
-      { sym: 'HYPE', chain: 'hype', name: 'HyperEVM', balKey: 'hype', assetId: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', decimals: 18 },
+      { sym: 'HYPE', chain: 'hype', name: 'HyperEVM', balKey: 'hype', assetId: 'hype:native:hype', decimals: 18 },
       { sym: 'BTC', chain: 'btc', name: 'Bitcoin', balKey: 'btc', assetId: 'nep141:btc.omft.near', decimals: 8 }
     ];
 
@@ -237,7 +237,8 @@
       for (const dt of list) {
         const isNativeSentinel = !dt.contractAddress ||
           dt.contractAddress === 'So11111111111111111111111111111111111111112' ||
-          dt.contractAddress.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+          dt.contractAddress.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' ||
+          (chainKey === 'arc' && dt.contractAddress.toLowerCase() === '0x3600000000000000000000000000000000000000');
         if (isNativeSentinel) continue;
 
         let bal = null;
@@ -492,11 +493,14 @@
     const st = getState();
     const catalog = getSwapTokenCatalog();
     const idLower = String(assetId || '').toLowerCase();
+    const bcLower = String(blockchain || '').toLowerCase();
     const contractLower = String(contractAddress || '').toLowerCase();
     const matched = catalog.find((x) =>
       String(x.assetId || '').toLowerCase() === idLower ||
-      (x.blockchain === blockchain && contractLower && String(x.contractAddress || '').toLowerCase() === contractLower)
-    );
+      (String(x.blockchain || '').toLowerCase() === bcLower && contractLower && String(x.contractAddress || '').toLowerCase() === contractLower)
+    ) || (!contractLower
+      ? catalog.find((x) => String(x.blockchain || '').toLowerCase() === bcLower && typeof isSwapTokenNative === 'function' && isSwapTokenNative(x))
+      : null);
 
     st.swap.fromAssetId = matched ? matched.assetId : assetId;
     if (st.swap.toAssetId === st.swap.fromAssetId) {

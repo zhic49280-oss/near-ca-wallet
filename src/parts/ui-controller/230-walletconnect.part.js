@@ -24,7 +24,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.68');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.69');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -203,7 +203,7 @@
         $('wc-advanced-drawer')?.classList.add('hidden');
         showToast(t('✅ 已恢复内置默认 Project ID', '✅ Restored built-in Project ID'));
       } catch (e) {
-        showToast(e && e.message ? e.message : t('连接失败', 'Connection failed'));
+        showToast(toUserFriendlyError(e, '连接失败', 'Connection failed'));
       }
       return;
     }
@@ -218,7 +218,7 @@
       $('wc-advanced-drawer')?.classList.add('hidden');
       showToast(t('✅ WalletConnect 已就绪', '✅ WalletConnect ready'));
     } catch (e) {
-      showToast(e && e.message ? e.message : t('连接失败', 'Connection failed'));
+      showToast(toUserFriendlyError(e, '连接失败', 'Connection failed'));
     }
   }
 
@@ -252,7 +252,7 @@
       await client.core.pairing.pair({ uri });
       showToast(t('已发起配对，等待 DApp 请求...', 'Pairing sent...'));
     } catch (e) {
-      showToast(e && e.message ? e.message : t('配对失败', 'Pairing failed'));
+      showToast(toUserFriendlyError(e, '配对失败', 'Pairing failed'));
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -261,7 +261,10 @@
     }
   }
 
+  let _wcApprovingProposal = false;
+
   async function approveWcProposal() {
+    if (_wcApprovingProposal) return;
     const st = getState();
     const contracts = getContracts();
     const p = st.wc.pendingProposal;
@@ -269,6 +272,13 @@
     const wallet = st.getActiveWallet();
     if (!p || !client || !wallet) return;
     if (!(await verifySecurityAuthAsync(wallet, t('授权 WalletConnect 连接', 'Authorize WalletConnect')))) return;
+    _wcApprovingProposal = true;
+    const approveBtn = typeof document !== 'undefined' ? document.querySelector('#wc-proposal-card .btn-primary') : null;
+    const prevBtnTxt = approveBtn ? approveBtn.textContent : '';
+    if (approveBtn) {
+      approveBtn.disabled = true;
+      approveBtn.textContent = t('授权中...', 'Approving...');
+    }
     try {
       await contracts.ensureWalletSigningKeysAsync(wallet);
       const supportedChainIds = new Set(Object.values(contracts.EVM_CHAINS || {}).map((c) => `eip155:${c.chainId}`));
@@ -305,7 +315,13 @@
       renderHeaderAndHero();
       showToast(t('✅ 已批准 DApp 连接', '✅ DApp approved'));
     } catch (e) {
-      showToast(e && e.message ? e.message : t('批准失败', 'Approve failed'));
+      showToast(toUserFriendlyError(e, '批准失败', 'Approve failed'));
+    } finally {
+      _wcApprovingProposal = false;
+      if (approveBtn) {
+        approveBtn.disabled = false;
+        if (prevBtnTxt) approveBtn.textContent = prevBtnTxt;
+      }
     }
   }
 
@@ -505,7 +521,7 @@
       }
       if (client && typeof client._nexusShiftNextRequest === 'function') client._nexusShiftNextRequest();
       else { st.wc.pendingRequest = null; renderWcCards(); }
-      showToast(e && e.message ? e.message : t('签名失败', 'Sign failed'));
+      showToast(toUserFriendlyError(e, '签名失败', 'Sign failed'));
     } finally {
       _wcApprovingRequest = false;
       if (approveBtn) {
@@ -684,7 +700,7 @@
         }, 260);
       } else if (statusEl) {
         statusEl.setAttribute('data-i18n-dynamic', '1');
-        statusEl.textContent = t('当前系统内核暂不支持摄像头扫码，请返回直接粘贴地址或链接', 'QR camera decoder unsupported on this WebView; please go back and paste the address or URI');
+        statusEl.textContent = t('当前设备暂不支持摄像头扫码，请返回直接粘贴地址或链接', 'Camera QR scanner is unsupported on this device; please go back and paste the address or link');
       }
     } catch (_) {
       if (statusEl) {
@@ -717,7 +733,7 @@
     const DetectorCtor = (typeof window !== 'undefined' && window.BarcodeDetector) || (typeof globalThis !== 'undefined' && globalThis.BarcodeDetector);
     const jsQrFn = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     if (typeof DetectorCtor !== 'function' && typeof jsQrFn !== 'function') {
-      showToast(t('当前设备不支持图片二维码解码，请直接复制 wc: 链接粘贴', 'Image QR decoding unsupported on this WebView; paste wc: URI instead'));
+      showToast(t('当前设备不支持图片二维码识别，请直接复制 wc: 链接粘贴', 'Image QR decoding is unsupported on this device; paste the wc: link instead'));
       return;
     }
     try {

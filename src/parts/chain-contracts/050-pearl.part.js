@@ -20,7 +20,9 @@
       if (res && res.status >= 200 && res.status < 300) {
         return typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
       }
-      throw new Error((res && res.data && res.data.error) || `Blockbook HTTP ${res ? res.status : 'error'}`);
+      const err = new Error((res && res.data && res.data.error) || t('Pearl 节点请求失败，请稍后重试', 'Pearl node request failed'));
+      if (res && res.status) err.status = res.status;
+      throw err;
     }
     const isDevServer =
       !isNativeCap &&
@@ -34,7 +36,7 @@
     } catch (err) {
       const msg = String((err && err.message) || '');
       if (!isNativeCap && !isDevServer && ((err && err.name === 'TypeError') || /failed to fetch|networkerror|cors/i.test(msg))) {
-        throw new Error(t('浏览器跨域限制无法直连 Pearl 节点，请在原生 App 或本地服务中使用', 'Browser CORS blocked direct Pearl node access; use the native App or local server'));
+        throw new Error(t('当前网页环境无法直连节点，请使用原生 App 或本地服务', 'Direct node access is restricted in this browser; please use the native App or local server'));
       }
       throw err;
     }
@@ -122,13 +124,13 @@
       spk.set(Uint8Array.from(v0.programBytes), 2);
       return spk;
     }
-    throw new Error(t('Pearl Taproot 地址无效', 'Invalid Pearl Taproot address'));
+    throw new Error(t('Pearl 地址无效', 'Invalid Pearl address'));
   }
 
   function pearlTaprootScriptPubKey(cryptoEngine, prlAddress) {
     const decoded = cryptoEngine.decodeBech32m(String(prlAddress || '').trim());
     if (!decoded || !decoded.valid || decoded.hrp !== 'prl' || decoded.witnessVersion !== 1 || !decoded.programBytes || decoded.programBytes.length !== 32) {
-      throw new Error(t('Pearl Taproot 地址无效', 'Invalid Pearl Taproot address'));
+      throw new Error(t('Pearl 地址无效', 'Invalid Pearl address'));
     }
     const spk = new Uint8Array(34);
     spk[0] = 0x51; // OP_1 (SegWit v1)
@@ -147,12 +149,13 @@
   }) {
     const cryptoEngine = getCryptoEngine();
     if (!cryptoEngine || typeof cryptoEngine.signSchnorrBip340 !== 'function') {
-      throw new Error(t('BIP-340 Schnorr 签名引擎不可用', 'BIP-340 Schnorr signer unavailable'));
+      throw new Error(t('签名引擎不可用', 'Transaction signer unavailable'));
     }
     const sendAmt = BigInt(String(amountGrains || '0'));
     const feeAmt = BigInt(String(feeGrains || '0'));
     if (sendAmt <= 0n) throw new Error(t('转账金额必须大于 0', 'Transfer amount must be positive'));
-    if (sendAmt < 546n) throw new Error(t('Pearl 转账金额过小（低于粉尘限制 546 grains）', 'Pearl transfer amount below dust limit (546 grains)'));
+    if (sendAmt < 546n) throw new Error(t('Pearl 转账金额过小，请调高转账数量', 'Pearl transfer amount is below minimum threshold'));
+    if (feeAmt <= 0n) throw new Error(t('Pearl 矿工费必须大于 0', 'Pearl miner fee must be positive'));
 
     const sortedUtxos = [...utxos]
       .filter((u) => u && u.txid && u.vout !== undefined && BigInt(String(u.value || '0')) > 0n)
@@ -233,7 +236,7 @@
     return { rawHex, feeGrains: actualFee.toString(), changeGrains: hasChange ? changeAmt.toString() : '0', inputCount: selected.length, outputCount: outputs.length };
   }
 
-  async function executePearlTransfer({ wallet, toAddress, amountPrl, feeDeductMode = 'extra', feePerKbPrl = null, gasBuffer = null } = {}) {
+  async function executePearlTransfer({ wallet, toAddress, amountPrl, feeDeductMode = 'extra', feePerKbPrl = null, gasBuffer = null, tokenBalance = null } = {}) {
     if (!wallet || !wallet.address) {
       throw new Error(t('Pearl 地址不可用', 'Pearl address unavailable'));
     }
@@ -248,24 +251,34 @@
       throw new Error(t('请输入有效 PRL 数量', 'Enter a valid PRL amount'));
     }
 
-    const cachedPrl = wallet.nativeBalances && typeof wallet.nativeBalances.prl === 'number'
-      ? wallet.nativeBalances.prl
-      : (typeof wallet.balance === 'number' ? wallet.balance : null);
-    if (cachedPrl !== null) {
-      validateSufficientChainBalance({
-        wallet,
-        chain: 'prl',
-        tokenSymbol: 'PRL',
-        amount: reqAmt,
-        isNative: feeDeductMode !== 'internal',
-        tokenBalance: cachedPrl,
-        gasBuffer
-      });
+    let resolvedPrl =
+      tokenBalance !== null && tokenBalance !== undefined && Number.isFinite(Number(tokenBalance))
+        ? Number(tokenBalance)
+        : (wallet.nativeBalances && typeof wallet.nativeBalances.prl === 'number'
+            ? wallet.nativeBalances.prl
+            : (typeof wallet.balance === 'number' ? wallet.balance : null));
+    if (resolvedPrl === null) {
+      const livePrl = await fetchPearlNativeBalance(wallet.address);
+      if (!livePrl || typeof livePrl.formatted !== 'number' || !Number.isFinite(livePrl.formatted)) {
+        throw new Error(t('暂时无法确认 PRL 可用余额，请刷新后重试', 'Unable to verify PRL balance; please refresh and retry'));
+      }
+      resolvedPrl = livePrl.formatted;
+      if (!wallet.nativeBalances || typeof wallet.nativeBalances !== 'object') wallet.nativeBalances = {};
+      wallet.nativeBalances.prl = resolvedPrl;
     }
+    validateSufficientChainBalance({
+      wallet,
+      chain: 'prl',
+      tokenSymbol: 'PRL',
+      amount: reqAmt,
+      isNative: feeDeductMode !== 'internal',
+      tokenBalance: resolvedPrl,
+      gasBuffer
+    });
 
     await ensureWalletSigningKeysAsync(wallet);
     if (!wallet.tweakedPrivateKeyHex) {
-      throw new Error(t('缺少 Pearl Taproot 签名私钥', 'Pearl Taproot signing key unavailable'));
+      throw new Error(t('缺少 Pearl 签名私钥', 'Pearl signing key unavailable'));
     }
 
     const overrideFeePerKb = Number(feePerKbPrl);
@@ -278,7 +291,7 @@
     ]);
 
     if (!Array.isArray(utxos) || utxos.length === 0) {
-      throw new Error(t('Pearl 钱包暂无可用 UTXO', 'No spendable PRL UTXOs found'));
+      throw new Error(t('Pearl 钱包暂无可用余额记录', 'No spendable PRL balance outputs found'));
     }
 
     const spendableUtxos = utxos.filter((u) => {
@@ -294,7 +307,7 @@
     });
 
     if (spendableUtxos.length === 0) {
-      throw new Error(t('Pearl 钱包暂无可用 UTXO（可能仍在成熟确认中）', 'No spendable PRL UTXOs found (coinbase outputs may still be maturing)'));
+      throw new Error(t('Pearl 钱包可用余额仍在成熟确认中，请稍后重试', 'Spendable PRL balance is still maturing; please retry shortly'));
     }
 
     const sortedUtxos = [...spendableUtxos]
@@ -302,8 +315,16 @@
 
     const resolvedFeePerKb = feeEst && feeEst.result && Number(feeEst.result) > 0 ? Number(feeEst.result) : 0.0066;
     const reqGrainsBig = BigInt(toBaseUnits(String(reqAmt), 8));
-    let feeGrainsBig = BigInt(Math.max(10000, Math.ceil((resolvedFeePerKb * 1e8 * (12 + 58 + 2 * 43)) / 1000)));
-    for (let pass = 0; pass < 3; pass++) {
+    let initInCount = 0;
+    let initAcc = 0n;
+    for (const u of sortedUtxos) {
+      initAcc += BigInt(String(u.value));
+      initInCount += 1;
+      if (initAcc >= reqGrainsBig) break;
+    }
+    let feeGrainsBig = BigInt(Math.max(10000, Math.ceil((resolvedFeePerKb * 1e8 * (12 + Math.max(1, initInCount) * 58 + 2 * 43)) / 1000)));
+    const seenFees = new Set([feeGrainsBig]);
+    for (let pass = 0; pass < 8; pass++) {
       const targetSend = feeDeductMode === 'internal'
         ? (reqGrainsBig > feeGrainsBig ? reqGrainsBig - feeGrainsBig : 0n)
         : reqGrainsBig;
@@ -318,6 +339,11 @@
       const vbytes = 12 + Math.max(1, count) * 58 + (hasChange ? 2 : 1) * 43;
       const nextFee = BigInt(Math.max(10000, Math.ceil((resolvedFeePerKb * 1e8 * vbytes) / 1000)));
       if (nextFee === feeGrainsBig) break;
+      if (seenFees.has(nextFee)) {
+        if (nextFee > feeGrainsBig) feeGrainsBig = nextFee;
+        break;
+      }
+      seenFees.add(nextFee);
       feeGrainsBig = nextFee;
     }
 

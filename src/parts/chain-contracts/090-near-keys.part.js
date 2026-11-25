@@ -24,7 +24,7 @@
       if (errCause === 'UNKNOWN_ACCOUNT' || /does not exist|unknown account/i.test(String(msg))) {
         return { accountId: cleanId, exists: false, keys: [] };
       }
-      throw new Error(msg || t('查询 NEAR Access Keys 失败', 'Failed to query NEAR Access Keys'));
+      throw new Error(msg || t('查询 NEAR 账户密钥失败', 'Failed to query NEAR account keys'));
     }
     const keys = Array.isArray(res.result.keys) ? res.result.keys : [];
     return {
@@ -38,7 +38,7 @@
     const pubBorsh = encodeNearPublicKeyBorsh(newPublicKeyStr);
     // AccessKey { nonce: u64(0), permission: AccessKeyPermission::FullAccess (tag 1) }
     if (permission !== 'FullAccess') {
-      throw new Error(t('暂仅支持添加 FullAccess 密钥', 'Only FullAccess permission is supported'));
+      throw new Error(t('暂仅支持添加完全权限密钥', 'Only full-permission keys are supported'));
     }
     return concatUint8Arrays([
       new Uint8Array([5]), // Action::AddKey
@@ -59,7 +59,7 @@
   function buildDeleteAccountActionBytes({ beneficiaryId } = {}) {
     const beneficiary = String(beneficiaryId || '').trim().toLowerCase();
     if (!beneficiary) {
-      throw new Error(t('缺少 DeleteAccount 受益账户', 'Missing DeleteAccount beneficiaryId'));
+      throw new Error(t('缺少注销受益账户', 'Missing beneficiary account for account closure'));
     }
     return concatUint8Arrays([
       new Uint8Array([7]), // Action::DeleteAccount
@@ -136,8 +136,8 @@
       if (fullKeys.length > 0 && remainingFull.length === 0) {
         throw new Error(
           t(
-            '安全拦截：不能删除账户上最后一把 FullAccess 密钥，否则账户将永久锁死',
-            'Safety block: Cannot delete the last FullAccess key on this account'
+            '安全拦截：不能删除账户上最后一把完全权限密钥，否则账户将永久锁死',
+            'Safety block: Cannot delete the last full-permission key on this account'
           )
         );
       }
@@ -212,7 +212,7 @@
       await new Promise((r) => setTimeout(r, 900));
     }
     if (!newKeyVerified) {
-      throw new Error(t('新密钥已提交但尚未在链上确认，已中止删除旧密钥以确保安全', 'New key not yet confirmed on-chain; aborted DeleteKey for safety'));
+      throw new Error(t('新密钥已提交但尚未在链上确认，已中止删除旧密钥以确保安全', 'New key not yet confirmed on-chain; aborted removing old key for safety'));
     }
 
     let deleteTxHash = '';
@@ -254,7 +254,7 @@
       throw new Error(t('请输入有效的 .near 域名（如 alice.near）', 'Enter a valid .near account ID (e.g. alice.near)'));
     }
     if (!sender || !pub || !priv) {
-      throw new Error(t('缺少 NEAR 隐式账户签名凭据', 'Missing NEAR implicit account signing credentials'));
+      throw new Error(t('缺少 NEAR 账户签名凭据', 'Missing NEAR account signing credentials'));
     }
 
     let knownBal = availableBalanceNear;

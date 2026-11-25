@@ -5,7 +5,7 @@
             <button type="button" class="btn-ghost-sm" onclick="switchTab('wallet')" data-i18n="common.back">← 返回</button>
             <h2 class="section-title" data-i18n="earn.title">链上流动性质押</h2>
           </div>
-          <button type="button" class="btn-ghost-sm" onclick="refreshStakingMetrics(true)" data-i18n="earn.refreshBtn">刷新利率</button>
+          <button type="button" id="btn-earn-refresh" class="btn-ghost-sm" onclick="refreshStakingMetrics(true)" data-i18n="earn.refreshBtn">刷新利率</button>
         </div>
 
         <input id="earn-pool-search" type="text" class="input-field" data-i18n-placeholder="earnSearchPlaceholder" placeholder="搜索质押代币、协议或合约 (如 RHEA, JUP, NEAR, SOL, USDC)..." oninput="handleEarnPoolSearch(this.value)" />

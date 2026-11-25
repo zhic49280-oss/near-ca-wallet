@@ -24,6 +24,12 @@
     const sumEl = $('sol-rent-summary');
     if (!wallet || !wallet.solAddress || !contracts || typeof contracts.scanSolanaReclaimableAccounts !== 'function') return;
 
+    const refreshBtn = $('btn-refresh-sol-rent');
+    const prevRefreshTxt = refreshBtn ? refreshBtn.textContent : '';
+    if (refreshBtn) {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = t('扫描中...', 'Scanning...');
+    }
     if (sumEl) sumEl.textContent = t('扫描中...', 'Scanning...');
     if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:12px;text-align:center;">${t('正在扫描 Solana 代币账户...', 'Scanning Solana token accounts...')}</div>`;
 
@@ -41,7 +47,7 @@
         }
       });
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(t('Solana 节点响应超时，请点击刷新重试', 'Solana RPC timed out, please tap Refresh'))), 7000)
+        setTimeout(() => reject(new Error(t('Solana 网络响应超时，请点击刷新重试', 'Solana network timed out, please tap Refresh'))), 7000)
       );
       const res = await Promise.race([scanPromise, timeoutPromise]);
       _solRentScanAccounts = (res.accounts || []).map((acc) => {
@@ -59,7 +65,12 @@
       renderSolRentList();
     } catch (err) {
       if (sumEl) sumEl.textContent = '--';
-      if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:12px;text-align:center;">${escapeHtml(err && err.message ? err.message : t('扫描失败', 'Scan failed'))}</div>`;
+      if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:12px;text-align:center;">${escapeHtml(toUserFriendlyError(err, '扫描失败', 'Scan failed'))}</div>`;
+    } finally {
+      if (refreshBtn) {
+        refreshBtn.disabled = false;
+        if (prevRefreshTxt) refreshBtn.textContent = prevRefreshTxt;
+      }
     }
   }
 
@@ -153,7 +164,7 @@
       await scanSolRentReclaimUI();
       refreshAllBalancesAsync(false);
     } catch (err) {
-      showToast(err && err.message ? err.message : t('租金回收失败', 'Rent reclaim failed'));
+      showToast(toUserFriendlyError(err, '租金回收失败', 'Rent reclaim failed'));
       await scanSolRentReclaimUI().catch(() => {});
     } finally {
       if (btn && _solRentSelectedAtas.size > 0) {

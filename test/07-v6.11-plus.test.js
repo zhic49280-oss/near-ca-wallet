@@ -416,11 +416,12 @@ test('v6.14 Swap/Limit Live USD Prices, Smart Price Orientation & Zero-Lag Perp 
         assert.ok(getOrMake('perp-ls-long-label').textContent.includes('61.2%'));
         assert.ok(getOrMake('perp-ls-short-label').textContent.includes('38.8%'));
 
-        // Failure hides bar cleanly and caches failure backoff
+        // Failure keeps Zero-CLS bar visible with -- placeholder and caches failure backoff
         state.perp.selectedCoin = 'UNKNOWNCOIN';
         const missingLs = await uiController.refreshPerpLongShortAsync('UNKNOWNCOIN');
         assert.equal(missingLs, null);
-        assert.equal(getOrMake('perp-ls-ratio-wrap').classList.contains('hidden'), true);
+        assert.equal(getOrMake('perp-ls-ratio-wrap').classList.contains('hidden'), false);
+        assert.ok(getOrMake('perp-ls-long-label').textContent.includes('--'));
       });
     } finally {
       globalThis.document = prevDoc;
@@ -633,7 +634,7 @@ test('v6.15 Flagship Hub Redesign, Merged NEAR Account/Keys & Lossless .near Del
       }, async () => {
         await uiController.refreshNearAccessKeysSheet();
         assert.equal(getOrMake('near-keys-rotate-card').classList.contains('hidden'), false, 'Activated account must show #near-keys-rotate-card');
-        assert.ok(getOrMake('near-keys-list').innerHTML.includes('FullAccess'));
+        assert.ok(/完全权限密钥|Full Key/i.test(getOrMake('near-keys-list').innerHTML));
       });
 
       uiController.openWalletAddressesSheet();

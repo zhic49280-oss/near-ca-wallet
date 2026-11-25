@@ -392,7 +392,7 @@
         });
       } catch (e) {
         _dappSession.nativeOpen = false;
-        showToast((e && e.message) || t('无法打开 DApp 浏览器', 'Failed to open DApp browser'));
+        showToast(toUserFriendlyError(e, '无法打开 DApp 浏览器', 'Failed to open DApp browser'));
       }
       return;
     }

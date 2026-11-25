@@ -347,6 +347,9 @@
       st.limit.liveMarketRate = null;
       st.limit.poolInfo = null;
       st.limit.evmAllowanceRaw = null;
+      st.limit.evmAllowanceFailed = false;
+      st.limit.solUnavailable = false;
+      st.limit.errorMsg = '';
       closeAllSheets();
       renderLimitOrderView();
       refreshLimitMarketContextAsync().catch(() => {});

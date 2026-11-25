@@ -98,7 +98,7 @@
       renderMiningWatchlist();
       showToast(t('已加入矿工收藏列表', 'Saved to watchlist'));
     } catch (err) {
-      showToast(err && err.message ? err.message : t('无效 Pearl 地址', 'Invalid Pearl address'));
+      showToast(toUserFriendlyError(err, '无效 Pearl 地址', 'Invalid Pearl address'));
     }
   }
 
@@ -125,7 +125,7 @@
     st.mining.loading = true;
     st.mining.telemetry = null;
     renderMiningTelemetry();
-    const queryBtn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
+    const queryBtn = $('btn-mining-query') || (typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null);
     const prevTxt = queryBtn ? queryBtn.textContent : '';
     if (queryBtn) {
       queryBtn.disabled = true;
@@ -136,17 +136,17 @@
       if (myGen !== _miningQueryGen) return;
       st.mining.telemetry = tel;
       renderMiningTelemetry();
-      if (tel && tel.hashrate === null && tel.workersOnline === null && tel.unpaidBalance === null) {
+      if (tel && tel.hashrateCurrent === null && tel.unpaidBalancePrl === null && (tel.workersOnlineCount === null || tel.workersOnlineCount === 0)) {
         const isStaticWeb = typeof window !== 'undefined' && window.location && !/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname || '') && !window.Capacitor?.Plugins?.CapacitorHttp;
         if (isStaticWeb) {
-          showToast(t('公网静态网页受浏览器 CORS 限制，请在原生 App 或本地代理环境使用矿机监控', 'Static web blocked by CORS; use native App or local proxy for mining telemetry'));
+          showToast(t('网页版暂无法直接连接矿池，请使用原生 App 查看矿机状态', 'Pool status is unavailable in web view; please use the native App'));
         }
       }
     } catch (err) {
       if (myGen === _miningQueryGen) {
-        const errMsg = err && err.message ? err.message : t('矿工数据查询失败', 'Miner query failed');
+        const errMsg = toUserFriendlyError(err, '矿工数据查询失败', 'Miner query failed');
         const isStaticWeb = typeof window !== 'undefined' && window.location && !/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname || '') && !window.Capacitor?.Plugins?.CapacitorHttp;
-        showToast(isStaticWeb ? t('公网静态网页受浏览器 CORS 限制，请在原生 App 或本地代理环境使用矿机监控', 'Static web blocked by CORS; use native App or local proxy for mining telemetry') : errMsg);
+        showToast(isStaticWeb ? t('网页版暂无法直接连接矿池，请使用原生 App 查看矿机状态', 'Pool status is unavailable in web view; please use the native App') : errMsg);
       }
     } finally {
       if (myGen === _miningQueryGen) {

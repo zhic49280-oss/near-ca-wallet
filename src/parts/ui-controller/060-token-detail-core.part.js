@@ -288,6 +288,7 @@
         byKey.set(key, {
           ...existing,
           ...remoteItem,
+          type: existing.type === 'swap' ? 'swap' : (remoteItem.type || existing.type),
           toSymbol: existing.toSymbol || remoteItem.toSymbol || '',
           toAmount: existing.toAmount ?? remoteItem.toAmount ?? null,
           source: remoteItem.source || 'onchain'
@@ -324,7 +325,7 @@
     _lastTokenDetailMergedItems = items;
     if (allBtn) allBtn.classList.toggle('hidden', items.length === 0);
 
-    const nextSig = `${wallet.id}|${symKey}|${chainFilter}|${_tokenDetailState.historyLoading ? 1 : 0}|${st.lang}|${items.slice(0, 6).map((x) => `${x.id || x.txHash || ''}:${x.status || ''}:${x.tsSec || ''}`).join(',')}`;
+    const nextSig = `${wallet.id}|${symKey}|${chainFilter}|${_tokenDetailState.historyLoading ? 1 : 0}|${_tokenDetailState.historyPartialUnavailable ? 1 : 0}|${st.lang}|${items.slice(0, 6).map((x) => `${x.id || x.txHash || ''}:${x.status || ''}:${x.timestamp || ''}`).join(',')}`;
     if (nextSig === _lastDetailHistorySig && listEl.innerHTML) return;
     _lastDetailHistorySig = nextSig;
 
@@ -333,11 +334,17 @@
       return;
     }
     if (items.length === 0) {
-      listEl.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:8px 0;">${escapeHtml(t('暂无该代币链上变动记录，可点击右上方前往区块浏览器查看', 'No recent token activity found; click Explorer above to view on-chain'))}</div>`;
+      const emptyMsg = _tokenDetailState.historyPartialUnavailable
+        ? t('部分网络暂无法拉取历史记录，可点击右上方前往区块浏览器查看', 'History on some networks is temporarily unavailable; tap Explorer above to view on-chain')
+        : t('暂无该代币链上变动记录，可点击右上方前往区块浏览器查看', 'No recent token activity found; click Explorer above to view on-chain');
+      listEl.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:8px 0;">${escapeHtml(emptyMsg)}</div>`;
       return;
     }
 
-    listEl.innerHTML = renderCompactTxPreviewHtml(items, 'token', symKey);
+    const partialHint = _tokenDetailState.historyPartialUnavailable
+      ? `<div style="color:var(--text-muted);font-size:11px;text-align:center;padding-top:4px;">${escapeHtml(t('部分网络暂无法拉取历史记录，可点击右上方前往区块浏览器查看', 'History on some networks is temporarily unavailable; tap Explorer above to view on-chain'))}</div>`
+      : '';
+    listEl.innerHTML = renderCompactTxPreviewHtml(items, 'token', symKey) + partialHint;
   }
 
   function openAllTokenHistorySheet() {
@@ -474,7 +481,7 @@
             <span class="meta-key">${escapeHtml(t('交易哈希', 'Tx Hash'))}</span>
             <span class="meta-val flex items-center gap-2">
               <span class="mono">${escapeHtml(shortenAddr(it.txHash, 10, 8))}</span>
-              <button type="button" class="btn-ghost-sm" style="padding:2px 6px;color:var(--cyan-glow);" data-action="copy-text" data-val="${escapeHtml(it.txHash)}" data-label="Tx Hash">${escapeHtml(t('复制', 'Copy'))}</button>
+              <button type="button" class="btn-ghost-sm" style="padding:2px 6px;color:var(--cyan-glow);" data-action="copy-text" data-val="${escapeHtml(it.txHash)}" data-label="${escapeHtml(t('交易哈希', 'Tx Hash'))}">${escapeHtml(t('复制', 'Copy'))}</button>
             </span>
           </div>
         ` : ''}

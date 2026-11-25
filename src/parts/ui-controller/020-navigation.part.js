@@ -126,11 +126,31 @@
     const backupContent = $('backup-keys-content');
     if (backupContent) backupContent.innerHTML = '';
     if (st && st.staking) st.staking.amountIn = '';
+    if (st && st.send && typeof st.send === 'object') {
+      st.send.recipient = '';
+      st.send.amount = '';
+      st.send.detectedNetwork = null;
+      st.send.quote = null;
+    }
+    if (typeof _sendCrossQuoteTimer !== 'undefined' && _sendCrossQuoteTimer) {
+      clearTimeout(_sendCrossQuoteTimer);
+      _sendCrossQuoteTimer = null;
+    }
+    if (st && st.perp && typeof st.perp === 'object') {
+      st.perp.fundingAmount = '';
+      st.perp.fundingQuote = null;
+      st.perp.fundingQuoteError = '';
+      st.perp.fundingQuoting = false;
+      st.perp.editingTpslCoin = '';
+      st.perp.marketSearch = '';
+    }
     if (typeof resetFormFields === 'function') {
       resetFormFields([
         'earn-amount-in',
         'send-amount-input',
         'send-recipient-input',
+        'token-picker-search',
+        'perp-market-search',
         'perp-oc-amount',
         'perp-arb-amount',
         'perp-withdraw-amount',
@@ -143,9 +163,18 @@
         'near-keys-rotate-mnemonic',
         'hub-near-domain-input',
         'hub-near-bind-auth-input',
-        'wc-uri-input'
+        'wc-uri-input',
+        'dapp-url-input'
       ]);
     }
+    if ($('send-detected-net')) $('send-detected-net').textContent = '';
+    const sendPreviewEl = $('send-route-preview');
+    if (sendPreviewEl) {
+      sendPreviewEl.classList.add('hidden');
+      sendPreviewEl.textContent = '';
+    }
+    $('send-gas-fix-banner')?.classList.add('hidden');
+    $('send-evm-chain-row')?.classList.add('hidden');
     const backdrop = $('sheet-backdrop');
     if (backdrop) {
       backdrop.classList.remove('open');
@@ -154,7 +183,11 @@
     if (typeof document !== 'undefined') {
       document.querySelectorAll('.bottom-sheet.open').forEach((s) => {
         s.classList.remove('open');
+        s.classList.remove('auth-top');
         s.setAttribute('aria-hidden', 'true');
+      });
+      document.querySelectorAll('.bottom-sheet.auth-top').forEach((s) => {
+        s.classList.remove('auth-top');
       });
     }
     syncSheetScrollLock();

@@ -58,7 +58,11 @@
       return;
     }
     const net = crypto.detectAddressNetwork(address);
-    if (!net || (typeof crypto.validateChainAddress === 'function' && !crypto.validateChainAddress(net, address))) {
+    const addrCheck = (net && typeof crypto.validateChainAddress === 'function')
+      ? crypto.validateChainAddress(net, address)
+      : { valid: Boolean(net) };
+    const isAddrValid = typeof addrCheck === 'boolean' ? addrCheck : Boolean(addrCheck && addrCheck.valid);
+    if (!net || !isAddrValid) {
       showToast(t('地址格式或校验和无效', 'Invalid wallet address or checksum'));
       return;
     }

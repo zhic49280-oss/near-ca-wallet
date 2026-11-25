@@ -99,23 +99,27 @@
       $('perp-tab-fills').classList.toggle('active', tab === 'fills');
     }
 
+    const busyKey = (st.perp && st.perp.actionBusyKey) || '';
     const batchBtn = $('btn-perp-batch-action');
     if (batchBtn) {
       if (tab === 'positions' && posCount > 0) {
         batchBtn.classList.remove('hidden');
-        batchBtn.textContent = t('一键全平', 'Close All');
+        batchBtn.disabled = busyKey === 'batch';
+        batchBtn.textContent = busyKey === 'batch' ? t('平仓中...', 'Closing...') : t('一键全平', 'Close All');
       } else if (tab === 'orders' && ordCount > 0) {
         batchBtn.classList.remove('hidden');
-        batchBtn.textContent = t('全部撤单', 'Cancel All');
+        batchBtn.disabled = busyKey === 'batch';
+        batchBtn.textContent = busyKey === 'batch' ? t('撤单中...', 'Cancelling...') : t('全部撤单', 'Cancel All');
       } else {
         batchBtn.classList.add('hidden');
+        batchBtn.disabled = false;
       }
     }
 
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (fw && typeof fw.mountPerpBottomList === 'function') {
       if (!acct) {
-        fw.mountPerpBottomList(listEl, { items: [], tab, emptyText: '--', isEn: st.lang === 'en', formatPerpPx });
+        fw.mountPerpBottomList(listEl, { items: [], tab, emptyText: '--', isEn: st.lang === 'en', formatPerpPx, busyKey });
         return;
       }
       if (tab === 'positions') {
@@ -128,16 +132,16 @@
             markPx: (mkt && mkt.markPx) ? mkt.markPx : p.markPx
           };
         });
-        fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无持仓', 'No open positions'), isEn: st.lang === 'en', formatPerpPx });
+        fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无持仓', 'No open positions'), isEn: st.lang === 'en', formatPerpPx, busyKey });
         return;
       }
       if (tab === 'orders') {
         const items = (acct.openOrders || []).slice(0, 25).map((o) => ({ ...o, pair: formatPerpDisplayPair(o.coin || '') }));
-        fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无委托', 'No open orders'), isEn: st.lang === 'en', formatPerpPx });
+        fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无委托', 'No open orders'), isEn: st.lang === 'en', formatPerpPx, busyKey });
         return;
       }
       const items = (acct.fills || []).slice(0, 20).map((f) => ({ ...f, pair: formatPerpDisplayPair(f.coin || '') }));
-      fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无成交记录', 'No recent fills'), isEn: st.lang === 'en', formatPerpPx });
+      fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无成交记录', 'No recent fills'), isEn: st.lang === 'en', formatPerpPx, busyKey });
       return;
     }
 
@@ -184,9 +188,9 @@
               <div><div class="meta-key">${escapeHtml(t('止盈/止损', 'TP / SL'))}</div><span class="mono" style="font-size:10px;">${escapeHtml(tpslSummary)}</span></div>
             </div>
             <div class="flex items-center gap-2" style="margin-top: 2px;">
-              <button type="button" class="mini-action-btn flex-1" data-action="reverse-perp-pos" data-coin="${escapeHtml(p.coin)}">${escapeHtml(t('反手', 'Reverse'))}</button>
-              <button type="button" class="mini-action-btn flex-1" data-action="open-perp-pos-tpsl" data-coin="${escapeHtml(p.coin)}">${escapeHtml(t('止盈/止损', 'TP / SL'))}</button>
-              <button type="button" class="mini-action-btn primary flex-1" data-action="close-perp-pos" data-coin="${escapeHtml(p.coin)}">${escapeHtml(t('市价平仓', 'Close'))}</button>
+              <button type="button" class="mini-action-btn flex-1" data-action="reverse-perp-pos" data-coin="${escapeHtml(p.coin)}" ${(busyKey === `reverse:${p.coin}` || busyKey === `close:${p.coin}` || busyKey === 'batch') ? 'disabled' : ''}>${escapeHtml(busyKey === `reverse:${p.coin}` ? t('反手中...', 'Reversing...') : t('反手', 'Reverse'))}</button>
+              <button type="button" class="mini-action-btn flex-1" data-action="open-perp-pos-tpsl" data-coin="${escapeHtml(p.coin)}" ${(busyKey === `reverse:${p.coin}` || busyKey === `close:${p.coin}` || busyKey === 'batch') ? 'disabled' : ''}>${escapeHtml(t('止盈/止损', 'TP / SL'))}</button>
+              <button type="button" class="mini-action-btn primary flex-1" data-action="close-perp-pos" data-coin="${escapeHtml(p.coin)}" ${(busyKey === `reverse:${p.coin}` || busyKey === `close:${p.coin}` || busyKey === 'batch') ? 'disabled' : ''}>${escapeHtml((busyKey === `close:${p.coin}` || busyKey === 'batch') ? t('平仓中...', 'Closing...') : t('市价平仓', 'Close'))}</button>
             </div>
           </div>
         `;
@@ -216,7 +220,7 @@
               </div>
               <div class="flex items-center gap-1">
                 ${isTrigger ? `<button type="button" class="mini-action-btn" data-action="open-perp-pos-tpsl" data-coin="${escapeHtml(String(o.coin || ''))}">${escapeHtml(t('修改', 'Modify'))}</button>` : ''}
-                <button type="button" class="mini-action-btn" data-action="cancel-perp-order" data-coin="${escapeHtml(String(o.coin || ''))}" data-oid="${escapeHtml(String(o.oid || ''))}">${escapeHtml(t('撤单', 'Cancel'))}</button>
+                <button type="button" class="mini-action-btn" data-action="cancel-perp-order" data-coin="${escapeHtml(String(o.coin || ''))}" data-oid="${escapeHtml(String(o.oid || ''))}" ${(busyKey === `cancel:${o.coin}:${o.oid}` || busyKey === 'batch') ? 'disabled' : ''}>${escapeHtml((busyKey === `cancel:${o.coin}:${o.oid}` || busyKey === 'batch') ? t('撤单中...', 'Cancelling...') : t('撤单', 'Cancel'))}</button>
               </div>
             </div>
             <div class="flex items-center justify-between" style="font-size: 11.5px; color: var(--text-secondary);">
@@ -617,13 +621,18 @@
     const st = getState();
     const wrap = $('perp-ls-ratio-wrap');
     if (!wrap) return;
+    wrap.classList.remove('hidden');
     const coin = (st.perp && st.perp.selectedCoin) || 'BTC';
     const ls = st.perp && st.perp.lsRatio && st.perp.lsRatio.coin === coin ? st.perp.lsRatio : null;
     if (!ls || !Number.isFinite(ls.longPct) || !Number.isFinite(ls.shortPct)) {
-      wrap.classList.add('hidden');
+      if (wrap.style) wrap.style.opacity = '0.55';
+      if ($('perp-ls-long-label')) $('perp-ls-long-label').textContent = `${t('做多', 'Long')} --`;
+      if ($('perp-ls-short-label')) $('perp-ls-short-label').textContent = `-- ${t('做空', 'Short')}`;
+      if ($('perp-ls-long-bar')) $('perp-ls-long-bar').style.width = '50%';
+      if ($('perp-ls-short-bar')) $('perp-ls-short-bar').style.width = '50%';
       return;
     }
-    wrap.classList.remove('hidden');
+    if (wrap.style) wrap.style.opacity = '1';
     const longPct = Math.max(1, Math.min(99, ls.longPct));
     const shortPct = Math.max(1, Math.min(99, 100 - longPct));
     if ($('perp-ls-long-label')) $('perp-ls-long-label').textContent = `${t('做多', 'Long')} ${ls.longPct.toFixed(1)}%`;

@@ -88,6 +88,8 @@
     $('onboard-choice-panel')?.classList.add('hidden');
     $('onboard-import-panel')?.classList.add('hidden');
     $('onboard-create-panel')?.classList.remove('hidden');
+    const createBtn = $('btn-confirm-create-wallet');
+    if (createBtn) createBtn.disabled = false;
   }
 
   function copyPendingMnemonic() {
@@ -163,7 +165,11 @@
     }
     _onboardingBusy = true;
     const btn = $('btn-confirm-create-wallet');
-    if (btn) btn.disabled = true;
+    const prevBtnText = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = t('正在创建钱包...', 'Creating wallet...');
+    }
     try {
       const wallet = await buildWalletFromMnemonic(phrase, name, pin);
       st.wallets.push(wallet);
@@ -179,10 +185,13 @@
       renderAll();
       refreshAllBalancesAsync(true);
     } catch (e) {
-      showToast(e && e.message ? e.message : t('创建失败', 'Create failed'));
+      showToast(toUserFriendlyError(e, '创建钱包失败，请重试', 'Failed to create wallet'));
     } finally {
       _onboardingBusy = false;
-      if (btn) btn.disabled = false;
+      if (btn) {
+        btn.disabled = false;
+        if (prevBtnText) btn.textContent = prevBtnText;
+      }
     }
   }
 
@@ -190,10 +199,12 @@
     $('onboard-choice-panel')?.classList.add('hidden');
     $('onboard-create-panel')?.classList.add('hidden');
     $('onboard-import-panel')?.classList.remove('hidden');
+    const importBtn = $('btn-confirm-import-wallet');
+    if (importBtn) importBtn.disabled = false;
     const ta = $('onboard-import-phrase');
     if (ta) {
       ta.value = '';
-      ta.placeholder = t('输入 12 或 24 个英文助记词，使用空格分隔', 'Enter 12 or 24 BIP-39 words separated by spaces');
+      ta.placeholder = t('输入 12 或 24 个英文助记词，使用空格分隔', 'Enter 12 or 24 recovery words separated by spaces');
     }
     const status = $('onboard-import-status');
     if (status) status.textContent = '';
@@ -211,9 +222,7 @@
     const res = crypto.validateMnemonic(phrase);
     if (res.valid) {
       statusEl.style.color = 'var(--near-emerald)';
-      statusEl.textContent = res.checksumValid
-        ? t(`✓ 有效 ${res.words.length} 词助记词`, `✓ Valid ${res.words.length}-word phrase`)
-        : t(`⚠ ${res.words.length} 词有效（校验和提醒）`, `⚠ ${res.words.length} words valid (checksum note)`);
+      statusEl.textContent = t(`✓ 有效 ${res.words.length} 词助记词`, `✓ Valid ${res.words.length}-word phrase`);
     } else {
       statusEl.style.color = 'var(--rose-alert)';
       statusEl.textContent = res.error || t('助记词格式无效', 'Invalid mnemonic');
@@ -231,10 +240,6 @@
     const check = crypto.validateMnemonic(raw);
     if (!check.valid) {
       showToast(check.error || t('无效助记词', 'Invalid recovery phrase'));
-      return;
-    }
-    if (!check.checksumValid) {
-      showToast(t('助记词校验和异常，请仔细核对每个单词拼写', 'Mnemonic checksum mismatch. Please double-check every word.'));
       return;
     }
     const normalizedPhrase = check.words.join(' ');
@@ -255,7 +260,11 @@
     }
     _onboardingBusy = true;
     const btn = $('btn-confirm-import-wallet');
-    if (btn) btn.disabled = true;
+    const prevBtnText = btn ? btn.textContent : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = t('正在导入...', 'Importing...');
+    }
     try {
       const wallet = await buildWalletFromMnemonic(normalizedPhrase, name, '');
       const existing = st.wallets.find((w) => w.nearAddress && w.nearAddress === wallet.nearAddress);
@@ -279,10 +288,13 @@
       renderAll();
       refreshAllBalancesAsync(true);
     } catch (e) {
-      showToast(e && e.message ? e.message : t('导入失败', 'Import failed'));
+      showToast(toUserFriendlyError(e, '导入钱包失败，请重试', 'Failed to import wallet'));
     } finally {
       _onboardingBusy = false;
-      if (btn) btn.disabled = false;
+      if (btn) {
+        btn.disabled = false;
+        if (prevBtnText) btn.textContent = prevBtnText;
+      }
     }
   }
 
@@ -512,7 +524,7 @@
         : []),
       { label: t('NEAR 主账户', 'NEAR Master Account'), val: wallet.nearNamedAccount || wallet.nearAddress, secret: false },
       { label: t('NEAR 主私钥', 'NEAR Master Private Key'), val: wallet.nearPrivateKey, secret: true },
-      { label: t('Bitcoin (BTC) Taproot 地址', 'Bitcoin (BTC) Taproot Address'), val: wallet.btcAddress, secret: false },
+      { label: t('Bitcoin (BTC) 地址', 'Bitcoin (BTC) Address'), val: wallet.btcAddress, secret: false },
       { label: t('Bitcoin (BTC) 私钥', 'Bitcoin (BTC) Private Key'), val: wallet.btcPrivateKeyHex, secret: true },
       { label: t('Pearl (PRL) 地址', 'Pearl (PRL) Address'), val: wallet.address, secret: false },
       { label: t('Pearl (PRL) 私钥', 'Pearl (PRL) Private Key'), val: wallet.privateKeyHex, secret: true }
@@ -545,13 +557,27 @@
     openSheet('sheet-backup');
   }
 
-  function copyTextValue(val, label) {
-    if (typeof event !== 'undefined' && event?.target?.closest) {
-      const btn = event.target.closest('button');
-      if (btn && btn.getAttribute('data-secret-copy') === '1' && !_backupRevealActive) {
-        showToast(t('请先点击「显示助记词与私钥」后再复制', 'Reveal phrase & keys first before copying'));
-        return;
-      }
+  function copyTextValue(val, label, evOrEl = null) {
+    const btn = (evOrEl && typeof evOrEl.closest === 'function')
+      ? evOrEl.closest('button')
+      : ((evOrEl && evOrEl.target && typeof evOrEl.target.closest === 'function')
+          ? evOrEl.target.closest('button')
+          : ((typeof document !== 'undefined' && document.activeElement && typeof document.activeElement.closest === 'function')
+              ? document.activeElement.closest('button')
+              : null));
+    const isUnrevealedBackupSecret = Boolean(
+      !_backupRevealActive &&
+      val &&
+      $('sheet-backup')?.classList?.contains('open') &&
+      typeof document !== 'undefined' &&
+      typeof document.querySelectorAll === 'function' &&
+      Array.from(document.querySelectorAll('#backup-keys-content .backup-secret-val')).some(
+        (el) => (el.dataset?.secret || el.getAttribute?.('data-secret') || '') === String(val)
+      )
+    );
+    if ((btn && btn.getAttribute('data-secret-copy') === '1' && !_backupRevealActive) || isUnrevealedBackupSecret) {
+      showToast(t('请先点击「显示助记词与私钥」后再复制', 'Reveal phrase & keys first before copying'));
+      return;
     }
     if (val) copyText(val, label);
   }

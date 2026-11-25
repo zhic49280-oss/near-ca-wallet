@@ -547,6 +547,7 @@
 
     // Poll /api/swap/status until SUCCESS
     let settledOutStr = String(swapQuoteOk.quote.amountOut || '0');
+    let swapSettled = false;
     const pollDeadline = Date.now() + 45_000;
     while (Date.now() < pollDeadline) {
       const { res: stRes } = await nearcomAuthedRequest(creds, '/api/swap/status', {
@@ -561,6 +562,7 @@
           if (stOk.amountOut && /^\d+$/.test(String(stOk.amountOut))) {
             settledOutStr = String(stOk.amountOut);
           }
+          swapSettled = true;
           break;
         }
         if (statusUpper === 'FAILED' || statusUpper === 'REFUNDED') {
@@ -568,6 +570,16 @@
         }
       }
       await new Promise((r) => setTimeout(r, 1500));
+    }
+
+    if (!swapSettled) {
+      const pendingErr = new Error(
+        t('机密兑换仍在处理中，请稍后刷新查看状态', 'Confidential swap is still processing. Please refresh status shortly.')
+      );
+      pendingErr.code = 'CONFIDENTIAL_SWAP_PENDING';
+      pendingErr.swapIntentHash = swapIntentHash;
+      pendingErr.swapDepositAddress = swapDepositAddr;
+      throw pendingErr;
     }
 
     const settledOutBig = BigInt(settledOutStr);

@@ -610,7 +610,7 @@
       if (activeQuote._jupiterQuote) {
         activeQuote = activeQuote._jupiterQuote;
       } else {
-        throw new Error(t('Raydium 交易构建失败且无 Jupiter 备选报价', 'Raydium swap build failed and no Jupiter quote available'));
+        throw new Error(t('兑换交易构建失败，请刷新报价后重试', 'Swap transaction build failed. Please refresh quote and retry.'));
       }
     } else if (activeQuote._jupiterQuote) {
       activeQuote = activeQuote._jupiterQuote;
@@ -651,7 +651,7 @@
     );
 
     if (!swapRes || !swapRes.swapTransaction) {
-      throw new Error((swapRes && swapRes.error) || t('Jupiter 交易构建失败', 'Jupiter swap build failed'));
+      throw new Error(toUserFriendlyError(swapRes && swapRes.error, t('兑换交易构建失败，请稍后重试', 'Swap transaction build failed. Please try again.')));
     }
 
     return signAndBroadcastSolanaBase64Tx(swapRes.swapTransaction, wallet.solPrivateSeedHex || null, wallet, 'solana-1');
@@ -943,7 +943,7 @@
     ]);
 
     if (!splRes && !t22Res) {
-      throw new Error(t('Solana RPC 扫描失败，请稍后重试', 'Solana RPC scan failed, please retry'));
+      throw new Error(t('Solana 网络扫描失败，请稍后重试', 'Solana network scan failed, please retry'));
     }
 
     const accounts = [];

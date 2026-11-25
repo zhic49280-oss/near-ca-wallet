@@ -1153,13 +1153,20 @@
       : null;
 
     // Cancel existing TP/SL triggers on this coin before reversing
+    const contracts = getContracts();
+    let resolvedWallet = wallet;
+    if (contracts && typeof contracts.ensureWalletSigningKeysAsync === 'function') {
+      resolvedWallet = await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => wallet);
+    }
     try {
-      const addr = wallet.mpcEvmAddress || wallet.evmAddress;
+      const addr = contracts && typeof contracts.resolveWalletEvmSender === 'function'
+        ? contracts.resolveWalletEvmSender(resolvedWallet)
+        : (resolvedWallet.mpcEvmAddress || resolvedWallet.evmAddress);
       if (addr) {
         const orders = await fetchHlOpenOrders(addr).catch(() => []);
         const coinTriggers = (orders || []).filter((o) => o && o.coin === market.name && o.isTrigger);
         if (coinTriggers.length > 0) {
-          await cancelHlOrdersBatch({ wallet, cancels: coinTriggers.map((o) => ({ a: market.index, o: o.oid })) }).catch(() => {});
+          await cancelHlOrdersBatch({ wallet: resolvedWallet, cancels: coinTriggers.map((o) => ({ a: market.index, o: o.oid })) }).catch(() => {});
         }
       }
     } catch (_) {}
@@ -1172,7 +1179,7 @@
     }
 
     return placeHlPerpOrder({
-      wallet,
+      wallet: resolvedWallet,
       market,
       isBuy: !position.isLong,
       size: Number(position.absSize) * 2,
@@ -1264,7 +1271,7 @@
       throw new Error(
         t(
           `Arbitrum 直充最低 ${HL_ARB_BRIDGE_MIN_USDC} USDC，低于 ${HL_ARB_BRIDGE_MIN_USDC} USDC 将被合约永久丢失`,
-          `Arbitrum Bridge2 requires at least ${HL_ARB_BRIDGE_MIN_USDC} USDC (deposits under ${HL_ARB_BRIDGE_MIN_USDC} USDC are permanently lost)`
+          `Arbitrum deposit requires at least ${HL_ARB_BRIDGE_MIN_USDC} USDC (deposits under ${HL_ARB_BRIDGE_MIN_USDC} USDC are permanently lost)`
         )
       );
     }

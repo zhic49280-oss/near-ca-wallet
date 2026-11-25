@@ -23,7 +23,7 @@ export function PerpOrderbookSidePanel({ rows = [], side = 'bid', maxSz = 0, fmt
   );
 }
 
-export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText = '', isEn = false, formatPerpPx }) {
+export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText = '', isEn = false, formatPerpPx, busyKey = '' }) {
   if (!Array.isArray(items) || items.length === 0) {
     return (
       <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '14px 0' }}>
@@ -53,6 +53,9 @@ export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText =
             ? `${isEn ? 'TP' : '止盈'}: ${item.tpTriggerPx ? '$' + fmtPx(item.tpTriggerPx) : '--'} / ${isEn ? 'SL' : '止损'}: ${item.slTriggerPx ? '$' + fmtPx(item.slTriggerPx) : '--'}`
             : (isEn ? 'TP/SL: Not set' : '止盈/止损: 未设置');
 
+          const isReversing = busyKey === `reverse:${item.coin}`;
+          const isClosing = busyKey === `close:${item.coin}` || busyKey === 'batch';
+          const isAnyPosBusy = isReversing || isClosing;
           return (
             <div key={item.coin || idx} className="perp-pos-card">
               <div className="flex items-center justify-between gap-2">
@@ -94,14 +97,14 @@ export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText =
                 </div>
               </div>
               <div className="flex items-center gap-2" style={{ marginTop: '2px' }}>
-                <button type="button" className="mini-action-btn flex-1" data-action="reverse-perp-pos" data-coin={item.coin}>
-                  {isEn ? 'Reverse' : '反手'}
+                <button type="button" className="mini-action-btn flex-1" data-action="reverse-perp-pos" data-coin={item.coin} disabled={isAnyPosBusy}>
+                  {isReversing ? (isEn ? 'Reversing...' : '反手中...') : (isEn ? 'Reverse' : '反手')}
                 </button>
-                <button type="button" className="mini-action-btn flex-1" data-action="open-perp-pos-tpsl" data-coin={item.coin}>
+                <button type="button" className="mini-action-btn flex-1" data-action="open-perp-pos-tpsl" data-coin={item.coin} disabled={isAnyPosBusy}>
                   {isEn ? 'TP / SL' : '止盈/止损'}
                 </button>
-                <button type="button" className="mini-action-btn primary flex-1" data-action="close-perp-pos" data-coin={item.coin}>
-                  {isEn ? 'Close' : '市价平仓'}
+                <button type="button" className="mini-action-btn primary flex-1" data-action="close-perp-pos" data-coin={item.coin} disabled={isAnyPosBusy}>
+                  {isClosing ? (isEn ? 'Closing...' : '平仓中...') : (isEn ? 'Close' : '市价平仓')}
                 </button>
               </div>
             </div>
@@ -115,6 +118,7 @@ export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText =
           const pxLabel = isTrigger ? (isEn ? 'Trigger' : '触发价') : (isEn ? 'Price' : '委托价');
           const pxShow = isTrigger ? (item.triggerPx || item.limitPx || '--') : (item.limitPx || '--');
 
+          const isCancelling = busyKey === `cancel:${item.coin}:${item.oid}` || busyKey === 'batch';
           return (
             <div key={item.oid || idx} className="perp-pos-card">
               <div className="flex items-center justify-between gap-2">
@@ -135,8 +139,9 @@ export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText =
                     data-action="cancel-perp-order"
                     data-coin={String(item.coin || '')}
                     data-oid={String(item.oid || '')}
+                    disabled={isCancelling}
                   >
-                    {isEn ? 'Cancel' : '撤单'}
+                    {isCancelling ? (isEn ? 'Cancelling...' : '撤单中...') : (isEn ? 'Cancel' : '撤单')}
                   </button>
                 </div>
               </div>

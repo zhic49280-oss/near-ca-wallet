@@ -160,14 +160,21 @@
     const bDec = outFollow.hubDecimals || 8;
     const bSym = outFollow.hubSymbol || 'PRL';
     const bHuman = intents.fromBaseUnits(String(bridgeInRaw), bDec);
+    const bContract = outFollow.hubContract || fallbackContract;
+    const bBalMap = await intents.fetchNearNep141Balances(nearId, { [bContract]: bDec }).catch(() => null);
+    const realBBal = (bBalMap && bBalMap[bContract] && bBalMap[bContract].formatted !== undefined)
+      ? Number(bBalMap[bContract].formatted)
+      : (wallet.nearNep141Balances && wallet.nearNep141Balances[bContract]
+          ? Number(wallet.nearNep141Balances[bContract].formatted)
+          : null);
     const sendB = await contracts.executeNearNep141Transfer({
       wallet,
-      tokenContract: outFollow.hubContract || fallbackContract,
+      tokenContract: bContract,
       receiverId: liveOut.depositAddress,
       amount: bHuman,
       decimals: bDec,
       tokenSymbol: bSym,
-      tokenBalance: Number(bHuman)
+      tokenBalance: realBBal
     });
     await intents.submitExternalDepositTxHash({
       depositAddress: liveOut.depositAddress,
@@ -243,7 +250,7 @@
         order.confidentialWithdrawIntentHash = confRes.withdrawIntentHash || null;
         if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
         renderSwapOrderCard();
-        showToast(`✅ ${t('near.com 机密意图兑换与提现已自动完成', 'near.com confidential swap & withdraw completed')}`);
+        showToast(`✅ ${t('机密兑换与提现已自动完成', 'Confidential swap & withdraw completed')}`);
         return;
       }
       if (order.followUpRefSwap) {
@@ -255,11 +262,14 @@
           const nearId = wallet.nearNamedAccount || wallet.nearAddress;
           const balMap = await intents.fetchNearNep141Balances(nearId, { [follow.tokenIn]: follow.inputDecimals || 6 }).catch(() => null);
           const liveRaw = balMap?.[follow.tokenIn]?.raw;
-          const amtInRaw = (liveRaw && BigInt(liveRaw) > 0n)
-            ? (follow.amountUsdcRaw && BigInt(liveRaw) > BigInt(follow.amountUsdcRaw)
-                ? String(follow.amountUsdcRaw)
-                : String(liveRaw))
-            : String(follow.amountUsdcRaw || '0');
+          const realFollowBal = (balMap && balMap[follow.tokenIn] && balMap[follow.tokenIn].formatted !== undefined)
+            ? Number(balMap[follow.tokenIn].formatted)
+            : (wallet.nearNep141Balances && wallet.nearNep141Balances[follow.tokenIn]
+                ? Number(wallet.nearNep141Balances[follow.tokenIn].formatted)
+                : null);
+          const amtInRaw = (follow.amountUsdcRaw && BigInt(String(follow.amountUsdcRaw)) > 0n)
+            ? String(follow.amountUsdcRaw)
+            : String(liveRaw || '0');
           if (BigInt(amtInRaw) > 0n) {
             const outFollow = follow.followUpBridgeOut || null;
             const dclFollow = follow.followUpDclSwap || null;
@@ -275,6 +285,7 @@
                   tokenOut: follow.tokenOut,
                   amountRaw: amtInRaw,
                   slippageBps: follow.slippageBps || 100,
+                  tokenBalance: realFollowBal,
                   inputDecimals: follow.inputDecimals || 6,
                   tokenSymbol: follow.tokenSymbol || 'USDC'
                 })
@@ -284,6 +295,7 @@
                   tokenOut: follow.tokenOut,
                   amountRaw: amtInRaw,
                   slippageBps: follow.slippageBps || 100,
+                  tokenBalance: realFollowBal,
                   inputDecimals: follow.inputDecimals || 6,
                   tokenSymbol: follow.tokenSymbol || 'USDC'
                 });
@@ -777,7 +789,7 @@
     } catch (err) {
       order.followUpExecuted = false;
       order.followUpFailed = true;
-      order.followUpError = (err && err.message) || t('后续自动兑换执行失败', 'Follow-up swap execution failed');
+      order.followUpError = toUserFriendlyError(err, t('后续自动兑换执行失败，请稍后重试', 'Follow-up swap execution failed. Please try again.'));
       if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
       renderSwapOrderCard();
       showToast(order.followUpError);

@@ -58,7 +58,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.68');
+      await loadScriptOnce('ethers.umd.min.js?v=6.69');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -68,7 +68,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.68').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.69').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -78,7 +78,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.68').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.69').catch(() => false);
       return getMining();
     }
     return null;
@@ -181,6 +181,27 @@
   function t(zh, en) {
     const st = getState();
     return st && typeof st.t === 'function' ? st.t(zh, en) : zh;
+  }
+
+  function toUserFriendlyError(err, fallbackZh = '操作失败，请稍后重试', fallbackEn = 'Operation failed. Please try again.') {
+    const contracts = getContracts();
+    if (contracts && typeof contracts.toUserFriendlyError === 'function') {
+      return contracts.toUserFriendlyError(err, fallbackZh, fallbackEn);
+    }
+    return t(fallbackZh, fallbackEn);
+  }
+
+  const _stForErr = getState();
+  if (_stForErr && typeof _stForErr === 'object' && !_stForErr.toUserFriendlyError) {
+    _stForErr.toUserFriendlyError = toUserFriendlyError;
+  }
+  if (typeof Promise !== 'undefined') {
+    Promise.resolve().then(() => {
+      const uiObj = (typeof globalThis !== 'undefined' && globalThis.NearCAUI) || (typeof window !== 'undefined' && window.NearCAUI);
+      if (uiObj && typeof uiObj === 'object' && !uiObj.toUserFriendlyError) {
+        uiObj.toUserFriendlyError = toUserFriendlyError;
+      }
+    }).catch(() => {});
   }
 
   function escapeHtml(str) {

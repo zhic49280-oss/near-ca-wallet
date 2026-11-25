@@ -35,7 +35,7 @@
 
     const valEl = $('receive-addr-value');
     if (valEl && st.receive.selectedNetwork === 'qtc' && !wallet.qtcDepositAddress) {
-      valEl.textContent = t('正在获取 Quantus 跨链充值地址...', 'Fetching Quantus deposit address...');
+      valEl.textContent = t('正在获取 QTC 收款地址...', 'Fetching QTC deposit address...');
     }
 
     try {
@@ -50,7 +50,11 @@
         wallet.qtcDepositAddressAt = Date.now();
         st.saveWallets();
       } else if (st.receive.selectedNetwork === 'qtc') {
-        showToast((res && res.error) || t('获取 QTC 跨链收款地址失败', 'Failed to obtain QTC deposit address'));
+        showToast(toUserFriendlyError(res && res.error, '获取 QTC 收款地址失败，请重试', 'Failed to obtain QTC deposit address'));
+      }
+    } catch (err) {
+      if (st.receive.selectedNetwork === 'qtc') {
+        showToast(toUserFriendlyError(err, '获取 QTC 收款地址失败，请重试', 'Failed to obtain QTC deposit address'));
       }
     } finally {
       if (_qtcDepositPromiseKey === reqKey) _qtcDepositPromiseKey = '';
@@ -102,9 +106,9 @@
           valEl.dataset.error = isFetching ? '' : '1';
         }
         if (isFetching) {
-          valEl.textContent = t('正在获取 Quantus 跨链充值地址...', 'Fetching Quantus deposit address...');
+          valEl.textContent = t('正在获取 QTC 收款地址...', 'Fetching QTC deposit address...');
         } else {
-          valEl.innerHTML = `<span>${escapeHtml(t('获取 Quantus 地址失败', 'Failed to fetch Quantus address'))}</span> <button type="button" class="mini-action-btn primary" style="margin-left:6px;" data-action="select-receive-network" data-net="qtc">${escapeHtml(t('重试', 'Retry'))}</button>`;
+          valEl.innerHTML = `<span>${escapeHtml(t('获取 QTC 收款地址失败', 'Failed to fetch QTC deposit address'))}</span> <button type="button" class="mini-action-btn primary" style="margin-left:6px;" data-action="select-receive-network" data-net="qtc">${escapeHtml(t('重试', 'Retry'))}</button>`;
         }
       }
       renderQrInto('receive-qr-container', '', 172);

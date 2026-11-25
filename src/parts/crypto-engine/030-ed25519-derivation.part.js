@@ -221,6 +221,52 @@
     }
   }
 
+  function slip0010Ed25519DeriveFromSeedBytesSync(seedBytes, pathIndices) {
+    const enc = new TextEncoder();
+    let I = cryptoHmacSha512Sync(enc.encode('ed25519 seed'), seedBytes);
+    let key = I.slice(0, 32);
+    let chain = I.slice(32);
+
+    for (const idx of pathIndices) {
+      const actualIdx = (idx + 0x80000000) >>> 0;
+      const data = new Uint8Array(1 + 32 + 4);
+      data[0] = 0;
+      data.set(key, 1);
+      new DataView(data.buffer).setUint32(33, actualIdx, false);
+      I = cryptoHmacSha512Sync(chain, data);
+      key = I.slice(0, 32);
+      chain = I.slice(32);
+    }
+
+    const h = sha512Bytes(key);
+    h[0] &= 248;
+    h[31] &= 127;
+    h[31] |= 64;
+    const kBig = bytesToLeBigInt(h.slice(0, 32));
+    const pubBytes = edScalarMult(kBig);
+    const secret64 = new Uint8Array(64);
+    secret64.set(key, 0);
+    secret64.set(pubBytes, 32);
+
+    return { key, pubBytes, secret64 };
+  }
+
+  function deriveNearFromSeed(words, accountIndex = 0) {
+    const mnemonicStr = assertNonEmptyMnemonic(words);
+    const seedBytes = cryptoPbkdf2Sync(mnemonicStr);
+    const { key, pubBytes, secret64 } = slip0010Ed25519DeriveFromSeedBytesSync(
+      seedBytes,
+      [44, 397, accountIndex]
+    );
+    return {
+      nearAddress: bytesToHex(pubBytes),
+      nearPublicKey: `ed25519:${base58Encode(pubBytes)}`,
+      nearPrivateKey: `ed25519:${base58Encode(secret64)}`,
+      nearPrivateSeedHex: bytesToHex(key),
+      path: `m/44'/397'/${accountIndex}'`
+    };
+  }
+
   async function slip0010Ed25519DeriveFromSeedBytesAsync(seedBytes, pathIndices) {
     const enc = new TextEncoder();
     let I = await cryptoHmacSha512Async(enc.encode('ed25519 seed'), seedBytes);

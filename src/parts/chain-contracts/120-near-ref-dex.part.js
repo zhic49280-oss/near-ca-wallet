@@ -88,7 +88,7 @@
     const outId = normalizeNearRefTokenContract(tokenOut);
     const amtStr = String(amountRaw || '0').trim();
     if (!inId || !outId || inId === outId || !/^\d+$/.test(amtStr) || BigInt(amtStr) <= 0n) {
-      return { ok: false, isDcl: true, dclContract: DCL_CONTRACT_ID, poolIds: [], amountOut: null, minAmountOut: '0', error: t('DCL 询价参数无效', 'Invalid DCL quote parameters') };
+      return { ok: false, isDcl: true, dclContract: DCL_CONTRACT_ID, poolIds: [], amountOut: null, minAmountOut: '0', error: t('报价参数无效', 'Invalid quote parameters') };
     }
     const poolIdsList = resolveNearDclPoolIds(inId, outId);
     if (poolIdsList.length === 0) {
@@ -111,7 +111,7 @@
       );
       const valid = results.filter(Boolean).sort((a, b) => (b.outBig > a.outBig ? 1 : b.outBig < a.outBig ? -1 : 0));
       if (valid.length === 0) {
-        return { ok: false, isDcl: true, dclContract: DCL_CONTRACT_ID, poolIds: [poolIdsList[0]], amountOut: null, minAmountOut: '0', error: t('DCL 流动池暂无可用报价', 'DCL pool returned zero quote') };
+        return { ok: false, isDcl: true, dclContract: DCL_CONTRACT_ID, poolIds: [poolIdsList[0]], amountOut: null, minAmountOut: '0', error: t('流动池暂无可用报价', 'Liquidity pool returned zero quote') };
       }
       const best = valid[0];
       const outAmt = best.outAmt;
@@ -142,7 +142,7 @@
         poolIds: [poolIdsList[0]],
         amountOut: null,
         minAmountOut: '0',
-        error: err && err.message ? err.message : t('DCL 询价失败', 'DCL quote failed')
+        error: toUserFriendlyError(err, t('获取报价失败，请稍后重试', 'Failed to fetch quote. Please try again.'))
       };
     }
   }
@@ -447,7 +447,7 @@
           amountOut: null,
           actions: [],
           routeData: null,
-          error: (srData && srData.result_message) || t('Ref Finance 暂无可用流动性路径', 'No Ref Finance liquidity route found')
+          error: toUserFriendlyError(srData && srData.result_message, t('暂无可用流动性路径，请稍后重试', 'No liquidity route found. Please try again.'))
         };
       } finally {
         if (signal && onExtAbort) {

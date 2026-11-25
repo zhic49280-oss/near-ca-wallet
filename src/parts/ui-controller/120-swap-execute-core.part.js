@@ -168,8 +168,9 @@
         }
       }
     } catch (err) {
-      setSwapError(err.message);
-      showToast(err.message);
+      const friendly = toUserFriendlyError(err, t('兑换校验失败，请检查后重试', 'Swap validation failed. Please check and retry.'));
+      setSwapError(friendly);
+      showToast(friendly);
       return;
     }
 
@@ -431,7 +432,7 @@
         });
         renderSwapOrderCard();
         startOrderStatusPolling();
-        showToast(`✅ ${t('源链入金已广播，到账后将自动完成 near.com 机密兑换与提现', 'Deposit broadcast; will auto-complete confidential swap & withdraw')}`);
+        showToast(`✅ ${t('源链入金已广播，到账后将自动完成机密兑换与提现', 'Deposit broadcast; will auto-complete confidential swap & withdraw')}`);
         return;
       }
 
@@ -739,6 +740,13 @@
             const bridgeDec = outLeg.hubDecimals || first.outDecimals || 8;
             const bridgeSym = outLeg.hubSymbol || first.outSymbol || 'PRL';
             const bridgeHuman = intents.fromBaseUnits(bridgeInRaw, bridgeDec);
+            const targetContract = outLeg.hubContract === 'wrap.near' ? 'wrap.near' : outLeg.hubContract;
+            const hubBalMap = await intents.fetchNearNep141Balances(nearId, { [targetContract]: outLeg.hubContract === 'wrap.near' ? 24 : bridgeDec }).catch(() => null);
+            const realHubBal = (hubBalMap && hubBalMap[targetContract] && hubBalMap[targetContract].formatted !== undefined)
+              ? Number(hubBalMap[targetContract].formatted)
+              : (wallet.nearNep141Balances && wallet.nearNep141Balances[targetContract]
+                  ? Number(wallet.nearNep141Balances[targetContract].formatted)
+                  : null);
             if (outLeg.hubContract === 'wrap.near') {
               sendBridge = await contracts.executeNearNep141Transfer({
                 wallet,
@@ -747,7 +755,7 @@
                 amount: bridgeHuman,
                 decimals: 24,
                 tokenSymbol: 'wNEAR',
-                tokenBalance: Number(bridgeHuman)
+                tokenBalance: realHubBal
               });
             } else {
               sendBridge = await contracts.executeNearNep141Transfer({
@@ -757,7 +765,7 @@
                 amount: bridgeHuman,
                 decimals: bridgeDec,
                 tokenSymbol: bridgeSym,
-                tokenBalance: Number(bridgeHuman)
+                tokenBalance: realHubBal
               });
             }
           } catch (s2Err) {

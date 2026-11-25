@@ -1670,6 +1670,12 @@ body.sheet-scroll-locked {
   color: #34d399;
 }
 
+.badge-rose {
+  border-color: rgba(244, 63, 94, 0.36);
+  background: rgba(244, 63, 94, 0.14);
+  color: #fb7185;
+}
+
 /* Home Pull-to-Refresh Indicator (GPU-Composited Zero-Reflow) */
 #view-wallet {
   position: relative;
@@ -2138,7 +2144,7 @@ html.nexus-locked #app-lock-overlay {
   width: 100%;
   height: 248px;
   display: block;
-  touch-action: none;
+  touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -2205,6 +2211,7 @@ html.nexus-locked #app-lock-overlay {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  white-space: nowrap;
 }
 
 .perp-ob-grid {
@@ -2827,4 +2834,24 @@ html.nexus-locked #app-lock-overlay {
   padding: 6px 8px;
   border-radius: 9px;
   background: rgba(255, 255, 255, 0.035);
+}
+
+/* 375px Narrow-Screen Polish */
+@media (max-width: 390px) {
+  .perp-ob-header,
+  .perp-ob-hcol {
+    font-size: 9.5px;
+    white-space: nowrap;
+  }
+  .perp-trade-top-bar {
+    gap: 4px;
+  }
+  .perp-back-btn {
+    padding: 4px 6px;
+    font-size: 10.5px;
+  }
+  #perp-coin-btn {
+    padding: 4px 7px 4px 5px;
+    font-size: 12px;
+  }
 }

@@ -118,23 +118,23 @@
 
   function decodeBech32Any(address, expectedConst = null) {
     if (typeof address !== 'string') {
-      return { valid: false, error: 'Address must be a string' };
+      return { valid: false, error: msg('地址格式无效', 'Invalid address format') };
     }
     if (address.length < 8 || address.length > 90) {
-      return { valid: false, error: `Invalid address length: ${address.length}` };
+      return { valid: false, error: msg('地址长度无效', 'Invalid address length') };
     }
     const isLower = address === address.toLowerCase();
     const isUpper = address === address.toUpperCase();
     if (!isLower && !isUpper) {
-      return { valid: false, error: 'Mixed case is not allowed in Bech32' };
+      return { valid: false, error: msg('地址不能混用大小写字母', 'Address cannot mix uppercase and lowercase letters') };
     }
     const addr = address.toLowerCase();
     const sep = addr.lastIndexOf('1');
     if (sep === -1) {
-      return { valid: false, error: 'Missing separator "1"' };
+      return { valid: false, error: msg('地址格式无效', 'Invalid address format') };
     }
     if (sep === 0 || sep + 7 > addr.length) {
-      return { valid: false, error: 'Invalid HRP or data length' };
+      return { valid: false, error: msg('地址前缀或长度无效', 'Invalid address prefix or length') };
     }
     const hrp = addr.slice(0, sep);
     const dataChars = addr.slice(sep + 1);
@@ -142,7 +142,7 @@
     for (let i = 0; i < dataChars.length; i++) {
       const idx = BECH32_CHARSET.indexOf(dataChars[i]);
       if (idx === -1) {
-        return { valid: false, error: `Invalid bech32 character: ${dataChars[i]}` };
+        return { valid: false, error: msg('地址包含无效字符', 'Address contains invalid characters') };
       }
       data.push(idx);
     }
@@ -151,24 +151,24 @@
     if (!encoding || (expectedConst !== null && poly !== expectedConst)) {
       return {
         valid: false,
-        error: `Invalid Bech32 checksum: got 0x${poly.toString(16)}`
+        error: msg('地址校验未通过，请核对字符', 'Invalid address checksum; please check characters')
       };
     }
     const values = data.slice(0, data.length - 6);
     if (values.length < 1) {
-      return { valid: false, error: 'Empty witness data' };
+      return { valid: false, error: msg('地址格式无效', 'Invalid address format') };
     }
     const witnessVersion = values[0];
     if (witnessVersion === 0 && poly !== 1) {
-      return { valid: false, error: 'Witness v0 must use Bech32' };
+      return { valid: false, error: msg('地址版本与编码不匹配', 'Address version mismatch') };
     }
     if (witnessVersion > 0 && poly !== BECH32M_CONST) {
-      return { valid: false, error: 'Witness v1+ must use Bech32m' };
+      return { valid: false, error: msg('地址版本与编码不匹配', 'Address version mismatch') };
     }
     const programWords = values.slice(1);
     const programBytes = convertBits(programWords, 5, 8, false);
     if (!programBytes) {
-      return { valid: false, error: 'Failed to convert 5-bit words back to bytes' };
+      return { valid: false, error: msg('地址编码无效', 'Invalid address encoding') };
     }
     return {
       valid: true,
@@ -202,7 +202,7 @@
 
   function validatePearlAddress(address) {
     if (!address || typeof address !== 'string') {
-      return { valid: false, error: 'Address must be a string' };
+      return { valid: false, error: msg('请输入有效的 Pearl 地址', 'Enter a valid Pearl address') };
     }
     const cleanAddr = address.trim();
     const decoded = decodeBech32m(cleanAddr);
@@ -210,15 +210,12 @@
       return { valid: false, error: decoded.error };
     }
     if (decoded.hrp !== 'prl') {
-      return { valid: false, error: `Invalid HRP: expected 'prl', got '${decoded.hrp}'` };
+      return { valid: false, error: msg('Pearl 地址应以 prl1 开头', 'Pearl address must start with prl1') };
     }
-    if (decoded.witnessVersion !== 1) {
-      return { valid: false, error: `Invalid witness version: expected 1 for Taproot, got ${decoded.witnessVersion}` };
-    }
-    if (decoded.programBytes.length !== 32) {
+    if (decoded.witnessVersion !== 1 || decoded.programBytes.length !== 32) {
       return {
         valid: false,
-        error: `Invalid program length: expected 32 bytes (256-bit x-only pubkey), got ${decoded.programBytes.length}`
+        error: msg('Pearl 地址格式无效，请检查后重试', 'Invalid Pearl address format')
       };
     }
     return { valid: true, decoded };
@@ -306,7 +303,7 @@
       if (/^qz[1-9A-HJ-NP-Za-km-z]{45,50}$/.test(clean)) return { valid: true };
       return {
         valid: false,
-        error: msg('Quantus (QTC) 地址应为 qz 开头的 SS58 地址', 'Quantus (QTC) address must be a valid SS58 string starting with qz')
+        error: msg('Quantus (QTC) 地址应以 qz 开头', 'Quantus (QTC) address must start with qz')
       };
     }
     if (net === 'near') {
@@ -316,7 +313,7 @@
       }
       return {
         valid: false,
-        error: msg('NEAR 地址应为 .near/.tg 域名或 64 位十六进制隐式地址', 'NEAR address must be a .near/.tg account ID or 64-hex implicit account')
+        error: msg('NEAR 地址应为 .near/.tg 账户名或 64 位账户地址', 'NEAR address must be a .near/.tg account ID or 64-character account address')
       };
     }
     if (EVM_NETWORKS.has(net)) {
@@ -326,28 +323,28 @@
         if (hasLower && hasUpper && eip55ChecksumAddress(clean) !== clean) {
           return {
             valid: false,
-            error: msg('EVM 地址 EIP-55 大小写校验失败', 'Invalid EVM EIP-55 checksum')
+            error: msg('EVM 地址大小写校验未通过，请仔细核对地址', 'EVM address checksum mismatch; please double-check')
           };
         }
         return { valid: true };
       }
       return {
         valid: false,
-        error: msg('EVM 地址应为 0x 开头的 42 位十六进制地址', 'EVM address must be a 42-character hex string starting with 0x')
+        error: msg('EVM 地址应为 0x 开头的 42 位地址', 'EVM address must be a 42-character address starting with 0x')
       };
     }
     if (net === 'sol' || net === 'solana') {
       if (isValidSolanaAddressFormat(clean)) return { valid: true };
       return {
         valid: false,
-        error: msg('Solana 地址应为 32 字节 Base58 公钥字符串', 'Solana address must be a valid 32-byte Base58 public key')
+        error: msg('Solana 地址格式无效，请核对后重试', 'Invalid Solana address format')
       };
     }
     if (net === 'tron' || net === 'trx') {
       if (isValidTronAddressFormat(clean)) return { valid: true };
       return {
         valid: false,
-        error: msg('TRON 地址无效（应为 T 开头的有效 Base58Check 地址）', 'Invalid TRON Base58Check address')
+        error: msg('TRON 地址无效，应为 T 开头的有效地址', 'Invalid TRON address (must start with T)')
       };
     }
     if (net === 'btc' || net === 'bitcoin') {

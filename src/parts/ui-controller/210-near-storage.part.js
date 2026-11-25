@@ -26,13 +26,19 @@
     const sumEl = $('near-storage-summary');
     if (!wallet || !nearAcct || !contracts || typeof contracts.scanNearReclaimableStorageAsync !== 'function') return;
 
+    const refreshBtn = $('btn-refresh-near-storage');
+    const prevRefreshTxt = refreshBtn ? refreshBtn.textContent : '';
+    if (refreshBtn) {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = t('扫描中...', 'Scanning...');
+    }
     if (sumEl) sumEl.textContent = t('扫描中...', 'Scanning...');
-    if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:12px;text-align:center;">${t('正在扫描 NEAR NEP-141 合约存储押金...', 'Scanning NEAR NEP-141 storage deposits...')}</div>`;
+    if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:12px;text-align:center;">${t('正在扫描 NEAR 代币合约存储押金...', 'Scanning NEAR token storage deposits...')}</div>`;
 
     try {
       const scanPromise = contracts.scanNearReclaimableStorageAsync(nearAcct);
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(t('NEAR 节点响应超时，请点击刷新重试', 'NEAR RPC timed out, please tap Refresh'))), 8000)
+        setTimeout(() => reject(new Error(t('NEAR 网络响应超时，请点击刷新重试', 'NEAR network timed out, please tap Refresh'))), 8000)
       );
       const res = await Promise.race([scanPromise, timeoutPromise]);
       _nearStorageScanAccounts = Array.isArray(res && res.accounts) ? res.accounts : [];
@@ -44,7 +50,12 @@
       renderNearStorageList();
     } catch (err) {
       if (sumEl) sumEl.textContent = '--';
-      if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:12px;text-align:center;">${escapeHtml(err && err.message ? err.message : t('扫描失败', 'Scan failed'))}</div>`;
+      if (listEl) listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:12px;text-align:center;">${escapeHtml(toUserFriendlyError(err, '扫描失败', 'Scan failed'))}</div>`;
+    } finally {
+      if (refreshBtn) {
+        refreshBtn.disabled = false;
+        if (prevRefreshTxt) refreshBtn.textContent = prevRefreshTxt;
+      }
     }
   }
 
@@ -131,7 +142,7 @@
       await scanNearStorageReclaimUI();
       refreshAllBalancesAsync(false);
     } catch (err) {
-      showToast(err && err.message ? err.message : t('存储押金回收失败', 'Storage reclaim failed'));
+      showToast(toUserFriendlyError(err, '存储押金回收失败', 'Storage reclaim failed'));
       await scanNearStorageReclaimUI().catch(() => {});
     } finally {
       if (btn && _nearStorageSelectedContracts.size > 0) {

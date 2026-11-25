@@ -46,9 +46,193 @@
 
   function t(zh, en) {
     const lang = getConfiguredLang();
-    if (lang === 'zh') return zh;
-    if (lang === 'en') return en;
-    return `${zh} | ${en}`;
+    return lang === 'en' ? en : zh;
+  }
+
+  function toUserFriendlyError(err, fallbackZh = '操作失败，请稍后重试', fallbackEn = 'Operation failed. Please try again.') {
+    const fbZh = String(fallbackZh || '操作失败，请稍后重试');
+    const fbEn = String(fallbackEn || 'Operation failed. Please try again.');
+    const lang = getConfiguredLang();
+    const fallbackMsg = lang === 'en' ? fbEn : fbZh;
+    if (!err) return fallbackMsg;
+
+    if (typeof err === 'object' && err.code === 'INSUFFICIENT_BALANCE') {
+      const balMsg = lang === 'en' ? (err.enMessage || err.message) : (err.zhMessage || err.message);
+      if (balMsg) return String(balMsg);
+    }
+
+    const names = [];
+    const codes = [];
+    const statuses = [];
+    const messages = [];
+    const seen = typeof Set === 'function' ? new Set() : null;
+
+    function collectErrMeta(node, depth = 0) {
+      if (!node || depth > 4) return;
+      if (typeof node === 'string') {
+        const s = node.trim();
+        if (s) messages.push(s);
+        return;
+      }
+      if (typeof node !== 'object') {
+        const s = String(node).trim();
+        if (s) messages.push(s);
+        return;
+      }
+      if (seen) {
+        if (seen.has(node)) return;
+        seen.add(node);
+      }
+      if (node.name) names.push(String(node.name));
+      if (node.code !== undefined && node.code !== null && node.code !== '') codes.push(String(node.code));
+      if (node.status !== undefined && node.status !== null && Number.isFinite(Number(node.status))) {
+        statuses.push(Number(node.status));
+      }
+      if (typeof node.message === 'string' && node.message.trim()) messages.push(node.message.trim());
+      if (typeof node.shortMessage === 'string' && node.shortMessage.trim()) messages.push(node.shortMessage.trim());
+      if (typeof node.reason === 'string' && node.reason.trim()) messages.push(node.reason.trim());
+      if (typeof node.error === 'string' && node.error.trim()) {
+        messages.push(node.error.trim());
+      } else if (node.error && typeof node.error === 'object') {
+        collectErrMeta(node.error, depth + 1);
+      }
+      if (typeof node.data === 'string' && node.data.trim()) {
+        messages.push(node.data.trim());
+      } else if (node.data && typeof node.data === 'object') {
+        collectErrMeta(node.data, depth + 1);
+      }
+      if (node.cause !== undefined && node.cause !== null) {
+        collectErrMeta(node.cause, depth + 1);
+      }
+    }
+
+    collectErrMeta(err, 0);
+    const rawMsg = messages[0] || '';
+    const extraJsonParts = [];
+    for (const m of messages) {
+      if (m.startsWith('{') && m.includes('"')) {
+        try {
+          const parsed = JSON.parse(m);
+          if (parsed && typeof parsed === 'object') {
+            if (parsed.code !== undefined && parsed.code !== null) codes.push(String(parsed.code));
+            if (parsed.error && typeof parsed.error === 'object') {
+              if (parsed.error.code !== undefined && parsed.error.code !== null) codes.push(String(parsed.error.code));
+              if (typeof parsed.error.message === 'string') extraJsonParts.push(parsed.error.message);
+              if (parsed.error.data && typeof parsed.error.data.message === 'string') extraJsonParts.push(parsed.error.data.message);
+            } else if (typeof parsed.error === 'string') {
+              extraJsonParts.push(parsed.error);
+            }
+            if (typeof parsed.message === 'string') extraJsonParts.push(parsed.message);
+            if (parsed.data && typeof parsed.data.message === 'string') extraJsonParts.push(parsed.data.message);
+          }
+        } catch (_) {}
+      }
+    }
+    const inspectMsg = [...messages, ...extraJsonParts].filter(Boolean).join(' ');
+
+    if (
+      names.includes('NotAllowedError') ||
+      codes.includes('AUTH_CANCELLED') ||
+      codes.includes('4001') ||
+      codes.includes('ACTION_REJECTED') ||
+      /\bNotAllowedError\b|user rejected|user denied|cancelled|canceled|已取消/i.test(inspectMsg)
+    ) {
+      return t('已取消验证或操作', 'Verification or action cancelled');
+    }
+
+    if (
+      names.includes('AbortError') ||
+      statuses.includes(408) ||
+      statuses.includes(504) ||
+      /timeout|timed out|failed to fetch|network\s*error|load failed|cors|跨域|webview|fetch api unavailable|econnreset|etimedout/i.test(inspectMsg)
+    ) {
+      return t('网络连接超时或不稳定，请检查网络后重试', 'Network connection timed out or unstable. Please check your connection and retry.');
+    }
+
+    if (
+      names.includes('SecurityError') ||
+      names.includes('NotSupportedError') ||
+      names.includes('InvalidStateError') ||
+      names.includes('OperationError') ||
+      /webauthn|publickeycredential|relying party|unable to authenticate|passkey|biometric/i.test(inspectMsg)
+    ) {
+      return t('验证不可用或密码校验未通过，请重试或使用安全密码', 'Verification unavailable or failed. Please retry or use your wallet PIN.');
+    }
+
+    if (
+      statuses.includes(429) ||
+      codes.includes('-32001') ||
+      codes.includes('-32005') ||
+      /\bHTTP\s*429\b|usage limit|rate limit|too many requests|exceeded.*capacity|请求繁忙/i.test(inspectMsg)
+    ) {
+      return t('当前网络请求繁忙，请稍后再试', 'Network service is busy. Please try again shortly.');
+    }
+
+    if (/insufficient funds|exceeds the balance|NotEnoughBalance|LackBalanceForState/i.test(inspectMsg)) {
+      return t('余额或网络手续费不足，请充值后重试', 'Insufficient balance or network fee. Please top up and retry.');
+    }
+
+    if (/nonce too low|replacement transaction underpriced/i.test(inspectMsg)) {
+      return t('交易序号已过期，请稍后重试', 'Transaction sequence outdated. Please retry shortly.');
+    }
+
+    if (/slippage|insufficient output|min.*return/i.test(inspectMsg)) {
+      return t('价格波动超过滑点限制，请调高滑点或重试', 'Price moved beyond slippage limit. Adjust slippage or retry.');
+    }
+
+    if (/UNKNOWN_ACCOUNT|AccountDoesNotExist|recipient is not valid/i.test(inspectMsg)) {
+      return t('目标账户不存在或尚未激活，请核对后重试', 'Target account not found or not activated. Please check and retry.');
+    }
+
+    if (/粉尘|dust\s*limit|546\s*sats/i.test(inspectMsg)) {
+      return t('转账金额过小，请适当调高转账数量', 'Transfer amount is too small; please increase the amount.');
+    }
+
+    if (
+      statuses.some((s) => s === 403 || s >= 500) ||
+      codes.some((c) => c === '-32603' || /^-320\d{2}$/.test(c)) ||
+      /<!doctype|<html|just a moment|cloudflare|bad gateway|internal server error|service unavailable|\bHTTP\s*(?:403|5\d{2})\b|\b403\s*forbidden\b|\binternal\s+(?:json-?rpc\s+)?error\b|-32603|-320\d{2}/i.test(inspectMsg)
+    ) {
+      return t('服务暂时不可用，请稍后重试', 'Service temporarily unavailable. Please try again later.');
+    }
+
+    if (
+      names.includes('SyntaxError') ||
+      names.includes('TypeError') ||
+      names.includes('ReferenceError') ||
+      codes.some((c) => /^(?:INVALID_ARGUMENT|BAD_DATA|CALL_EXCEPTION|NUMERIC_FAULT|UNPREDICTABLE_GAS_LIMIT|UNKNOWN_ERROR)$/i.test(c)) ||
+      /cannot read propert|is not a function|unexpected token|is not defined|referenceerror|typeerror|\bsyntaxerror\b|unexpected .*json|is not valid json|json\.parse|json parse error|unterminated string in json|expected .* in json|bad control character in string literal|\bin JSON at position \d+|unable to parse json string|\bcode=(?:INVALID_ARGUMENT|BAD_DATA|CALL_EXCEPTION|NUMERIC_FAULT|UNPREDICTABLE_GAS_LIMIT|UNKNOWN_ERROR)\b|\bargument="[^"]*"|\bversion=\d+\.\d+\.\d+|\b(?:value|info|payload)=\{[\s\S]*\}/i.test(inspectMsg)
+    ) {
+      return fallbackMsg;
+    }
+
+    let cleaned = rawMsg
+      .replace(/\r?\n\s*at\s+(?:[^\r\n(]+\s*\([^\r\n)]*(?::\d+|<anonymous>|native|https?:|file:|capacitor:|webpack|node:|\/|\\)[^\r\n)]*\)|(?:https?:|file:|capacitor:|webpack(?:-internal)?:|node:|\/|[A-Za-z]:\\|<anonymous>|VM\d+:\d+|[^\s:]+\.(?:[cm]?[jt]sx?|html):\d+))[\s\S]*/g, '')
+      .replace(/\r?\n[ \t]*[^\r\n]*@(?:https?:\/\/|file:\/\/|capacitor:\/\/|moz-extension:\/\/|resource:\/\/|webpack(?:-internal)?:\/\/|debugger eval code:\d+(?::\d+)?|\S+:\d+)[\s\S]*/g, '')
+      .replace(/^[ \t]*(?:(?:(?:async\*)?(?:global code|anonymous(?:\s+function)?)|(?:get|set)\s+[^\r\n\s]+)\s*|[^\r\n\s]*)@(?:https?:\/\/|file:\/\/|capacitor:\/\/|moz-extension:\/\/|resource:\/\/|webpack(?:-internal)?:\/\/|debugger eval code:\d+(?::\d+)?|\S+:\d+)[\s\S]*/g, '')
+      .replace(/\s+(?:(?:(?:async\*)?(?:global code|anonymous(?:\s+function)?)|(?:get|set)\s+[^\r\n\s]+)\s*|[^\r\n\s]*)@(?:https?:\/\/|file:\/\/|capacitor:\/\/|moz-extension:\/\/|resource:\/\/|webpack(?:-internal)?:\/\/|debugger eval code:\d+(?::\d+)?|\S+:\d+)[\s\S]*/g, '')
+      .replace(/\r?\n\s*@[\s\S]*/g, '')
+      .replace(/\{[\s\S]*"(?:code|jsonrpc|error|message|baseFeePerGas|number|hash|parentHash)"[\s\S]*\}/g, '')
+      .replace(/\b(?:argument|code|version|operation|shortMessage|value|info|payload)=(?:"[^"]*"|\{[^}]*\}|\S+)/gi, '')
+      .replace(/https?:\/\/\S+/gi, '')
+      .replace(/\b(?:BTC API|Blockbook|BTC broadcast)\s+HTTP\s*\S*/gi, '')
+      .replace(/\bHTTP\s*\d{3}(?:\s*:\s*[^,;]+)?/gi, '')
+      .replace(/\b403\s+Forbidden\b|\bForbidden\b/gi, '')
+      .replace(/\bJSON-?RPC\b/gi, '')
+      .replace(/\bRPC\s*(?:error|failed|request\s*failed)\b|\bRPC\b/gi, '')
+      .replace(/\berror\s*code\s*[:=]?\s*-?\d+\b/gi, '')
+      .replace(/-32(?:6\d{2}|0\d{2})\b/g, '')
+      .replace(/\b0x[0-9a-fA-F]{16,}\b/g, '')
+      .replace(/\b(?:NearCACrypto(?:\.\w+)?|NearCA(?:State|Contracts|UI|Intents)|ethers(?:\.js)?|v1\.signer|MPC|Blockbook|1Click|Solver Relay|Ref Finance|Rhea(?:\s*CLMM)?|CoW(?:\s*API)?|VaultRelayer|Bridge2|Borsh|NEP-?141|NEP-?413|Ed25519|secp256k1|BIP-?(?:32|39|86|340|341)|WebView|CORS|DOMException|CapacitorHttp|HRP|Bech32m?|Base58(?:Check)?|EIP-?(?:55|712)|AddKey|DeleteKey|ft_transfer|storage_deposit|eth_call|sendtx|DCL|WebAuthn|UTXO)\b/gi, '')
+      .replace(/[\s:：,，;；\-—|]+$/g, '')
+      .replace(/^[\s:：,，;；\-—|]+/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
+    if (!cleaned || /^[\p{P}\p{S}\s]+$/u.test(cleaned)) {
+      return fallbackMsg;
+    }
+    return cleaned;
   }
 
   function normalizeDecimalInput(value) {

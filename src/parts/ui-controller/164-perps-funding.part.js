@@ -326,9 +326,77 @@
     openSheet('sheet-perp-funding');
   }
 
+  let _perpOneClickPollTimer = null;
+  let _perpOneClickPollSeq = 0;
+
+  function stopPerpOneClickDepositPolling() {
+    _perpOneClickPollSeq += 1;
+    if (_perpOneClickPollTimer) {
+      clearTimeout(_perpOneClickPollTimer);
+      _perpOneClickPollTimer = null;
+    }
+  }
+
+  function startPerpOneClickDepositPolling(depositAddress, { intervalMs = 5000, maxAttempts = 24 } = {}) {
+    const addr = String(depositAddress || '').trim();
+    if (!addr) return;
+    stopPerpOneClickDepositPolling();
+    const seq = ++_perpOneClickPollSeq;
+    const st = getState();
+    st.perp.oneClickDepositStatus = { depositAddress: addr, status: 'PENDING_DEPOSIT', updatedAt: Date.now() };
+    let attempts = 0;
+    let lastNotifiedStatus = '';
+
+    const tick = async () => {
+      if (seq !== _perpOneClickPollSeq) return;
+      attempts += 1;
+      try {
+        const intents = getIntents();
+        if (!intents || typeof intents.fetchSwapOrderStatus !== 'function') return;
+        const res = await intents.fetchSwapOrderStatus(addr).catch(() => null);
+        if (seq !== _perpOneClickPollSeq) return;
+        if (res && res.ok && res.status) {
+          const status = String(res.status).toUpperCase();
+          st.perp.oneClickDepositStatus = { depositAddress: addr, status, updatedAt: Date.now() };
+          if (status === 'SUCCESS') {
+            showToast(`✅ ${t('跨链充值已到账，请点击「一键转入合约」', 'Cross-chain deposit arrived; click Move to Trading')}`);
+            refreshPerpDataAsync(false).catch(() => {});
+            refreshAllBalancesAsync(false);
+            stopPerpOneClickDepositPolling();
+            return;
+          }
+          if (status === 'FAILED' || status === 'REFUNDED' || status === 'INCOMPLETE_DEPOSIT') {
+            showToast(`⚠️ ${t('跨链充值未完成或已退回，请查看交易记录', 'Cross-chain deposit failed or refunded; check activity')}`);
+            stopPerpOneClickDepositPolling();
+            return;
+          }
+          if ((status === 'KNOWN_DEPOSIT_TX' || status === 'PROCESSING') && lastNotifiedStatus !== status) {
+            lastNotifiedStatus = status;
+            showToast(`⏳ ${t('跨链充值处理中，正在等待到账...', 'Cross-chain deposit processing...')}`);
+          }
+        }
+      } catch (_) {}
+      if (seq === _perpOneClickPollSeq && attempts < maxAttempts) {
+        _perpOneClickPollTimer = setTimeout(tick, intervalMs);
+        if (_perpOneClickPollTimer && typeof _perpOneClickPollTimer.unref === 'function') {
+          _perpOneClickPollTimer.unref();
+        }
+      }
+    };
+
+    _perpOneClickPollTimer = setTimeout(tick, Math.min(intervalMs, 150));
+    if (_perpOneClickPollTimer && typeof _perpOneClickPollTimer.unref === 'function') {
+      _perpOneClickPollTimer.unref();
+    }
+  }
+
   function setPerpFundingTab(tab) {
     const st = getState();
     st.perp.fundingTab = tab === 'arbitrum' ? 'arbitrum' : 'oneclick';
+    resetFormFields(['perp-oc-amount', 'perp-arb-amount']);
+    st.perp.fundingQuote = null;
+    st.perp.fundingQuoteError = '';
+    st.perp.fundingQuoting = false;
     renderPerpFundingSheet();
   }
 
@@ -367,13 +435,15 @@
           st.perp.fundingQuoteError = '';
         } else {
           st.perp.fundingQuote = null;
-          st.perp.fundingQuoteError = (q && q.error) || t('暂无跨链报价', 'Quote unavailable');
+          st.perp.fundingQuoteError = q && q.error
+            ? formatPerpError(q.error, '暂无跨链报价', 'Quote unavailable')
+            : t('暂无跨链报价', 'Quote unavailable');
         }
       } catch (err) {
         if (seq !== _perpQuoteSeq) return;
         st.perp.fundingQuoting = false;
         st.perp.fundingQuote = null;
-        st.perp.fundingQuoteError = (err && err.message) || t('询价失败', 'Quote failed');
+        st.perp.fundingQuoteError = formatPerpError(err, '询价失败，请稍后重试', 'Quote failed. Please try again.');
       } finally {
         if (seq === _perpQuoteSeq) evaluatePerpOneClickUI();
       }
@@ -468,11 +538,15 @@
         });
         await intents.submitExternalDepositTxHash({ depositAddress: q.depositAddress, txHash, nearSenderAccount: wallet.nearNamedAccount || wallet.nearAddress }).catch(() => {});
       }
-      showToast(`✅ ${t('跨链充值已发送，到账后点击「一键转入合约」即可下单', 'Deposit sent; click Move to Trading after confirmation')}`);
+      startPerpOneClickDepositPolling(q.depositAddress);
+      resetFormFields(['perp-oc-amount', 'perp-arb-amount', 'perp-withdraw-amount']);
+      st.perp.fundingQuote = null;
+      st.perp.fundingQuoteError = '';
+      showToast(`✅ ${t('跨链充值已发送，正在后台追踪到账状态', 'Deposit sent; tracking arrival in background')}`);
       closeAllSheets();
       refreshAllBalancesAsync(false);
     } catch (err) {
-      st.perp.fundingQuoteError = (err && err.message) || t('跨链充值失败', 'Deposit failed');
+      st.perp.fundingQuoteError = formatPerpError(err, '跨链充值失败，请稍后重试', 'Deposit failed. Please try again.');
       evaluatePerpOneClickUI();
       showToast(st.perp.fundingQuoteError);
     } finally {
@@ -517,13 +591,14 @@
         });
       }
       showToast(`✅ ${t('Arbitrum 充值已提交 (约 1~2 分钟到账)', 'Arbitrum deposit sent (~1-2 min arrival)')}: ${shortenAddr(res.txHash)}`);
+      resetFormFields(['perp-oc-amount', 'perp-arb-amount', 'perp-withdraw-amount']);
       closeAllSheets();
       refreshAllBalancesAsync(false);
       refreshPerpDataAsync(false).catch(() => {});
       setTimeout(() => refreshPerpDataAsync(false).catch(() => {}), 20000).unref?.();
       setTimeout(() => refreshPerpDataAsync(false).catch(() => {}), 60000).unref?.();
     } catch (err) {
-      showToast((err && err.message) || t('Arbitrum 充值失败', 'Arbitrum deposit failed'));
+      showToast(formatPerpError(err, 'Arbitrum 充值失败，请稍后重试', 'Arbitrum deposit failed. Please try again.'));
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -558,10 +633,11 @@
       await ensureEthersLoaded();
       await hl.withdrawHlToArbitrum({ wallet, amount: amt, withdrawable });
       showToast(`✅ ${t('提现请求已提交至 Arbitrum (约几分钟到账)', 'Withdrawal submitted to Arbitrum')}`);
+      resetFormFields(['perp-oc-amount', 'perp-arb-amount', 'perp-withdraw-amount']);
       closeAllSheets();
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
-      showToast((err && err.message) || t('提现失败', 'Withdrawal failed'));
+      showToast(formatPerpError(err, '提现失败，请稍后重试', 'Withdrawal failed. Please try again.'));
     } finally {
       if (btn) {
         btn.disabled = false;

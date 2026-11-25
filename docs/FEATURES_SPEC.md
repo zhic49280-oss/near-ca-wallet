@@ -92,17 +92,17 @@
    - 支持 **⭐ 自选 / 加密合约 / 美股与商品 (`xyz:` 等 HIP-3 市场) / 全部** 分类筛选、搜索及按成交量/最新价/24h涨跌幅排序；
    - 点击任意合约星标 `★` 实时收藏/取消收藏（精确匹配含大小写前缀的 `m.name` 如 `xyz:CRCL`），点击行进入合约交易页。
 2. **专业交易页 (`#perp-trade-panel`)**：
-   - **SVG K 线图 (`161-perps-chart.part.js`)**：支持 `5m / 15m / 1h / 4h / 1d` 周期、MA5/10/20 均线、最高最低价标注、单指平移/长按十字线查价/双指缩放，顶部详情栏常驻固定高度（Zero CLS）；
-   - **实时盘口 (`PerpOrderbookSidePanel`)**：WebSocket `l2Book` 实时驱动买卖 10 档深度与买卖盘比例条，点击档位价格自动填入限价框；
+   - **SVG K 线图 (`161-perps-chart.part.js`)**：支持 `5m / 15m / 1h / 4h / 1d` 周期、MA5/10/20 均线、最高最低价标注、单指平移/长按十字线查价/双指缩放（`touch-action: pan-y` 保障页面纵向滑动），顶部详情栏常驻固定高度（Zero CLS）；
+   - **实时盘口 (`PerpOrderbookSidePanel`)**：WebSocket `l2Book` 实时驱动买卖 10 档深度与固定高度买卖盘比例条（`#perp-ls-ratio-wrap`，Zero CLS），点击档位价格自动填入限价框；
    - **下单面板**：支持做多/做空、逐仓/全仓、市价/限价/只做Maker (Post-Only)、杠杆滑块 (`1x ~ Max`)、25%/50%/75%/100% 保证金快捷比例、只减仓 (`Reduce-Only`) 及附带止盈/止损 (`TP/SL`)；
    - **底部仓位与委托管理 (`PerpBottomListPanel`)**：
-     - **当前持仓**：完整 6 宫格展示持仓数量、保证金、预估强平价、开仓均价、实时标记价、收益率 ROE% 与已设止盈止损价，支持【反手】、【止盈/止损设置弹窗】、【市价平仓】及【一键全平】；
+     - **当前持仓**：完整 6 宫格展示持仓数量、保证金、预估强平价、开仓均价、实时标记价、收益率 ROE% 与已设止盈止损价，支持【反手】、【止盈/止损设置弹窗】（完整中英双语标签与留空清除提示）、【市价平仓】及【一键全平】；
      - **当前委托**：区分普通限价单与条件止盈止损单（显示触发价 `Trigger` 并支持点击【修改】），支持单笔撤单与【全部撤单】；
      - **历史成交**：展示币对、买入/卖出方向、成交均价与数量、已实现盈亏 (`Closed PnL`) 与手续费 (`Fee`)。
 
 ### 2.7 质押理财 (`view-earn`)
 1. **多链真实生息协议**：
-   - **NEAR**：Rhea `rNEAR`、`xRHEA`、`oRHEA` 锁仓转换、Meta Pool `stNEAR`、LiNEAR、Stader `NearX`、Burrow 活期存款、以及原生 Validator 节点质押；
+   - **NEAR**：Rhea `rNEAR`、`xRHEA`、`oRHEA` 锁仓转换（支持 15~181 天锁仓周期提示）、Meta Pool `stNEAR`、LiNEAR、Stader `NearX`、Burrow 活期存款、以及原生 Validator 节点质押；
    - **Solana**：Jito (`JitoSOL`)、Jupiter (`jupSOL`)、Marinade (`mSOL`)、Sanctum (`INF`)、Jupiter DAO (`JUP` 锁仓) 及 Solana 原生节点质押；
    - **EVM / Arc / HyperEVM**：Lido (`stETH`)、Ethena (`sUSDe`)、Aave V3 (`ETH / Base / Arbitrum`)、Morpho Steakhouse (`Arc USDC`)、Kinetiq (`kHYPE`)。
 2. **我的持仓与赎回操作 (`#earn-my-positions-card`)**：
@@ -119,4 +119,5 @@
 3. **矿机遥测 (`sheet-mining-pro`)、DApp 浏览器 (`sheet-dapp-browser`)、联系人地址簿 (`sheet-contacts`) 与生物识别/PIN 锁 (`010-security.part.js`)**：
    - **安全验证弹窗叠加机制 (`sheet-security-auth`)**：在任意业务底部弹窗（如发送、质押、合约出入金、止盈止损、WalletConnect、DApp 审批）内触发交易 PIN 码验证时，`sheet-security-auth` 以高层级 (`z-index: 10010`) 叠加在原业务弹窗上方，验证完成或取消后仅关闭 PIN 弹窗，严禁销毁底层正在操作的业务弹窗；
    - **密钥金库 (`encryptedVault`) 会话解锁校验**：修改或清除 PIN 码前，若当前会话尚未通过旧 PIN 解密 `encryptedVault`，必须强制要求输入旧 PIN 码完整解密全部链私钥至内存后方可重加密或清除金库；
-   - **内置 DApp 浏览器安全边界**：内置生态白名单 (`DAPP_CATALOG`) 支持免弹窗快速连接；手动输入的外部未知域名必须经过 `sheet-dapp-approve` 明确授权后方可获取钱包地址；NEAR `signAndSendTransaction` 多 Action 请求通过 `signAndSendNearActionsBatch` 原子打包进单笔链上交易签名广播；EVM `personal_sign` 通过 NEAR MPC 签名后自动执行 `yParity` 地址恢复校验。
+   - **内置 DApp 浏览器安全边界**：内置生态白名单 (`DAPP_CATALOG`) 支持免弹窗快速连接；手动输入的外部未知域名必须经过 `sheet-dapp-approve` 明确授权后方可获取钱包地址；NEAR `signAndSendTransaction` 多 Action 请求通过 `signAndSendNearActionsBatch` 原子打包进单笔链上交易签名广播；EVM `personal_sign` 通过 NEAR MPC 签名后自动执行 `yParity` 地址恢复校验；
+   - **全局错误清洗与终端用户文案规范**：所有链上/网络异常均通过 `toUserFriendlyError` 转换为自然友好的中英文提示，剔除底层 HTTP 状态码、RPC、WebView、CORS、合约协议名等开发者术语。

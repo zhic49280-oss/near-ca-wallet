@@ -1,6 +1,26 @@
   // ==================== Root Render & Lifecycle ====================
 
   let _delegatedListenersBound = false;
+  let _foregroundResumeBound = false;
+
+  function initForegroundResumeSync() {
+    if (_foregroundResumeBound) return;
+    _foregroundResumeBound = true;
+    const onResume = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      const st = getState();
+      if (!st || !st.getActiveWallet()) return;
+      if (st.activeTab === 'swap' && st.swap && st.swap.panelMode === 'limit' && typeof refreshLimitOrdersAsync === 'function') {
+        refreshLimitOrdersAsync(false).catch(() => {});
+      }
+    };
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('focus', onResume);
+    }
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', onResume);
+    }
+  }
 
   function initDelegatedEventListeners() {
     if (_delegatedListenersBound || typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
@@ -158,6 +178,7 @@
     initDelegatedEventListeners();
     initHomePullToRefresh();
     initAppSecurityLifecycle();
+    initForegroundResumeSync();
     st.onLanguageChange(() => renderAll());
     renderAll();
     const activeW = st.getActiveWallet();
@@ -692,9 +713,6 @@
     executeEarnPositionAction,
     registerNearDomainFromHub,
     bindNearDomainFromHub,
-    recomputeHubMpcAddress,
-    copyHubMpcAddress,
-    executeHubMpcSign,
     openMiningProSheet,
     setMiningPoolKey,
     saveCurrentMinerAddress,

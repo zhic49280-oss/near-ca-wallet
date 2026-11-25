@@ -112,7 +112,7 @@
     const addr = address.toLowerCase();
     const sep = addr.lastIndexOf('1');
     if (sep <= 0 || sep + 7 > addr.length) {
-      return { valid: false, error: 'Invalid HRP or Bech32 separator' };
+      return { valid: false, error: 'Invalid Pearl address format' };
     }
     const hrp = addr.slice(0, sep);
     const dataChars = addr.slice(sep + 1);
@@ -179,13 +179,13 @@
       return { valid: false, error: decoded.error };
     }
     if (decoded.hrp !== 'prl') {
-      return { valid: false, error: `Invalid HRP: expected 'prl', got '${decoded.hrp}'` };
+      return { valid: false, error: 'Pearl address must start with prl1p' };
     }
     if (decoded.witnessVersion !== 1) {
-      return { valid: false, error: `Invalid witness version: expected 1 (Taproot), got ${decoded.witnessVersion}` };
+      return { valid: false, error: 'Invalid Pearl address format' };
     }
     if (!decoded.programBytes || decoded.programBytes.length !== 32) {
-      return { valid: false, error: 'Invalid witness program length: expected 32 bytes' };
+      return { valid: false, error: 'Invalid Pearl address length' };
     }
     return { valid: true, decoded };
   }

@@ -338,7 +338,7 @@
 
   async function decryptVaultJsonAsync(envelope, password) {
     if (!envelope || typeof envelope !== 'object' || !envelope.ctBase64 || !envelope.saltHex || !envelope.ivHex) {
-      throw new Error('Invalid encrypted vault envelope');
+      throw new Error(msg('安全密钥数据格式无效', 'Invalid encrypted vault data'));
     }
     const saltBytes = hexToBytes(envelope.saltHex);
     const ivBytes = hexToBytes(envelope.ivHex);
@@ -346,21 +346,25 @@
     const iterations = Number(envelope.iter) || 100_000;
     const keyBytes = await derivePbkdf2Sha256KeyBytesAsync(password, saltBytes, iterations);
 
-    if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
-      const aesKey = await globalThis.crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt']);
-      const ptBuf = await globalThis.crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivBytes }, aesKey, ctBytes);
-      return JSON.parse(new TextDecoder().decode(new Uint8Array(ptBuf)));
+    try {
+      if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
+        const aesKey = await globalThis.crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt']);
+        const ptBuf = await globalThis.crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivBytes }, aesKey, ctBytes);
+        return JSON.parse(new TextDecoder().decode(new Uint8Array(ptBuf)));
+      }
+      if (nodeCrypto && nodeCrypto.createDecipheriv) {
+        if (ctBytes.length < 16) throw new Error(msg('安全密钥数据格式无效', 'Invalid encrypted vault data'));
+        const data = ctBytes.slice(0, ctBytes.length - 16);
+        const tag = ctBytes.slice(ctBytes.length - 16);
+        const decipher = nodeCrypto.createDecipheriv('aes-256-gcm', keyBytes, ivBytes);
+        decipher.setAuthTag(tag);
+        const dec = Buffer.concat([decipher.update(data), decipher.final()]);
+        return JSON.parse(new TextDecoder().decode(new Uint8Array(dec)));
+      }
+    } catch (_) {
+      throw new Error(msg('密码校验未通过，无法解锁钱包密钥', 'Incorrect password; unable to unlock wallet secrets'));
     }
-    if (nodeCrypto && nodeCrypto.createDecipheriv) {
-      if (ctBytes.length < 16) throw new Error('Invalid AES-GCM ciphertext');
-      const data = ctBytes.slice(0, ctBytes.length - 16);
-      const tag = ctBytes.slice(ctBytes.length - 16);
-      const decipher = nodeCrypto.createDecipheriv('aes-256-gcm', keyBytes, ivBytes);
-      decipher.setAuthTag(tag);
-      const dec = Buffer.concat([decipher.update(data), decipher.final()]);
-      return JSON.parse(new TextDecoder().decode(new Uint8Array(dec)));
-    }
-    throw new Error('AES-256-GCM unavailable');
+    throw new Error(msg('当前环境不支持安全解密', 'Secure decryption unavailable'));
   }
 
   // ======================== Export Bundle ========================
@@ -400,6 +404,7 @@
 
     // 3. Multi-Chain Key Derivation
     deriveNearFromSeedAsync,
+    deriveNearFromSeed,
     deriveSolanaFromSeedAsync,
     deriveEvmFromSeedAsync,
     derivePearlFromSeedAsync,

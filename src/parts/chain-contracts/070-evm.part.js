@@ -403,6 +403,32 @@
   const ARC_USDC_PRECOMPILE = '0x3600000000000000000000000000000000000000';
   const LIFI_API_URL = 'https://li.quest/v1';
 
+  /**
+   * Unifies Arc Mainnet (5042) native USDC (18 decimals) vs precompile ERC-20 USDC (6 decimals).
+   */
+  function normalizeArcUsdcParams({ chainKey, chainId, srcToken, destToken, amountRaw, srcDecimals = 18, destDecimals = 18 } = {}) {
+    const key = String(chainKey || '').toLowerCase();
+    const isArcMainnet = key === 'arc' || Number(chainId) === 5042;
+    const srcLower = String(srcToken || '').trim().toLowerCase();
+    const destLower = String(destToken || '').trim().toLowerCase();
+    const arcSrcNative = isArcMainnet && (!srcToken || srcLower === NATIVE_EVM_SENTINEL || srcLower === ARC_USDC_PRECOMPILE);
+    const arcDestNative = isArcMainnet && (destLower === NATIVE_EVM_SENTINEL || destLower === ARC_USDC_PRECOMPILE);
+    const effSrc = arcSrcNative ? ARC_USDC_PRECOMPILE : String(srcToken || NATIVE_EVM_SENTINEL).trim();
+    const effDest = arcDestNative ? ARC_USDC_PRECOMPILE : String(destToken || '').trim();
+    const effSrcDec = arcSrcNative ? 6 : Number(srcDecimals);
+    const effDestDec = arcDestNative ? 6 : Number(destDecimals);
+    const rawStr = String(amountRaw === undefined || amountRaw === null ? '' : amountRaw).trim();
+    const effAmtStr = (arcSrcNative && Number(srcDecimals) === 18 && /^\d+$/.test(rawStr))
+      ? (BigInt(rawStr) / 1000000000000n).toString()
+      : rawStr;
+    const scaleArcOut = (rawOutStr) => {
+      const b = BigInt(rawOutStr);
+      if (arcDestNative && Number(destDecimals) === 18) return b * 1000000000000n;
+      return b;
+    };
+    return { isArcMainnet, arcSrcNative, arcDestNative, effSrc, effDest, effSrcDec, effDestDec, effAmtStr, scaleArcOut };
+  }
+
   async function quoteArcNetworkDexSwap(params = {}) {
     return quoteEvmDexSwap({ ...params, chainKey: 'arc' });
   }
@@ -430,19 +456,23 @@
       throw new Error(t('兑换数量必须大于 0', 'amountRaw must be positive'));
     }
 
-    const isArcMainnet = key === 'arc' || cfg.chainId === 5042;
-    const srcLower = String(srcToken).trim().toLowerCase();
-    const destLower = String(destToken).trim().toLowerCase();
-    const arcSrcNative = isArcMainnet && (srcLower === NATIVE_EVM_SENTINEL || srcLower === ARC_USDC_PRECOMPILE);
-    const arcDestNative = isArcMainnet && (destLower === NATIVE_EVM_SENTINEL || destLower === ARC_USDC_PRECOMPILE);
-
-    const effSrc = arcSrcNative ? ARC_USDC_PRECOMPILE : String(srcToken).trim();
-    const effDest = arcDestNative ? ARC_USDC_PRECOMPILE : String(destToken).trim();
-    const effSrcDec = arcSrcNative ? 6 : Number(srcDecimals);
-    const effDestDec = arcDestNative ? 6 : Number(destDecimals);
-    const effAmtStr = arcSrcNative && Number(srcDecimals) === 18
-      ? (BigInt(amtStr) / 1000000000000n).toString()
-      : amtStr;
+    const {
+      isArcMainnet,
+      effSrc,
+      effDest,
+      effSrcDec,
+      effDestDec,
+      effAmtStr,
+      scaleArcOut
+    } = normalizeArcUsdcParams({
+      chainKey: key,
+      chainId: cfg.chainId,
+      srcToken,
+      destToken,
+      amountRaw: amtStr,
+      srcDecimals,
+      destDecimals
+    });
     if (!/^\d+$/.test(effAmtStr) || BigInt(effAmtStr) <= 0n) {
       return {
         ok: false,
@@ -545,12 +575,6 @@
           localCtrl
         );
 
-        const scaleArcOut = (rawOutStr) => {
-          const b = BigInt(rawOutStr);
-          if (arcDestNative && Number(destDecimals) === 18) return b * 1000000000000n;
-          return b;
-        };
-
         const candidates = [];
         const kRoute =
           kRes && kRes.status === 'fulfilled' && kRes.value && kRes.value.code === 0 && kRes.value.data && kRes.value.data.routeSummary
@@ -590,14 +614,15 @@
             ? oRes.value.data
             : null;
         if (ooRoute && /^\d+$/.test(String(ooRoute.outAmount)) && BigInt(ooRoute.outAmount) > 0n) {
+          const scaledOut = scaleArcOut(ooRoute.outAmount);
           candidates.push({
             routeSource: 'openocean',
             label: 'OpenOcean',
-            outBig: BigInt(ooRoute.outAmount),
-            amountOut: String(ooRoute.outAmount),
+            outBig: scaledOut,
+            amountOut: scaledOut.toString(),
             amountInUsd: null,
             amountOutUsd: null,
-            routeData: ooRoute
+            routeData: { ...ooRoute, _arcNormSrc: effSrc, _arcNormDest: effDest, _arcNormAmtIn: effAmtStr }
           });
         }
 
@@ -996,13 +1021,19 @@
     const cfg = EVM_CHAINS[key];
     if (!cfg) throw new Error(t(`不支持的 EVM 链: ${chainKey}`, `Unsupported EVM chain: ${chainKey}`));
 
-    const isArcMainnet = key === 'arc' || cfg.chainId === 5042;
-    const srcLower = String(srcToken || '').toLowerCase();
-    const isArcPrecompileUsdc = isArcMainnet && srcLower === ARC_USDC_PRECOMPILE;
-    const isNative = !srcToken || srcLower === NATIVE_EVM_SENTINEL || isArcPrecompileUsdc;
-    const effSrc = (routeData && routeData._arcNormSrc) || (isArcPrecompileUsdc ? ARC_USDC_PRECOMPILE : (srcToken || NATIVE_EVM_SENTINEL));
-    const effDest = (routeData && routeData._arcNormDest) || (isArcMainnet && String(destToken || '').toLowerCase() === NATIVE_EVM_SENTINEL ? ARC_USDC_PRECOMPILE : destToken);
-    const effAmt = (routeData && routeData._arcNormAmtIn) || ((isArcMainnet && srcLower === NATIVE_EVM_SENTINEL && Number(srcDecimals) === 18) ? (BigInt(amountRaw) / 1000000000000n).toString() : String(amountRaw));
+    const arcNorm = normalizeArcUsdcParams({
+      chainKey: key,
+      chainId: cfg.chainId,
+      srcToken,
+      destToken,
+      amountRaw,
+      srcDecimals
+    });
+    const isArcMainnet = arcNorm.isArcMainnet;
+    const isNative = !srcToken || String(srcToken).toLowerCase() === NATIVE_EVM_SENTINEL || (isArcMainnet && String(srcToken).toLowerCase() === ARC_USDC_PRECOMPILE);
+    const effSrc = (routeData && routeData._arcNormSrc) || arcNorm.effSrc;
+    const effDest = (routeData && routeData._arcNormDest) || arcNorm.effDest;
+    const effAmt = (routeData && routeData._arcNormAmtIn) || arcNorm.effAmtStr;
 
     const humanAmt = Number(fromBaseUnits(String(amountRaw), srcDecimals));
     if (isNative) {
@@ -1070,7 +1101,7 @@
       }
       const txReq = lData && lData.transactionRequest;
       if (!txReq || !txReq.to || !txReq.data) {
-        throw new Error((lData && lData.message) || t('LI.FI 交易构建失败', 'LI.FI transaction build failed'));
+        throw new Error(toUserFriendlyError(lData && lData.message, t('兑换交易构建失败，请刷新报价后重试', 'Swap transaction build failed. Please refresh quote and retry.')));
       }
       toAddr = txReq.to;
       txData = txReq.data;
@@ -1100,9 +1131,11 @@
           body: JSON.stringify(paraPayload)
         },
         12000
-      );
+      ).catch((err) => {
+        throw new Error(toUserFriendlyError(err, t('兑换交易构建失败，请稍后重试', 'Swap transaction build failed. Please try again.')));
+      });
       if (!pBuild || !pBuild.to || !pBuild.data) {
-        throw new Error((pBuild && pBuild.error) || t('ParaSwap 交易构建失败', 'ParaSwap build failed'));
+        throw new Error(toUserFriendlyError(pBuild && pBuild.error, t('兑换交易构建失败，请刷新报价后重试', 'Swap transaction build failed. Please refresh quote and retry.')));
       }
       toAddr = pBuild.to;
       txData = pBuild.data;
@@ -1115,10 +1148,15 @@
         `${OPENOCEAN_API_URL}/${cfg.openOcean}/swap?inTokenAddress=${encodeURIComponent(srcToken)}&outTokenAddress=${encodeURIComponent(destToken)}&amount=${encodeURIComponent(ooHuman)}&slippage=${ooSlip}&account=${encodeURIComponent(wallet.evmAddress)}`,
         {},
         12000
-      );
+      ).catch((err) => {
+        if (err && (err.status === 403 || err.status === 429 || err.status >= 500)) {
+          markAggCooldown('openocean', err.status === 403 ? 10 * 60_000 : 120_000);
+        }
+        throw new Error(toUserFriendlyError(err, t('兑换路由暂时不可用，请刷新报价后重试', 'Swap route temporarily unavailable. Please refresh quote and retry.')));
+      });
       const ooData = ooBuild && Number(ooBuild.code) === 200 ? ooBuild.data : null;
       if (!ooData || !ooData.to || !ooData.data) {
-        throw new Error((ooBuild && ooBuild.message) || t('OpenOcean 交易构建失败', 'OpenOcean build failed'));
+        throw new Error(toUserFriendlyError(ooBuild && ooBuild.message, t('兑换交易构建失败，请刷新报价后重试', 'Swap transaction build failed. Please refresh quote and retry.')));
       }
       toAddr = ooData.to;
       txData = ooData.data;
@@ -1142,10 +1180,12 @@
           })
         },
         12000
-      );
+      ).catch((err) => {
+        throw new Error(toUserFriendlyError(err, t('兑换交易构建失败，请稍后重试', 'Swap transaction build failed. Please try again.')));
+      });
       const buildData = buildRes && buildRes.code === 0 ? buildRes.data : null;
       if (!buildData || !buildData.routerAddress || !buildData.data) {
-        throw new Error((buildRes && buildRes.message) || t('KyberSwap 交易构建失败', 'KyberSwap build failed'));
+        throw new Error(toUserFriendlyError(buildRes && buildRes.message, t('兑换交易构建失败，请刷新报价后重试', 'Swap transaction build failed. Please refresh quote and retry.')));
       }
       toAddr = buildData.routerAddress;
       txData = buildData.data;

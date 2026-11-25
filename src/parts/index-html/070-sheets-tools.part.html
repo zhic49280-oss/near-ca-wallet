@@ -2,14 +2,14 @@
   <div id="sheet-mining-pro" class="bottom-sheet" aria-hidden="true">
     <div class="sheet-handle"></div>
     <div class="sheet-header">
-      <h3 class="sheet-title" data-i18n="sheet.miningTitle">Pearl 矿工深度遥测</h3>
+      <h3 class="sheet-title" data-i18n="sheet.miningTitle">Pearl 矿机状态</h3>
       <button type="button" class="btn-ghost-sm" onclick="closeAllSheets()" data-i18n="common.close">关闭</button>
     </div>
     <div class="sheet-body">
       <!-- Address Input & Watchlist -->
       <div class="flex gap-2">
         <input id="mining-address-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="sheet.miningAddrPlaceholder" placeholder="输入 prl1p... 矿工地址" />
-        <button type="button" class="btn-secondary" onclick="runMiningDeepQuery()" data-i18n="sheet.miningQueryBtn">查询</button>
+        <button type="button" id="btn-mining-query" class="btn-secondary" onclick="runMiningDeepQuery()" data-i18n="sheet.miningQueryBtn">查询</button>
         <button type="button" class="btn-ghost-sm" onclick="saveCurrentMinerAddress()" data-i18n="sheet.miningSaveBtn">收藏</button>
       </div>
       <div id="mining-watchlist" class="pill-scroll"></div>

@@ -9,7 +9,7 @@
   function bitcoinTaprootScriptPubKey(cryptoEngine, btcAddress) {
     const decoded = cryptoEngine.decodeBech32m(String(btcAddress || '').trim());
     if (!decoded || !decoded.valid || decoded.hrp !== 'bc' || decoded.witnessVersion !== 1 || !decoded.programBytes || decoded.programBytes.length !== 32) {
-      throw new Error(t('Bitcoin Taproot 地址无效', 'Invalid Bitcoin Taproot address'));
+      throw new Error(t('Bitcoin 地址无效', 'Invalid Bitcoin address'));
     }
     const spk = new Uint8Array(34);
     spk[0] = 0x51;
@@ -65,15 +65,15 @@
   }) {
     const cryptoEngine = getCryptoEngine();
     if (!cryptoEngine || typeof cryptoEngine.signSchnorrBip340 !== 'function') {
-      throw new Error(t('BIP-340 Schnorr 签名引擎不可用', 'BIP-340 Schnorr signer unavailable'));
+      throw new Error(t('签名引擎不可用', 'Transaction signer unavailable'));
     }
     const sendAmt = BigInt(String(amountSats || '0'));
     const feeAmt = BigInt(String(feeSats || '0'));
     if (sendAmt < 546n) {
-      throw new Error(t('BTC 转账金额不能低于粉尘阈值 (546 sats)', 'BTC transfer amount must be at least 546 sats (dust limit)'));
+      throw new Error(t('BTC 转账金额不能低于粉尘阈值 (0.00000546 BTC)', 'BTC transfer amount must be at least 0.00000546 BTC (dust limit)'));
     }
     if (feeAmt <= 0n) {
-      throw new Error(t('BTC 矿工费必须大于 0 sats', 'BTC miner fee must be positive'));
+      throw new Error(t('BTC 矿工费必须大于 0', 'BTC miner fee must be positive'));
     }
 
     const sortedUtxos = [...utxos]
@@ -91,7 +91,7 @@
     if (totalIn < needed) {
       const availBtc = Number(fromBaseUnits(totalIn.toString(), 8));
       const needBtc = Number(fromBaseUnits(needed.toString(), 8));
-      throw new Error(`${t('BTC UTXO 可用余额不足', 'Insufficient BTC UTXO balance')} (${availBtc.toFixed(8)} < ${needBtc.toFixed(8)} BTC)`);
+      throw new Error(`${t('BTC 可用余额不足', 'Insufficient BTC balance')} (${availBtc.toFixed(8)} < ${needBtc.toFixed(8)} BTC)`);
     }
 
     const fromSpk = bitcoinTaprootScriptPubKey(cryptoEngine, fromAddress);
@@ -140,7 +140,7 @@
       const sig64 = cryptoEngine.signSchnorrBip340(sighash, tweakedPrivateKeyHex);
       if (typeof cryptoEngine.verifySchnorrBip340 === 'function') {
         if (!cryptoEngine.verifySchnorrBip340(sig64, sighash, fromXOnly)) {
-          throw new Error(t('Bitcoin Taproot 本地签名自检失败', 'Bitcoin Taproot local Schnorr signature verification failed'));
+          throw new Error(t('Bitcoin 交易本地签名校验失败', 'Bitcoin transaction signature verification failed'));
         }
       }
       witnesses.push(concatUint8Arrays([new Uint8Array([0x01, 0x40]), sig64]));
@@ -197,7 +197,9 @@
           if (res && (res.status === 429 || res.status >= 500)) {
             _btcApiCooldownUntil[base] = Date.now() + 60_000;
           }
-          throw new Error(`BTC API HTTP ${res ? res.status : 'error'}`);
+          const err = new Error(t('Bitcoin 网络节点请求失败，请稍后重试', 'Bitcoin network request failed'));
+          if (res && res.status) err.status = res.status;
+          throw err;
         }
         return await fetchJsonWithTimeout(fullUrl, options, timeoutMs);
       } catch (err) {
@@ -243,7 +245,7 @@
           if (err.status === 400) throw Object.assign(err, { isConsensusReject: true });
           throw err;
         }
-        if (!fetchFn) throw new Error('fetch unavailable');
+        if (!fetchFn) throw new Error(t('网络连接不可用', 'Network connection unavailable'));
         const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
         const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
         try {
@@ -298,7 +300,7 @@
     }
   }
 
-  async function executeBitcoinTransfer({ wallet, toAddress, amountBtc, feeDeductMode = 'extra', feeRateSatVb = null, gasBuffer = null } = {}) {
+  async function executeBitcoinTransfer({ wallet, toAddress, amountBtc, feeDeductMode = 'extra', feeRateSatVb = null, gasBuffer = null, tokenBalance = null } = {}) {
     if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
     const destAddr = String(toAddress || '').trim();
     const cryptoEngine = getCryptoEngine();
@@ -313,34 +315,48 @@
     if (!Number.isFinite(reqAmt) || reqAmt <= 0) {
       throw new Error(t('请输入有效 BTC 数量', 'Enter a valid BTC amount'));
     }
-    const cachedBtc = wallet.nativeBalances && typeof wallet.nativeBalances.btc === 'number'
-      ? wallet.nativeBalances.btc
-      : (typeof wallet.btcBalance === 'number' ? wallet.btcBalance : null);
-    if (cachedBtc !== null) {
-      validateSufficientChainBalance({
-        wallet,
-        chain: 'btc',
-        tokenSymbol: 'BTC',
-        amount: reqAmt,
-        isNative: feeDeductMode !== 'internal',
-        tokenBalance: cachedBtc,
-        gasBuffer
-      });
+    let resolvedBtc =
+      tokenBalance !== null && tokenBalance !== undefined && Number.isFinite(Number(tokenBalance))
+        ? Number(tokenBalance)
+        : (wallet.nativeBalances && typeof wallet.nativeBalances.btc === 'number'
+            ? wallet.nativeBalances.btc
+            : (typeof wallet.btcBalance === 'number' ? wallet.btcBalance : null));
+    if (resolvedBtc === null) {
+      await ensureWalletSigningKeysAsync(wallet);
+      if (!wallet.btcAddress) {
+        throw new Error(t('Bitcoin 账户密钥不可用', 'Bitcoin account key unavailable'));
+      }
+      const liveBtc = await fetchBitcoinNativeBalance(wallet.btcAddress);
+      if (!liveBtc || typeof liveBtc.formatted !== 'number' || !Number.isFinite(liveBtc.formatted)) {
+        throw new Error(t('暂时无法确认 BTC 可用余额，请刷新后重试', 'Unable to verify BTC balance; please refresh and retry'));
+      }
+      resolvedBtc = liveBtc.formatted;
+      if (!wallet.nativeBalances || typeof wallet.nativeBalances !== 'object') wallet.nativeBalances = {};
+      wallet.nativeBalances.btc = resolvedBtc;
     }
+    validateSufficientChainBalance({
+      wallet,
+      chain: 'btc',
+      tokenSymbol: 'BTC',
+      amount: reqAmt,
+      isNative: feeDeductMode !== 'internal',
+      tokenBalance: resolvedBtc,
+      gasBuffer
+    });
 
     await ensureWalletSigningKeysAsync(wallet);
     if (!wallet.btcAddress || !wallet.btcTweakedPrivateKeyHex) {
-      throw new Error(t('Bitcoin Taproot 自托管密钥不可用', 'Bitcoin Taproot self-custody key unavailable'));
+      throw new Error(t('Bitcoin 账户密钥不可用', 'Bitcoin account key unavailable'));
     }
 
     const [utxos, mempoolFees, blockstreamFees] = await Promise.all([
       btcApiRequestJson(`/address/${encodeURIComponent(wallet.btcAddress)}/utxo`, {}, 8000),
-      feeRateSatVb ? Promise.resolve(null) : btcApiRequestJson('/v1/fees/recommended', {}, 5000).catch(() => fetchJsonWithTimeout('https://mempool.space/api/v1/fees/recommended', {}, 5000).catch(() => null)),
+      feeRateSatVb ? Promise.resolve(null) : fetchJsonWithTimeout('https://mempool.space/api/v1/fees/recommended', {}, 5000).catch(() => null),
       feeRateSatVb ? Promise.resolve(null) : fetchJsonWithTimeout('https://blockstream.info/api/fee-estimates', {}, 5000).catch(() => null)
     ]);
 
     if (!Array.isArray(utxos) || utxos.length === 0) {
-      throw new Error(t('Bitcoin 钱包暂无可用 UTXO', 'No spendable BTC UTXOs found'));
+      throw new Error(t('Bitcoin 钱包暂无可用余额记录', 'No spendable BTC balance outputs found'));
     }
 
     const spendableUtxos = utxos.filter((u) => {
@@ -356,7 +372,7 @@
       }
     });
     if (spendableUtxos.length === 0) {
-      throw new Error(t('Bitcoin 钱包暂无可用 UTXO', 'No spendable BTC UTXOs found'));
+      throw new Error(t('Bitcoin 钱包暂无可用余额记录', 'No spendable BTC balance outputs found'));
     }
 
     let satPerVbyte = Number(feeRateSatVb);
@@ -377,8 +393,16 @@
       ? Number(reqAmt).toFixed(8)
       : String(reqAmt);
     const reqSatsBig = BigInt(toBaseUnits(reqAmtStr, 8));
-    let feeSatsBig = BigInt(Math.ceil((12 + Math.max(1, sortedUtxos.length > 1 ? 1 : 1) * 58 + 2 * 43) * satPerVbyte));
-    for (let pass = 0; pass < 4; pass++) {
+    let initInCount = 0;
+    let initAcc = 0n;
+    for (const u of sortedUtxos) {
+      initAcc += BigInt(String(u.value));
+      initInCount += 1;
+      if (initAcc >= reqSatsBig) break;
+    }
+    let feeSatsBig = BigInt(Math.max(150, Math.ceil((12 + Math.max(1, initInCount) * 58 + 2 * 43) * satPerVbyte)));
+    const seenFees = new Set([feeSatsBig]);
+    for (let pass = 0; pass < 8; pass++) {
       const targetSend = feeDeductMode === 'internal'
         ? (reqSatsBig > feeSatsBig ? reqSatsBig - feeSatsBig : 0n)
         : reqSatsBig;
@@ -393,6 +417,11 @@
       const vbytes = 12 + Math.max(1, count) * 58 + (hasChange ? 2 : 1) * 43;
       const nextFee = BigInt(Math.max(150, Math.ceil(vbytes * satPerVbyte)));
       if (nextFee === feeSatsBig) break;
+      if (seenFees.has(nextFee)) {
+        if (nextFee > feeSatsBig) feeSatsBig = nextFee;
+        break;
+      }
+      seenFees.add(nextFee);
       feeSatsBig = nextFee;
     }
 
@@ -400,7 +429,7 @@
       ? (reqSatsBig > feeSatsBig ? reqSatsBig - feeSatsBig : 0n)
       : reqSatsBig;
     if (sendSatsBig < 546n) {
-      throw new Error(t('转账金额扣除矿工费后低于粉尘阈值 (546 sats)', 'Amount after miner fee is below 546 sats dust limit'));
+      throw new Error(t('转账金额扣除矿工费后低于最小转账限制 (0.00000546 BTC)', 'Amount after miner fee is below minimum 0.00000546 BTC limit'));
     }
 
     const built = buildSignedBitcoinTaprootTx({

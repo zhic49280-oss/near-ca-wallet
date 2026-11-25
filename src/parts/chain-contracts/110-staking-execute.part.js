@@ -243,7 +243,7 @@
     if (pool.chain === 'sol') {
       const hasNearMpc = Boolean((wallet.nearNamedAccount || wallet.nearAddress) && wallet.nearPublicKey && wallet.nearPrivateKey);
       if (!wallet.solAddress || (!wallet.solPrivateSeedHex && !hasNearMpc)) {
-        throw new Error(t('NEAR 主账户或 MPC Solana 地址不可用', 'NEAR Master Account or MPC Solana address unavailable'));
+        throw new Error(t('Solana 账户地址不可用', 'Solana address unavailable'));
       }
       if (pool.isTokenStake) {
         const solGas = resolveWalletChainBalance(wallet, 'sol');
@@ -360,10 +360,10 @@
     // C. EVM / Arc / HyperEVM Staking
     const hasNearMpc = Boolean((wallet.nearNamedAccount || wallet.nearAddress) && wallet.nearPublicKey && wallet.nearPrivateKey);
     if (!wallet.evmPrivateKey && !hasNearMpc) {
-      throw new Error(t('NEAR 主账户或 MPC EVM 地址不可用', 'NEAR Master Account or MPC EVM address unavailable'));
+      throw new Error(t('EVM 账户地址不可用', 'EVM address unavailable'));
     }
     const ethersLib = getEthersLib();
-    if (!ethersLib) throw new Error(t('EVM 签名库 ethers 不可用', 'EVM signer library ethers unavailable'));
+    if (!ethersLib) throw new Error(t('签名组件未就绪，请稍后重试', 'Signing engine not ready. Please try again.'));
     const evmSender = resolveWalletEvmSender(wallet, ethersLib);
 
     const sendEvmContractCall = async ({ chainKey, to, data, value = '0', approvalToken = null, spender = null, approvalAmount = null }) => {
@@ -446,7 +446,7 @@
               value: shortfallWei
             });
             if (!wrapRes || !wrapRes.txHash) {
-              throw new Error(t('ETH Wrap 交易未返回哈希，已中止 Supply', 'ETH wrap did not return txHash; aborted supply'));
+              throw new Error(t('封装 ETH 未完成，已取消存入', 'ETH wrap did not complete; supply cancelled'));
             }
             await waitForEvmTxConfirmation(pool.chain, wrapRes.txHash, 45000);
           }

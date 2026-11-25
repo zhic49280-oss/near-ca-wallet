@@ -126,6 +126,7 @@
   }
 
   let _isRefreshing = false;
+  let _feedbackRefreshing = false;
   let _refreshGen = 0;
   let _lastStakingPositionsSyncAt = 0;
 
@@ -145,12 +146,20 @@
     const contracts = getContracts();
     const tokens = getTokens();
     const wallet = st.getActiveWallet();
-    if (!wallet || (_isRefreshing && !showFeedback)) return;
+    if (!wallet || (_isRefreshing && (!showFeedback || _feedbackRefreshing))) return;
 
     _isRefreshing = true;
+    if (showFeedback) _feedbackRefreshing = true;
     const gen = ++_refreshGen;
     const targetWalletId = wallet.id;
     const isStaleRefresh = () => gen !== _refreshGen || st.activeWalletId !== targetWalletId;
+
+    const refreshBtn = $('btn-home-refresh');
+    const prevRefreshText = refreshBtn ? refreshBtn.textContent : '';
+    if (showFeedback && refreshBtn) {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = t('同步中...', 'Syncing...');
+    }
 
     const ptrInd = $('home-ptr-indicator');
     const ptrTxt = $('home-ptr-text');
@@ -212,7 +221,9 @@
               }
             }).catch(() => {});
           }
-        }).catch(() => {});
+        }).catch(() => {
+          wallet._nearAccountChecked = false;
+        });
       }
 
       const solTokens = (tokens.DEX_CHAIN_TOKENS && tokens.DEX_CHAIN_TOKENS.sol) || [];
@@ -325,30 +336,6 @@
           }).catch(() => {});
         }
       }
-      let prlSyncFailed = false;
-      let btcSyncFailed = false;
-      if (wallet.address && typeof contracts.fetchPearlNativeBalance === 'function') {
-        contracts.fetchPearlNativeBalance(wallet.address).then((res) => {
-          if (!isStaleRefresh() && res && typeof res.formatted === 'number' && Number.isFinite(res.formatted)) {
-            wallet.nativeBalances.prl = reconcileFetchedChainBalance(wallet, 'prl', res.formatted);
-            scheduleProgressiveWalletRender();
-          } else {
-            prlSyncFailed = true;
-          }
-        }).catch(() => { prlSyncFailed = true; });
-      }
-      if (wallet.btcAddress && typeof contracts.fetchBitcoinNativeBalance === 'function') {
-        contracts.fetchBitcoinNativeBalance(wallet.btcAddress).then((res) => {
-          const bal = res && typeof res.formatted === 'number' ? res.formatted : (typeof res === 'number' ? res : null);
-          if (!isStaleRefresh() && typeof bal === 'number' && Number.isFinite(bal)) {
-            wallet.nativeBalances.btc = reconcileFetchedChainBalance(wallet, 'btc', bal);
-            scheduleProgressiveWalletRender();
-          } else {
-            btcSyncFailed = true;
-          }
-        }).catch(() => { btcSyncFailed = true; });
-      }
-
       const softCapPromise = (promise, ms) => {
         if (!showFeedback || typeof setTimeout !== 'function') return promise;
         return new Promise((resolve) => {
@@ -384,6 +371,8 @@
         nearBalRes,
         nep141BalRes,
         solBalRes,
+        prlBalRes,
+        btcBalRes,
         ...evmBatchResults
       ] = await Promise.all([
         softCapPromise(intents.fetchLiveDefuseTokenPrices({
@@ -451,6 +440,27 @@
           }
           return res;
         }).catch(() => null), 3000) : Promise.resolve(null),
+        (wallet.address && typeof contracts.fetchPearlNativeBalance === 'function')
+          ? softCapPromise(contracts.fetchPearlNativeBalance(wallet.address).then((res) => {
+              if (!isStaleRefresh() && res && typeof res.formatted === 'number' && Number.isFinite(res.formatted)) {
+                wallet.nativeBalances.prl = reconcileFetchedChainBalance(wallet, 'prl', res.formatted);
+                scheduleProgressiveWalletRender();
+                return wallet.nativeBalances.prl;
+              }
+              return null;
+            }).catch(() => null), 3000)
+          : Promise.resolve(null),
+        (wallet.btcAddress && typeof contracts.fetchBitcoinNativeBalance === 'function')
+          ? softCapPromise(contracts.fetchBitcoinNativeBalance(wallet.btcAddress).then((res) => {
+              const bal = res && typeof res.formatted === 'number' ? res.formatted : (typeof res === 'number' ? res : null);
+              if (!isStaleRefresh() && typeof bal === 'number' && Number.isFinite(bal)) {
+                wallet.nativeBalances.btc = reconcileFetchedChainBalance(wallet, 'btc', bal);
+                scheduleProgressiveWalletRender();
+                return wallet.nativeBalances.btc;
+              }
+              return null;
+            }).catch(() => null), 3000)
+          : Promise.resolve(null),
         ...evmAllChainKeys.map((ck) => {
           if (!wallet.evmAddress) return Promise.resolve(null);
           const qList = evmBatchQueriesByChain[ck] || [];
@@ -551,15 +561,24 @@
         renderTokenDetailSheet();
       }
 
-      const anyTimedOut = (nearAccountId && nearBalRes === null) || (wallet.solAddress && solBalRes === null) || (wallet.evmAddress && evmBatchResults.some((r) => r === null)) || prlSyncFailed || btcSyncFailed;
+      const anyTimedOut = (nearAccountId && nearBalRes === null) ||
+        (wallet.solAddress && solBalRes === null) ||
+        (wallet.evmAddress && evmBatchResults.some((r) => r === null)) ||
+        (wallet.address && typeof contracts.fetchPearlNativeBalance === 'function' && prlBalRes === null) ||
+        (wallet.btcAddress && typeof contracts.fetchBitcoinNativeBalance === 'function' && btcBalRes === null);
       if (showFeedback) {
         showToast(anyTimedOut ? t('部分链仍在后台同步中...', 'Syncing remaining chains...') : t('多链资产已同步', 'Balances synced'));
       }
     } catch (e) {
-      if (showFeedback) showToast(e && e.message ? e.message : t('余额同步失败', 'Sync failed'));
+      if (showFeedback) showToast(toUserFriendlyError(e, '余额同步失败，请稍后重试', 'Sync failed, please try again'));
     } finally {
+      if (showFeedback && refreshBtn) {
+        refreshBtn.disabled = false;
+        if (prevRefreshText) refreshBtn.textContent = prevRefreshText;
+      }
       if (gen === _refreshGen) {
         _isRefreshing = false;
+        _feedbackRefreshing = false;
         const viewWallet = $('view-wallet');
         if (ptrInd) {
           ptrInd.classList.remove('pulling', 'refreshing');

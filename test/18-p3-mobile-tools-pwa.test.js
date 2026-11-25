@@ -28,7 +28,6 @@ test('P3.2: QTC deposit address expires after 20 min & copyReceiveAddress blocks
     const w = state.normalizeWalletRecord({
       id: 'w_qtc_ttl',
       name: 'QTC',
-      mnemonic: TEST_MNEMONIC,
       qtcDepositAddress: 'qz_old_expired',
       qtcDepositAddressAt: Date.now() - (25 * 60 * 1000)
     });

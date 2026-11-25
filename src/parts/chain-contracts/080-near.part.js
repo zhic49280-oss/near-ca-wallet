@@ -64,7 +64,7 @@
         lastErr = err;
       }
     }
-    throw lastErr || new Error(t('NEAR RPC 网络请求失败', 'NEAR RPC request failed'));
+    throw lastErr || new Error(t('NEAR 网络节点请求失败，请稍后重试', 'NEAR network request failed. Please try again.'));
   }
 
   function encodeNearPublicKeyBorsh(publicKeyStr) {
@@ -72,13 +72,13 @@
     if (raw.startsWith('secp256k1:')) {
       const pubBytes = base58Decode(raw.slice('secp256k1:'.length));
       if (pubBytes.length !== 64) {
-        throw new Error(t('secp256k1 公钥长度无效', 'Invalid secp256k1 public key length'));
+        throw new Error(t('公钥格式无效', 'Invalid public key length'));
       }
       return concatUint8Arrays([new Uint8Array([1]), pubBytes]); // KeyType::SECP256K1 = 1
     }
     const pubBytes = base58Decode(raw.replace(/^ed25519:/, ''));
     if (pubBytes.length !== 32) {
-      throw new Error(t('Ed25519 公钥长度无效', 'Invalid Ed25519 public key length'));
+      throw new Error(t('公钥格式无效', 'Invalid public key length'));
     }
     return concatUint8Arrays([new Uint8Array([0]), pubBytes]); // KeyType::ED25519 = 0
   }
@@ -101,7 +101,7 @@
     }
     const cryptoEngine = getCryptoEngine();
     if (!cryptoEngine || typeof cryptoEngine.ed25519SignAsync !== 'function') {
-      throw new Error(t('Ed25519 签名引擎不可用', 'NearCACrypto.ed25519SignAsync unavailable'));
+      throw new Error(t('钱包签名引擎不可用', 'Wallet signing engine unavailable'));
     }
 
     const akRes = await nearRpcPostAsync(
@@ -133,7 +133,7 @@
 
     if (!akRes || akRes.error || !akRes.result || typeof akRes.result.nonce !== 'number') {
       throw new Error(
-        formatNearRpcErr(akRes && akRes.error, t('NEAR 账户未激活或 AccessKey 不存在', 'NEAR account not activated or AccessKey missing'))
+        formatNearRpcErr(akRes && akRes.error, t('NEAR 账户未激活或访问密钥不存在', 'NEAR account not activated or access key missing'))
       );
     }
 
@@ -233,7 +233,7 @@
     depositYocto = '0'
   } = {}) {
     if (!methodName) {
-      throw new Error(t('缺少合约方法名', 'Missing NEAR contract methodName'));
+      throw new Error(t('缺少合约调用方法名', 'Missing contract method name'));
     }
     const argsBytes = new TextEncoder().encode(typeof argsJson === 'string' ? argsJson : JSON.stringify(argsJson || {}));
     const actionBytes = concatUint8Arrays([
@@ -277,7 +277,7 @@
     }
     const list = Array.isArray(actions) ? actions : [];
     if (!list.length) {
-      throw new Error(t('NEAR 交易至少需要一个 Action', 'NEAR transaction requires at least one action'));
+      throw new Error(t('NEAR 交易至少需要一个操作', 'NEAR transaction requires at least one operation'));
     }
     const encodedList = [];
     for (const act of list) {
@@ -335,7 +335,7 @@
       } else {
         const methodName = String(body.methodName || '');
         if (!methodName) {
-          throw new Error(t('不支持的无方法名 NEAR Action', 'Unsupported NEAR action without methodName'));
+          throw new Error(t('不支持的交易操作类型', 'Unsupported transaction operation'));
         }
         const argsVal = body.args !== undefined ? body.args : (body.argsJson || '{}');
         const argsBytes = argsVal instanceof Uint8Array
@@ -373,7 +373,7 @@
     gasBuffer = null
   } = {}) {
     if (!receiverId) {
-      throw new Error(t('缺少 NEAR 转账账户或收款方参数', 'Missing NEAR transfer account or receiverId'));
+      throw new Error(t('缺少 NEAR 收款账户参数', 'Missing NEAR recipient account'));
     }
 
     if (wallet || (availableBalanceNear !== null && availableBalanceNear !== undefined)) {
@@ -399,7 +399,7 @@
     const priv = privateKeyStr || creds.privateKeyStr;
 
     if (!sender || !pub || !priv) {
-      throw new Error(t('缺少 NEAR 转账账户或收款方参数', 'Missing NEAR transfer account or receiverId'));
+      throw new Error(t('缺少 NEAR 账户签名凭据', 'Missing NEAR account signing credentials'));
     }
 
     const yoctoAmount = toBaseUnits(amountNear, 24);
@@ -439,8 +439,8 @@
     if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
     const contract = String(tokenContract || '').trim();
     const dest = String(receiverId || '').trim().toLowerCase();
-    if (!contract) throw new Error(t('缺少 NEAR NEP-141 合约地址', 'Missing NEP-141 token contract'));
-    if (!dest) throw new Error(t('缺少 NEAR 收款账户', 'Missing NEAR receiverId'));
+    if (!contract) throw new Error(t('缺少 NEAR 代币合约地址', 'Missing NEAR token contract'));
+    if (!dest) throw new Error(t('缺少 NEAR 收款账户', 'Missing NEAR recipient account'));
 
     const cachedBal =
       tokenBalance !== null && tokenBalance !== undefined
@@ -473,6 +473,22 @@
     const sender = resolvedWallet.nearNamedAccount || resolvedWallet.nearAddress;
     if (!sender || !resolvedWallet.nearPublicKey || !resolvedWallet.nearPrivateKey) {
       throw new Error(t('缺少 NEAR 转账账户签名凭据', 'Missing NEAR signing credentials'));
+    }
+
+    if (cachedBal === null) {
+      const rawFt = await viewNearContractCall(contract, 'ft_balance_of', { account_id: sender }).catch(() => null);
+      if (rawFt === null || rawFt === undefined || !/^\d+$/.test(String(rawFt))) {
+        throw new Error(t('暂时无法确认代币余额，请刷新后重试', 'Unable to verify token balance; please refresh and retry'));
+      }
+      const liveBal = Number(fromBaseUnits(String(rawFt), decimals));
+      validateSufficientChainBalance({
+        wallet: resolvedWallet,
+        chain: 'near',
+        tokenSymbol,
+        amount,
+        isNative: false,
+        tokenBalance: liveBal
+      });
     }
 
     const rawAmount = toBaseUnits(amount, decimals);

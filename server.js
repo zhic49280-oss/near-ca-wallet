@@ -68,9 +68,10 @@ const server = http.createServer((req, res) => {
   }
 
   const reqUrlStr = String(req.url || '/');
-  if (reqUrlStr.startsWith('/pearl-proxy')) {
-    const parsed = safeParseReqUrl(reqUrlStr);
-    const pathParam = parsed ? parsed.searchParams.get('path') : null;
+  const parsedRouteUrl = safeParseReqUrl(reqUrlStr);
+  const reqPathname = parsedRouteUrl ? parsedRouteUrl.pathname : '';
+  if (reqPathname === '/pearl-proxy') {
+    const pathParam = parsedRouteUrl.searchParams.get('path');
     const targetUrl = isSafeProxyPath(pathParam, ['/api/v2/'], 'blockbook.pearlresearch.ai');
     if (!targetUrl) {
       sendJsonError(res, 400, 'Invalid path parameter');
@@ -79,6 +80,10 @@ const server = http.createServer((req, res) => {
     const chunks = [];
     let totalLen = 0;
     let bodyTooLarge = false;
+    let activeProxyReq = null;
+    req.on('close', () => {
+      if (activeProxyReq && !activeProxyReq.destroyed) activeProxyReq.destroy();
+    });
     req.on('data', (c) => {
       if (bodyTooLarge) return;
       totalLen += c.length;
@@ -116,8 +121,10 @@ const server = http.createServer((req, res) => {
           'Content-Type': proxyRes.headers['content-type'] || 'application/json; charset=utf-8',
           'Access-Control-Allow-Origin': '*'
         });
+        proxyRes.on('error', () => { if (!res.writableEnded) res.end(); });
         proxyRes.pipe(res);
       });
+      activeProxyReq = proxyReq;
       proxyReq.on('timeout', () => proxyReq.destroy(new Error('Upstream timeout')));
       proxyReq.on('error', (err) => sendJsonError(res, 502, err.message));
       if (bodyBuf.length > 0) proxyReq.write(bodyBuf);
@@ -126,9 +133,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (reqUrlStr.startsWith('/kryptex-proxy')) {
-    const parsed = safeParseReqUrl(reqUrlStr);
-    const pathParam = parsed ? parsed.searchParams.get('path') : null;
+  if (reqPathname === '/kryptex-proxy') {
+    const pathParam = parsedRouteUrl.searchParams.get('path');
     const targetUrl = isSafeProxyPath(pathParam, ['/prl/', '/api/'], 'pool.kryptex.com');
     if (!targetUrl) {
       sendJsonError(res, 400, 'Invalid path parameter');
@@ -146,16 +152,19 @@ const server = http.createServer((req, res) => {
         'Content-Type': proxyRes.headers['content-type'] || 'application/json; charset=utf-8',
         'Access-Control-Allow-Origin': '*'
       });
+      proxyRes.on('error', () => { if (!res.writableEnded) res.end(); });
       proxyRes.pipe(res);
+    });
+    req.on('close', () => {
+      if (!proxyReq.destroyed) proxyReq.destroy();
     });
     proxyReq.on('timeout', () => proxyReq.destroy(new Error('Upstream timeout')));
     proxyReq.on('error', (err) => sendJsonError(res, 502, err.message));
     return;
   }
 
-  if (reqUrlStr.startsWith('/nearcom-proxy')) {
-    const parsed = safeParseReqUrl(reqUrlStr);
-    const pathParam = parsed ? parsed.searchParams.get('path') : null;
+  if (reqPathname === '/nearcom-proxy' && reqUrlStr.startsWith('/nearcom-proxy')) {
+    const pathParam = parsedRouteUrl.searchParams.get('path');
     const targetUrl = isSafeProxyPath(
       pathParam,
       ['/api/auth/', '/api/deposit/', '/api/swap/', '/api/withdraw/', '/api/account/', '/api/earn/', '/api/perps/'],
@@ -168,6 +177,10 @@ const server = http.createServer((req, res) => {
     const chunks = [];
     let totalLen = 0;
     let bodyTooLarge = false;
+    let activeProxyReq = null;
+    req.on('close', () => {
+      if (activeProxyReq && !activeProxyReq.destroyed) activeProxyReq.destroy();
+    });
     req.on('data', (c) => {
       if (bodyTooLarge) return;
       totalLen += c.length;
@@ -209,8 +222,10 @@ const server = http.createServer((req, res) => {
           'Content-Type': proxyRes.headers['content-type'] || 'application/json; charset=utf-8',
           'Access-Control-Allow-Origin': '*'
         });
+        proxyRes.on('error', () => { if (!res.writableEnded) res.end(); });
         proxyRes.pipe(res);
       });
+      activeProxyReq = proxyReq;
       proxyReq.on('timeout', () => proxyReq.destroy(new Error('Upstream timeout')));
       proxyReq.on('error', (err) => sendJsonError(res, 502, err.message));
       if (bodyBuf.length > 0) proxyReq.write(bodyBuf);

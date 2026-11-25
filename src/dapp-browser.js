@@ -1293,7 +1293,7 @@
         kind: 'sendTransaction',
         chainLabel: 'Solana',
         account: pubKeyStr,
-        summary: `Sign & broadcast Solana transaction (${b64Tx.slice(0, 64)}...)`
+        summary: `Approve & send Solana transaction (${b64Tx.slice(0, 64)}...)`
       });
       await ensureBiometricAuth(req, ctx);
       const sent = await contracts.signAndBroadcastSolanaBase64Tx(b64Tx, solSeedHex, wallet, 'solana-1');
@@ -1410,7 +1410,7 @@
         : (arg0.nonce instanceof Uint8Array ? arg0.nonce : new Uint8Array(32));
       await ensureApproval(req, ctx, {
         kind: 'signMessage',
-        chainLabel: 'NEAR (NEP-413)',
+        chainLabel: 'NEAR',
         account: creds.accountId || '',
         summary: `Recipient: ${recipient}\nMessage: ${message.slice(0, 500)}`
       });

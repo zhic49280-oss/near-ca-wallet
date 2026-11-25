@@ -62,8 +62,12 @@
       const entry = wallet.nearNep141Balances && wallet.nearNep141Balances[cid];
       const ftBal = entry && typeof entry.formatted === 'number' && Number.isFinite(entry.formatted) ? entry.formatted : 0;
       if (cid === 'wrap.near') {
+        const st = getState();
+        const lo = getLimitOrders();
+        const gasReserve = Number(lo?.DCL_GAS_RESERVE_NEAR ?? 0.05);
+        const storageReserve = st.limit?.dclStorageRegistered === false ? Number(lo?.DCL_STORAGE_DEPOSIT_NEAR ?? 0.5) : 0;
         const nativeNear = Number(getContracts()?.resolveWalletChainBalance(wallet, 'near') || 0);
-        return ftBal + Math.max(0, nativeNear - 0.05);
+        return ftBal + Math.max(0, nativeNear - gasReserve - storageReserve);
       }
       return ftBal;
     }
@@ -169,6 +173,9 @@
     st.limit.liveMarketRate = null;
     st.limit.poolInfo = null;
     st.limit.evmAllowanceRaw = null;
+    st.limit.evmAllowanceFailed = false;
+    st.limit.solUnavailable = false;
+    st.limit.rateLimited = false;
     st.limit.errorMsg = '';
     st.limit.ordersActive = [];
     st.limit.ordersHistory = [];
@@ -247,7 +254,9 @@
     if (isSolNative) {
       maxAmt = Math.max(0, bal - (getLimitOrders()?.SOL_LIMIT_GAS_RESERVE || 0.005));
     }
-    const rawUnits = isSolNative ? null : getWalletTokenRawBaseUnits(wallet, st.limit.chain, sellToken.contractAddress);
+    const rawUnits = (isSolNative || (st.limit.chain === 'near' && sellToken.contractAddress === 'wrap.near'))
+      ? null
+      : getWalletTokenRawBaseUnits(wallet, st.limit.chain, sellToken.contractAddress);
     st.limit.amountIn = maxAmt > 0 ? formatMaxDecimalString(maxAmt, sellToken.decimals || 6, rawUnits) : '0';
     if ($('limit-amount-in')) $('limit-amount-in').value = st.limit.amountIn;
     renderLimitOrderCalculations();
@@ -271,6 +280,9 @@
     st.limit.snappedPoint = null;
     st.limit.evmAllowanceRaw = null;
     st.limit.evmAllowanceFailed = false;
+    st.limit.solUnavailable = false;
+    st.limit.rateLimited = false;
+    st.limit.errorMsg = '';
     st.limit.liveMarketRate = st.limit.liveMarketRate && st.limit.liveMarketRate > 0 ? (1 / st.limit.liveMarketRate) : null;
     renderLimitOrderView();
     refreshLimitMarketContextAsync().catch(() => {});
@@ -441,7 +453,7 @@
       const wnearOnly = Number((wnearEntry && typeof wnearEntry === 'object') ? (wnearEntry.formatted ?? 0) : (wnearEntry || 0));
       const needsAutoWrap = sellToken.contractAddress === 'wrap.near' && amt > wnearOnly + 1e-8;
       const wrapShortfall = needsAutoWrap ? (amt - wnearOnly) : 0;
-      if (nearAvail < minNear + wrapShortfall) {
+      if (nearAvail + 1e-9 < minNear + wrapShortfall) {
         return { disabled: true, action: 'submit', text: t(`NEAR 余额不足 (需 ${(minNear + wrapShortfall).toFixed(2)} NEAR)`, `Need ${(minNear + wrapShortfall).toFixed(2)} NEAR`), error: '' };
       }
       return {

@@ -733,8 +733,9 @@
     } catch (err) {
       _swapAbortedOrFailed = true;
       st.swap._executing = false;
-      setSwapError(err && err.message ? err.message : t('兑换失败', 'Swap failed'));
-      showToast(err && err.message ? err.message : t('兑换失败', 'Swap failed'));
+      const friendly = toUserFriendlyError(err, t('兑换失败，请稍后重试', 'Swap failed. Please try again.'));
+      setSwapError(friendly);
+      showToast(friendly);
     } finally {
       if (!_swapAbortedOrFailed && typeof clearSwapAmountAndQuote === 'function') {
         clearSwapAmountAndQuote();

@@ -206,9 +206,30 @@
         : null;
     }
 
+    const cryptoEngine = getCryptoEngine();
+    const mnemonicClean = String(raw.mnemonic || '').trim();
     const nearNamedAccount = String(raw.nearNamedAccount || '').trim().toLowerCase();
-    const nearAddress = String(raw.nearAddress || '').trim().toLowerCase();
-    const activeNearId = nearNamedAccount || nearAddress;
+    let healedNearAddr = String(raw.nearAddress || '').trim().toLowerCase();
+    let healedNearPub = String(raw.nearPublicKey || '').trim();
+    let healedNearPriv = String(raw.nearPrivateKey || '').trim();
+    let healedNearSeedHex = String(raw.nearPrivateSeedHex || '').trim();
+    let didSelfHeal = false;
+
+    const needsNear = Boolean(mnemonicClean) && (!healedNearAddr || !healedNearPub || !healedNearPriv || !healedNearSeedHex);
+    if (needsNear && cryptoEngine && typeof cryptoEngine.deriveNearFromSeed === 'function') {
+      try {
+        const nearDerived = cryptoEngine.deriveNearFromSeed(mnemonicClean, 0);
+        if (nearDerived && nearDerived.nearAddress) {
+          healedNearAddr = healedNearAddr || String(nearDerived.nearAddress).trim().toLowerCase();
+          healedNearPub = healedNearPub || String(nearDerived.nearPublicKey || '').trim();
+          healedNearPriv = healedNearPriv || String(nearDerived.nearPrivateKey || '').trim();
+          healedNearSeedHex = healedNearSeedHex || String(nearDerived.nearPrivateSeedHex || '').trim();
+          didSelfHeal = true;
+        }
+      } catch (_) {}
+    }
+
+    const activeNearId = nearNamedAccount || healedNearAddr;
 
     let mpcEvmAddress = String(raw.mpcEvmAddress || '').trim();
     let evmAddress = String(raw.evmAddress || '').trim();
@@ -221,10 +242,7 @@
     let btcTweakedPrivateKeyHex = String(raw.btcTweakedPrivateKeyHex || '').trim();
 
     let mpcDerivedForNearId = String(raw._mpcDerivedForNearId || '').trim().toLowerCase();
-    let didSelfHeal = false;
 
-    const cryptoEngine = getCryptoEngine();
-    const mnemonicClean = String(raw.mnemonic || '').trim();
     const prlMnemonic = String(raw.prlMnemonic || '').trim();
     const btcMnemonic = String(raw.btcMnemonic || '').trim();
     const effectivePrlMnemonic = prlMnemonic || mnemonicClean;
@@ -287,9 +305,6 @@
 
     const rawIter = Number(raw.pinIterations) || 100_000;
     const pinIterations = Math.min(250_000, Math.max(1000, rawIter));
-    const healedNearAddr = nearAddress;
-    const healedNearPub = String(raw.nearPublicKey || '').trim();
-    const healedNearPriv = String(raw.nearPrivateKey || '').trim();
 
     const wallet = {
       id: String(raw.id || `w_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),
@@ -311,7 +326,7 @@
       nearAddress: healedNearAddr,
       nearPublicKey: healedNearPub,
       nearPrivateKey: healedNearPriv,
-      nearPrivateSeedHex: String(raw.nearPrivateSeedHex || '').trim(),
+      nearPrivateSeedHex: healedNearSeedHex,
       _nearAccountChecked: Boolean(raw._nearAccountChecked || nearNamedAccount),
       // External Chain Addresses Controlled by NEAR MPC (v1.signer) + Native BIP-86 Pearl & Bitcoin Addresses
       mpcEvmAddress,
@@ -349,6 +364,19 @@
   function recomputeWalletMpcAddresses(wallet) {
     if (!wallet || typeof wallet !== 'object') return wallet;
     const cryptoEngine = getCryptoEngine();
+    const mnemonicClean = String(wallet.mnemonic || '').trim();
+    const needsNear = Boolean(mnemonicClean) && (!wallet.nearAddress || !wallet.nearPublicKey || !wallet.nearPrivateKey || !wallet.nearPrivateSeedHex);
+    if (needsNear && cryptoEngine && typeof cryptoEngine.deriveNearFromSeed === 'function') {
+      try {
+        const nearDerived = cryptoEngine.deriveNearFromSeed(mnemonicClean, 0);
+        if (nearDerived && nearDerived.nearAddress) {
+          wallet.nearAddress = wallet.nearAddress || String(nearDerived.nearAddress).trim().toLowerCase();
+          wallet.nearPublicKey = wallet.nearPublicKey || nearDerived.nearPublicKey;
+          wallet.nearPrivateKey = wallet.nearPrivateKey || nearDerived.nearPrivateKey;
+          wallet.nearPrivateSeedHex = wallet.nearPrivateSeedHex || nearDerived.nearPrivateSeedHex;
+        }
+      } catch (_) {}
+    }
     const effectivePrlMnemonic = String(wallet.prlMnemonic || wallet.mnemonic || '').trim();
     const needsPearl = Boolean(effectivePrlMnemonic) && (!wallet.address || !wallet.privateKeyHex || !wallet.tweakedPrivateKeyHex);
     if (needsPearl && cryptoEngine && typeof cryptoEngine.derivePearlFromSeed === 'function') {
@@ -384,20 +412,24 @@
     );
     if (!hasCachedMpc && cryptoEngine) {
       if (typeof cryptoEngine.deriveNearMpcEvmAddress === 'function' && typeof cryptoEngine.deriveNearMpcSolanaAddress === 'function') {
-        const evmMpc = cryptoEngine.deriveNearMpcEvmAddress(activeNearId, 'ethereum-1');
-        const solMpc = cryptoEngine.deriveNearMpcSolanaAddress(activeNearId, 'solana-1');
-        wallet.mpcEvmAddress = evmMpc.mpcEvmAddress;
-        wallet.evmAddress = evmMpc.mpcEvmAddress;
-        wallet.solAddress = solMpc.mpcSolAddress;
-        wallet.solPublicKey = solMpc.mpcSolAddress;
-        wallet._mpcDerivedForNearId = activeNearId;
+        try {
+          const evmMpc = cryptoEngine.deriveNearMpcEvmAddress(activeNearId, 'ethereum-1');
+          const solMpc = cryptoEngine.deriveNearMpcSolanaAddress(activeNearId, 'solana-1');
+          wallet.mpcEvmAddress = evmMpc.mpcEvmAddress;
+          wallet.evmAddress = evmMpc.mpcEvmAddress;
+          wallet.solAddress = solMpc.mpcSolAddress;
+          wallet.solPublicKey = solMpc.mpcSolAddress;
+          wallet._mpcDerivedForNearId = activeNearId;
+        } catch (_) {}
       } else if (typeof cryptoEngine.deriveNearMpcAllAddresses === 'function') {
-        const mpcAll = cryptoEngine.deriveNearMpcAllAddresses(activeNearId);
-        wallet.mpcEvmAddress = mpcAll.evmAddress;
-        wallet.evmAddress = mpcAll.evmAddress;
-        wallet.solAddress = mpcAll.solAddress;
-        wallet.solPublicKey = mpcAll.solAddress;
-        wallet._mpcDerivedForNearId = activeNearId;
+        try {
+          const mpcAll = cryptoEngine.deriveNearMpcAllAddresses(activeNearId);
+          wallet.mpcEvmAddress = mpcAll.evmAddress;
+          wallet.evmAddress = mpcAll.evmAddress;
+          wallet.solAddress = mpcAll.solAddress;
+          wallet.solPublicKey = mpcAll.solAddress;
+          wallet._mpcDerivedForNearId = activeNearId;
+        } catch (_) {}
       }
     }
     return wallet;

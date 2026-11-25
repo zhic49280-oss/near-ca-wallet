@@ -34,8 +34,33 @@
   }
 
   let _llamaPoolsCache = { ts: 0, data: null };
+  const LLAMA_STORAGE_KEY = 'near_ca_llama_pools_v1';
+  const LLAMA_FRESH_TTL_MS = 900_000;
+  const LLAMA_STALE_TTL_MS = 7_200_000;
   let _stakingMetricsCache = { ts: 0, pools: null };
   let _stakingMetricsInFlight = null;
+
+  function loadPersistedLlamaCache(maxAgeMs = LLAMA_STALE_TTL_MS) {
+    try {
+      if (typeof localStorage === 'undefined' || !localStorage) return null;
+      const raw = localStorage.getItem(LLAMA_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.data) || !Number.isFinite(Number(parsed.ts))) return null;
+      if (Date.now() - Number(parsed.ts) > maxAgeMs) return null;
+      return { ts: Number(parsed.ts), data: parsed.data };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function savePersistedLlamaCache(filteredPools) {
+    try {
+      if (!Array.isArray(filteredPools) || filteredPools.length === 0) return;
+      if (typeof localStorage === 'undefined' || !localStorage) return;
+      localStorage.setItem(LLAMA_STORAGE_KEY, JSON.stringify({ ts: Date.now(), data: filteredPools }));
+    } catch (_) {}
+  }
 
   const RELEVANT_LLAMA_PROJECTS = new Set([
     'rhea-lst',
@@ -117,10 +142,20 @@
       return cUsd ? `${cTok} ${sym} ($${cUsd})` : `${cTok} ${sym}`;
     };
 
-    const useCachedLlama = Boolean(opts && opts.useCache === true && Array.isArray(_llamaPoolsCache.data) && (Date.now() - _llamaPoolsCache.ts < 900_000));
+    if (!_llamaPoolsCache.data) {
+      const persisted = loadPersistedLlamaCache(LLAMA_STALE_TTL_MS);
+      if (persisted) _llamaPoolsCache = persisted;
+    }
+    const useCachedLlama = Boolean(opts && opts.useCache === true && Array.isArray(_llamaPoolsCache.data) && (Date.now() - _llamaPoolsCache.ts < LLAMA_FRESH_TTL_MS));
     const llamaPromise = useCachedLlama
       ? Promise.resolve({ data: _llamaPoolsCache.data })
-      : fetchJsonWithTimeout('https://yields.llama.fi/pools', {}, 7000);
+      : Promise.race([
+          fetchJsonWithTimeout('https://yields.llama.fi/pools', {}, 5500).catch(() => null),
+          new Promise((resolve) => {
+            const tmr = setTimeout(() => resolve(null), 5800);
+            if (tmr && typeof tmr.unref === 'function') tmr.unref();
+          })
+        ]);
     const runTasksWithLimit = async (taskFns, limit = 6) => {
       const results = new Array(taskFns.length);
       let cursor = 0;
@@ -278,16 +313,22 @@
     }
 
     let llamaPools = [];
+    let llamaFromNetwork = false;
     try {
       const llamaRaw = earlyLlama || (await llamaPromise);
       if (llamaRaw && Array.isArray(llamaRaw.data)) {
         llamaPools = useCachedLlama ? llamaRaw.data : filterAndSortLlamaPools(llamaRaw.data);
+        if (!useCachedLlama && llamaPools.length > 0) llamaFromNetwork = true;
       }
     } catch (_) {
       llamaPools = [];
     }
-    if (!useCachedLlama && llamaPools.length > 0) {
+    if (llamaFromNetwork) {
       _llamaPoolsCache = { ts: Date.now(), data: llamaPools };
+      savePersistedLlamaCache(llamaPools);
+    } else if (llamaPools.length === 0 && Array.isArray(_llamaPoolsCache.data) && (Date.now() - _llamaPoolsCache.ts < LLAMA_STALE_TTL_MS)) {
+      // Graceful stale fallback if yields.llama.fi timed out or failed
+      llamaPools = _llamaPoolsCache.data;
     }
     const findLlamaPool = (predicate) => {
       for (let i = 0; i < llamaPools.length; i++) {
@@ -609,15 +650,47 @@
     // 13. Arc Mainnet Steakhouse Prime USDC (ERC-4626)
     const arcSteakApy = findLlamaApy((p) => String(p.chain || '').toLowerCase() === 'arc' && String(p.symbol || '').toUpperCase() === 'STEAKUSDC');
     if (arcSteakApy !== null) setPool('arc_steak_usdc', { apy: arcSteakApy });
-    if (arcSteakInfoRes.status === 'fulfilled' && arcSteakInfoRes.value) {
+    const arcExplorerOk = arcSteakInfoRes.status === 'fulfilled' && arcSteakInfoRes.value;
+    if (arcExplorerOk) {
       const hCount = Number(arcSteakInfoRes.value?.holders_count || arcSteakInfoRes.value?.holders);
       if (Number.isFinite(hCount) && hCount > 0) setPool('arc_steak_usdc', { stakersCount: hCount });
     }
+    let arcAssetsHex = arcSteakAssetsRes.status === 'fulfilled' ? arcSteakAssetsRes.value : null;
+    let arcPreviewHex = arcSteakPreviewRes.status === 'fulfilled' ? arcSteakPreviewRes.value : null;
+    if (!arcExplorerOk && (!arcAssetsHex || !arcPreviewHex)) {
+      // Fallback when explorer.arc.io returns HTTP 403/unavailable: query Steakhouse vault directly on rpc.mainnet.arc.io
+      const arcRpcCall = async (data) => {
+        const viaChain = await ethReadCall('arc', '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', data, 5000).catch(() => null);
+        if (viaChain) return viaChain;
+        const direct = await fetchJsonWithTimeout(
+          'https://rpc.mainnet.arc.io',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 'arc_steak_fallback',
+              method: 'eth_call',
+              params: [{ to: '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', data }, 'latest']
+            })
+          },
+          5000
+        ).catch(() => null);
+        const resHex = direct && direct.data && typeof direct.data.result === 'string' ? direct.data.result : null;
+        return resHex && resHex !== '0x' ? resHex : null;
+      };
+      const [fbAssets, fbPreview] = await Promise.all([
+        arcAssetsHex ? Promise.resolve(arcAssetsHex) : arcRpcCall('0x01e1d114'),
+        arcPreviewHex ? Promise.resolve(arcPreviewHex) : arcRpcCall('0xef8b30f7000000000000000000000000000000000000000000000000000f4240')
+      ]);
+      if (fbAssets) arcAssetsHex = fbAssets;
+      if (fbPreview) arcPreviewHex = fbPreview;
+    }
     const arcUsd = findLlamaTvlUsd((p) => String(p.chain || '').toLowerCase() === 'arc' && String(p.symbol || '').toUpperCase() === 'STEAKUSDC');
     let arcTvlSet = false;
-    if (arcSteakAssetsRes.status === 'fulfilled' && arcSteakAssetsRes.value) {
+    if (arcAssetsHex) {
       try {
-        const usdcStaked = Number(BigInt(arcSteakAssetsRes.value)) / 1e6;
+        const usdcStaked = Number(BigInt(arcAssetsHex)) / 1e6;
         if (Number.isFinite(usdcStaked) && usdcStaked > 0) {
           const tvlText = formatTvlToken(usdcStaked, 'USDC', arcUsd || usdcStaked);
           if (tvlText) {
@@ -631,9 +704,9 @@
       const tvlText = formatTvlToken(arcUsd, 'USDC', arcUsd);
       if (tvlText) setPool('arc_steak_usdc', { tvlText });
     }
-    if (arcSteakPreviewRes.status === 'fulfilled' && arcSteakPreviewRes.value) {
+    if (arcPreviewHex) {
       try {
-        const shares = BigInt(arcSteakPreviewRes.value);
+        const shares = BigInt(arcPreviewHex);
         const r = Number(shares / 10n ** 12n) / 1e6;
         if (Number.isFinite(r) && r > 0) setPool('arc_steak_usdc', { rate: r });
       } catch (_) {}

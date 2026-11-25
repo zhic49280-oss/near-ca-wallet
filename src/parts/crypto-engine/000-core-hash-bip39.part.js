@@ -538,7 +538,11 @@
   }
 
   function normalizeMnemonicInput(mnemonic) {
-    return (Array.isArray(mnemonic) ? mnemonic.join(' ') : String(mnemonic || '')).trim().normalize('NFKD');
+    return (Array.isArray(mnemonic) ? mnemonic.join(' ') : String(mnemonic || ''))
+      .replace(/[,，.。;；\s]+/g, ' ')
+      .trim()
+      .normalize('NFKD')
+      .toLowerCase();
   }
 
   const _pbkdf2Cache = new Map();
@@ -699,7 +703,7 @@
   function generateMnemonic(length = 12) {
     const wordlist = getBip39Wordlist();
     if (wordlist.length !== 2048) {
-      throw new Error(msg('BIP-39 完整词库未加载，无法安全生成助记词', 'Full 2048-word BIP-39 wordlist unavailable'));
+      throw new Error(msg('助记词词库未加载，无法安全生成助记词', 'Full recovery wordlist unavailable'));
     }
     const len = Number(length) || 12;
     if (![12, 15, 18, 21, 24].includes(len)) {
@@ -765,7 +769,7 @@
       return {
         valid: false,
         error: msg(
-          `⚠️ 助记词数量错误 (Invalid word count)：检测到 ${words.length} 个单词，应为 12 / 15 / 18 / 21 / 24 个英文单词！`,
+          `助记词数量不正确：检测到 ${words.length} 个单词，应为 12 / 15 / 18 / 21 / 24 个英文单词`,
           `Invalid word count: expected 12, 15, 18, 21, or 24 words, got ${words.length}`
         ),
         invalidWords: []
@@ -776,7 +780,7 @@
     const invalidWords = [];
     for (let i = 0; i < words.length; i++) {
       const raw = words[i];
-      const lower = raw.toLowerCase();
+      const lower = raw.normalize('NFKD').toLowerCase();
       if (!/^[a-z]+$/.test(lower) || !wordSet.has(lower)) {
         invalidWords.push({ index: i + 1, word: raw });
       }
@@ -787,19 +791,19 @@
       return {
         valid: false,
         error: msg(
-          `⚠️ 助记词包含无效词 (Invalid BIP-39 words found): ${invalidDetails}，不在标准 BIP-39 词库中，请核对拼写！`,
-          `Invalid BIP-39 words found: ${invalidDetails}`
+          `助记词包含无效单词：${invalidDetails}，请核对拼写`,
+          `Invalid recovery words found: ${invalidDetails}`
         ),
         invalidWords
       };
     }
 
-    const normalized = words.map(w => w.toLowerCase());
+    const normalized = words.map(w => w.normalize('NFKD').toLowerCase());
     const checksumValid = verifyBip39Checksum(normalized);
     if (!checksumValid) {
       return {
         valid: false,
-        error: msg('助记词校验和无效，请检查单词拼写或顺序', 'Invalid BIP-39 checksum; check word spelling or order'),
+        error: msg('助记词校验未通过，请检查单词拼写或顺序', 'Invalid recovery phrase; check word spelling or order'),
         words: normalized,
         checksumValid: false
       };

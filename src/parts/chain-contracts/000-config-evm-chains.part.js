@@ -6,7 +6,7 @@
   const NEAR_RPC_ENDPOINTS = [
     'https://free.rpc.fastnear.com',
     NEAR_RPC_URL,
-    'https://1rpc.io/near'
+    'https://near.drpc.org'
   ];
   const _nearRpc429Until = {};
   const _solRpcCooldownUntil = {};
@@ -100,7 +100,7 @@
       name: 'Ethereum',
       symbol: 'ETH',
       rpc: 'https://ethereum-rpc.publicnode.com',
-      rpcs: ['https://ethereum-rpc.publicnode.com', 'https://1rpc.io/eth'],
+      rpcs: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://rpc.flashbots.net'],
       supportsMulticall3: true,
       kyber: 'ethereum',
       openOcean: 'eth',
@@ -112,7 +112,7 @@
       name: 'Base',
       symbol: 'ETH',
       rpc: 'https://mainnet.base.org',
-      rpcs: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://1rpc.io/base'],
+      rpcs: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base.drpc.org'],
       supportsMulticall3: true,
       kyber: 'base',
       openOcean: 'base',
@@ -124,7 +124,7 @@
       name: 'Arbitrum',
       symbol: 'ETH',
       rpc: 'https://arb1.arbitrum.io/rpc',
-      rpcs: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum-one-rpc.publicnode.com', 'https://1rpc.io/arb'],
+      rpcs: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum-one-rpc.publicnode.com', 'https://arbitrum.drpc.org'],
       supportsMulticall3: true,
       kyber: 'arbitrum',
       openOcean: 'arbitrum',
@@ -136,7 +136,7 @@
       name: 'BSC',
       symbol: 'BNB',
       rpc: 'https://bsc-rpc.publicnode.com',
-      rpcs: ['https://bsc-rpc.publicnode.com', 'https://bsc-dataseed.bnbchain.org', 'https://1rpc.io/bnb'],
+      rpcs: ['https://bsc-rpc.publicnode.com', 'https://bsc-dataseed.bnbchain.org', 'https://bsc-dataseed1.defibit.io', 'https://bsc-dataseed1.ninicoin.io'],
       supportsMulticall3: true,
       kyber: 'bsc',
       openOcean: 'bsc',
@@ -148,7 +148,7 @@
       name: 'Optimism',
       symbol: 'ETH',
       rpc: 'https://mainnet.optimism.io',
-      rpcs: ['https://mainnet.optimism.io', 'https://optimism-rpc.publicnode.com', 'https://1rpc.io/op'],
+      rpcs: ['https://mainnet.optimism.io', 'https://optimism-rpc.publicnode.com', 'https://optimism.drpc.org'],
       supportsMulticall3: true,
       kyber: 'optimism',
       openOcean: 'optimism',
@@ -160,7 +160,7 @@
       name: 'Polygon',
       symbol: 'POL',
       rpc: 'https://polygon-bor-rpc.publicnode.com',
-      rpcs: ['https://polygon-bor-rpc.publicnode.com', 'https://1rpc.io/matic'],
+      rpcs: ['https://polygon-bor-rpc.publicnode.com', 'https://polygon.drpc.org'],
       supportsMulticall3: true,
       kyber: 'polygon',
       openOcean: 'polygon',
@@ -231,4 +231,33 @@
     btc: 0.00005,
     prl: 0.003
   };
+
+  const GAS_CHAIN_ALIASES = Object.assign(Object.create(null), {
+    bnb: 'bsc',
+    smartchain: 'bsc',
+    ethereum: 'eth',
+    arbitrum: 'arb',
+    optimism: 'op',
+    polygon: 'pol',
+    matic: 'pol',
+    avalanche: 'avax',
+    hyperevm: 'hype',
+    robinhood: 'hood',
+    arcnetwork: 'arc',
+    solana: 'sol',
+    bitcoin: 'btc',
+    pearl: 'prl'
+  });
+
+  function getNativeGasReserve(chainKey) {
+    const raw = String(chainKey || '').trim().toLowerCase();
+    const key = Object.prototype.hasOwnProperty.call(GAS_CHAIN_ALIASES, raw) ? GAS_CHAIN_ALIASES[raw] : raw;
+    if (Object.prototype.hasOwnProperty.call(DEFAULT_GAS_BUFFERS, key)) {
+      return DEFAULT_GAS_BUFFERS[key];
+    }
+    if (Object.prototype.hasOwnProperty.call(EVM_CHAINS, key) && EVM_CHAINS[key] && typeof EVM_CHAINS[key].gasReserve === 'number') {
+      return EVM_CHAINS[key].gasReserve;
+    }
+    return 0;
+  }
 

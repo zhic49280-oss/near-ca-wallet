@@ -12,7 +12,7 @@
   const DCL_CONTRACT_ID = 'dclv2.ref-labs.near';
   const DCL_STORAGE_DEPOSIT_NEAR = 0.5;
   const DCL_STORAGE_DEPOSIT_YOCTO = '500000000000000000000000';
-  const DCL_GAS_RESERVE_NEAR = 0.02;
+  const DCL_GAS_RESERVE_NEAR = 0.05;
 
   const JUPITER_TRIGGER_URL = 'https://lite-api.jup.ag/trigger/v1';
   const SOL_LIMIT_MIN_USD = 5;
@@ -484,7 +484,7 @@
     const humanAmt = Number(fromBaseUnits(amtStr, 24));
     const nearBal = Number(contracts.resolveWalletChainBalance(wallet, 'near') || 0);
     const gasReserve = 0.05;
-    if (nearBal < humanAmt + gasReserve) {
+    if (nearBal + 1e-9 < humanAmt + gasReserve) {
       throw new Error(
         t(
           `NEAR 余额不足以封装 (需保留 ${gasReserve} NEAR 作 Gas，当前可用: ${nearBal.toFixed(4)})`,
@@ -545,7 +545,7 @@
 
     const targetPoolId = poolId || resolveNearLimitPoolId(sellId, buyId);
     if (!targetPoolId) {
-      throw new Error(t('该币对暂未开通 DCL 限价池', 'No DCL limit order pool for this pair'));
+      throw new Error(t('该币对暂未开通限价池', 'No limit order pool for this pair'));
     }
 
     const humanSell = Number(fromBaseUnits(amtStr, sellDecimals));
@@ -1054,6 +1054,9 @@
       method: 'eth_call',
       params: [{ to: tokenAddress, data: calldata }, 'latest']
     });
+    if (rpcRes === null || rpcRes === undefined || (rpcRes && rpcRes.error)) {
+      throw new Error(t('授权额度查询失败', 'Failed to query allowance'));
+    }
     const hex = typeof rpcRes === 'string' ? rpcRes : (rpcRes && typeof rpcRes.result === 'string' ? rpcRes.result : '');
     if (!hex || hex === '0x' || !/^0x[0-9a-fA-F]+$/.test(hex)) return 0n;
     return BigInt(hex);
@@ -1193,7 +1196,7 @@
 
     const allowance = await checkEvmCowAllowance({ chainKey: key, owner, tokenAddress: sellToken });
     if (allowance < BigInt(sellStr)) {
-      throw new Error(t(`请先授权 ${sellSymbol} 给 CoW 结算合约`, `Approve ${sellSymbol} for CoW VaultRelayer first`));
+      throw new Error(t(`请先授权 ${sellSymbol} 后再提交限价单`, `Approve ${sellSymbol} before placing limit order`));
     }
 
     const checksumSell = ethers.getAddress(sellToken);
@@ -1245,11 +1248,17 @@
     }, COW_DEFAULT_TIMEOUT_MS);
 
     if (!res.ok) {
-      const desc = (res.data && (res.data.description || res.data.errorType || res.data.error)) || res.rawText || `CoW HTTP ${res.status}`;
-      if (res.status === 429) {
-        throw new Error(t('CoW 订单簿请求过于频繁，请稍后重试', 'CoW orderbook rate limited; retry shortly'));
+      const desc = String((res.data && (res.data.description || res.data.errorType || res.data.error)) || res.rawText || `HTTP ${res.status}`);
+      if (res.status === 429 || res.status === 402 || /x402/i.test(desc)) {
+        if (key === 'bsc') {
+          throw new Error(t('BSC 限价单服务当前繁忙或暂不可用，请稍后重试', 'BSC limit order service is currently busy or unavailable. Please try again later.'));
+        }
+        throw new Error(t('限价单服务请求过于频繁，请稍后重试', 'Limit order service is busy. Please try again shortly.'));
       }
-      throw new Error(String(desc));
+      const friendly = typeof contracts.toUserFriendlyError === 'function'
+        ? contracts.toUserFriendlyError(desc, t('限价单提交失败，请稍后重试', 'Limit order submission failed. Please try again.'))
+        : desc;
+      throw new Error(friendly);
     }
 
     const orderUid = typeof res.data === 'string' ? res.data : (res.rawText ? res.rawText.replace(/"/g, '').trim() : '');
@@ -1272,7 +1281,14 @@
       8000
     ).catch(() => null);
     if (!res) return { active: [], history: [], rateLimited: false };
-    if (res.status === 429) return { active: [], history: [], rateLimited: true };
+    if (res.status === 429 || res.status === 402) {
+      return {
+        active: [],
+        history: [],
+        rateLimited: true,
+        unavailable: key === 'bsc' && res.status === 402
+      };
+    }
     if (!res.ok || !Array.isArray(res.data)) return { active: [], history: [], rateLimited: false };
 
     const active = [];
@@ -1313,8 +1329,17 @@
     }, COW_DEFAULT_TIMEOUT_MS);
 
     if (!res.ok) {
-      const desc = (res.data && (res.data.description || res.data.error)) || res.rawText || `CoW Cancel HTTP ${res.status}`;
-      throw new Error(String(desc));
+      const desc = String((res.data && (res.data.description || res.data.error)) || res.rawText || `HTTP ${res.status}`);
+      if (res.status === 429 || res.status === 402 || /x402/i.test(desc)) {
+        if (key === 'bsc') {
+          throw new Error(t('BSC 限价单服务当前繁忙或暂不可用，请稍后重试', 'BSC limit order service is currently busy or unavailable. Please try again later.'));
+        }
+        throw new Error(t('限价单服务请求过于频繁，请稍后重试', 'Limit order service is busy. Please try again shortly.'));
+      }
+      const friendly = typeof contracts.toUserFriendlyError === 'function'
+        ? contracts.toUserFriendlyError(desc, t('撤单失败，请稍后重试', 'Cancel failed. Please try again.'))
+        : desc;
+      throw new Error(friendly);
     }
     return { ok: true, orderUid };
   }

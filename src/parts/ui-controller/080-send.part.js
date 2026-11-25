@@ -40,7 +40,7 @@
           symbol: g.symbol,
           blockchain: e.blockchain,
           chainLabel: e.kind === 'nep141'
-            ? `${chainMeta.name} (NEP-141 ${shortenAddr(e.contractAddress, 6, 4)})`
+            ? `${chainMeta.name} (${shortenAddr(e.contractAddress, 6, 4)})`
             : `${chainMeta.name}`,
           networkName: e.networkName,
           assetId: e.assetId,
@@ -159,6 +159,9 @@
     if ($('send-detected-net')) $('send-detected-net').textContent = '';
     $('send-route-preview')?.classList.add('hidden');
     $('send-gas-fix-banner')?.classList.add('hidden');
+    _sendCachedCrossQuote = null;
+    const confirmBtn = $('btn-confirm-send');
+    if (confirmBtn) confirmBtn.disabled = false;
 
     updateSendAvailabilityUI();
     if (opts.recipient) handleSendRecipientInput();
@@ -178,6 +181,8 @@
       contract === 'wrap.near' ||
       (bc === 'arc' && contract.toLowerCase() === '0x3600000000000000000000000000000000000000');
   }
+
+  const sendDec = (a, fb = 8) => (a && isNativeSendAsset(a) && a.blockchain === 'arc') ? 18 : (a?.decimals ?? fb);
 
   function resolveEffectiveSendGasPlan(wallet, asset) {
     const st = getState();
@@ -296,6 +301,7 @@
   let _sendCrossQuoteTimer = null;
   let _sendCrossQuoteSeq = 0;
   let _sendCachedCrossQuote = null;
+  let _sendCrossQuoteWarn = null;
 
   function scheduleSendCrossQuoteAsync({ wallet, asset, destAsset, recipient, rawAmtStr, feeBps }) {
     if (_sendCrossQuoteTimer) {
@@ -304,9 +310,10 @@
     }
     const intents = getIntents();
     if (!wallet || !asset || !destAsset || !recipient || !intents || typeof intents.quoteIntentSwapOrWithdraw !== 'function') return;
-    const amountRaw = intents.toBaseUnits(rawAmtStr, asset.decimals || 8);
+    const originAssetId = resolve1ClickId(asset, asset.blockchain) || asset.assetId;
+    const amountRaw = intents.toBaseUnits(rawAmtStr, sendDec(asset, 8));
     if (!amountRaw || amountRaw === '0') return;
-    const cacheKey = `${wallet.id || ''}|${asset.assetId}|${destAsset.assetId}|${amountRaw}|${recipient}`;
+    const cacheKey = `${wallet.id || ''}|${originAssetId}|${destAsset.assetId}|${amountRaw}|${recipient}`;
     if (_sendCachedCrossQuote && _sendCachedCrossQuote.key === cacheKey && (Date.now() - _sendCachedCrossQuote.ts < 15_000)) {
       return;
     }
@@ -315,7 +322,7 @@
       _sendCrossQuoteTimer = null;
       const refundTo = getWalletDefaultRecipientForChain(wallet, asset.blockchain) || (wallet.nearNamedAccount || wallet.nearAddress);
       const q = await intents.quoteIntentSwapOrWithdraw({
-        originAsset: asset.assetId,
+        originAsset: originAssetId,
         destinationAsset: destAsset.assetId,
         amountRaw,
         slippageBps: 100,
@@ -325,10 +332,11 @@
         recipientType: 'DESTINATION_CHAIN',
         appFeeBps: feeBps,
         dry: true
-      }).catch(() => null);
+      }).catch((err) => ({ ok: false, error: err && err.message ? err.message : '' }));
       if (seq !== _sendCrossQuoteSeq) return;
       if (q && q.ok) {
-        const outHuman = q.amountOutFormatted || intents.fromBaseUnits(String(q.amountOut || '0'), destAsset.decimals || 8);
+        _sendCrossQuoteWarn = null;
+        const outHuman = q.amountOutFormatted || intents.fromBaseUnits(String(q.amountOut || '0'), destAsset.decimals ?? 8);
         _sendCachedCrossQuote = {
           key: cacheKey,
           ts: Date.now(),
@@ -336,8 +344,11 @@
           destAsset,
           outHuman: Number(outHuman)
         };
-        updateSendRoutePreview(false);
+      } else {
+        if (_sendCachedCrossQuote && _sendCachedCrossQuote.key === cacheKey) _sendCachedCrossQuote = null;
+        _sendCrossQuoteWarn = { key: cacheKey, msg: toUserFriendlyError(q && q.error, '暂无法获取跨链报价，请稍后重试', 'Cross-chain quote unavailable') };
       }
+      updateSendRoutePreview(false);
     }, 350);
     if (_sendCrossQuoteTimer && typeof _sendCrossQuoteTimer.unref === 'function') {
       _sendCrossQuoteTimer.unref();
@@ -380,9 +391,9 @@
       previewEl.textContent = '';
       return;
     }
-    if (asset.blockchain === 'arc') {
+    if (asset.blockchain === 'arc' || asset.blockchain === 'hype' || !isOneClickAsset(asset, asset.blockchain)) {
       previewEl.classList.remove('hidden');
-      previewEl.textContent = t('Arc 主网暂不支持跨链直转，请使用闪兑', 'Arc Mainnet does not support direct cross-chain send; please use Swap');
+      previewEl.textContent = t('该网络或代币暂不支持跨链直转，请使用闪兑', 'Cross-chain send is unavailable for this network/token; please use Swap');
       return;
     }
     const destAsset = resolveDestinationAssetForNetwork(asset.symbol, net, asset.assetId, targetEvmChain);
@@ -395,19 +406,25 @@
     const feePctText = `${(feeBps / 100).toFixed(2)}%`;
     const rawAmtStr = String($('send-amount-input')?.value || '').trim();
     const amt = Number(rawAmtStr || 0);
+    const originAssetId = resolve1ClickId(asset, asset.blockchain) || asset.assetId;
     let estOutNum = Number.isFinite(amt) && amt > 0 ? amt * (1 - feeBps / 10000) : null;
+    let warnText = '';
     if (Number.isFinite(amt) && amt > 0 && wallet && intents && typeof intents.toBaseUnits === 'function') {
-      const amountRaw = intents.toBaseUnits(rawAmtStr, asset.decimals || 8);
-      const cacheKey = `${wallet.id || ''}|${asset.assetId}|${destAsset.assetId}|${amountRaw}|${addr}`;
+      const amountRaw = intents.toBaseUnits(rawAmtStr, sendDec(asset, 8));
+      const cacheKey = `${wallet.id || ''}|${originAssetId}|${destAsset.assetId}|${amountRaw}|${addr}`;
       if (_sendCachedCrossQuote && _sendCachedCrossQuote.key === cacheKey && (Date.now() - _sendCachedCrossQuote.ts < 15_000) && Number.isFinite(_sendCachedCrossQuote.outHuman) && _sendCachedCrossQuote.outHuman > 0) {
         estOutNum = _sendCachedCrossQuote.outHuman;
+      } else if (_sendCrossQuoteWarn && _sendCrossQuoteWarn.key === cacheKey) {
+        estOutNum = null;
+        warnText = ` · ${_sendCrossQuoteWarn.msg}`;
       } else if (triggerAsyncQuote) {
+        _sendCrossQuoteWarn = null;
         scheduleSendCrossQuoteAsync({ wallet, asset, destAsset, recipient: addr, rawAmtStr, feeBps });
       }
     }
     const estText = estOutNum !== null && estOutNum > 0
       ? ` · ${t('预估到账', 'Est. Receive')}: ~${formatBal(estOutNum, 6)} ${destAsset.symbol || asset.symbol}`
-      : '';
+      : warnText;
     previewEl.classList.remove('hidden');
     previewEl.textContent = `${String(asset.blockchain || '').toUpperCase()} ➔ ${String(destAsset.blockchain || targetEvmChain).toUpperCase()} · ${t('跨链服务费', 'Cross-Chain Fee')}: ${feePctText}${estText}`;
   }
@@ -435,7 +452,7 @@
     let effectiveAvail = avail !== null ? avail : 0;
     let rawUnits = gasPlan.liveGas && gasPlan.liveGas.liveBalanceBaseUnits ? gasPlan.liveGas.liveBalanceBaseUnits : null;
     if (rawUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
-      const liveNum = Number(contracts.fromBaseUnits(rawUnits, asset.decimals || 18));
+      const liveNum = Number(contracts.fromBaseUnits(rawUnits, sendDec(asset, 18)));
       if (Number.isFinite(liveNum) && liveNum > 0 && liveNum <= effectiveAvail + 1e-12) {
         effectiveAvail = liveNum;
       } else {
@@ -449,7 +466,7 @@
       avail: effectiveAvail,
       isNative: true,
       gasBuffer: gasPlan.gasBuffer,
-      decimals: asset.decimals || 6,
+      decimals: sendDec(asset, 6),
       rawBaseUnits: rawUnits,
       exactFeeBaseUnits: gasPlan.exactFeeBaseUnits
     });
@@ -490,40 +507,51 @@
     const asset = getSelectedSendAsset();
     const bal = getSendSourceAvailable();
     const inp = $('send-amount-input');
-    if (!inp || !asset || bal === null || bal <= 0) return;
+    if (!inp || !asset) return;
+    if (bal === null || bal === undefined) {
+      showToast(t('余额同步中，请稍候', 'Balance syncing, please wait'));
+      return;
+    }
+    if (bal <= 0) return;
 
     if (!isNativeSendAsset(asset)) {
       const rawUnits = getWalletTokenRawBaseUnits(wallet, asset.blockchain, asset.contractAddress);
-      inp.value = formatMaxDecimalString(bal, asset.decimals || 6, rawUnits);
+      inp.value = formatMaxDecimalString(bal, asset.decimals ?? 6, rawUnits);
       handleSendAmountInput();
       return;
     }
 
+    const maxBtn = $('btn-send-max');
+    if (maxBtn) maxBtn.disabled = true;
     const startKey = asset.key;
-    const liveGas = await prefetchSendLiveGasAsync(false).catch(() => null);
-    const curAsset = getSelectedSendAsset();
-    if (!curAsset || curAsset.key !== startKey) return;
+    try {
+      const liveGas = await prefetchSendLiveGasAsync(false).catch(() => null);
+      const curAsset = getSelectedSendAsset();
+      if (!curAsset || curAsset.key !== startKey) return;
 
-    const gasPlan = resolveEffectiveSendGasPlan(wallet, curAsset);
-    let effectiveBal = bal;
-    let rawUnits = null;
-    if (liveGas && liveGas.liveBalanceBaseUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
-      const liveNum = Number(contracts.fromBaseUnits(liveGas.liveBalanceBaseUnits, curAsset.decimals || 18));
-      if (Number.isFinite(liveNum) && liveNum > 0 && liveNum <= bal + 1e-12) {
-        effectiveBal = liveNum;
-        rawUnits = liveGas.liveBalanceBaseUnits;
+      const gasPlan = resolveEffectiveSendGasPlan(wallet, curAsset);
+      let effectiveBal = bal;
+      let rawUnits = null;
+      if (liveGas && liveGas.liveBalanceBaseUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
+        const liveNum = Number(contracts.fromBaseUnits(liveGas.liveBalanceBaseUnits, sendDec(curAsset, 18)));
+        if (Number.isFinite(liveNum) && liveNum > 0 && liveNum <= bal + 1e-12) {
+          effectiveBal = liveNum;
+          rawUnits = liveGas.liveBalanceBaseUnits;
+        }
       }
+      const maxInfo = computeExactMaxSpendable({
+        balance: effectiveBal,
+        rawBaseUnits: rawUnits,
+        decimals: sendDec(curAsset, 6),
+        isNative: true,
+        gasReserve: gasPlan.gasBuffer || 0,
+        exactFeeBaseUnits: gasPlan.exactFeeBaseUnits
+      });
+      inp.value = maxInfo.maxAmountStr || '0';
+      handleSendAmountInput();
+    } finally {
+      if (maxBtn) maxBtn.disabled = false;
     }
-    const maxInfo = computeExactMaxSpendable({
-      balance: effectiveBal,
-      rawBaseUnits: rawUnits,
-      decimals: curAsset.decimals || 6,
-      isNative: true,
-      gasReserve: gasPlan.gasBuffer || 0,
-      exactFeeBaseUnits: gasPlan.exactFeeBaseUnits
-    });
-    inp.value = maxInfo.maxAmountStr || '0';
-    handleSendAmountInput();
   }
 
   async function pasteToSendAddress() {
@@ -580,6 +608,29 @@
     updateSendRoutePreview();
   }
 
+  function resolve1ClickId(tok, chain) {
+    if (!tok) return '';
+    const intents = getIntents();
+    const raw = String(tok.assetId || '');
+    const id = intents && typeof intents.resolveOneClickAssetId === 'function'
+      ? String(intents.resolveOneClickAssetId(tok, chain) || raw)
+      : raw;
+    return /^(nep141:|nep245:|1cs_v1:)/i.test(id) ? id : '';
+  }
+
+  function isOneClickAsset(tok, chain) {
+    const bc = String(chain || tok?.blockchain || '').toLowerCase();
+    if (!tok || bc === 'arc' || bc === 'hype') return false;
+    const id = resolve1ClickId(tok, bc);
+    if (!id) return false;
+    const cached = getIntents()?.getCachedDefuseTokens?.() || [];
+    const live1Click = cached.filter((x) => x && /^(nep141:|nep245:|1cs_v1:)/i.test(String(x.assetId || '')));
+    if (live1Click.length > 0 && !/(prl|qtc)\.omft\.near/i.test(id)) {
+      return live1Click.some((x) => String(x.assetId || '').toLowerCase() === id.toLowerCase());
+    }
+    return true;
+  }
+
   function resolveDestinationAssetForNetwork(symbol, detectedNet, fallbackAssetId, preferredEvmChain = 'eth') {
     const tokens = getTokens();
     const symUpper = String(symbol || '').toUpperCase();
@@ -588,6 +639,7 @@
     const targetChain = detectedNet === 'evm'
       ? (EVM_CHAIN_KEYS.includes(prefEvm) ? prefEvm : 'eth')
       : detectedNet;
+    if (targetChain === 'arc' || targetChain === 'hype') return null;
     if (targetChain === 'near' && symUpper === 'PRL') {
       return { assetId: '1cs_v1:near:nep141:prl.omft.near', blockchain: 'near', symbol: 'PRL', decimals: 8 };
     }
@@ -597,11 +649,65 @@
     if (targetChain === 'near' && symUpper === 'QTC') {
       return { assetId: '1cs_v1:near:nep141:qtc.omft.near', blockchain: 'near', symbol: 'QTC', decimals: 12 };
     }
-    const exact = core.find((c) => c.blockchain === targetChain && String(c.symbol).toUpperCase() === symUpper);
-    if (exact) return exact;
+    const exact = core.find((c) => c.blockchain === targetChain && String(c.symbol).toUpperCase() === symUpper && isOneClickAsset(c, targetChain));
+    if (exact) return { ...exact, assetId: resolve1ClickId(exact, targetChain) || exact.assetId };
+    const cached1Click = (getIntents()?.getCachedDefuseTokens?.() || []).filter(
+      (c) => c && /^(nep141:|nep245:|1cs_v1:)/i.test(String(c.assetId || ''))
+    );
+    const exactLive = cached1Click.find((c) => String(c.blockchain || '').toLowerCase() === targetChain && String(c.symbol || '').toUpperCase() === symUpper);
+    if (exactLive) return exactLive;
     const catalog = getSwapTokenCatalog();
-    const exactCat = catalog.find((c) => c.blockchain === targetChain && String(c.symbol).toUpperCase() === symUpper);
-    if (exactCat) return exactCat;
+    const exactCat = catalog.find((c) => c.blockchain === targetChain && String(c.symbol).toUpperCase() === symUpper && isOneClickAsset(c, targetChain));
+    if (exactCat) return { ...exactCat, assetId: resolve1ClickId(exactCat, targetChain) || exactCat.assetId };
+    return null;
+  }
+
+  async function dispatchOnChainSend({ contracts, wallet, asset, isEvmOrigin, isNativeGas, toAddress, exactAmt, avail, gasBuf, gasMeta }) {
+    const bc = asset.blockchain;
+    if (bc === 'near' && asset.kind !== 'nep141' && asset.symbol === 'NEAR') {
+      const res = await contracts.signAndSendNearTransfer({ wallet, receiverId: toAddress.toLowerCase(), amountNear: exactAmt, gasBuffer: gasBuf });
+      return { txHash: res.txHash, tag: 'NEAR', fee: null, netSent: null };
+    }
+    if (bc === 'near' && asset.contractAddress && typeof contracts.executeNearNep141Transfer === 'function') {
+      const res = await contracts.executeNearNep141Transfer({
+        wallet, tokenContract: asset.contractAddress, receiverId: toAddress.toLowerCase(),
+        amount: exactAmt, decimals: asset.decimals ?? 8, tokenSymbol: asset.symbol, tokenBalance: avail
+      });
+      return { txHash: res.txHash, tag: `${asset.symbol} (NEAR)`, fee: null, netSent: null };
+    }
+    if (bc === 'sol') {
+      if (!asset.contractAddress || asset.contractAddress === 'So11111111111111111111111111111111111111112') {
+        const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress, amountSol: exactAmt, gasBuffer: gasBuf });
+        return { txHash: res.txHash, tag: 'SOL', fee: null, netSent: null };
+      }
+      const res = await contracts.executeSolanaSplTransfer({
+        wallet, mintAddress: asset.contractAddress, toAddress, amount: exactAmt,
+        decimals: asset.decimals ?? 6, tokenBalance: avail
+      });
+      return { txHash: res.txHash, tag: `${asset.symbol} (Solana)`, fee: null, netSent: null };
+    }
+    if (isEvmOrigin) {
+      const res = await contracts.executeEvmTransfer({
+        wallet, chainKey: bc, toAddress, amount: exactAmt, tokenContract: asset.contractAddress,
+        decimals: sendDec(asset, 18), tokenBalance: avail, gasBuffer: isNativeGas ? gasBuf : null,
+        gasPriceWei: isNativeGas ? (gasMeta.gasPriceWei ?? null) : null, gasLimit: isNativeGas ? (gasMeta.gasLimit ?? null) : null
+      });
+      return { txHash: res.txHash, tag: 'EVM', fee: null, netSent: null };
+    }
+    if (bc === 'prl') {
+      const res = await contracts.executePearlTransfer({
+        wallet, toAddress, amountPrl: exactAmt, feeDeductMode: 'extra',
+        feePerKbPrl: gasMeta.feePerKbPrl ?? null, gasBuffer: gasBuf
+      });
+      return { txHash: res.txHash, tag: 'PRL', fee: Number(res.feePrl) || 0, netSent: Number(res.sentPrl) || null };
+    }
+    if (bc === 'btc') {
+      const res = await contracts.executeBitcoinTransfer({
+        wallet, toAddress, amountBtc: exactAmt, feeDeductMode: 'extra',
+        feeRateSatVb: gasMeta.feeRateSatVb ?? null, gasBuffer: gasBuf
+      });
+      return { txHash: res.txHash, tag: 'BTC', fee: Number(res.feeBtc) || 0, netSent: Number(res.amountBtc || res.sentBtc) || null };
+    }
     return null;
   }
 
@@ -649,7 +755,7 @@
     let effectiveAvail = avail !== null ? avail : 0;
     let rawUnits = isNativeGas && gasPlan.liveGas && gasPlan.liveGas.liveBalanceBaseUnits ? gasPlan.liveGas.liveBalanceBaseUnits : null;
     if (isNativeGas && rawUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
-      const liveNum = Number(contracts.fromBaseUnits(rawUnits, asset.decimals || 18));
+      const liveNum = Number(contracts.fromBaseUnits(rawUnits, sendDec(asset, 18)));
       if (Number.isFinite(liveNum) && liveNum > 0 && liveNum <= effectiveAvail + 1e-12) {
         effectiveAvail = liveNum;
       } else {
@@ -664,7 +770,7 @@
       avail: effectiveAvail,
       isNative: isNativeGas,
       gasBuffer: gasBuf,
-      decimals: asset.decimals || 6,
+      decimals: sendDec(asset, 6),
       rawBaseUnits: rawUnits,
       exactFeeBaseUnits: gasPlan.exactFeeBaseUnits
     });
@@ -674,7 +780,8 @@
     }
     if (feePlan.mode === 'insufficient_gas') {
       handleSendAmountInput();
-      showToast(`${String(asset.blockchain || '').toUpperCase()} ${t('Gas 余额不足', 'Gas insufficient')}`);
+      const gasSym = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' }[String(asset.blockchain || '').toLowerCase()] || 'ETH';
+      showToast(`${gasSym} ${t('网络手续费余额不足', 'network fee insufficient')}`);
       return;
     }
 
@@ -690,20 +797,23 @@
       });
       if (!isNativeGas && typeof contracts.getNativeGasReserve === 'function') {
         const minNative = contracts.getNativeGasReserve(asset.blockchain);
-        const nativeBal = Number((wallet.nativeBalances && wallet.nativeBalances[asset.blockchain]) ?? 0);
-        if (nativeBal + 1e-12 < minNative) {
-          throw new Error(`${String(asset.blockchain || '').toUpperCase()} ${t('主链 Gas 余额不足', 'native gas insufficient')} (${nativeBal.toFixed(5)} < ${minNative})`);
+        const nativeBal = typeof contracts.resolveWalletChainBalance === 'function'
+          ? contracts.resolveWalletChainBalance(wallet, asset.blockchain)
+          : Number((wallet.nativeBalances && wallet.nativeBalances[asset.blockchain]) ?? 0);
+        if (minNative > 0 && nativeBal + 1e-12 < minNative) {
+          const gasSym = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' }[String(asset.blockchain || '').toLowerCase()] || 'ETH';
+          throw new Error(`${gasSym} ${t('网络手续费余额不足', 'network fee balance insufficient')} (${nativeBal.toFixed(5)} < ${minNative})`);
         }
       }
       if (asset.blockchain === 'sol' && isNativeGas) {
         const feeSol = typeof gasBuf === 'number' ? gasBuf : 0.00001;
         const remainingSol = effectiveAvail - amountNum - feeSol;
         if (remainingSol > 1e-9 && remainingSol < 0.00089088) {
-          throw new Error(t('Solana 账户剩余 SOL 低于免租阈值 (0.000891 SOL)，请点击 MAX 全部发送或减少发送金额', 'Remaining SOL would fall below rent-exempt minimum (0.000891 SOL). Use MAX or send less.'));
+          throw new Error(t('Solana 账户剩余 SOL 低于免租阈值 (0.000891 SOL)，请点击「全部」或减少发送金额', 'Remaining SOL would fall below rent-exempt minimum (0.000891 SOL). Tap Max or send less.'));
         }
       }
     } catch (err) {
-      showToast(err.message);
+      showToast(toUserFriendlyError(err, '余额或参数校验未通过', 'Balance or validation check failed'));
       return;
     }
 
@@ -756,23 +866,24 @@
           asset.blockchain === 'sol' ||
           asset.blockchain === 'prl' ||
           asset.blockchain === 'btc' ||
-          (isEvmOrigin && asset.blockchain !== 'arc');
-        if (!canBroadcastOrigin) {
-          throw new Error(t('所选源链暂不支持自动签名跨链，请在收款网络切换或使用支持的源链', 'Origin chain does not support automated cross-chain broadcast'));
+          (isEvmOrigin && asset.blockchain !== 'arc' && asset.blockchain !== 'hype');
+        if (!canBroadcastOrigin || !isOneClickAsset(asset, asset.blockchain)) {
+          throw new Error(t('所选源链或代币暂不支持跨链直转，请使用闪兑', 'Cross-chain send is unavailable for this source chain/token; please use Swap'));
         }
         preDestAsset = resolveDestinationAssetForNetwork(asset.symbol, detectedNet, asset.assetId, targetEvmChain);
         if (!preDestAsset) {
           throw new Error(t('该代币暂不支持跨链直转到目标网络，请使用闪兑', 'This token cannot be sent directly to the target network; please use Swap'));
         }
         await contracts.ensureWalletSigningKeysAsync(wallet);
-        const amountRaw = intents.toBaseUnits(exactAmt, asset.decimals || 8);
+        const originAssetId = resolve1ClickId(asset, asset.blockchain) || asset.assetId;
+        const amountRaw = intents.toBaseUnits(exactAmt, sendDec(asset, 8));
         const refundTo = getWalletDefaultRecipientForChain(wallet, asset.blockchain) || (wallet.nearNamedAccount || wallet.nearAddress);
-        const cacheKey = `${wallet.id || ''}|${asset.assetId}|${preDestAsset.assetId}|${amountRaw}|${recipient}`;
+        const cacheKey = `${wallet.id || ''}|${originAssetId}|${preDestAsset.assetId}|${amountRaw}|${recipient}`;
         if (_sendCachedCrossQuote && _sendCachedCrossQuote.key === cacheKey && (Date.now() - _sendCachedCrossQuote.ts < 15_000) && _sendCachedCrossQuote.quote && _sendCachedCrossQuote.quote.ok) {
           preQuotedCross = _sendCachedCrossQuote.quote;
         } else {
           preQuotedCross = await intents.quoteIntentSwapOrWithdraw({
-            originAsset: asset.assetId,
+            originAsset: originAssetId,
             destinationAsset: preDestAsset.assetId,
             amountRaw,
             slippageBps: 100,
@@ -785,9 +896,9 @@
           });
         }
         if (!preQuotedCross.ok) {
-          throw new Error(preQuotedCross.error || t('获取跨链转账路由失败', 'Failed to obtain cross-chain route'));
+          throw new Error(toUserFriendlyError(preQuotedCross.error, '获取跨链转账路由失败，请重试', 'Failed to obtain cross-chain route'));
         }
-        const outHuman = preQuotedCross.amountOutFormatted || intents.fromBaseUnits(String(preQuotedCross.amountOut || '0'), preDestAsset.decimals || 8);
+        const outHuman = preQuotedCross.amountOutFormatted || intents.fromBaseUnits(String(preQuotedCross.amountOut || '0'), preDestAsset.decimals ?? 8);
         authReason = `${t('确认跨链发送', 'Confirm cross-chain send')} ${exactAmt} ${asset.symbol} → ~${formatBal(Number(outHuman), 6)} ${preDestAsset.symbol || asset.symbol}`;
       }
 
@@ -796,10 +907,11 @@
       await contracts.ensureWalletSigningKeysAsync(wallet);
 
       if (!isSameChain) {
-        const amountRaw = intents.toBaseUnits(exactAmt, asset.decimals || 8);
+        const originAssetId = resolve1ClickId(asset, asset.blockchain) || asset.assetId;
+        const amountRaw = intents.toBaseUnits(exactAmt, sendDec(asset, 8));
         const refundTo = getWalletDefaultRecipientForChain(wallet, asset.blockchain) || (wallet.nearNamedAccount || wallet.nearAddress);
         preQuotedCross = await intents.quoteIntentSwapOrWithdraw({
-          originAsset: asset.assetId,
+          originAsset: originAssetId,
           destinationAsset: preDestAsset.assetId,
           amountRaw,
           slippageBps: 100,
@@ -811,220 +923,45 @@
           dry: false
         });
         if (!preQuotedCross.ok || !preQuotedCross.depositAddress) {
-          throw new Error(preQuotedCross.error || t('获取跨链转账路由失败', 'Failed to obtain cross-chain route'));
+          throw new Error(toUserFriendlyError(preQuotedCross.error, '获取跨链转账路由失败，请重试', 'Failed to obtain cross-chain route'));
         }
       }
 
       // Case 1: Same-chain direct on-chain transfer
       if (isSameChain) {
-        const exactAmt = rawAmtStr || amountNum;
-        if (asset.blockchain === 'near' && asset.kind !== 'nep141' && asset.symbol === 'NEAR') {
-          const res = await contracts.signAndSendNearTransfer({
-            wallet,
-            receiverId: recipient.toLowerCase(),
-            amountNear: exactAmt,
-            gasBuffer: gasBuf
-          });
-          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
-          showToast(`✅ NEAR ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
-          closeAllSheets();
-          refreshAllBalancesAsync(false);
-          return;
+        const sent = await dispatchOnChainSend({ contracts, wallet, asset, isEvmOrigin, isNativeGas, toAddress: recipient, exactAmt, avail, gasBuf, gasMeta });
+        if (!sent || !sent.txHash) {
+          throw new Error(t('该同链代币转账暂未接通签名广播', 'Direct transfer unsupported for this token'));
         }
-
-        if (asset.blockchain === 'near' && asset.contractAddress && typeof contracts.executeNearNep141Transfer === 'function') {
-          const res = await contracts.executeNearNep141Transfer({
-            wallet,
-            tokenContract: asset.contractAddress,
-            receiverId: recipient.toLowerCase(),
-            amount: exactAmt,
-            decimals: asset.decimals || 8,
-            tokenSymbol: asset.symbol,
-            tokenBalance: avail
-          });
-          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
-          showToast(`✅ ${asset.symbol} (NEAR) ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
-          closeAllSheets();
-          refreshAllBalancesAsync(false);
-          return;
-        }
-
-        if (asset.blockchain === 'sol') {
-          if (!asset.contractAddress || asset.contractAddress === 'So11111111111111111111111111111111111111112') {
-            const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: recipient, amountSol: exactAmt, gasBuffer: gasBuf });
-            recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
-            showToast(`✅ SOL ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
-            closeAllSheets();
-            refreshAllBalancesAsync(false);
-            return;
-          }
-          const res = await contracts.executeSolanaSplTransfer({
-            wallet,
-            mintAddress: asset.contractAddress,
-            toAddress: recipient,
-            amount: exactAmt,
-            decimals: asset.decimals || 6,
-            tokenBalance: avail
-          });
-          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
-          showToast(`✅ ${asset.symbol} (Solana) ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
-          closeAllSheets();
-          refreshAllBalancesAsync(false);
-          return;
-        }
-
-        if (isEvmOrigin) {
-          const res = await contracts.executeEvmTransfer({
-            wallet,
-            chainKey: asset.blockchain,
-            toAddress: recipient,
-            amount: exactAmt,
-            tokenContract: asset.contractAddress,
-            decimals: asset.decimals,
-            tokenBalance: avail,
-            gasBuffer: isNativeGas ? gasBuf : null,
-            gasPriceWei: isNativeGas ? (gasMeta.gasPriceWei ?? null) : null,
-            gasLimit: isNativeGas ? (gasMeta.gasLimit ?? null) : null
-          });
-          recordWalletActivity(wallet, { type: 'send', symbol: asset.symbol, chain: asset.blockchain, amount: amountNum, txHash: res.txHash, title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}` });
-          showToast(`✅ EVM ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
-          closeAllSheets();
-          refreshAllBalancesAsync(false);
-          return;
-        }
-
-        if (asset.blockchain === 'prl') {
-          const res = await contracts.executePearlTransfer({
-            wallet,
-            toAddress: recipient,
-            amountPrl: exactAmt,
-            feeDeductMode: 'extra',
-            feePerKbPrl: gasMeta.feePerKbPrl ?? null,
-            gasBuffer: gasBuf
-          });
-          const feePrl = Number(res.feePrl) || 0;
-          const netSent = Number(res.sentPrl) || amountNum;
-          applyOptimisticChainSpend(wallet, 'prl', netSent, feePrl, res.txHash);
-          recordWalletActivity(wallet, {
-            type: 'send',
-            symbol: asset.symbol,
-            chain: asset.blockchain,
-            amount: netSent,
-            fee: feePrl > 0 ? feePrl : null,
-            netAmount: -(netSent + feePrl),
-            counterparty: recipient,
-            txHash: res.txHash,
-            title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}`
-          });
-          showToast(`✅ PRL ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
-          closeAllSheets();
-          refreshAllBalancesAsync(false);
-          return;
-        }
-        if (asset.blockchain === 'btc') {
-          const res = await contracts.executeBitcoinTransfer({
-            wallet,
-            toAddress: recipient,
-            amountBtc: exactAmt,
-            feeDeductMode: 'extra',
-            feeRateSatVb: gasMeta.feeRateSatVb ?? null,
-            gasBuffer: gasBuf
-          });
-          const feeBtc = Number(res.feeBtc) || 0;
-          const netSent = Number(res.amountBtc || res.sentBtc) || amountNum;
-          applyOptimisticChainSpend(wallet, 'btc', netSent, feeBtc, res.txHash);
-          recordWalletActivity(wallet, {
-            type: 'send',
-            symbol: asset.symbol,
-            chain: 'btc',
-            amount: netSent,
-            fee: feeBtc > 0 ? feeBtc : null,
-            netAmount: -(netSent + feeBtc),
-            counterparty: recipient,
-            txHash: res.txHash,
-            title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}`
-          });
-          showToast(`✅ BTC ${t('广播成功', 'Sent')}: ${shortenAddr(res.txHash)}`);
-          closeAllSheets();
-          refreshAllBalancesAsync(false);
-          return;
-        }
-        throw new Error(t('该同链代币转账暂未接通签名广播', 'Direct transfer unsupported for this token'));
+        const isUtxo = asset.blockchain === 'prl' || asset.blockchain === 'btc';
+        const feeVal = isUtxo ? (sent.fee || 0) : null;
+        const netSent = isUtxo ? (sent.netSent || amountNum) : amountNum;
+        if (isUtxo) applyOptimisticChainSpend(wallet, asset.blockchain, netSent, feeVal, sent.txHash);
+        recordWalletActivity(wallet, {
+          type: 'send',
+          symbol: asset.symbol,
+          chain: asset.blockchain,
+          amount: netSent,
+          fee: feeVal && feeVal > 0 ? feeVal : null,
+          netAmount: isUtxo ? -(netSent + feeVal) : null,
+          counterparty: isUtxo ? recipient : undefined,
+          txHash: sent.txHash,
+          title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}`
+        });
+        showToast(`✅ ${sent.tag} ${t('广播成功', 'Sent')}: ${shortenAddr(sent.txHash)}`);
+        closeAllSheets();
+        refreshAllBalancesAsync(false);
+        return;
       }
 
       // Case 2: Cross-chain L1 -> L1 transfer via pre-quoted 1Click ORIGIN_CHAIN -> DESTINATION_CHAIN
       const destAsset = preDestAsset;
       const quote = preQuotedCross;
-
-      let depositTxHash = '';
-      let depositFeeNum = null;
-      if (asset.blockchain === 'near' && asset.kind !== 'nep141' && asset.symbol === 'NEAR') {
-        const res = await contracts.signAndSendNearTransfer({ wallet, receiverId: quote.depositAddress, amountNear: exactAmt, gasBuffer: gasBuf });
-        depositTxHash = res.txHash;
-      } else if (asset.blockchain === 'near' && asset.contractAddress && typeof contracts.executeNearNep141Transfer === 'function') {
-        const res = await contracts.executeNearNep141Transfer({
-          wallet,
-          tokenContract: asset.contractAddress,
-          receiverId: quote.depositAddress,
-          amount: exactAmt,
-          decimals: asset.decimals || 8,
-          tokenSymbol: asset.symbol,
-          tokenBalance: avail
-        });
-        depositTxHash = res.txHash;
-      } else if (asset.blockchain === 'sol') {
-        if (!asset.contractAddress || asset.contractAddress === 'So11111111111111111111111111111111111111112') {
-          const res = await contracts.executeSolanaNativeTransfer({ wallet, toAddress: quote.depositAddress, amountSol: exactAmt, gasBuffer: gasBuf });
-          depositTxHash = res.txHash;
-        } else {
-          const res = await contracts.executeSolanaSplTransfer({
-            wallet,
-            mintAddress: asset.contractAddress,
-            toAddress: quote.depositAddress,
-            amount: exactAmt,
-            decimals: asset.decimals || 6,
-            tokenBalance: avail
-          });
-          depositTxHash = res.txHash;
-        }
-      } else if (asset.blockchain === 'prl') {
-        const res = await contracts.executePearlTransfer({
-          wallet,
-          toAddress: quote.depositAddress,
-          amountPrl: exactAmt,
-          feeDeductMode: 'extra',
-          feePerKbPrl: gasMeta.feePerKbPrl ?? null,
-          gasBuffer: gasBuf
-        });
-        depositTxHash = res.txHash;
-        depositFeeNum = Number(res.feePrl) || 0;
-        applyOptimisticChainSpend(wallet, 'prl', amountNum, depositFeeNum, depositTxHash);
-      } else if (asset.blockchain === 'btc') {
-        const res = await contracts.executeBitcoinTransfer({
-          wallet,
-          toAddress: quote.depositAddress,
-          amountBtc: exactAmt,
-          feeDeductMode: 'extra',
-          feeRateSatVb: gasMeta.feeRateSatVb ?? null,
-          gasBuffer: gasBuf
-        });
-        depositTxHash = res.txHash;
-        depositFeeNum = Number(res.feeBtc) || 0;
-        applyOptimisticChainSpend(wallet, 'btc', amountNum, depositFeeNum, depositTxHash);
-      } else if (isEvmOrigin) {
-        const res = await contracts.executeEvmTransfer({
-          wallet,
-          chainKey: asset.blockchain,
-          toAddress: quote.depositAddress,
-          amount: exactAmt,
-          tokenContract: asset.contractAddress,
-          decimals: asset.decimals,
-          tokenBalance: avail,
-          gasBuffer: isNativeGas ? gasBuf : null,
-          gasPriceWei: isNativeGas ? (gasMeta.gasPriceWei ?? null) : null,
-          gasLimit: isNativeGas ? (gasMeta.gasLimit ?? null) : null
-        });
-        depositTxHash = res.txHash;
+      const crossSent = await dispatchOnChainSend({ contracts, wallet, asset, isEvmOrigin, isNativeGas, toAddress: quote.depositAddress, exactAmt, avail, gasBuf, gasMeta });
+      const depositTxHash = (crossSent && crossSent.txHash) || '';
+      const depositFeeNum = (crossSent && crossSent.fee !== null) ? crossSent.fee : null;
+      if (depositTxHash && (asset.blockchain === 'prl' || asset.blockchain === 'btc')) {
+        applyOptimisticChainSpend(wallet, asset.blockchain, amountNum, depositFeeNum || 0, depositTxHash);
       }
 
       if (!depositTxHash) {
@@ -1068,7 +1005,7 @@
       closeAllSheets();
       refreshAllBalancesAsync(false);
     } catch (err) {
-      showToast(err && err.message ? err.message : t('转账失败', 'Transfer failed'));
+      showToast(toUserFriendlyError(err, '转账失败，请重试', 'Transfer failed. Please try again.'));
     } finally {
       _sendExecuting = false;
       if (btn) {
