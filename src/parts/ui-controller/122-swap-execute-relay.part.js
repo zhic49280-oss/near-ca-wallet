@@ -30,15 +30,19 @@
           title: `${fromToken.symbol} ➔ SOL (Stage 1)`
         });
 
-        let postSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
-        let postLamports = BigInt(postSolRes?.nativeLamports || '0');
-        if (postLamports <= preLamports) {
-          await new Promise((r) => setTimeout(r, 1800));
-          postSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
-          postLamports = BigInt(postSolRes?.nativeLamports || '0');
+        if (s1Tx?.txHash && typeof contracts.waitForSolanaTxConfirmation === 'function') {
+          await contracts.waitForSolanaTxConfirmation(s1Tx.txHash, 45000);
         }
+        const postSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
+        const postLamports = BigInt(postSolRes?.nativeLamports || '0');
+        if (postSolRes && typeof postSolRes.nativeSol === 'number') {
+          wallet.nativeBalances = wallet.nativeBalances || {};
+          wallet.nativeBalances.sol = postSolRes.nativeSol;
+        }
+        const solGasReserve = typeof contracts.getNativeGasReserve === 'function' ? contracts.getNativeGasReserve('sol') : 0.002;
+        const reserveLamports = BigInt(contracts.toBaseUnits(String(solGasReserve), 9));
         const deltaLamports = postLamports > preLamports ? (postLamports - preLamports) : BigInt(s1Quote.outAmount || '0');
-        const maxSendable = postLamports > 2000000n ? (postLamports - 2000000n) : deltaLamports;
+        const maxSendable = postLamports > reserveLamports ? (postLamports - reserveLamports) : 0n;
         const sendLamports = deltaLamports > maxSendable ? maxSendable : deltaLamports;
         if (sendLamports <= 0n) throw new Error(t('SOL 余额不足以执行跨链第二阶段', 'Insufficient SOL for Stage 2 bridge'));
 
@@ -64,7 +68,8 @@
           sendSolTx = await contracts.executeSolanaNativeTransfer({
             wallet,
             toAddress: stage2Live.depositAddress,
-            amountSol: sendSolNum
+            amountSol: sendSolNum,
+            gasBuffer: solGasReserve
           });
         } catch (s2Err) {
           st.swap.activeOrder = {
@@ -426,7 +431,10 @@
           ? intents.ARC_USDC_CONTRACT
           : fromToken.contractAddress;
         let arcUsdcRaw = amountRaw;
-        if (srcContract.toLowerCase() !== intents.ARC_USDC_CONTRACT.toLowerCase()) {
+        const isArcSwapStage1 = srcContract.toLowerCase() !== intents.ARC_USDC_CONTRACT.toLowerCase();
+        if (isArcSwapStage1) {
+          const preArcRes = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
+          const preArcWei = BigInt(preArcRes?.nativeRaw || '0');
           const s1Q = activeQuote.stage1DexQuote?.routeData
             ? activeQuote.stage1DexQuote
             : await contracts.quoteEvmDexSwap({
@@ -453,7 +461,6 @@
             tokenBalance: avail,
             gasBuffer: isNative ? gasBuf : null
           });
-          arcUsdcRaw = s1Q.amountOut;
           recordWalletActivity(wallet, {
             type: 'swap',
             symbol: fromToken.symbol,
@@ -464,6 +471,27 @@
             title: `${fromToken.symbol} ➔ USDC (Arc Stage 1)`
           });
           showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}: ${shortenAddr(s1Tx.txHash)}`);
+          if (s1Tx?.txHash && typeof contracts.waitForEvmTxConfirmation === 'function') {
+            await contracts.waitForEvmTxConfirmation('arc', s1Tx.txHash, 45000);
+          }
+          const postArcRes = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
+          const postArcWei = BigInt(postArcRes?.nativeRaw || '0');
+          if (postArcRes && typeof postArcRes.nativeFormatted === 'number') {
+            wallet.nativeBalances = wallet.nativeBalances || {};
+            wallet.nativeBalances.arc = postArcRes.nativeFormatted;
+          }
+          const reserveArcWei = BigInt(intents.toBaseUnits('0.02', 18));
+          const maxSpendableWei = postArcWei > reserveArcWei ? (postArcWei - reserveArcWei) : 0n;
+          const deltaArcWei = postArcWei > preArcWei ? (postArcWei - preArcWei) : 0n;
+          const expectedArcWei = BigInt(s1Q.amountOut || '0') * 1000000000000n;
+          let bridgeArcWei = deltaArcWei > 0n ? deltaArcWei : expectedArcWei;
+          if (expectedArcWei > 0n && bridgeArcWei > expectedArcWei) bridgeArcWei = expectedArcWei;
+          if (postArcRes && bridgeArcWei > maxSpendableWei) bridgeArcWei = maxSpendableWei;
+          const bridgeArc6 = bridgeArcWei / 1000000000000n;
+          if (bridgeArc6 <= 0n) {
+            throw new Error(t('Arc 主网兑换后 USDC 余额不足以发起跨链', 'Insufficient Arc USDC after swap to bridge'));
+          }
+          arcUsdcRaw = bridgeArc6.toString();
         }
         const hasStage3 = Boolean(activeQuote.stage3Quote);
         const validRecipEvm = recipient && /^0x[0-9a-fA-F]{40}$/.test(recipient) ? recipient : evmAddr;
@@ -489,7 +517,7 @@
               amountRaw: arcUsdcRaw,
               srcDecimals: 6,
               slippageBps: st.swap.slippageBps,
-              tokenBalance: avail
+              tokenBalance: isArcSwapStage1 ? Number(intents.fromBaseUnits(arcUsdcRaw, 6)) : avail
             });
           } else {
             const liveRelay = await intents.quoteRelayBridge({

@@ -153,7 +153,10 @@
         }
       }
       const activeCompType = st.swap.quoteData && st.swap.quoteData.compositeType;
-      if (activeCompType === 'CROSS_CHAIN_TO_ARC_MAINNET' || activeCompType === 'ARC_MAINNET_TO_CROSS_CHAIN') {
+      const needsBaseRelayGas =
+        activeCompType === 'CROSS_CHAIN_TO_ARC_MAINNET' ||
+        (activeCompType === 'ARC_MAINNET_TO_CROSS_CHAIN' && Boolean(st.swap.quoteData && st.swap.quoteData.stage3Quote));
+      if (needsBaseRelayGas) {
         const baseEthBal = Number((wallet.nativeBalances && wallet.nativeBalances.base) ?? 0);
         if (baseEthBal < 0.00005) {
           throw new Error(t(`Base 链 ETH Gas 余额不足 (当前: ${baseEthBal.toFixed(6)} ETH，中继需要 >= 0.00005 ETH)`, `Insufficient Base ETH for relay gas (${baseEthBal.toFixed(6)} < 0.00005 ETH)`));
@@ -459,6 +462,9 @@
               txHash: origTx?.txHash || '',
               title: `${fromToken.symbol} ➔ SOL (Stage 1)`
             });
+            if (origTx?.txHash && typeof contracts.waitForSolanaTxConfirmation === 'function') {
+              await contracts.waitForSolanaTxConfirmation(origTx.txHash, 45000);
+            }
             const postSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
             const postLamports = BigInt(postSolRes?.nativeLamports || '0');
             const deltaL = postLamports > preLamports ? (postLamports - preLamports) : BigInt(s0Quote.outAmount || '0');
@@ -499,6 +505,9 @@
               txHash: origTx?.txHash || '',
               title: `${fromToken.symbol} ➔ ${origStage.chain.toUpperCase()} (Stage 1)`
             });
+            if (origTx?.txHash && typeof contracts.waitForEvmTxConfirmation === 'function') {
+              await contracts.waitForEvmTxConfirmation(origStage.chain, origTx.txHash, 45000);
+            }
             const postEvm = await contracts.fetchEvmNativeAndErc20Balance(origStage.chain, evmAddr).catch(() => null);
             const postWei = BigInt(postEvm?.nativeRaw || '0');
             const deltaW = postWei > preWei ? (postWei - preWei) : BigInt(s0Q.amountOut || '0');

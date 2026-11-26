@@ -102,6 +102,25 @@
     throw lastErr || new Error('Solana RPC call failed');
   }
 
+  async function waitForSolanaTxConfirmation(txSig, timeoutMs = 45000) {
+    if (!txSig) return null;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const res = await callSolanaRpc('getSignatureStatuses', [[txSig], { searchTransactionHistory: true }], 5000).catch(() => null);
+      const status = res && Array.isArray(res.value) ? res.value[0] : null;
+      if (status) {
+        if (status.err) {
+          throw new Error(t(`Solana 链上交易执行失败 (tx: ${txSig})`, `Solana transaction failed (tx: ${txSig})`));
+        }
+        if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
+          return status;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    return null;
+  }
+
   /**
    * 通用竞速聚合器：并发发起多个异步请求，一旦首个有效结果到达，
    * 仅再等待 graceMs 毫秒让其余更快候选参与比价，超时立即返回当前已到达的结果数组，

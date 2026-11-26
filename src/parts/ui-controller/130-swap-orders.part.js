@@ -577,9 +577,13 @@
             const arcBal = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
             const availArcWei = BigInt(arcBal?.nativeRaw || '0');
             const availArc6 = availArcWei / 1000000000000n;
+            const reserveArc6 = 20000n;
+            const maxSpendableArc6 = availArc6 > reserveArc6 ? (availArc6 - reserveArc6) : 0n;
             const reqRaw = BigInt(follow.amountRaw || '0');
-            const bridgeArc6 = reqRaw > 0n && availArc6 > 0n ? (reqRaw < availArc6 ? reqRaw : availArc6) : (reqRaw || availArc6);
-            if (bridgeArc6 <= 0n) throw new Error(t('Arc USDC 余额不足以发起跨链至 Base', 'Insufficient Arc USDC to bridge to Base'));
+            const bridgeArc6 = reqRaw > 0n
+              ? (maxSpendableArc6 > 0n ? (reqRaw < maxSpendableArc6 ? reqRaw : maxSpendableArc6) : 0n)
+              : maxSpendableArc6;
+            if (bridgeArc6 <= 0n) throw new Error(t('Arc USDC 余额不足或不足预留 Gas 以发起跨链至 Base', 'Insufficient Arc USDC (after gas reserve) to bridge to Base'));
             const preBaseRes = await contracts.fetchEvmNativeAndErc20Balance('base', evmAddr, intents.BASE_USDC_EVM, 6).catch(() => null);
             const isBaseUsdcDest = String(follow.destinationAsset || '') === intents.BASE_USDC_ASSET_ID;
             const relayLive = await intents.quoteRelayBridge({
@@ -768,7 +772,7 @@
             dry: false
           });
           if (!s3Quote.ok || !s3Quote.depositAddress) {
-            throw new Error(s3Quote.error || t('获取第三阶段跨链路由失败', 'Failed to get stage 3 1Click route'));
+            throw new Error(s3Quote.error || t('获取第三阶段跨链路由失败', 'Failed to get stage 3 cross-chain route'));
           }
           const sendS3 = await contracts.executeEvmTransfer({
             wallet,
