@@ -59,15 +59,44 @@
           : (wallet.nearNep141Balances && wallet.nearNep141Balances[intents.PRL_NEAR_CONTRACT]
               ? Number(wallet.nearNep141Balances[intents.PRL_NEAR_CONTRACT].formatted)
               : null);
-        const sendBridge = await contracts.executeNearNep141Transfer({
-          wallet,
-          tokenContract: intents.PRL_NEAR_CONTRACT,
-          receiverId: bridgeQuote.depositAddress,
-          amount: prlHuman,
-          decimals: 8,
-          tokenSymbol: 'PRL',
-          tokenBalance: realPrlBal
-        });
+        let sendBridge;
+        try {
+          sendBridge = await contracts.executeNearNep141Transfer({
+            wallet,
+            tokenContract: intents.PRL_NEAR_CONTRACT,
+            receiverId: bridgeQuote.depositAddress,
+            amount: prlHuman,
+            decimals: 8,
+            tokenSymbol: 'PRL',
+            tokenBalance: realPrlBal
+          });
+        } catch (bridgeErr) {
+          st.swap.activeOrder = {
+            walletId: wallet.id,
+            depositAddress: refRes.txHash || `near_prl_${Date.now()}`,
+            status: 'SUCCESS',
+            fromSymbol: fromToken.symbol,
+            toSymbol: toToken.symbol,
+            originTxHash: refRes.txHash || '',
+            autoBroadcasted: true,
+            createdAt: Date.now(),
+            followUpFailed: true,
+            followUpError: bridgeErr?.message || t('第一阶段已换出 PRL，第二步跨链失败，请点击继续重试', 'Stage 1 swapped to PRL; tap Resume for Stage 2'),
+            followUpBridgeOut: {
+              originAsset: intents.PRL_NEAR_ASSET_ID,
+              hubContract: intents.PRL_NEAR_CONTRACT,
+              hubDecimals: 8,
+              destinationAsset: intents.PRL_PEARL_ASSET_ID,
+              recipient,
+              expectedInRaw: prlOutRaw,
+              slippageBps: st.swap.slippageBps,
+              toSymbol: toToken.symbol
+            }
+          };
+          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+          renderSwapOrderCard();
+          throw bridgeErr;
+        }
         await intents.submitExternalDepositTxHash({
           depositAddress: bridgeQuote.depositAddress,
           txHash: sendBridge.txHash,
@@ -145,7 +174,7 @@
         if (!bridgeLive.ok || !bridgeLive.depositAddress) {
           throw new Error(bridgeLive.error || t('创建 PRL 跨链订单失败', 'Failed to create PRL bridge order'));
         }
-        const bridgeTx = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: bridgeLive.depositAddress, gasOverride: originGasOverride });
+        const bridgeTx = await broadcastOriginDepositTx({ wallet, fromToken, amt: amtStr, avail, depositAddress: bridgeLive.depositAddress, gasOverride: originGasOverride });
         if (!bridgeTx || !bridgeTx.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
@@ -373,6 +402,29 @@
               toSymbol: toToken.symbol
             }
           };
+          {
+            const s2Reserve = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', activeQuote).selectedReserve;
+            if (isRelaySolDex) {
+              st.swap.activeOrder.followUpBridgeOut.followUpSolDexSwap = {
+                outputMint: toToken.contractAddress,
+                outputDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 6,
+                toSymbol: toToken.symbol,
+                expectedSolRaw: String(activeQuote?.intermediaryRaw || '0'),
+                reserveSol: s2Reserve,
+                slippageBps: st.swap.slippageBps
+              };
+            } else if (isRelayEvmDex) {
+              st.swap.activeOrder.followUpBridgeOut.followUpEvmDexSwap = {
+                chainKey: String(toToken.blockchain || '').toLowerCase(),
+                destToken: toToken.contractAddress,
+                destDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 18,
+                toSymbol: toToken.symbol,
+                expectedInRaw: String(activeQuote?.intermediaryRaw || '0'),
+                reserveNative: s2Reserve,
+                slippageBps: st.swap.slippageBps
+              };
+            }
+          }
           if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
           renderSwapOrderCard();
           throw s2Err;
@@ -454,7 +506,7 @@
         const txRes = await broadcastOriginDepositTx({
           wallet,
           fromToken,
-          amt,
+          amt: amtStr,
           avail,
           depositAddress: liveQuote.depositAddress,
           gasOverride: originGasOverride

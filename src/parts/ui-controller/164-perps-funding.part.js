@@ -1,3 +1,5 @@
+  let _perpFundingBusy = false;
+
   function getEligiblePerpOneClickEntries(wallet) {
     const hl = getHyperliquid();
     if (!wallet || !hl) return [];
@@ -460,6 +462,7 @@
   }
 
   async function executePerpOneClickDepositUI() {
+    if (_perpFundingBusy) return;
     const st = getState();
     const hl = getHyperliquid();
     const intents = getIntents();
@@ -467,7 +470,9 @@
     const wallet = st.getActiveWallet();
     if (!hl || !intents || !contracts || !wallet) return;
 
-    const amt = Number($('perp-oc-amount')?.value || 0);
+    const rawAmtStr = String($('perp-oc-amount')?.value || '').trim();
+    const amt = Number(rawAmtStr || 0);
+    const amtExact = /^\d+(\.\d+)?$/.test(rawAmtStr) ? rawAmtStr : amt;
     const key = $('perp-oc-origin-select')?.value || '';
     const entry = getEligiblePerpOneClickEntries(wallet).find((e) => e.key === key);
     const check = evaluatePerpOneClickState({
@@ -483,8 +488,7 @@
       return;
     }
     const avail = Number(entry.balance || 0);
-    const authed = await verifySecurityAuthAsync(wallet, `${t('跨链充值至 Hyperliquid', 'Cross-chain deposit to Hyperliquid')} (${amt} ${entry.symbol})`);
-    if (!authed) return;
+    _perpFundingBusy = true;
     const btn = $('btn-perp-oc-deposit');
     const prevBtnTxt = btn ? btn.textContent : '';
     if (btn) {
@@ -492,8 +496,10 @@
       btn.textContent = t('充值提交中...', 'Depositing...');
     }
     try {
+      const authed = await verifySecurityAuthAsync(wallet, `${t('跨链充值至 Hyperliquid', 'Cross-chain deposit to Hyperliquid')} (${rawAmtStr || amt} ${entry.symbol})`);
+      if (!authed) return;
       await ensureEthersLoaded();
-      const q = await hl.quoteOneClickDepositToHlSpot({ wallet, originToken: entry, amount: amt, dry: false });
+      const q = await hl.quoteOneClickDepositToHlSpot({ wallet, originToken: entry, amount: amtExact, dry: false });
       if (!q || !q.ok || !q.depositAddress) throw new Error((q && q.error) || t('获取跨链充值路由失败', 'Failed to get deposit route'));
 
       const walletKey = wallet.id || wallet.nearNamedAccount || wallet.nearAddress || 'default';
@@ -509,15 +515,15 @@
 
       let txHash = '';
       if (entry.blockchain === 'near' && entry.kind !== 'nep141' && entry.symbol === 'NEAR') {
-        txHash = (await contracts.signAndSendNearTransfer({ wallet, receiverId: q.depositAddress, amountNear: amt, gasBuffer: ocGasBuf })).txHash;
+        txHash = (await contracts.signAndSendNearTransfer({ wallet, receiverId: q.depositAddress, amountNear: amtExact, gasBuffer: ocGasBuf })).txHash;
       } else if (entry.blockchain === 'near' && entry.contractAddress) {
-        txHash = (await contracts.executeNearNep141Transfer({ wallet, tokenContract: entry.contractAddress, receiverId: q.depositAddress, amount: amt, decimals: entry.decimals || 8, tokenSymbol: entry.symbol, tokenBalance: avail })).txHash;
+        txHash = (await contracts.executeNearNep141Transfer({ wallet, tokenContract: entry.contractAddress, receiverId: q.depositAddress, amount: amtExact, decimals: entry.decimals || 8, tokenSymbol: entry.symbol, tokenBalance: avail })).txHash;
       } else if (entry.blockchain === 'sol') {
         txHash = !entry.contractAddress || entry.contractAddress === 'So11111111111111111111111111111111111111112'
-          ? (await contracts.executeSolanaNativeTransfer({ wallet, toAddress: q.depositAddress, amountSol: amt, gasBuffer: ocGasBuf })).txHash
-          : (await contracts.executeSolanaSplTransfer({ wallet, mintAddress: entry.contractAddress, toAddress: q.depositAddress, amount: amt, decimals: entry.decimals || 6, tokenBalance: avail })).txHash;
+          ? (await contracts.executeSolanaNativeTransfer({ wallet, toAddress: q.depositAddress, amountSol: amtExact, gasBuffer: ocGasBuf })).txHash
+          : (await contracts.executeSolanaSplTransfer({ wallet, mintAddress: entry.contractAddress, toAddress: q.depositAddress, amount: amtExact, decimals: entry.decimals || 6, tokenBalance: avail })).txHash;
       } else if (entry.blockchain === 'btc') {
-        const res = await contracts.executeBitcoinTransfer({ wallet, toAddress: q.depositAddress, amountBtc: amt, feeDeductMode: 'extra', feeRateSatVb: ocMeta.feeRateSatVb ?? null, gasBuffer: ocGasBuf });
+        const res = await contracts.executeBitcoinTransfer({ wallet, toAddress: q.depositAddress, amountBtc: amtExact, feeDeductMode: 'extra', feeRateSatVb: ocMeta.feeRateSatVb ?? null, gasBuffer: ocGasBuf });
         txHash = res.txHash;
         applyOptimisticChainSpend(wallet, 'btc', amt, Number(res.feeBtc) || 0, txHash);
       } else {
@@ -525,7 +531,7 @@
           wallet,
           chainKey: entry.blockchain,
           toAddress: q.depositAddress,
-          amount: amt,
+          amount: amtExact,
           tokenContract: entry.contractAddress,
           decimals: entry.decimals || 18,
           tokenBalance: avail,
@@ -559,6 +565,7 @@
       evaluatePerpOneClickUI();
       showToast(st.perp.fundingQuoteError);
     } finally {
+      _perpFundingBusy = false;
       if (btn) {
         btn.disabled = false;
         if (prevBtnTxt) btn.textContent = prevBtnTxt;
@@ -568,6 +575,7 @@
   }
 
   async function executePerpArbBridgeDepositUI() {
+    if (_perpFundingBusy) return;
     const st = getState();
     const hl = getHyperliquid();
     const wallet = st.getActiveWallet();
@@ -577,9 +585,10 @@
       if (pre.error) showToast(pre.error);
       return;
     }
-    const amt = Number($('perp-arb-amount')?.value || 0);
-    const authed = await verifySecurityAuthAsync(wallet, `${t('Arbitrum 充值 USDC 至 Hyperliquid', 'Deposit Arbitrum USDC to Hyperliquid')} (${amt} USDC)`);
-    if (!authed) return;
+    const rawAmtStr = String($('perp-arb-amount')?.value || '').trim();
+    const amt = Number(rawAmtStr || 0);
+    const amtExact = /^\d+(\.\d+)?$/.test(rawAmtStr) ? rawAmtStr : amt;
+    _perpFundingBusy = true;
     const btn = $('btn-perp-arb-deposit');
     const prevBtnTxt = btn ? btn.textContent : '';
     if (btn) {
@@ -587,8 +596,10 @@
       btn.textContent = t('提交充值中...', 'Depositing...');
     }
     try {
+      const authed = await verifySecurityAuthAsync(wallet, `${t('Arbitrum 充值 USDC 至 Hyperliquid', 'Deposit Arbitrum USDC to Hyperliquid')} (${rawAmtStr || amt} USDC)`);
+      if (!authed) return;
       await ensureEthersLoaded();
-      const res = await hl.depositArbUsdcToHlBridge({ wallet, amount: amt });
+      const res = await hl.depositArbUsdcToHlBridge({ wallet, amount: amtExact });
       if (res && res.txHash) {
         recordWalletActivity(wallet, {
           type: 'send',
@@ -609,6 +620,7 @@
     } catch (err) {
       showToast(formatPerpError(err, 'Arbitrum 充值失败，请稍后重试', 'Arbitrum deposit failed. Please try again.'));
     } finally {
+      _perpFundingBusy = false;
       if (btn) {
         btn.disabled = false;
         btn.textContent = prevBtnTxt || t('确认 Arbitrum 充值', 'Confirm Arbitrum Deposit');
@@ -618,6 +630,7 @@
   }
 
   async function executePerpWithdrawUI() {
+    if (_perpFundingBusy) return;
     const st = getState();
     const hl = getHyperliquid();
     const wallet = st.getActiveWallet();
@@ -629,9 +642,7 @@
     }
     const amt = Number($('perp-withdraw-amount')?.value || 0);
     const withdrawable = st.perp.account ? Number(st.perp.account.withdrawable || 0) : 0;
-    const authed = await verifySecurityAuthAsync(wallet, t('提现 USDC 至 Arbitrum 钱包', 'Withdraw USDC to Arbitrum wallet'));
-    if (!authed) return;
-
+    _perpFundingBusy = true;
     const btn = $('btn-perp-withdraw');
     const prevBtnTxt = btn ? btn.textContent : '';
     if (btn) {
@@ -639,6 +650,8 @@
       btn.textContent = t('提现提交中...', 'Withdrawing...');
     }
     try {
+      const authed = await verifySecurityAuthAsync(wallet, t('提现 USDC 至 Arbitrum 钱包', 'Withdraw USDC to Arbitrum wallet'));
+      if (!authed) return;
       await ensureEthersLoaded();
       await hl.withdrawHlToArbitrum({ wallet, amount: amt, withdrawable });
       showToast(`✅ ${t('提现请求已提交至 Arbitrum (约几分钟到账)', 'Withdrawal submitted to Arbitrum')}`);
@@ -648,6 +661,7 @@
     } catch (err) {
       showToast(formatPerpError(err, '提现失败，请稍后重试', 'Withdrawal failed. Please try again.'));
     } finally {
+      _perpFundingBusy = false;
       if (btn) {
         btn.disabled = false;
         btn.textContent = prevBtnTxt || t('确认提现到 Arbitrum', 'Confirm Withdraw to Arbitrum');

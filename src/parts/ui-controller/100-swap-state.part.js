@@ -771,6 +771,20 @@
     };
   }
 
+  // Arc native USDC reports 18-dec gas units but the token uses 6 decimals: floor balance, ceil fee.
+  function scaleSwapLiveGasUnits(token, liveBalanceRaw, feeRaw) {
+    const isArc6Dec = token && String(token.blockchain || '').toLowerCase() === 'arc' &&
+      String(token.contractAddress || '').toLowerCase() === '0x3600000000000000000000000000000000000000' &&
+      Number(token.decimals) === 6;
+    let balanceUnits = liveBalanceRaw ? String(liveBalanceRaw) : null;
+    let feeUnits = feeRaw;
+    if (isArc6Dec) {
+      if (balanceUnits && /^\d+$/.test(balanceUnits)) balanceUnits = (BigInt(balanceUnits) / 1000000000000n).toString();
+      if (feeUnits && /^\d+$/.test(String(feeUnits))) feeUnits = ((BigInt(String(feeUnits)) + 999999999999n) / 1000000000000n).toString();
+    }
+    return { balanceUnits, feeUnits };
+  }
+
   function resolveEffectiveSwapGasPlan(wallet, fromToken, toToken, gasReserveMode = 'auto', quoteData = null) {
     const st = getState();
     const contracts = getContracts();
@@ -877,8 +891,9 @@
       const isNative = isSwapTokenNative(fromToken);
       const gasPlan = resolveEffectiveSwapGasPlan(wallet, fromToken, toToken, gasReserveMode || 'auto', quoteData);
       const customGasBuf = isNative ? gasPlan.gasBuffer : null;
+      const arcScaled = isNative ? scaleSwapLiveGasUnits(fromToken, gasPlan.liveGas && gasPlan.liveGas.liveBalanceBaseUnits, gasPlan.exactFeeBaseUnits) : null;
       const rawUnits = isNative
-        ? (gasPlan.liveGas && gasPlan.liveGas.liveBalanceBaseUnits ? gasPlan.liveGas.liveBalanceBaseUnits : null)
+        ? (arcScaled && arcScaled.balanceUnits ? arcScaled.balanceUnits : null)
         : getWalletTokenRawBaseUnits(wallet, fromToken.blockchain, fromToken.contractAddress);
       let effectiveAvail = avail !== null ? avail : 0;
       let checkedRawUnits = rawUnits;
@@ -899,7 +914,7 @@
         gasBuffer: customGasBuf,
         decimals: fromToken.decimals || 6,
         rawBaseUnits: checkedRawUnits,
-        exactFeeBaseUnits: isNative ? gasPlan.exactFeeBaseUnits : null
+        exactFeeBaseUnits: isNative ? (arcScaled ? arcScaled.feeUnits : gasPlan.exactFeeBaseUnits) : null
       });
       const gasMap = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' };
       const gasSym = gasMap[String(fromToken.blockchain || '').toLowerCase()] || 'ETH';

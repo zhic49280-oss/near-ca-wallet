@@ -24,7 +24,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.73');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.74');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -289,7 +289,6 @@
     const client = st.wc.client;
     const wallet = st.getActiveWallet();
     if (!p || !client || !wallet) return;
-    if (!(await verifySecurityAuthAsync(wallet, t('授权 WalletConnect 连接', 'Authorize WalletConnect')))) return;
     _wcApprovingProposal = true;
     const fwLoading = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (fwLoading && typeof fwLoading.mountWcProposalPanel === 'function') {
@@ -302,6 +301,7 @@
       approveBtn.textContent = t('授权中...', 'Approving...');
     }
     try {
+      if (!(await verifySecurityAuthAsync(wallet, t('授权 WalletConnect 连接', 'Authorize WalletConnect')))) return;
       await contracts.ensureWalletSigningKeysAsync(wallet);
       const supportedChainIds = new Set(Object.values(contracts.EVM_CHAINS || {}).map((c) => `eip155:${c.chainId}`));
       const chainsSet = new Set(['eip155:1', 'eip155:8453', 'eip155:56', 'eip155:42161'].filter((c) => supportedChainIds.size === 0 || supportedChainIds.has(c)));
@@ -403,7 +403,6 @@
       return;
     }
 
-    if (!(await verifySecurityAuthAsync(wallet, t('批准 WalletConnect DApp 请求', 'Approve WalletConnect request')))) return;
     _wcApprovingRequest = true;
     const approveBtn = typeof document !== 'undefined' ? document.querySelector('#wc-request-card .btn-primary') : null;
     const prevBtnText = approveBtn ? approveBtn.textContent : '';
@@ -412,6 +411,7 @@
       approveBtn.textContent = t('处理中...', 'Signing...');
     }
     try {
+      if (!(await verifySecurityAuthAsync(wallet, t('批准 WalletConnect DApp 请求', 'Approve WalletConnect request')))) return;
       await contracts.ensureWalletSigningKeysAsync(wallet);
       const ethersLib = await ensureEthersLoaded();
       if (!ethersLib) throw new Error(t('EVM 签名库不可用', 'EVM signer unavailable'));
@@ -655,7 +655,7 @@
     const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
     if (existing) return existing;
     if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
-      await loadScriptOnce('src/jsqr-lazy.js?v=6.73').catch(() => false);
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.74').catch(() => false);
       return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     }
     return null;

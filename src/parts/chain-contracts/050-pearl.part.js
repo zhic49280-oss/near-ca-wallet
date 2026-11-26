@@ -314,7 +314,7 @@
       .sort((a, b) => (BigInt(String(b.value)) > BigInt(String(a.value)) ? 1 : -1));
 
     const resolvedFeePerKb = feeEst && feeEst.result && Number(feeEst.result) > 0 ? Number(feeEst.result) : 0.0066;
-    const reqGrainsBig = BigInt(toBaseUnits(String(reqAmt), 8));
+    const reqGrainsBig = BigInt(toBaseUnits(amountPrl, 8));
     let initInCount = 0;
     let initAcc = 0n;
     for (const u of sortedUtxos) {

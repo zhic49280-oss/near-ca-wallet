@@ -821,6 +821,7 @@
   }
 
   let _orderPollInFlight = false;
+  let _orderPollSeq = 0;
 
   async function refreshActiveSwapOrderStatus(manual = false) {
     if (_orderPollInFlight && !manual) return;
@@ -832,6 +833,7 @@
       if (manual) showToast(t('当前没有进行中的跨链订单', 'No active cross-chain order'));
       return;
     }
+    const mySeq = ++_orderPollSeq;
     _orderPollInFlight = true;
     const refreshBtn = manual ? $('btn-refresh-swap-order') : null;
     const prevBtnText = refreshBtn ? refreshBtn.textContent : '';
@@ -839,12 +841,14 @@
       refreshBtn.disabled = true;
       refreshBtn.textContent = t('刷新中...', 'Refreshing...');
     }
+    const isStalePoll = () => mySeq !== _orderPollSeq || st.swap.activeOrder !== order;
     try {
       if (order.followUpBaseOneClick && !order.followUpExecuted && !order.followUpFailed && order.status === 'PENDING_BASE_BRIDGE') {
         const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
         const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
         if (evmAddr && contracts) {
           const baseBalRes = await contracts.fetchEvmNativeAndErc20Balance('base', evmAddr, intents.BASE_USDC_EVM, 6).catch(() => null);
+          if (isStalePoll()) return;
           const availRaw = BigInt(baseBalRes?.tokenRaw || '0');
           const preRaw = BigInt(order.followUpBaseOneClick.preBaseRaw || '0');
           if (availRaw > preRaw) {
@@ -866,6 +870,7 @@
         const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
         if (evmAddr && contracts) {
           const arcBalRes = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
+          if (isStalePoll()) return;
           const availWei = BigInt(arcBalRes?.nativeRaw || '0');
           const preWei = BigInt(order.followUpArcDexSwap.preArcUsdcRaw || '0');
           const reserveWei = BigInt(intents.toBaseUnits('0.02', 18));
@@ -892,6 +897,7 @@
           const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
           if (wallet) {
             const depRes = await intents.fetchNearcomConfidentialDepositStatus({ wallet, proof: order.followUpConfidentialSwap.depositProof }).catch((e) => ({ ok: false, error: e && e.message }));
+            if (isStalePoll()) return;
             if (depRes && depRes.ok && depRes.status) {
               order.status = depRes.status;
               if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
@@ -917,6 +923,7 @@
         return;
       }
       const res = await intents.fetchSwapOrderStatus(order.depositAddress).catch((e) => ({ ok: false, error: e && e.message }));
+      if (isStalePoll()) return;
       if (res && res.ok && res.status) {
         order.status = res.status;
         if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
@@ -934,7 +941,9 @@
         showToast((res && res.error) || `${t('暂未获取到新状态，当前', 'No update yet; status')}: ${getSwapOrderStatusLabel(order.status)}`);
       }
     } finally {
-      _orderPollInFlight = false;
+      if (mySeq === _orderPollSeq) {
+        _orderPollInFlight = false;
+      }
       if (refreshBtn) {
         refreshBtn.disabled = false;
         refreshBtn.textContent = prevBtnText || t('刷新状态', 'Refresh');

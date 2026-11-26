@@ -2,6 +2,8 @@
 
   let _solRentScanAccounts = [];
   let _solRentSelectedAtas = new Set();
+  let _solRentScanSeq = 0;
+  let _solRentReclaimInFlight = false;
 
   function openSolRentReclaimSheet() {
     const st = getState();
@@ -49,8 +51,16 @@
     const tokenByMint = new Map();
     for (const tk of solTokens) tokenByMint.set(tk.contractAddress, tk);
 
+    const scanSeq = ++_solRentScanSeq;
+    const activeWalletId = wallet.id;
+    const activeSolAddr = wallet.solAddress;
+    const isStaleScan = () => {
+      const cur = st.getActiveWallet();
+      return scanSeq !== _solRentScanSeq || !cur || cur.id !== activeWalletId || cur.solAddress !== activeSolAddr;
+    };
+
     try {
-      const scanPromise = contracts.scanSolanaReclaimableAccounts(wallet.solAddress, {
+      const scanPromise = contracts.scanSolanaReclaimableAccounts(activeSolAddr, {
         priceResolver: (mint) => {
           const tk = tokenByMint.get(mint);
           if (!tk) return null;
@@ -62,6 +72,7 @@
         setTimeout(() => reject(new Error(t('Solana 网络响应超时，请点击刷新重试', 'Solana network timed out, please tap Refresh'))), 10000)
       );
       const res = await Promise.race([scanPromise, timeoutPromise]);
+      if (isStaleScan()) return;
       _solRentScanAccounts = (res.accounts || []).map((acc) => {
         const tk = tokenByMint.get(acc.mint);
         return {
@@ -76,6 +87,7 @@
       );
       renderSolRentList();
     } catch (err) {
+      if (isStaleScan()) return;
       if (sumEl) sumEl.textContent = '--';
       if (execBtn) {
         execBtn.disabled = true;
@@ -90,7 +102,7 @@
         }
       }
     } finally {
-      if (refreshBtn) {
+      if (refreshBtn && scanSeq === _solRentScanSeq) {
         refreshBtn.disabled = false;
         if (prevRefreshTxt) refreshBtn.textContent = prevRefreshTxt;
       }
@@ -171,6 +183,7 @@
   }
 
   async function executeSolRentReclaimUI() {
+    if (_solRentReclaimInFlight) return;
     const st = getState();
     const wallet = st.getActiveWallet();
     const contracts = getContracts();
@@ -185,8 +198,7 @@
       ? `${t('⚠️ 危险：将永久销毁有余额代币', '⚠️ WARNING: Permanently BURN')} [${burnSummary}] ${t('以回收', 'to reclaim')} +${totalSol.toFixed(4)} SOL`
       : `${t('回收', 'Reclaim')} ${selected.length} ${t('个空账户/WSOL 租金', 'empty/WSOL accounts')} (+${totalSol.toFixed(4)} SOL)`;
 
-    if (!(await verifySecurityAuthAsync(wallet, promptText))) return;
-
+    _solRentReclaimInFlight = true;
     const btn = $('btn-execute-sol-rent');
     const prevTxt = btn ? btn.textContent : '';
     if (btn) {
@@ -194,6 +206,7 @@
       btn.textContent = t('回收中...', 'Reclaiming...');
     }
     try {
+      if (!(await verifySecurityAuthAsync(wallet, promptText))) return;
       const res = await contracts.executeSolanaRentReclaim({ wallet, accounts: selected });
       const firstHash = res.txHashes && res.txHashes[0] ? `: ${shortenAddr(res.txHashes[0])}` : '';
       showToast(`✅ ${t('已回收', 'Reclaimed')} +${res.reclaimedSol.toFixed(4)} SOL (${res.closedCount} ${t('个账户', 'accounts')})${firstHash}`);
@@ -203,6 +216,7 @@
       showToast(toUserFriendlyError(err, '租金回收失败', 'Rent reclaim failed'));
       await scanSolRentReclaimUI().catch(() => {});
     } finally {
+      _solRentReclaimInFlight = false;
       if (btn && _solRentSelectedAtas.size > 0) {
         btn.disabled = false;
       }

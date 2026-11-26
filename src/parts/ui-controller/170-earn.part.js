@@ -705,7 +705,29 @@
     }
   }
 
+  let _earnStakeInFlight = false;
+
   async function executeSelectedStake() {
+    if (_earnStakeInFlight) return;
+    _earnStakeInFlight = true;
+    const lockBtn = $('btn-execute-stake');
+    const lockPrevTxt = lockBtn ? lockBtn.textContent : '';
+    if (lockBtn) {
+      lockBtn.disabled = true;
+      lockBtn.textContent = t('处理中...', 'Processing...');
+    }
+    try {
+      await executeSelectedStakeInner();
+    } finally {
+      _earnStakeInFlight = false;
+      if (lockBtn) {
+        lockBtn.disabled = false;
+        lockBtn.textContent = lockPrevTxt || t('确认链上质押', 'Confirm On-Chain Stake');
+      }
+    }
+  }
+
+  async function executeSelectedStakeInner() {
     const st = getState();
     const contracts = getContracts();
     const wallet = st.getActiveWallet();
@@ -876,8 +898,6 @@
     const baseAuthLabel = actionLabelMap[actionType] || t('确认质押赎回操作', 'Confirm Stake Redemption');
     const authLabel = parsedCustom ? `${baseAuthLabel} · ${formatBal(parsedCustom, 4)}` : baseAuthLabel;
     const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
-    if (!(await verifySecurityAuthAsync(wallet, authLabel))) return;
-
     _earnActionInFlight = true;
     const prevTxt = btn ? btn.textContent : '';
     if (btn) {
@@ -885,6 +905,7 @@
       btn.textContent = t('处理中...', 'Processing...');
     }
     try {
+      if (!(await verifySecurityAuthAsync(wallet, authLabel))) return;
       showToast(t('正在签名并提交赎回交易...', 'Signing & submitting redemption...'));
       let res = null;
       if (actionType === 'sol_validator_deactivate') {

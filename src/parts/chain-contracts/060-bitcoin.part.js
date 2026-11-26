@@ -6,6 +6,39 @@
   ];
   const _btcApiCooldownUntil = {};
 
+  // 公共 BTC 费率查询：60s TTL 缓存 + in-flight 去重 + 主备降级（mempool -> blockstream）
+  const BTC_FEE_RATE_TTL_MS = 60_000;
+  let _btcFeeRateCache = { ts: 0, satPerVbyte: 0 };
+  let _btcFeeRateInFlight = null;
+  async function fetchBtcFeeRateSatVb(timeoutMs = 5000) {
+    const now = Date.now();
+    if (_btcFeeRateCache.satPerVbyte > 0 && now - _btcFeeRateCache.ts < BTC_FEE_RATE_TTL_MS) {
+      return _btcFeeRateCache.satPerVbyte;
+    }
+    if (_btcFeeRateInFlight) return _btcFeeRateInFlight;
+    _btcFeeRateInFlight = (async () => {
+      let rate = 0;
+      const mempoolFees = await fetchJsonWithTimeout('https://mempool.space/api/v1/fees/recommended', {}, timeoutMs)
+        .then((r) => (r && r.data !== undefined ? r.data : r))
+        .catch(() => null);
+      if (mempoolFees && Number(mempoolFees.halfHourFee || mempoolFees.fastestFee) > 0) {
+        rate = Math.ceil(Number(mempoolFees.halfHourFee || mempoolFees.fastestFee));
+      } else {
+        const bsFees = await fetchJsonWithTimeout('https://blockstream.info/api/fee-estimates', {}, timeoutMs)
+          .then((r) => (r && r.data !== undefined ? r.data : r))
+          .catch(() => null);
+        if (bsFees && Number(bsFees['2'] || bsFees['3'] || bsFees['1']) > 0) {
+          rate = Math.ceil(Number(bsFees['2'] || bsFees['3'] || bsFees['1']));
+        }
+      }
+      if (rate > 0) _btcFeeRateCache = { ts: Date.now(), satPerVbyte: rate };
+      return rate > 0 ? rate : (_btcFeeRateCache.satPerVbyte > 0 ? _btcFeeRateCache.satPerVbyte : 0);
+    })().finally(() => {
+      _btcFeeRateInFlight = null;
+    });
+    return _btcFeeRateInFlight;
+  }
+
   function bitcoinTaprootScriptPubKey(cryptoEngine, btcAddress) {
     const decoded = cryptoEngine.decodeBech32m(String(btcAddress || '').trim());
     if (!decoded || !decoded.valid || decoded.hrp !== 'bc' || decoded.witnessVersion !== 1 || !decoded.programBytes || decoded.programBytes.length !== 32) {
@@ -349,10 +382,9 @@
       throw new Error(t('Bitcoin 账户密钥不可用', 'Bitcoin account key unavailable'));
     }
 
-    const [utxos, mempoolFees, blockstreamFees] = await Promise.all([
+    const [utxos, cachedFeeRate] = await Promise.all([
       btcApiRequestJson(`/address/${encodeURIComponent(wallet.btcAddress)}/utxo`, {}, 8000),
-      feeRateSatVb ? Promise.resolve(null) : fetchJsonWithTimeout('https://mempool.space/api/v1/fees/recommended', {}, 5000).catch(() => null),
-      feeRateSatVb ? Promise.resolve(null) : fetchJsonWithTimeout('https://blockstream.info/api/fee-estimates', {}, 5000).catch(() => null)
+      feeRateSatVb ? Promise.resolve(0) : fetchBtcFeeRateSatVb(5000).catch(() => 0)
     ]);
 
     if (!Array.isArray(utxos) || utxos.length === 0) {
@@ -377,11 +409,7 @@
 
     let satPerVbyte = Number(feeRateSatVb);
     if (!Number.isFinite(satPerVbyte) || satPerVbyte <= 0) {
-      if (mempoolFees && Number(mempoolFees.halfHourFee || mempoolFees.fastestFee) > 0) {
-        satPerVbyte = Math.ceil(Number(mempoolFees.halfHourFee || mempoolFees.fastestFee));
-      } else if (blockstreamFees && Number(blockstreamFees['2'] || blockstreamFees['3'] || blockstreamFees['1']) > 0) {
-        satPerVbyte = Math.ceil(Number(blockstreamFees['2'] || blockstreamFees['3'] || blockstreamFees['1']));
-      }
+      if (cachedFeeRate > 0) satPerVbyte = cachedFeeRate;
     }
     if (!Number.isFinite(satPerVbyte) || satPerVbyte <= 0) {
       throw new Error(t('无法获取实时 Bitcoin 网络费率，请稍后重试', 'Failed to fetch live Bitcoin fee rate'));
@@ -389,10 +417,7 @@
     satPerVbyte = Math.max(1, satPerVbyte);
 
     const sortedUtxos = [...spendableUtxos].sort((a, b) => (BigInt(String(b.value)) > BigInt(String(a.value)) ? 1 : -1));
-    const reqAmtStr = (typeof reqAmt === 'number' && /e/i.test(String(reqAmt))) || /e/i.test(String(reqAmt))
-      ? Number(reqAmt).toFixed(8)
-      : String(reqAmt);
-    const reqSatsBig = BigInt(toBaseUnits(reqAmtStr, 8));
+    const reqSatsBig = BigInt(toBaseUnits(amountBtc, 8));
     let initInCount = 0;
     let initAcc = 0n;
     for (const u of sortedUtxos) {

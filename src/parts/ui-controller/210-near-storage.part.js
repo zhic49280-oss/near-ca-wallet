@@ -2,6 +2,8 @@
 
   let _nearStorageScanAccounts = [];
   let _nearStorageSelectedContracts = new Set();
+  let _nearStorageScanSeq = 0;
+  let _nearStorageReclaimInFlight = false;
 
   function openNearStorageReclaimSheet() {
     const st = getState();
@@ -42,12 +44,21 @@
       }
     }
 
+    const scanSeq = ++_nearStorageScanSeq;
+    const activeWalletId = wallet.id;
+    const isStaleScan = () => {
+      const cur = st.getActiveWallet();
+      const curAcct = cur ? (cur.nearNamedAccount || cur.nearAddress) : '';
+      return scanSeq !== _nearStorageScanSeq || !cur || cur.id !== activeWalletId || curAcct !== nearAcct;
+    };
+
     try {
       const scanPromise = contracts.scanNearReclaimableStorageAsync(nearAcct);
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error(t('NEAR 网络响应超时，请点击刷新重试', 'NEAR network timed out, please tap Refresh'))), 8000)
       );
       const res = await Promise.race([scanPromise, timeoutPromise]);
+      if (isStaleScan()) return;
       _nearStorageScanAccounts = Array.isArray(res && res.accounts) ? res.accounts : [];
       _nearStorageSelectedContracts = new Set(
         _nearStorageScanAccounts
@@ -56,6 +67,7 @@
       );
       renderNearStorageList();
     } catch (err) {
+      if (isStaleScan()) return;
       if (sumEl) sumEl.textContent = '--';
       if (listEl) {
         const errText = toUserFriendlyError(err, '扫描失败', 'Scan failed');
@@ -66,7 +78,7 @@
         }
       }
     } finally {
-      if (refreshBtn) {
+      if (refreshBtn && scanSeq === _nearStorageScanSeq) {
         refreshBtn.disabled = false;
         if (prevRefreshTxt) refreshBtn.textContent = prevRefreshTxt;
       }
@@ -146,6 +158,7 @@
   }
 
   async function executeNearStorageReclaimUI() {
+    if (_nearStorageReclaimInFlight) return;
     const st = getState();
     const wallet = st.getActiveWallet();
     const contracts = getContracts();
@@ -154,8 +167,7 @@
 
     const totalNear = selected.reduce((s, a) => s + Number(a.depositNear || 0), 0);
     const promptText = `${t('回收 NEAR 存储押金', 'Reclaim NEAR Storage')} (${selected.length} · +${totalNear.toFixed(5)} NEAR)`;
-    if (!(await verifySecurityAuthAsync(wallet, promptText))) return;
-
+    _nearStorageReclaimInFlight = true;
     const btn = $('btn-execute-near-storage');
     const prevTxt = btn ? btn.textContent : '';
     if (btn) {
@@ -163,6 +175,7 @@
       btn.textContent = t('回收中...', 'Reclaiming...');
     }
     try {
+      if (!(await verifySecurityAuthAsync(wallet, promptText))) return;
       const res = await contracts.executeNearStorageReclaim({ wallet, contracts: selected });
       const firstHash = res.txHashes && res.txHashes[0] ? `: ${shortenAddr(res.txHashes[0])}` : '';
       showToast(`✅ ${t('已回收', 'Reclaimed')} +${totalNear.toFixed(5)} NEAR (${res.reclaimedCount} ${t('个合约', 'contracts')})${firstHash}`);
@@ -172,6 +185,7 @@
       showToast(toUserFriendlyError(err, '存储押金回收失败', 'Storage reclaim failed'));
       await scanNearStorageReclaimUI().catch(() => {});
     } finally {
+      _nearStorageReclaimInFlight = false;
       if (btn && _nearStorageSelectedContracts.size > 0) {
         btn.disabled = false;
       }

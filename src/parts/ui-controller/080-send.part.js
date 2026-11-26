@@ -66,7 +66,7 @@
       (bc === 'arc' && contractAddress.toLowerCase() === '0x3600000000000000000000000000000000000000');
 
     if (bc === 'near' && sym === 'NEAR' && isNativeContract) return wallet.nativeBalances.near;
-    if (bc === 'near' && contractAddress && !isNativeContract) {
+    if (bc === 'near' && contractAddress && (!isNativeContract || contractAddress === 'wrap.near')) {
       const nep = wallet.nearNep141Balances && wallet.nearNep141Balances[contractAddress];
       return nep && typeof nep.formatted === 'number' && Number.isFinite(nep.formatted) ? nep.formatted : null;
     }
@@ -870,17 +870,8 @@
 
       if (!isSameChain) {
         const existingOrder = st.swap && st.swap.activeOrder;
-        const hasPendingMultiStage = existingOrder && existingOrder.walletId === wallet.id && (
-          existingOrder.followUpConfidentialSwap ||
-          existingOrder.followUpRefSwap ||
-          existingOrder.followUpDclSwap ||
-          existingOrder.followUpSolDexSwap ||
-          existingOrder.followUpEvmDexSwap ||
-          existingOrder.followUpArcRelay ||
-          existingOrder.followUpArcDexSwap ||
-          existingOrder.followUpBaseOneClick ||
-          existingOrder.followUpBridgeOut
-        ) && !existingOrder.followUpExecuted && (
+        const hasPendingMultiStage = existingOrder && existingOrder.walletId === wallet.id &&
+          hasPendingSwapFollowUp(existingOrder) && !existingOrder.followUpExecuted && (
           existingOrder.followUpFailed ||
           !['SUCCESS', 'COMPLETED', 'FAILED', 'REFUNDED'].includes(String(existingOrder.status || '').toUpperCase())
         );

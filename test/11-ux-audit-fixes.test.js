@@ -148,10 +148,13 @@ test('v6.38-v6.40 UX Audit Fixes: Swap flip & origin change clear swap-amount-in
     assert.equal(state.swap.amountIn, '', 'Changing swap from token must clear amountIn');
     assert.equal(getOrMake('swap-amount-in').value, '', 'Changing swap from token must clear DOM input');
 
-    // Verify multi-stage guard source code uses followUpSolDexSwap, followUpEvmDexSwap, followUpExecuted, COMPLETED
+    // Verify multi-stage guard delegates to hasPendingSwapFollowUp (which checks followUpSolDexSwap, followUpEvmDexSwap, followUpSolBridgeOut, etc.)
     const coreSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/120-swap-execute-core.part.js'), 'utf8');
-    assert.ok(coreSrc.includes('existingOrder.followUpSolDexSwap'));
-    assert.ok(coreSrc.includes('existingOrder.followUpEvmDexSwap'));
+    const ordersSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/130-swap-orders.part.js'), 'utf8');
+    assert.ok(coreSrc.includes('hasPendingSwapFollowUp(existingOrder)'));
+    assert.ok(ordersSrc.includes('order.followUpSolDexSwap'));
+    assert.ok(ordersSrc.includes('order.followUpEvmDexSwap'));
+    assert.ok(ordersSrc.includes('order.followUpSolBridgeOut'));
     assert.ok(coreSrc.includes('!existingOrder.followUpExecuted'));
     assert.ok(coreSrc.includes("'COMPLETED'"));
   } finally {

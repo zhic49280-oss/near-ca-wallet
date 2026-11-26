@@ -84,17 +84,8 @@
     if (!wallet) return;
 
     const existingOrder = st.swap.activeOrder;
-    const hasPendingMultiStage = existingOrder && existingOrder.walletId === wallet.id && (
-      existingOrder.followUpConfidentialSwap ||
-      existingOrder.followUpRefSwap ||
-      existingOrder.followUpDclSwap ||
-      existingOrder.followUpSolDexSwap ||
-      existingOrder.followUpEvmDexSwap ||
-      existingOrder.followUpArcRelay ||
-      existingOrder.followUpArcDexSwap ||
-      existingOrder.followUpBaseOneClick ||
-      existingOrder.followUpBridgeOut
-    ) && !existingOrder.followUpExecuted && (
+    const hasPendingMultiStage = existingOrder && existingOrder.walletId === wallet.id &&
+      hasPendingSwapFollowUp(existingOrder) && !existingOrder.followUpExecuted && (
       existingOrder.followUpFailed ||
       !['SUCCESS', 'COMPLETED', 'FAILED', 'REFUNDED'].includes(String(existingOrder.status || '').toUpperCase())
     );
@@ -130,7 +121,8 @@
       : null;
     let effectiveAvail = avail !== null ? avail : 0;
     if (isNative && gasPlan.liveGas && gasPlan.liveGas.liveBalanceBaseUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
-      const liveNum = Number(contracts.fromBaseUnits(gasPlan.liveGas.liveBalanceBaseUnits, fromToken.decimals || 18));
+      const liveScaled = scaleSwapLiveGasUnits(fromToken, gasPlan.liveGas.liveBalanceBaseUnits, null);
+      const liveNum = Number(contracts.fromBaseUnits(liveScaled.balanceUnits, fromToken.decimals || 18));
       if (Number.isFinite(liveNum) && liveNum > 0 && liveNum <= effectiveAvail + 1e-12) {
         effectiveAvail = liveNum;
       }
@@ -389,7 +381,7 @@
         const inTx = await broadcastOriginDepositTx({
           wallet,
           fromToken,
-          amt,
+          amt: amtStr,
           avail,
           depositAddress: depRes.depositAddress,
           gasOverride: originGasOverride
@@ -602,7 +594,7 @@
           const inTx = await broadcastOriginDepositTx({
             wallet,
             fromToken: bridgeToken,
-            amt: bridgeAmtNum,
+            amt: isPostOriginDex ? String(bridgeAmtNum) : amtStr,
             avail: bridgeAvail,
             depositAddress: liveIn.depositAddress,
             gasOverride: stages.length < activeQuote.stages.length ? null : originGasOverride

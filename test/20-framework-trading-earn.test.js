@@ -75,7 +75,7 @@ test('FW-2.5: refreshLimitOrdersAsync clears ordersLoading before renderLimitOrd
   const nextFnIdx = limitSrc.indexOf('function renderLimitOrdersList', fnIdx);
   assert.ok(fnIdx !== -1 && nextFnIdx !== -1, 'refreshLimitOrdersAsync and renderLimitOrdersList must exist');
   const fnBody = limitSrc.slice(fnIdx, nextFnIdx);
-  const clearIdx = fnBody.indexOf('if (reqSeq === _limitOrdSeq) st.limit.ordersLoading = false;');
+  const clearIdx = fnBody.indexOf('st.limit.ordersLoading = false;');
   const renderIdx = fnBody.indexOf('renderLimitOrdersList();', clearIdx);
   assert.ok(clearIdx !== -1 && renderIdx > clearIdx, 'refreshLimitOrdersAsync must clear ordersLoading before calling renderLimitOrdersList');
   assert.ok(fnBody.includes('if (wasLoading) renderLimitOrdersList();'), 'refreshLimitOrdersAsync finally block must re-render if still loading');

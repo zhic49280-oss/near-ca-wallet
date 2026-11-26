@@ -20,8 +20,9 @@
     if (st.perp.showChart) tasks.push(hl.fetchHlCandles(coin, iv, 200).catch(() => []));
     const [ob, candles] = await Promise.all(tasks);
     if (st.perp.selectedCoin !== coin) return;
+    const ivStillCurrent = (st.perp.chartInterval || '15m') === iv;
     if (ob) st.perp.orderbook = ob;
-    if (Array.isArray(candles)) st.perp.candles = candles;
+    if (Array.isArray(candles) && ivStillCurrent) st.perp.candles = candles;
     if (typeof st.saveCachedPerpSnapshot === 'function') {
       st.saveCachedPerpSnapshot({
         candles: Array.isArray(candles) && candles.length > 0 ? candles : undefined,
@@ -171,6 +172,15 @@
                 evaluatePerpOrderUI(false);
               }
             } else if (msg && msg.channel === 'webData2' && msg.data) {
+              const curW = s.getActiveWallet();
+              const curAddr = curW && contracts && typeof contracts.resolveWalletEvmSender === 'function'
+                ? contracts.resolveWalletEvmSender(curW)
+                : '';
+              const msgUser = String(msg.data.user || '').toLowerCase();
+              if (!curAddr || String(curAddr).toLowerCase() !== String(hlAddr || '').toLowerCase()
+                || (msgUser && msgUser !== String(hlAddr || '').toLowerCase())) {
+                return;
+              }
               const hl = getHyperliquid();
               const ch = msg.data.clearinghouseState;
               const prevAcct = s.perp.account || {};
@@ -259,6 +269,11 @@
         if (!hl || !contracts || !wallet) return;
         await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
         const hlAddr = contracts.resolveWalletEvmSender(wallet);
+        const refreshWalletId = wallet.id;
+        const refreshStale = () => {
+          const cur = st.getActiveWallet();
+          return !cur || cur.id !== refreshWalletId;
+        };
         if ((!st.perp.markets.length || !st.perp.account) && typeof st.loadCachedPerpSnapshot === 'function') {
           st.loadCachedPerpSnapshot(hlAddr);
           renderPerpView();
@@ -269,6 +284,7 @@
           needMarkets ? hl.fetchHlMarkets().catch(() => null) : Promise.resolve(null),
           hlAddr ? hl.fetchHlAccountState(hlAddr).catch(() => null) : Promise.resolve(null)
         ]);
+        if (refreshStale()) return;
         if (Array.isArray(mkts) && mkts.length > 0) {
           st.perp.markets = mkts;
           st.perp.lastMarketSyncTs = Date.now();
@@ -754,11 +770,11 @@
     }
     const sideLabel = isBuy ? t('做多', 'Long') : t('做空', 'Short');
     const confirmLabel = `${t('确认合约下单', 'Confirm Perp Order')}: ${sideLabel} ${formatPerpDisplayPair(market.name)} ${st.perp.leverage}x · ${evalRes.sizeNum}`;
-    if (!(await verifySecurityAuthAsync(wallet, confirmLabel))) return;
     st.perp.submitting = true;
     st.perp.errorMsg = '';
     renderPerpView();
     try {
+      if (!(await verifySecurityAuthAsync(wallet, confirmLabel))) return;
       await ensureEthersLoaded();
       const oType = st.perp.orderType || 'market';
       const tif = st.perp.tif || (oType === 'post_only' ? 'Alo' : (oType === 'limit' ? 'Gtc' : 'Ioc'));
@@ -776,6 +792,7 @@
         limitPrice: isLimitLike ? Number(st.perp.limitPriceInput) : null,
         reduceOnly: Boolean(st.perp.reduceOnly),
         leverage: levUnchanged ? null : st.perp.leverage,
+        currentLeverage: openPos ? Number(openPos.leverageValue) || null : null,
         isCross: st.perp.marginMode === 'cross',
         tpPrice: tpNum,
         slPrice: slNum,
@@ -805,11 +822,11 @@
     const pos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === coin);
     let market = (st.perp.markets || []).find((m) => m.name === coin);
     if (!pos) return;
-    if (!(await verifySecurityAuthAsync(wallet, `${t('确认市价平仓', 'Confirm Market Close')}: ${formatPerpDisplayPair(coin)}`))) return;
     _perpTradeActionBusy = true;
     st.perp.actionBusyKey = `close:${coin}`;
     renderPerpBottomList();
     try {
+      if (!(await verifySecurityAuthAsync(wallet, `${t('确认市价平仓', 'Confirm Market Close')}: ${formatPerpDisplayPair(coin)}`))) return;
       await ensureEthersLoaded();
       if (!market) {
         const mkts = await hl.fetchHlMarkets();
@@ -872,12 +889,12 @@
         return;
       }
     }
-    if (!(await verifySecurityAuthAsync(wallet, `${clearOnly ? t('清除止盈止损', 'Clear TP/SL') : t('更新止盈止损', 'Update TP/SL')}: ${formatPerpDisplayPair(coin)}`))) return;
     _perpTradeActionBusy = true;
     const btn = $('btn-perp-tpsl-save');
     const prevTxt = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = t('提交中...', 'Saving...'); }
     try {
+      if (!(await verifySecurityAuthAsync(wallet, `${clearOnly ? t('清除止盈止损', 'Clear TP/SL') : t('更新止盈止损', 'Update TP/SL')}: ${formatPerpDisplayPair(coin)}`))) return;
       await ensureEthersLoaded();
       if (!market) {
         const mkts = await hl.fetchHlMarkets();
@@ -912,11 +929,11 @@
     if (!hl || !wallet || !coin) return;
     const pos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === coin);
     if (!pos) return;
-    if (!(await verifySecurityAuthAsync(wallet, `${t('确认反手开仓', 'Confirm Reverse Position')}: ${formatPerpDisplayPair(coin)}`))) return;
     _perpTradeActionBusy = true;
     st.perp.actionBusyKey = `reverse:${coin}`;
     renderPerpBottomList();
     try {
+      if (!(await verifySecurityAuthAsync(wallet, `${t('确认反手开仓', 'Confirm Reverse Position')}: ${formatPerpDisplayPair(coin)}`))) return;
       await ensureEthersLoaded();
       let market = (st.perp.markets || []).find((m) => m.name === coin);
       if (!market) {
@@ -949,11 +966,11 @@
     if (!hl || !wallet || !acct) return;
     const tab = st.perp.bottomTab || 'positions';
     const actionLabel = tab === 'orders' ? t('确认撤销全部委托', 'Confirm Cancel All Orders') : t('确认一键全平所有仓位', 'Confirm Close All Positions');
-    if (!(await verifySecurityAuthAsync(wallet, actionLabel))) return;
     _perpBatchBusy = true;
     st.perp.actionBusyKey = 'batch';
     renderPerpBottomList();
     try {
+      if (!(await verifySecurityAuthAsync(wallet, actionLabel))) return;
       await ensureEthersLoaded();
       if ((!st.perp.markets || st.perp.markets.length === 0) && typeof hl.fetchHlMarkets === 'function') {
         st.perp.markets = await hl.fetchHlMarkets();
@@ -1001,12 +1018,12 @@
     const hl = getHyperliquid();
     const wallet = st.getActiveWallet();
     if (!hl || !wallet || !coin || !oid) return;
-    if (!(await verifySecurityAuthAsync(wallet, `${t('撤销合约挂单', 'Cancel perp order')} ${coin} #${oid}`))) return;
     _perpTradeActionBusy = true;
     st.perp.actionBusyKey = `cancel:${coin}:${oid}`;
     renderPerpBottomList();
     let market = (st.perp.markets || []).find((m) => m.name === coin);
     try {
+      if (!(await verifySecurityAuthAsync(wallet, `${t('撤销合约挂单', 'Cancel perp order')} ${coin} #${oid}`))) return;
       await ensureEthersLoaded();
       if (!market) {
         const mkts = await hl.fetchHlMarkets();
@@ -1034,12 +1051,12 @@
     if (!hl || !wallet || !st.perp.account) return;
     const amt = Number(st.perp.account.spotUsdc || 0);
     if (amt <= 0) return;
-    if (!(await verifySecurityAuthAsync(wallet, `${t('现货划转至合约账户', 'Transfer Spot to Perp')} ${formatBal(amt, 4)} USDC`))) return;
     _perpTradeActionBusy = true;
     const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     const prevTxt = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = t('划转中...', 'Moving...'); }
     try {
+      if (!(await verifySecurityAuthAsync(wallet, `${t('现货划转至合约账户', 'Transfer Spot to Perp')} ${formatBal(amt, 4)} USDC`))) return;
       await ensureEthersLoaded();
       await hl.transferHlUsdClass({ wallet, amount: amt, toPerp: true });
       showToast(`✅ ${t('已划转至合约账户', 'Moved to Perp account')}`);

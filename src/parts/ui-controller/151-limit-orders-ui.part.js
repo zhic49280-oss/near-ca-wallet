@@ -67,6 +67,7 @@
 
   let _limitCtxSeq = 0;
   let _limitOrdSeq = 0;
+  let _limitOrderActionInFlight = false;
 
   function formatPlainDecimalRate(num) {
     if (!Number.isFinite(num) || num <= 0) return '';
@@ -89,7 +90,18 @@
     const { sellToken, buyToken } = resolveLimitSelectedTokens();
     if (!sellToken || !buyToken) return;
     const reqSeq = ++_limitCtxSeq;
-    const isStaleCtx = () => reqSeq !== _limitCtxSeq || (st.limit.chain || 'near') !== chain;
+    const activeWalletId = wallet.id;
+    const sellContract = sellToken.contractAddress;
+    const isStaleCtx = () => {
+      const curWallet = st.getActiveWallet();
+      const curSell = resolveLimitSelectedTokens().sellToken;
+      return reqSeq !== _limitCtxSeq
+        || (st.limit.chain || 'near') !== chain
+        || !curWallet
+        || curWallet.id !== activeWalletId
+        || !curSell
+        || curSell.contractAddress !== sellContract;
+    };
 
     if (lo.isEvmChainLimitSupported(chain)) {
       await ensureEthersLoaded().catch(() => {});
@@ -104,6 +116,7 @@
         poolId ? lo.fetchNearDclPoolInfo(poolId).catch(() => null) : Promise.resolve(null),
         sender ? lo.checkNearDclStorage(sender).catch(() => null) : Promise.resolve(null)
       ]);
+      if (isStaleCtx()) return;
       if (poolInfo) st.limit.poolInfo = poolInfo;
       if (storageState) st.limit.dclStorageRegistered = Boolean(storageState.registered);
       if (poolInfo && Number.isFinite(Number(poolInfo.currentPoint))) {
@@ -159,6 +172,7 @@
           fromAddress: owner
         }).catch(() => null)
       ]);
+      if (isStaleCtx()) return;
       if (allowance !== null) {
         st.limit.evmAllowanceRaw = allowance.toString();
         st.limit.evmAllowanceFailed = false;
@@ -198,6 +212,7 @@
     const wallet = st.getActiveWallet();
     if (!lo || !wallet) return;
     const reqSeq = ++_limitOrdSeq;
+    const activeWalletId = wallet.id;
     const chain = st.limit.chain || 'near';
     st.limit.ordersLoading = true;
     st.limit.rateLimited = false;
@@ -222,7 +237,7 @@
         const owner = (contracts && contracts.resolveWalletEvmSender && contracts.resolveWalletEvmSender(wallet)) || wallet.mpcEvmAddress || wallet.evmAddress;
         res = await lo.fetchEvmCowOrders(chain, owner);
       }
-      if (reqSeq !== _limitOrdSeq || (st.limit.chain || 'near') !== chain) return;
+      if (reqSeq !== _limitOrdSeq || (st.limit.chain || 'near') !== chain || st.getActiveWallet()?.id !== activeWalletId) return;
       if (res) {
         st.limit.ordersActive = res.active || [];
         st.limit.ordersHistory = res.history || [];
@@ -232,7 +247,7 @@
           showToast(res.error || t('当前链限价单接口暂不可用', 'Limit order service unavailable on this chain'));
         }
       }
-      if (reqSeq === _limitOrdSeq) st.limit.ordersLoading = false;
+      if (reqSeq === _limitOrdSeq && st.getActiveWallet()?.id === activeWalletId) st.limit.ordersLoading = false;
       renderLimitOrdersList();
       if (showFeedback && !(res && res.unavailable)) {
         const rateLimitMsg = chain === 'bsc'
@@ -424,12 +439,20 @@
     }
     targetAmt = Math.max(0.0001, Number(targetAmt.toFixed(6)));
 
-    const authed = await verifySecurityAuthAsync(wallet, t(`封装 ${targetAmt} 原生代币`, `Wrap ${targetAmt} native coin`));
-    if (!authed) return;
-
+    if (_limitOrderActionInFlight) return;
+    _limitOrderActionInFlight = true;
+    const wrapBtn = $('btn-limit-wrap');
+    const prevWrapTxt = wrapBtn ? wrapBtn.textContent : '';
+    if (wrapBtn) {
+      wrapBtn.disabled = true;
+      wrapBtn.textContent = t('封装中...', 'Wrapping...');
+    }
     st.limit.submitting = true;
     renderLimitOrderCalculations();
     try {
+      const authed = await verifySecurityAuthAsync(wallet, t(`封装 ${targetAmt} 原生代币`, `Wrap ${targetAmt} native coin`));
+      if (!authed) return;
+
       if (chain !== 'near' && chain !== 'sol') await ensureEthersLoaded();
       const amountRaw = contracts.toBaseUnits(String(targetAmt), sellToken.decimals);
       if (chain === 'near') {
@@ -445,12 +468,18 @@
       st.limit.errorMsg = err && err.message ? err.message : t('封装失败', 'Wrap failed');
       showToast(st.limit.errorMsg);
     } finally {
+      _limitOrderActionInFlight = false;
       st.limit.submitting = false;
+      if (wrapBtn) {
+        wrapBtn.disabled = false;
+        if (prevWrapTxt) wrapBtn.textContent = prevWrapTxt;
+      }
       renderLimitOrderCalculations();
     }
   }
 
   async function executeLimitOrderAction() {
+    if (_limitOrderActionInFlight) return;
     const st = getState();
     const lo = getLimitOrders();
     const contracts = getContracts();
@@ -510,13 +539,14 @@
     const actionTitle = btnState.action === 'approve'
       ? t(`授权 ${sellToken.symbol}`, `Approve ${sellToken.symbol}`)
       : `${t(`提交 ${sellToken.symbol} → ${buyToken.symbol} 限价单`, `Place ${sellToken.symbol} → ${buyToken.symbol} Limit Order`)}${worsePromptSuffix}`;
-    const authed = await verifySecurityAuthAsync(wallet, actionTitle);
-    if (!authed) return;
-
+    _limitOrderActionInFlight = true;
     st.limit.submitting = true;
     st.limit.errorMsg = '';
     renderLimitOrderCalculations();
     try {
+      const authed = await verifySecurityAuthAsync(wallet, actionTitle);
+      if (!authed) return;
+
       if (lo.isEvmChainLimitSupported(chain)) await ensureEthersLoaded();
       if (btnState.action === 'approve') {
         await lo.approveEvmCowToken({ wallet, chainKey: chain, tokenAddress: sellToken.contractAddress });
@@ -650,12 +680,11 @@
       st.limit.errorMsg = toUserFriendlyError(err, t('限价单提交失败，请稍后重试', 'Limit order failed. Please try again.'));
       showToast(st.limit.errorMsg);
     } finally {
+      _limitOrderActionInFlight = false;
       st.limit.submitting = false;
       renderLimitOrderCalculations();
     }
   }
-
-  let _limitOrderActionInFlight = false;
 
   async function claimLimitOrderUI(orderId, buyToken) {
     if (_limitOrderActionInFlight) return;
@@ -664,14 +693,14 @@
     const wallet = st.getActiveWallet();
     if (!wallet || !lo || !orderId) return;
     const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
-    const authed = await verifySecurityAuthAsync(wallet, t('领取已成交限价单资产', 'Claim filled limit order'));
-    if (!authed) return;
     _limitOrderActionInFlight = true;
-    st.limit.claimingOrderId = String(orderId);
-    renderLimitOrdersList();
     const prevTxt = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = t('领取中...', 'Claiming...'); }
     try {
+      const authed = await verifySecurityAuthAsync(wallet, t('领取已成交限价单资产', 'Claim filled limit order'));
+      if (!authed) return;
+      st.limit.claimingOrderId = String(orderId);
+      renderLimitOrdersList();
       await lo.claimNearDclOrder({ wallet, orderId, buyToken });
       showToast(t('已领取至钱包', 'Claimed to wallet'));
       await refreshAllBalancesAsync(true).catch(() => {});
@@ -693,14 +722,14 @@
     const wallet = st.getActiveWallet();
     if (!wallet || !lo || !orderId) return;
     const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
-    const authed = await verifySecurityAuthAsync(wallet, t('撤销限价单', 'Cancel limit order'));
-    if (!authed) return;
     _limitOrderActionInFlight = true;
-    st.limit.cancellingOrderId = String(orderId);
-    renderLimitOrdersList();
     const prevTxt = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = t('撤单中...', 'Cancelling...'); }
     try {
+      const authed = await verifySecurityAuthAsync(wallet, t('撤销限价单', 'Cancel limit order'));
+      if (!authed) return;
+      st.limit.cancellingOrderId = String(orderId);
+      renderLimitOrdersList();
       if (chain === 'near') {
         await lo.cancelNearDclOrder({ wallet, orderId, remainAmount, sellToken, buyToken });
       } else if (chain === 'sol') {

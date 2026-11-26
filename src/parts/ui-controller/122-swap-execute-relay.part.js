@@ -143,7 +143,7 @@
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建第一阶段跨链订单失败', 'Failed to create Stage 1 SOL order'));
         }
-        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress, gasOverride: originGasOverride });
+        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt: amtStr, avail, depositAddress: liveQuote.depositAddress, gasOverride: originGasOverride });
         if (!txRes || !txRes.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
@@ -210,7 +210,7 @@
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建 EVM 第一阶段跨链订单失败', 'Failed to create Stage 1 EVM order'));
         }
-        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress, gasOverride: originGasOverride });
+        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt: amtStr, avail, depositAddress: liveQuote.depositAddress, gasOverride: originGasOverride });
         if (!txRes || !txRes.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
@@ -362,7 +362,7 @@
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建 Base USDC 中转订单失败', 'Failed to create Base USDC stage 1 order'));
         }
-        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt, avail, depositAddress: liveQuote.depositAddress, gasOverride: originGasOverride });
+        const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt: amtStr, avail, depositAddress: liveQuote.depositAddress, gasOverride: originGasOverride });
         if (!txRes || !txRes.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
@@ -617,7 +617,7 @@
       const txRes = await broadcastOriginDepositTx({
         wallet,
         fromToken,
-        amt,
+        amt: amtStr,
         avail,
         depositAddress: liveQuote.depositAddress,
         gasOverride: originGasOverride

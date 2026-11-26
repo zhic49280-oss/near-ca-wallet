@@ -185,25 +185,18 @@
     if (!curFrom || curFrom.assetId !== tokenIdAtStart) return;
 
     const plan = resolveEffectiveSwapGasPlan(wallet, curFrom, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
-    const isArc6DecNative = String(curFrom.blockchain || '').toLowerCase() === 'arc' &&
-      String(curFrom.contractAddress || '').toLowerCase() === '0x3600000000000000000000000000000000000000' &&
-      Number(curFrom.decimals) === 6;
     let effectiveBal = bal;
     let rawUnits = null;
+    const scaledGas = scaleSwapLiveGasUnits(curFrom, liveGas && liveGas.liveBalanceBaseUnits, plan.exactFeeBaseUnits);
     if (liveGas && liveGas.liveBalanceBaseUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
-      const scaledLiveRaw = isArc6DecNative && /^\d+$/.test(String(liveGas.liveBalanceBaseUnits))
-        ? (BigInt(String(liveGas.liveBalanceBaseUnits)) / 1000000000000n).toString()
-        : String(liveGas.liveBalanceBaseUnits);
+      const scaledLiveRaw = scaledGas.balanceUnits;
       const liveNum = Number(contracts.fromBaseUnits(scaledLiveRaw, curFrom.decimals || 18));
       if (Number.isFinite(liveNum) && liveNum > 0 && liveNum <= bal + 1e-12) {
         effectiveBal = liveNum;
         rawUnits = scaledLiveRaw;
       }
     }
-    let effFeeBaseUnits = plan.exactFeeBaseUnits;
-    if (isArc6DecNative && effFeeBaseUnits && /^\d+$/.test(String(effFeeBaseUnits))) {
-      effFeeBaseUnits = ((BigInt(String(effFeeBaseUnits)) + 999999999999n) / 1000000000000n).toString();
-    }
+    const effFeeBaseUnits = scaledGas.feeUnits;
     const maxInfo = computeExactMaxSpendable({
       balance: effectiveBal,
       rawBaseUnits: rawUnits,

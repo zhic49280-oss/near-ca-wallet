@@ -133,10 +133,19 @@
           controller.abort();
         }, timeoutMs)
       : null;
+    const extSignal = options && options.signal ? options.signal : null;
+    let onExtAbort = null;
+    if (extSignal && controller) {
+      if (extSignal.aborted) controller.abort();
+      else {
+        onExtAbort = () => controller.abort();
+        extSignal.addEventListener('abort', onExtAbort, { once: true });
+      }
+    }
     try {
       const res = await fetchFn(url, {
         ...options,
-        signal: options.signal || (controller ? controller.signal : undefined),
+        signal: controller ? controller.signal : extSignal || undefined,
         headers: {
           Accept: 'application/json',
           ...(options.headers || {})
@@ -161,6 +170,7 @@
       throw err;
     } finally {
       if (timer) clearTimeout(timer);
+      if (extSignal && onExtAbort) extSignal.removeEventListener('abort', onExtAbort);
     }
   }
 
@@ -898,7 +908,8 @@
     isCross = false,
     tpPrice = null,
     slPrice = null,
-    availableMargin = null
+    availableMargin = null,
+    currentLeverage = null
   }) {
     if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
     if (!market || market.index === undefined) throw new Error(t('请选择有效合约市场', 'Select a valid perpetual market'));
@@ -944,7 +955,11 @@
     }
 
     const maxLev = Number(market.maxLeverage) || 20;
-    const effLev = Math.max(1, Math.min(maxLev, Math.round(Number(leverage) || 5)));
+    const liveLevNum = Number(currentLeverage);
+    const levForCheck = (leverage !== null && leverage !== undefined)
+      ? Number(leverage)
+      : (Number.isFinite(liveLevNum) && liveLevNum >= 1 ? liveLevNum : 5);
+    const effLev = Math.max(1, Math.min(maxLev, Math.round(levForCheck || 5)));
     const effectiveCross = market.onlyIsolated ? false : Boolean(isCross);
 
     if (!reduceOnly && availableMargin !== null && availableMargin !== undefined) {
@@ -1152,12 +1167,20 @@
       ? Math.max(0, Number(availableMargin) + Math.max(0, freedMargin) - lossBuffer)
       : null;
 
-    // Cancel existing TP/SL triggers on this coin before reversing
+    if (effectiveAvail !== null && mark > 0) {
+      const newReqMargin = (Number(position.absSize) * mark) / Math.max(1, curLev);
+      if (newReqMargin > effectiveAvail + 1e-6) {
+        throw new Error(t('反手开仓保证金不足（已计入未实现盈亏）', 'Insufficient margin for reverse position (after PnL)'));
+      }
+    }
+
+    // Cancel existing TP/SL triggers on this coin only after margin check passed
     const contracts = getContracts();
     let resolvedWallet = wallet;
     if (contracts && typeof contracts.ensureWalletSigningKeysAsync === 'function') {
       resolvedWallet = await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => wallet);
     }
+    let cancelledTriggers = 0;
     try {
       const addr = contracts && typeof contracts.resolveWalletEvmSender === 'function'
         ? contracts.resolveWalletEvmSender(resolvedWallet)
@@ -1166,30 +1189,36 @@
         const orders = await fetchHlOpenOrders(addr).catch(() => []);
         const coinTriggers = (orders || []).filter((o) => o && o.coin === market.name && o.isTrigger);
         if (coinTriggers.length > 0) {
-          await cancelHlOrdersBatch({ wallet: resolvedWallet, cancels: coinTriggers.map((o) => ({ a: market.index, o: o.oid })) }).catch(() => {});
+          await cancelHlOrdersBatch({ wallet: resolvedWallet, cancels: coinTriggers.map((o) => ({ a: market.index, o: o.oid })) });
+          cancelledTriggers = coinTriggers.length;
         }
       }
     } catch (_) {}
 
-    if (effectiveAvail !== null && mark > 0) {
-      const newReqMargin = (Number(position.absSize) * mark) / Math.max(1, curLev);
-      if (newReqMargin > effectiveAvail + 1e-6) {
-        throw new Error(t('反手开仓保证金不足（已计入未实现盈亏）', 'Insufficient margin for reverse position (after PnL)'));
+    try {
+      return await placeHlPerpOrder({
+        wallet: resolvedWallet,
+        market,
+        isBuy: !position.isLong,
+        size: Number(position.absSize) * 2,
+        orderType: 'market',
+        slippageBps,
+        reduceOnly: false,
+        leverage: curLev,
+        isCross: position.leverageType === 'cross',
+        availableMargin: null
+      });
+    } catch (err) {
+      if (cancelledTriggers > 0) {
+        const warn = new Error(t(
+          `原止盈止损已取消，但反手开仓失败，请重新设置止盈止损 (${err?.message || 'Error'})`,
+          `Original TP/SL were cancelled but the reverse order failed — please set TP/SL again (${err?.message || 'Error'})`
+        ));
+        warn.oldCancelled = true;
+        throw warn;
       }
+      throw err;
     }
-
-    return placeHlPerpOrder({
-      wallet: resolvedWallet,
-      market,
-      isBuy: !position.isLong,
-      size: Number(position.absSize) * 2,
-      orderType: 'market',
-      slippageBps,
-      reduceOnly: false,
-      leverage: curLev,
-      isCross: position.leverageType === 'cross',
-      availableMargin: null
-    });
   }
 
   // ==================== Funding, Internal Transfer & Arbitrum Withdraw ====================
@@ -1298,11 +1327,12 @@
         )
       );
     }
+    const rawAmtStr = typeof amount === 'string' && /^\d+(\.\d+)?$/.test(amount.trim()) ? amount.trim() : num;
     const txRes = await contracts.executeEvmTransfer({
       wallet: resolvedWallet,
       chainKey: 'arb',
       toAddress: HL_ARB_BRIDGE2_ADDRESS,
-      amount: num,
+      amount: rawAmtStr,
       tokenContract: HL_ARB_USDC_ADDRESS,
       decimals: 6,
       tokenBalance: usdcBal
@@ -1367,7 +1397,8 @@
     const resolvedOriginId = typeof intents.resolveOneClickAssetId === 'function'
       ? intents.resolveOneClickAssetId(originToken, bc)
       : originToken.assetId;
-    const amountRaw = intents.toBaseUnits(num, originToken.decimals || 6);
+    const rawAmtStr = typeof amount === 'string' && /^\d+(\.\d+)?$/.test(amount.trim()) ? amount.trim() : num;
+    const amountRaw = intents.toBaseUnits(rawAmtStr, originToken.decimals || 6);
     const quote = await intents.quoteIntentSwapOrWithdraw({
       originAsset: resolvedOriginId,
       originBlockchain: bc,
