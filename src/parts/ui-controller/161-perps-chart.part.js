@@ -192,7 +192,12 @@
     return true;
   }
 
+  let _lastLongPressAt = 0;
+
   function inspectPerpCandle(idx) {
+    if (_lastLongPressAt && (Date.now() - _lastLongPressAt) < 350) {
+      return;
+    }
     const st = getState();
     const list = getVisiblePerpCandles(st.perp && st.perp.candles);
     const n = Number(idx);
@@ -446,6 +451,7 @@
         const touchX = e.touches[0].clientX;
         longPressTimer = setTimeout(() => {
           mode = 'scrub';
+          _lastLongPressAt = Date.now();
           const idx = clientXToCandleIdx(touchX);
           if (idx !== null) {
             st.perp.inspectedCandleIdx = idx;
@@ -513,6 +519,7 @@
 
     const endTouch = () => {
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      if (mode === 'scrub') _lastLongPressAt = Date.now();
       mode = null;
     };
     host.addEventListener('touchend', endTouch, { passive: true });

@@ -237,15 +237,36 @@
               const hl = getHyperliquid();
               const ch = msg.data.clearinghouseState;
               const prevAcct = s.perp.account || {};
+              const prevHip3Orders = Array.isArray(prevAcct.openOrders)
+                ? prevAcct.openOrders.filter((o) => o && String(o.coin || '').includes(':'))
+                : [];
+              const incomingOrders = Array.isArray(msg.data.openOrders) ? msg.data.openOrders : null;
+              const mergedOrders = incomingOrders !== null
+                ? [...incomingOrders, ...prevHip3Orders]
+                : (Array.isArray(prevAcct.openOrders) ? prevAcct.openOrders : []);
               if (ch && hl && typeof hl.parseHlClearinghouseState === 'function') {
-                const nextAcct = hl.parseHlClearinghouseState(ch, msg.data.openOrders);
+                const nextAcct = hl.parseHlClearinghouseState(ch, mergedOrders);
+                const mainPositions = Array.isArray(nextAcct.positions) ? nextAcct.positions : [];
+                const mainCoins = new Set(mainPositions.map((p) => String(p && p.coin || '')));
+                const hip3Positions = Array.isArray(prevAcct.positions)
+                  ? prevAcct.positions.filter((p) => p && String(p.coin || '').includes(':') && !mainCoins.has(String(p.coin || '')))
+                  : [];
+                const mergedPositions = [...mainPositions, ...hip3Positions];
+                if (typeof hl.attachTpslOrdersToPositions === 'function') {
+                  hl.attachTpslOrdersToPositions(mergedPositions, nextAcct.openOrders || mergedOrders);
+                }
                 s.perp.account = {
                   ...prevAcct,
                   ...nextAcct,
-                  openOrders: Array.isArray(msg.data.openOrders) ? msg.data.openOrders : (nextAcct.openOrders || prevAcct.openOrders || [])
+                  positions: mergedPositions,
+                  openOrders: nextAcct.openOrders || mergedOrders
                 };
-              } else if (Array.isArray(msg.data.openOrders)) {
-                s.perp.account = { ...prevAcct, openOrders: msg.data.openOrders };
+              } else if (incomingOrders !== null) {
+                const positions = Array.isArray(prevAcct.positions) ? prevAcct.positions.map((p) => ({ ...p })) : [];
+                if (hl && typeof hl.attachTpslOrdersToPositions === 'function') {
+                  hl.attachTpslOrdersToPositions(positions, mergedOrders);
+                }
+                s.perp.account = { ...prevAcct, positions, openOrders: mergedOrders };
               }
               if (typeof renderPerpBottomList === 'function') renderPerpBottomList();
               evaluatePerpOrderUI(false);

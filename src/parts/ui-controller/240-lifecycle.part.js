@@ -167,6 +167,9 @@
         renderWcCards();
         renderWcSessions();
       }
+      if (isOpen('sheet-earn-stake') && st.activeTab !== 'earn') renderEarnView();
+      if (isOpen('sheet-dapp-approve') && typeof renderDAppApproveSheet === 'function') renderDAppApproveSheet();
+      if (isOpen('sheet-confirm-dialog') && typeof renderConfirmDialogSheet === 'function') renderConfirmDialogSheet();
     }
   }
 
@@ -492,7 +495,9 @@
     renderNearAccountSummary,
     renderMiningTelemetry,
     openSheet,
-    closeAllSheets
+    closeAllSheets,
+    showConfirmDialogAsync,
+    dismissConfirmDialog
   };
 
   const globalHandlers = {
@@ -738,7 +743,9 @@
     renderNearAccountSummary,
     renderMiningTelemetry,
     openSheet,
-    closeAllSheets
+    closeAllSheets,
+    showConfirmDialogAsync,
+    dismissConfirmDialog
   };
 
   if (root) {

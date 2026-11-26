@@ -169,7 +169,7 @@ test('000-store.part.js emits framework state topics on storage & balance mutati
 
   assert.ok(emittedTopics.includes('wallet'));
   assert.ok(emittedTopics.includes('contacts'));
-  assert.ok(emittedTopics.includes('lang'));
+  assert.ok(!emittedTopics.includes('lang'));
   assert.ok(emittedTopics.includes('swap'));
   assert.ok(emittedTopics.includes('balances'));
 

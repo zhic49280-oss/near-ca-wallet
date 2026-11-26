@@ -345,7 +345,7 @@ test('v6.14 Swap/Limit Live USD Prices, Smart Price Orientation & Zero-Lag Perp 
     const pill3 = createMockDomElement('pill3', { attributes: { 'data-offset-idx': '3' } });
     globalThis.document = {
       activeElement: null,
-      getElementById: (id) => getOrMake(id),
+      getElementById: (id) => (id === 'sheet-confirm-dialog' ? null : getOrMake(id)),
       querySelector: () => null,
       querySelectorAll: (sel) => (sel.includes('#limit-offset-pills') ? [pill0, pill1, pill2, pill3] : [])
     };
@@ -600,7 +600,7 @@ test('v6.15 Flagship Hub Redesign, Merged NEAR Account/Keys & Lossless .near Del
     getOrMake('wc-advanced-drawer').classList.add('hidden');
 
     globalThis.document = {
-      getElementById: (id) => getOrMake(id),
+      getElementById: (id) => (id === 'sheet-confirm-dialog' ? null : getOrMake(id)),
       querySelectorAll: () => [],
       querySelector: () => null
     };
@@ -778,7 +778,7 @@ test('v6.23 Limit Order: NEAR DCL prioritizes pool currentPoint over Ref V2, dis
   };
   globalThis.document = {
     documentElement: { lang: 'zh-CN', classList: createMockClassList() },
-    getElementById: (id) => getOrMake(id),
+    getElementById: (id) => (id === 'sheet-confirm-dialog' ? null : getOrMake(id)),
     querySelectorAll: () => [],
     querySelector: () => null,
     activeElement: null
@@ -948,7 +948,7 @@ test('v6.23 Swap Recipient: same-chain 1Click unlocks custom recipient, locks 1C
     return domMap.get(id);
   };
   globalThis.document = {
-    getElementById: (id) => getOrMake(id),
+    getElementById: (id) => (id === 'sheet-confirm-dialog' ? null : getOrMake(id)),
     querySelectorAll: () => [],
     querySelector: () => null
   };
@@ -1172,7 +1172,7 @@ test('v6.30 Perps Search Clear & K-Line Inspect, wNEAR Auto-Unwrap/Rollback, and
   };
   globalThis.document = {
     documentElement: { lang: 'zh-CN', classList: createMockClassList() },
-    getElementById: (id) => getOrMake(id),
+    getElementById: (id) => (id === 'sheet-confirm-dialog' ? null : getOrMake(id)),
     querySelectorAll: () => [],
     querySelector: () => null,
     activeElement: null
@@ -1369,7 +1369,7 @@ test('v6.31: independent PRL mining mnemonic bind/switch/restore, wallet mining 
   globalThis.document = {
     activeElement: null,
     documentElement: { lang: 'zh-CN', classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } } },
-    getElementById: (id) => getOrMake(id),
+    getElementById: (id) => (id === 'sheet-confirm-dialog' ? null : getOrMake(id)),
     querySelector: () => null,
     querySelectorAll: () => []
   };
@@ -1509,7 +1509,7 @@ test('v6.32: built-in WalletConnect Project ID & QR scanner URI/address parsing'
   globalThis.document = {
     activeElement: null,
     documentElement: { lang: 'zh-CN', classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } } },
-    getElementById: (id) => getOrMake(id),
+    getElementById: (id) => (id === 'sheet-confirm-dialog' ? null : getOrMake(id)),
     querySelector: () => null,
     querySelectorAll: () => []
   };
@@ -1898,7 +1898,7 @@ test('v6.66: FEATURES_SPEC.md, OKX Web3 Tx Detail style, Preact Perp/Icon parity
   };
   globalThis.document = {
     documentElement: { lang: 'zh-CN', classList: createMockClassList() },
-    getElementById: (id) => getOrMake(id),
+    getElementById: (id) => (id === 'sheet-confirm-dialog' ? null : getOrMake(id)),
     querySelectorAll: () => [],
     querySelector: () => null,
     activeElement: null
@@ -1973,7 +1973,7 @@ test('v6.67: Security Auth overlay sheet preservation, DApp MPC yParity recovery
   };
   globalThis.document = {
     documentElement: { lang: 'zh-CN', classList: createMockClassList() },
-    getElementById: (id) => getOrMake(id),
+    getElementById: (id) => (id === 'sheet-confirm-dialog' ? null : getOrMake(id)),
     querySelectorAll: (sel) => {
       if (sel === '.bottom-sheet.open') {
         return Array.from(domMap.values()).filter((el) => el.classList && el.classList.contains('open'));

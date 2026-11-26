@@ -2089,10 +2089,6 @@ html.nexus-locked #app-lock-overlay {
   z-index: 10005;
 }
 
-#sheet-security-auth {
-  z-index: 10010;
-}
-
 /* Segmented Mode Switcher (Swap | Limit, Perps tabs) */
 .mode-pill-switch {
   display: inline-flex;
@@ -2905,5 +2901,32 @@ html.nexus-locked #app-lock-overlay {
   #perp-coin-btn {
     padding: 4px 7px 4px 5px;
     font-size: 12px;
+  }
+  .perp-okx-split-grid {
+    grid-template-columns: 1.2fr 0.88fr;
+    gap: 6px;
+  }
+  .perp-okx-split-grid > .ios-glass-card {
+    min-width: 0;
+    padding: 8px !important;
+  }
+  .perp-okx-split-grid .mode-pill-btn {
+    font-size: 11px;
+    padding: 4px 6px;
+    white-space: nowrap;
+  }
+  .perp-ob-power-wrap > .flex {
+    gap: 4px;
+    min-width: 0;
+  }
+  #perp-ob-bid-summary,
+  #perp-ob-ask-summary,
+  #perp-ls-long-label,
+  #perp-ls-short-label {
+    font-size: 9px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 50%;
   }
 }

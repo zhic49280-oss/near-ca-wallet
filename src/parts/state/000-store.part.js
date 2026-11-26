@@ -61,8 +61,7 @@
     [STAKING_METRICS_STORAGE_KEY]: 'earn',
     [PERP_SNAPSHOT_STORAGE_KEY]: 'perp',
     [SWAP_PAIR_STORAGE_KEY]: 'swap',
-    [ACTIVE_SWAP_ORDER_STORAGE_KEY]: 'swap',
-    [LANG_STORAGE_KEY]: 'lang'
+    [ACTIVE_SWAP_ORDER_STORAGE_KEY]: 'swap'
   };
 
   function safeStorageGet(key) {

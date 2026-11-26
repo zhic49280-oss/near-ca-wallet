@@ -643,7 +643,7 @@
 
   function getEarnPoolMinStake(pool) {
     if (!pool) return 0;
-    if (pool.chain === 'near' && (pool.inSymbol === 'NEAR' || pool.id === 'rhea_rnear' || pool.id === 'meta_pool' || pool.id === 'linear_protocol' || pool.id === 'stader_nearx')) {
+    if (pool.chain === 'near' && (pool.inSymbol === 'NEAR' || pool.id === 'rhea_rnear' || pool.id === 'metapool_stnear' || pool.id === 'linear_near' || pool.id === 'stader_nearx')) {
       return pool.isBurrowSupply ? 0.05 : 1;
     }
     return 0;

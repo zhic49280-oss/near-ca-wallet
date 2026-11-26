@@ -370,7 +370,18 @@
   function formatHlUsdcAmount(amount) {
     const n = Number(amount);
     if (!Number.isFinite(n) || n <= 0) return '0';
-    return trimDecimalTrailingZeros(n.toFixed(6));
+    if (typeof amount === 'string') {
+      const s = amount.trim().replace(/^0+(?=\d)/, '');
+      if (/^\d+(\.\d+)?$/.test(s)) {
+        const dot = s.indexOf('.');
+        const truncated = dot === -1 ? s : s.slice(0, dot + 7);
+        const trimmed = trimDecimalTrailingZeros(truncated);
+        return trimmed && Number(trimmed) > 0 ? trimmed : '0';
+      }
+    }
+    const floored = Math.floor(n * 1e6 + 1e-9) / 1e6;
+    if (!Number.isFinite(floored) || floored <= 0) return '0';
+    return trimDecimalTrailingZeros(floored.toFixed(6));
   }
 
   function computeEstimatedLiqPrice({ markPx, leverage, isLong, maxLeverage = 100 }) {
@@ -650,6 +661,45 @@
     return out;
   }
 
+  function normalizeHlOpenOrders(openOrders) {
+    if (!Array.isArray(openOrders)) return [];
+    return openOrders.map((o) => ({
+      ...o,
+      isTrigger: Boolean(o && (o.isTrigger || o.orderType === 'Stop Market' || o.orderType === 'Take Profit Market' || o.triggerCondition))
+    }));
+  }
+
+  /**
+   * Backfills tpTriggerPx, slTriggerPx, and tpslOrders onto each position from open orders.
+   */
+  function attachTpslOrdersToPositions(positions, orders) {
+    const posList = Array.isArray(positions) ? positions : [];
+    const orderList = normalizeHlOpenOrders(orders);
+    for (const pos of posList) {
+      if (!pos || !pos.coin) continue;
+      const matching = orderList.filter((o) => String(o.coin || '') === pos.coin && (o.isTrigger || /Take Profit|Stop/i.test(String(o.orderType || ''))));
+      pos.tpslOrders = matching;
+      pos.tpTriggerPx = null;
+      pos.slTriggerPx = null;
+      for (const ord of matching) {
+        const trigPx = Number(ord.triggerPx || ord.limitPx || 0);
+        if (!Number.isFinite(trigPx) || trigPx <= 0) continue;
+        if (/Take Profit/i.test(String(ord.orderType || ''))) {
+          pos.tpTriggerPx = trigPx;
+        } else if (/Stop/i.test(String(ord.orderType || ''))) {
+          pos.slTriggerPx = trigPx;
+        } else {
+          const isTpHeuristic = pos.isLong
+            ? (pos.entryPx ? trigPx > pos.entryPx : true)
+            : (pos.entryPx ? trigPx < pos.entryPx : true);
+          if (isTpHeuristic) pos.tpTriggerPx = pos.tpTriggerPx || trigPx;
+          else pos.slTriggerPx = pos.slTriggerPx || trigPx;
+        }
+      }
+    }
+    return posList;
+  }
+
   function parseHlClearinghouseState(ch, openOrders = null) {
     if (!ch || typeof ch !== 'object') return null;
     const ms = ch.marginSummary || ch.crossMarginSummary || {};
@@ -659,11 +709,11 @@
     const availableMargin = Math.max(0, Math.min(withdrawable, accountValue - totalMarginUsed));
     const positions = mapClearinghousePositions(ch);
     const parsedOrders = Array.isArray(openOrders)
-      ? openOrders.map((o) => ({
-          ...o,
-          isTrigger: Boolean(o && (o.isTrigger || o.orderType === 'Stop Market' || o.orderType === 'Take Profit Market' || o.triggerCondition))
-        }))
+      ? normalizeHlOpenOrders(openOrders)
       : undefined;
+    if (parsedOrders) {
+      attachTpslOrdersToPositions(positions, parsedOrders);
+    }
     return {
       accountValue,
       totalMarginUsed,
@@ -736,25 +786,7 @@
       dedupOrders.push(o);
     }
 
-    for (const pos of positions) {
-      const matching = dedupOrders.filter((o) => String(o.coin || '') === pos.coin && (o.isTrigger || /Take Profit|Stop/i.test(String(o.orderType || ''))));
-      pos.tpslOrders = matching;
-      for (const ord of matching) {
-        const trigPx = Number(ord.triggerPx || ord.limitPx || 0);
-        if (!Number.isFinite(trigPx) || trigPx <= 0) continue;
-        if (/Take Profit/i.test(String(ord.orderType || ''))) {
-          pos.tpTriggerPx = trigPx;
-        } else if (/Stop/i.test(String(ord.orderType || ''))) {
-          pos.slTriggerPx = trigPx;
-        } else {
-          const isTpHeuristic = pos.isLong
-            ? (pos.entryPx ? trigPx > pos.entryPx : true)
-            : (pos.entryPx ? trigPx < pos.entryPx : true);
-          if (isTpHeuristic) pos.tpTriggerPx = pos.tpTriggerPx || trigPx;
-          else pos.slTriggerPx = pos.slTriggerPx || trigPx;
-        }
-      }
-    }
+    attachTpslOrdersToPositions(positions, dedupOrders);
 
     let spotUsdc = 0;
     if (spotRes.status === 'fulfilled' && spotRes.value && Array.isArray(spotRes.value.balances)) {
@@ -1509,6 +1541,7 @@
     signHlL1Action,
     signHlUserSignedAction,
     fetchHlMarkets,
+    attachTpslOrdersToPositions,
     parseHlClearinghouseState,
     fetchHlOpenOrders,
     fetchHlAccountState,
