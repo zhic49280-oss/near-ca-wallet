@@ -63,9 +63,10 @@
 
   function clearPickerContainerSafely(el) {
     if (!el) return;
-    const fw = typeof getFramework === 'function' ? getFramework() : null;
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework) || (typeof getFramework === 'function' ? getFramework() : null);
     if (fw && typeof fw.render === 'function') {
       try { fw.render(null, el); } catch (_) {}
+      return;
     }
     el.innerHTML = '';
   }
@@ -75,6 +76,7 @@
     const tokens = getTokens();
     const intents = getIntents();
     const wallet = st.getActiveWallet();
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const limitPickerSide = st.limit && st.limit.pickerSide;
     if (limitPickerSide) {
       const limitCatalog = getLimitPickerCatalog(limitPickerSide);
@@ -92,7 +94,15 @@
       const chainBar = $('token-picker-chains');
       if (chainBar) {
         const meta = tokens.getChainMeta(st.limit.chain);
-        chainBar.innerHTML = `<button type="button" class="filter-pill active">${escapeHtml(meta.shortName)}</button>`;
+        if (fw && typeof fw.mountTokenPickerPills === 'function') {
+          fw.mountTokenPickerPills(chainBar, {
+            kind: 'single',
+            items: [{ chain: st.limit.chain, label: meta.shortName }],
+            isEn: st.lang === 'en'
+          });
+        } else {
+          chainBar.innerHTML = `<button type="button" class="filter-pill active">${escapeHtml(meta.shortName)}</button>`;
+        }
       }
       const rows = limitCatalog
         .filter((tok) => {
@@ -112,7 +122,6 @@
         });
       const listEl = $('token-picker-list');
       if (!listEl) return;
-      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
       if (fw && typeof fw.mountTokenPicker === 'function') {
         fw.mountTokenPicker(listEl, {
           rows,
@@ -171,12 +180,20 @@
         .filter(Boolean);
       if (favTokens.length > 0) {
         favBar.classList.remove('hidden');
-        favBar.innerHTML = favTokens.map((tok) => `
-          <button type="button" class="filter-pill flex items-center gap-1" style="display:inline-flex;align-items:center;gap:5px;" data-action="select-swap-token" data-asset-id="${escapeHtml(tok.assetId)}">
-            ${tokens.renderTokenIconWithBadge(tok, 18, true)}
-            <span>${escapeHtml(tok.symbol)}</span>
-          </button>
-        `).join('');
+        if (fw && typeof fw.mountTokenPickerPills === 'function') {
+          fw.mountTokenPickerPills(favBar, {
+            kind: 'favorites',
+            items: favTokens,
+            isEn: st.lang === 'en'
+          });
+        } else {
+          favBar.innerHTML = favTokens.map((tok) => `
+            <button type="button" class="filter-pill flex items-center gap-1" style="display:inline-flex;align-items:center;gap:5px;" data-action="select-swap-token" data-asset-id="${escapeHtml(tok.assetId)}">
+              ${tokens.renderTokenIconWithBadge(tok, 18, true)}
+              <span>${escapeHtml(tok.symbol)}</span>
+            </button>
+          `).join('');
+        }
       } else {
         favBar.classList.add('hidden');
         clearPickerContainerSafely(favBar);
@@ -201,18 +218,40 @@
       const nextChainSig = `${activeChain}|${isFromPicker ? '1' : '0'}|${showMoreChains ? '1' : '0'}|${pinnedVisible.join(',')}|${tempExtraChain}|${st.lang}`;
       if (!chainBar.dataset || chainBar.dataset.renderedSig !== nextChainSig) {
         if (chainBar.dataset) chainBar.dataset.renderedSig = nextChainSig;
-        chainBar.innerHTML = [
-          `<button type="button" class="filter-pill ${activeChain === 'all' ? 'active' : ''}" data-action="set-picker-chain" data-chain="all">${t('全部网络', 'All')}</button>`,
-          ...pinnedVisible.map((ck) => {
-            const meta = tokens.getChainMeta(ck);
-            return `<button type="button" class="filter-pill ${activeChain === ck ? 'active' : ''}" data-action="set-picker-chain" data-chain="${escapeHtml(ck)}">${escapeHtml(meta.shortName)}</button>`;
-          }),
-          ...(tempExtraChain ? [(() => {
-            const meta = tokens.getChainMeta(tempExtraChain);
-            return `<button type="button" class="filter-pill active" data-action="set-picker-chain" data-chain="${escapeHtml(tempExtraChain)}">${escapeHtml(meta.shortName)}</button>`;
-          })()] : []),
-          `<button type="button" class="filter-pill ${showMoreChains ? 'active' : ''}" data-action="toggle-picker-more-chains">${escapeHtml(showMoreChains ? t('收起网络 ▲', 'Less ▲') : t('更多网络 ▾', 'More ▾'))}</button>`
-        ].join('');
+        if (fw && typeof fw.mountTokenPickerPills === 'function') {
+          const chainItems = [
+            { chain: 'all', label: t('全部网络', 'All') },
+            ...pinnedVisible.map((ck) => {
+              const meta = tokens.getChainMeta(ck);
+              return { chain: ck, label: meta.shortName };
+            }),
+            ...(tempExtraChain ? [(() => {
+              const meta = tokens.getChainMeta(tempExtraChain);
+              return { chain: tempExtraChain, label: meta.shortName };
+            })()] : []),
+            { isMoreToggle: true }
+          ];
+          fw.mountTokenPickerPills(chainBar, {
+            kind: 'chains',
+            items: chainItems,
+            activeChain,
+            showMoreChains,
+            isEn: st.lang === 'en'
+          });
+        } else {
+          chainBar.innerHTML = [
+            `<button type="button" class="filter-pill ${activeChain === 'all' ? 'active' : ''}" data-action="set-picker-chain" data-chain="all">${t('全部网络', 'All')}</button>`,
+            ...pinnedVisible.map((ck) => {
+              const meta = tokens.getChainMeta(ck);
+              return `<button type="button" class="filter-pill ${activeChain === ck ? 'active' : ''}" data-action="set-picker-chain" data-chain="${escapeHtml(ck)}">${escapeHtml(meta.shortName)}</button>`;
+            }),
+            ...(tempExtraChain ? [(() => {
+              const meta = tokens.getChainMeta(tempExtraChain);
+              return `<button type="button" class="filter-pill active" data-action="set-picker-chain" data-chain="${escapeHtml(tempExtraChain)}">${escapeHtml(meta.shortName)}</button>`;
+            })()] : []),
+            `<button type="button" class="filter-pill ${showMoreChains ? 'active' : ''}" data-action="toggle-picker-more-chains">${escapeHtml(showMoreChains ? t('收起网络 ▲', 'Less ▲') : t('更多网络 ▾', 'More ▾'))}</button>`
+          ].join('');
+        }
       }
     }
 
@@ -224,10 +263,22 @@
           ...PREFERRED_PICKER_CHAINS.filter((ck) => !isFromPicker || isSwapOriginSupported({ blockchain: ck })),
           ...orderedChains
         ])).filter((ck) => availableChainSet.has(ck) || ck === 'arc');
-        moreChainsEl.innerHTML = allMoreOrder.map((ck) => {
-          const meta = tokens.getChainMeta(ck);
-          return `<button type="button" class="filter-pill ${activeChain === ck ? 'active' : ''}" data-action="set-picker-chain" data-chain="${escapeHtml(ck)}">${escapeHtml(meta.shortName)}</button>`;
-        }).join('');
+        if (fw && typeof fw.mountTokenPickerPills === 'function') {
+          fw.mountTokenPickerPills(moreChainsEl, {
+            kind: 'chains',
+            items: allMoreOrder.map((ck) => {
+              const meta = tokens.getChainMeta(ck);
+              return { chain: ck, label: meta.shortName };
+            }),
+            activeChain,
+            isEn: st.lang === 'en'
+          });
+        } else {
+          moreChainsEl.innerHTML = allMoreOrder.map((ck) => {
+            const meta = tokens.getChainMeta(ck);
+            return `<button type="button" class="filter-pill ${activeChain === ck ? 'active' : ''}" data-action="set-picker-chain" data-chain="${escapeHtml(ck)}">${escapeHtml(meta.shortName)}</button>`;
+          }).join('');
+        }
       } else {
         moreChainsEl.classList.add('hidden');
         clearPickerContainerSafely(moreChainsEl);
@@ -288,7 +339,6 @@
 
     const listEl = $('token-picker-list');
     if (!listEl) return;
-    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (fw && typeof fw.mountTokenPicker === 'function') {
       fw.mountTokenPicker(listEl, {
         rows: filteredWithMeta,

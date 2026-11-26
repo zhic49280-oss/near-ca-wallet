@@ -21,13 +21,22 @@
       ? chainFilter
       : (activeEntry ? activeEntry.blockchain : 'near');
 
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const iconEl = $('token-detail-icon');
     if (iconEl) {
-      iconEl.innerHTML = tokens.renderTokenIconWithBadge(
-        { symbol: group.symbol, blockchain: activeChain },
-        30,
-        chainFilter !== 'all'
-      );
+      if (fw && typeof fw.mountTokenDetailIcon === 'function') {
+        fw.mountTokenDetailIcon(iconEl, {
+          symbol: group.symbol,
+          blockchain: activeChain,
+          showChainBadge: chainFilter !== 'all'
+        });
+      } else {
+        iconEl.innerHTML = tokens.renderTokenIconWithBadge(
+          { symbol: group.symbol, blockchain: activeChain },
+          30,
+          chainFilter !== 'all'
+        );
+      }
     }
     const titleEl = $('token-detail-title');
     if (titleEl) {
@@ -49,13 +58,32 @@
 
     const chainsEl = $('token-detail-chains');
     if (chainsEl) {
-      const allPill = `<button type="button" class="filter-pill ${chainFilter === 'all' ? 'active' : ''}" data-action="set-token-detail-chain" data-chain="all">${escapeHtml(t('全部网络', 'All Networks'))}</button>`;
-      const netPills = Array.from(chainTotals.values()).map((ct) => {
-        const meta = tokens.getChainMeta(ct.blockchain);
-        const balSuffix = typeof ct.balance === 'number' && ct.balance > 0 ? ` · ${formatBal(ct.balance, 4)}` : '';
-        return `<button type="button" class="filter-pill ${chainFilter === ct.blockchain ? 'active' : ''}" data-action="set-token-detail-chain" data-chain="${escapeHtml(ct.blockchain)}">${escapeHtml((meta.shortName || meta.name) + balSuffix)}</button>`;
-      }).join('');
-      chainsEl.innerHTML = allPill + netPills;
+      if (fw && typeof fw.mountTokenDetailChains === 'function') {
+        const chainItems = [
+          { chain: 'all', label: t('全部网络', 'All Networks') },
+          ...Array.from(chainTotals.values()).map((ct) => {
+            const meta = tokens.getChainMeta(ct.blockchain);
+            const balSuffix = typeof ct.balance === 'number' && ct.balance > 0 ? ` · ${formatBal(ct.balance, 4)}` : '';
+            return {
+              chain: ct.blockchain,
+              label: (meta.shortName || meta.name) + balSuffix
+            };
+          })
+        ];
+        fw.mountTokenDetailChains(chainsEl, {
+          items: chainItems,
+          activeChain: chainFilter,
+          onSelectChain: (ch) => setTokenDetailChain(ch)
+        });
+      } else {
+        const allPill = `<button type="button" class="filter-pill ${chainFilter === 'all' ? 'active' : ''}" data-action="set-token-detail-chain" data-chain="all">${escapeHtml(t('全部网络', 'All Networks'))}</button>`;
+        const netPills = Array.from(chainTotals.values()).map((ct) => {
+          const meta = tokens.getChainMeta(ct.blockchain);
+          const balSuffix = typeof ct.balance === 'number' && ct.balance > 0 ? ` · ${formatBal(ct.balance, 4)}` : '';
+          return `<button type="button" class="filter-pill ${chainFilter === ct.blockchain ? 'active' : ''}" data-action="set-token-detail-chain" data-chain="${escapeHtml(ct.blockchain)}">${escapeHtml((meta.shortName || meta.name) + balSuffix)}</button>`;
+        }).join('');
+        chainsEl.innerHTML = allPill + netPills;
+      }
     }
 
     // Compute balance & USD for active scope
@@ -99,7 +127,6 @@
     const breakdownCard = $('token-detail-breakdown-card');
     const breakdownList = $('token-detail-breakdown-list');
     if (breakdownCard && breakdownList) {
-      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
       if (chainFilter === 'all') {
         breakdownCard.classList.remove('hidden');
         const sortedEntries = [...group.entries].sort((a, b) => {
@@ -162,55 +189,73 @@
 
       if (matchedPools.length > 0) {
         earnCard.classList.remove('hidden');
-        const stakingPools = matchedPools.filter((p) => !p.isErc4626 && !p.isAaveV3 && !p.isLockConvert && !p.isBurrowSupply);
-        const earnLendingPools = matchedPools.filter((p) => p.isErc4626 || p.isAaveV3 || p.isLockConvert || p.isBurrowSupply);
+        if (fw && typeof fw.mountTokenDetailEarnList === 'function') {
+          const enrichedPools = matchedPools.map((p) => ({
+            ...p,
+            catMeta: getPoolCategoryMeta(p),
+            iconUrl: getPoolIconUrl(p),
+            apyText: formatPoolApyText(p)
+          }));
+          fw.mountTokenDetailEarnList(earnList, {
+            pools: enrichedPools,
+            isEn: st.lang === 'en',
+            onOpenPool: (pid) => openTokenDetailPool(pid)
+          });
+        } else {
+          const stakingPools = matchedPools.filter((p) => !p.isErc4626 && !p.isAaveV3 && !p.isLockConvert && !p.isBurrowSupply);
+          const earnLendingPools = matchedPools.filter((p) => p.isErc4626 || p.isAaveV3 || p.isLockConvert || p.isBurrowSupply);
 
-        const renderPoolRows = (poolList) => poolList.map((p) => {
-          const catMeta = getPoolCategoryMeta(p);
-          return `
-            <button type="button" class="detail-row-item detail-row-clickable" data-action="open-token-detail-pool" data-pool-id="${escapeHtml(p.id)}">
-              <div class="flex items-center gap-2" style="min-width:0;flex:1;">
-                ${tokens.renderTokenIconWithBadge({ symbol: p.outSymbol, blockchain: p.chain, logoURI: getPoolIconUrl(p) }, 26, true)}
-                <div class="flex flex-col" style="min-width:0;">
-                  <div class="flex items-center gap-1" style="flex-wrap:wrap;">
-                    <span style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(p.name)}</span>
-                    <span class="pool-cat-badge ${catMeta.cls}">${escapeHtml(catMeta.label)}</span>
+          const renderPoolRows = (poolList) => poolList.map((p) => {
+            const catMeta = getPoolCategoryMeta(p);
+            return `
+              <button type="button" class="detail-row-item detail-row-clickable" data-action="open-token-detail-pool" data-pool-id="${escapeHtml(p.id)}">
+                <div class="flex items-center gap-2" style="min-width:0;flex:1;">
+                  ${tokens.renderTokenIconWithBadge({ symbol: p.outSymbol, blockchain: p.chain, logoURI: getPoolIconUrl(p) }, 26, true)}
+                  <div class="flex flex-col" style="min-width:0;">
+                    <div class="flex items-center gap-1" style="flex-wrap:wrap;">
+                      <span style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(p.name)}</span>
+                      <span class="pool-cat-badge ${catMeta.cls}">${escapeHtml(catMeta.label)}</span>
+                    </div>
+                    <span style="font-size:11px;color:var(--text-secondary);">${escapeHtml(p.protocol || p.chainLabel || '')} · ${escapeHtml(p.inSymbol)} ➔ ${escapeHtml(p.outSymbol)}</span>
                   </div>
-                  <span style="font-size:11px;color:var(--text-secondary);">${escapeHtml(p.protocol || p.chainLabel || '')} · ${escapeHtml(p.inSymbol)} ➔ ${escapeHtml(p.outSymbol)}</span>
                 </div>
-              </div>
-              <span class="mono text-emerald" style="font-weight:800;font-size:13px;flex-shrink:0;">${escapeHtml(formatPoolApyText(p))}</span>
-            </button>
-          `;
-        }).join('');
+                <span class="mono text-emerald" style="font-weight:800;font-size:13px;flex-shrink:0;">${escapeHtml(formatPoolApyText(p))}</span>
+              </button>
+            `;
+          }).join('');
 
-        const cards = [];
-        if (stakingPools.length > 0) {
-          cards.push(`
-            <div class="ios-glass-card flex flex-col gap-2">
-              <div class="flex items-center justify-between">
-                <span style="font-weight:700;font-size:13px;color:#fff;">⚡ ${escapeHtml(t('链上质押 (Staking)', 'Staking'))}</span>
-                <span class="pool-cat-badge cat-staking">${escapeHtml(t('质押', 'Staking'))}</span>
+          const cards = [];
+          if (stakingPools.length > 0) {
+            cards.push(`
+              <div class="ios-glass-card flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                  <span style="font-weight:700;font-size:13px;color:#fff;">⚡ ${escapeHtml(t('链上质押 (Staking)', 'Staking'))}</span>
+                  <span class="pool-cat-badge cat-staking">${escapeHtml(t('质押', 'Staking'))}</span>
+                </div>
+                <div class="flex flex-col gap-2">${renderPoolRows(stakingPools)}</div>
               </div>
-              <div class="flex flex-col gap-2">${renderPoolRows(stakingPools)}</div>
-            </div>
-          `);
-        }
-        if (earnLendingPools.length > 0) {
-          cards.push(`
-            <div class="ios-glass-card flex flex-col gap-2">
-              <div class="flex items-center justify-between">
-                <span style="font-weight:700;font-size:13px;color:#fff;">🏦 ${escapeHtml(t('借贷与存款生息 (Lending & Earn)', 'Lending & Earn'))}</span>
-                <span class="pool-cat-badge cat-lending">${escapeHtml(t('借贷', 'Lending'))}</span>
+            `);
+          }
+          if (earnLendingPools.length > 0) {
+            cards.push(`
+              <div class="ios-glass-card flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                  <span style="font-weight:700;font-size:13px;color:#fff;">🏦 ${escapeHtml(t('借贷与存款生息 (Lending & Earn)', 'Lending & Earn'))}</span>
+                  <span class="pool-cat-badge cat-lending">${escapeHtml(t('借贷', 'Lending'))}</span>
+                </div>
+                <div class="flex flex-col gap-2">${renderPoolRows(earnLendingPools)}</div>
               </div>
-              <div class="flex flex-col gap-2">${renderPoolRows(earnLendingPools)}</div>
-            </div>
-          `);
+            `);
+          }
+          earnList.innerHTML = cards.join('');
         }
-        earnList.innerHTML = cards.join('');
       } else {
         earnCard.classList.add('hidden');
-        unmountPreactContainer(earnList);
+        if (fw && typeof fw.mountTokenDetailEarnList === 'function') {
+          fw.mountTokenDetailEarnList(earnList, { pools: [], isEn: st.lang === 'en' });
+        } else {
+          unmountPreactContainer(earnList);
+        }
       }
     }
 

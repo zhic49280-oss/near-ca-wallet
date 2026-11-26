@@ -88,9 +88,14 @@
     st.pendingMnemonic = phrase;
     const grid = $('onboard-seed-grid');
     if (grid) {
-      grid.innerHTML = words
-        .map((w, i) => `<div class="seed-word"><span class="seed-idx">${i + 1}.</span><span>${escapeHtml(w)}</span></div>`)
-        .join('');
+      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+      if (fw && typeof fw.mountOnboardSeedGrid === 'function') {
+        fw.mountOnboardSeedGrid(grid, { words });
+      } else {
+        grid.innerHTML = words
+          .map((w, i) => `<div class="seed-word"><span class="seed-idx">${i + 1}.</span><span>${escapeHtml(w)}</span></div>`)
+          .join('');
+      }
     }
     const hintEl = $('onboard-create-hint');
     if (hintEl) hintEl.textContent = t('请妥善离线保存以下 12 个单词，它是恢复所有链上资产的唯一凭证', 'Store these 12 words safely offline. They control all derived chain accounts.');

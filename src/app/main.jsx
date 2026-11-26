@@ -22,6 +22,13 @@ import { DAppBookmarksPanel, DAppApprovePanel } from './components/DAppBrowserPa
 import { ToastBanner } from './components/ui/ToastBanner.jsx';
 import { TxFlowModal } from './components/TxFlowModals.jsx';
 import {
+  OnboardSeedGridPanel,
+  TokenDetailIconPanel,
+  TokenDetailChainsPanel,
+  TokenDetailEarnPanel,
+  TokenPickerPillsPanel
+} from './components/RemainingIslandsPanels.jsx';
+import {
   useWalletState,
   notifyFrameworkState,
   useLang,
@@ -210,6 +217,26 @@ export function mountTxFlowModal(containerEl, props = {}) {
   return mountOrDispatch(containerEl, TxFlowModal, props);
 }
 
+export function mountOnboardSeedGrid(containerEl, props = {}) {
+  return mountOrDispatch(containerEl, OnboardSeedGridPanel, props);
+}
+
+export function mountTokenDetailIcon(containerEl, props = {}) {
+  return mountOrDispatch(containerEl, TokenDetailIconPanel, props);
+}
+
+export function mountTokenDetailChains(containerEl, props = {}) {
+  return mountOrDispatch(containerEl, TokenDetailChainsPanel, props);
+}
+
+export function mountTokenDetailEarnList(containerEl, props = {}) {
+  return mountOrDispatch(containerEl, TokenDetailEarnPanel, props);
+}
+
+export function mountTokenPickerPills(containerEl, props = {}) {
+  return mountOrDispatch(containerEl, TokenPickerPillsPanel, props);
+}
+
 export {
   App,
   registerPanelSlot,
@@ -275,7 +302,12 @@ const NearCAFramework = {
   mountDAppBookmarksPanel,
   mountDAppApprovePanel,
   mountToastBanner,
-  mountTxFlowModal
+  mountTxFlowModal,
+  mountOnboardSeedGrid,
+  mountTokenDetailIcon,
+  mountTokenDetailChains,
+  mountTokenDetailEarnList,
+  mountTokenPickerPills
 };
 
 if (typeof globalThis !== 'undefined') {
