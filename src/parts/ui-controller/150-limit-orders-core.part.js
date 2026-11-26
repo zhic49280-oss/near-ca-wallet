@@ -354,8 +354,11 @@
     const { inverted } = resolveLimitPriceOrientation(sellToken, buyToken);
     const poolId = (st.limit.poolInfo && st.limit.poolInfo.poolId) || lo.resolveNearLimitPoolId(sellToken.contractAddress, buyToken.contractAddress);
     if (!poolId) return;
-    const delta = (st.limit.poolInfo && st.limit.poolInfo.pointDelta) || 40;
-    const tokenX = (st.limit.poolInfo && st.limit.poolInfo.tokenX) || poolId.split('|')[0];
+    const desc = typeof lo.parsePoolDescriptor === 'function' ? lo.parsePoolDescriptor(poolId, st.limit.poolInfo) : null;
+    const delta = (st.limit.poolInfo && st.limit.poolInfo.pointDelta)
+      || (desc && desc.pointDelta)
+      || (typeof lo.feeToPointDelta === 'function' ? lo.feeToPointDelta(poolId.split('|')[2]) : 40);
+    const tokenX = (st.limit.poolInfo && st.limit.poolInfo.tokenX) || (desc && desc.tokenX) || poolId.split('|')[0];
     const sellIsX = lo.normalizeNearContract(sellToken.contractAddress) === tokenX;
     let curPt = st.limit.snappedPoint;
     if (curPt === null || curPt === undefined) {
@@ -373,7 +376,10 @@
     }
     const visualDir = inverted ? -Number(dir) : Number(dir);
     const stepDelta = (visualDir >= 0 ? 1 : -1) * (sellIsX ? delta : -delta);
-    const nextPt = curPt + stepDelta;
+    const rawNextPt = curPt + stepDelta;
+    const nextPt = typeof lo.clampDclPoint === 'function'
+      ? lo.clampDclPoint(rawNextPt, delta)
+      : Math.max(-800000, Math.min(800000, rawNextPt));
     const nextRate = lo.dclPointToPrice({
       point: nextPt,
       sellToken: sellToken.contractAddress,
@@ -479,7 +485,7 @@
       const isNativeSol = sellToken.contractAddress === lo.SOL_NATIVE_MINT;
       const solAvail = Number(contracts?.resolveWalletChainBalance(wallet, 'sol') || 0);
       if (isNativeSol) {
-        if (solAvail < amt + lo.SOL_LIMIT_GAS_RESERVE) {
+        if (solAvail + 1e-9 < amt + lo.SOL_LIMIT_GAS_RESERVE) {
           return { disabled: true, action: 'submit', text: t('SOL 余额不足 (含可退租金)', 'Insufficient SOL (+ rent)'), error: '' };
         }
       } else {
@@ -514,7 +520,7 @@
         return { disabled: true, action: 'submit', text: t('正在检查授权...', 'Checking allowance...'), error: '' };
       }
       try {
-        const sellBase = BigInt(contracts.toBaseUnits(String(amt), sellToken.decimals));
+        const sellBase = BigInt(contracts.toBaseUnits(String(st.limit.amountIn || '0').trim(), sellToken.decimals));
         if (BigInt(st.limit.evmAllowanceRaw) < sellBase) {
           const nativeBal = Number((wallet.nativeBalances && wallet.nativeBalances[chain]) ?? 0);
           if (nativeBal + 1e-12 < Number(cfg.gasReserve || 0.0015)) {

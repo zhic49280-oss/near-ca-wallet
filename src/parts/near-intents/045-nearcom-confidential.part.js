@@ -471,115 +471,140 @@
     slippageBps = 100,
     recipient,
     feeBps = 25,
-    feeRecipient = DEFAULT_REFERRAL_ACCOUNT
+    feeRecipient = DEFAULT_REFERRAL_ACCOUNT,
+    swapDepositAddress: existingSwapDepositAddress = '',
+    swapIntentHash: existingSwapIntentHash = '',
+    settledOutRaw: existingSettledOutRaw = '',
+    onStepASettled = null
   } = {}) {
     const creds = resolveNearcomSignerCredentials(wallet);
     if (!creds.signerId || !creds.nearPrivateSeedHex || !creds.nearPublicKey) {
       throw new Error(t('缺少 NEAR 签名凭据', 'Missing NEAR signing credentials'));
     }
 
-    // Check confidential balance for originAsset so slight deposit variance never causes insufficient balance
-    let swapInBig = BigInt(String(amountInRaw || '0'));
-    const balRes = await fetchNearcomConfidentialBalances(wallet).catch(() => null);
-    if (balRes && balRes.ok && Array.isArray(balRes.balances)) {
-      const hit = balRes.balances.find((b) => String(b.tokenId || '').toLowerCase() === String(originAsset || '').toLowerCase());
-      if (hit && /^\d+$/.test(String(hit.available))) {
-        const availBig = BigInt(String(hit.available));
-        if (availBig > 0n && availBig < swapInBig) swapInBig = availBig;
-      }
-    }
-    if (swapInBig <= 0n) {
-      throw new Error(t('机密账户余额不足以发起兑换', 'Insufficient confidential balance for swap'));
-    }
-
-    // Step A: Confidential Swap (/api/swap/quote -> /intent -> NEP-413 sign -> /submit -> /status)
-    const { res: swapQRes } = await nearcomAuthedRequest(creds, '/api/swap/quote', {
-      method: 'POST',
-      body: {
-        dry: false,
-        swapType: 'EXACT_INPUT',
-        originAsset,
-        destinationAsset,
-        amount: swapInBig.toString(),
-        slippageTolerance: Number(slippageBps) || 100,
-        deadline: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-        userAddress: creds.signerId,
-        authMethod: 'near',
-        idempotencyKey: generateNearcomUuidV4()
-      },
-      timeoutMs: 12000
-    });
-    if (!swapQRes || !swapQRes.ok || !swapQRes.data || !swapQRes.data.ok || !swapQRes.data.ok.quote) {
-      throw new Error((swapQRes && swapQRes.data && (swapQRes.data.err || swapQRes.data.error)) || t('创建机密兑换订单失败', 'Failed to create confidential swap quote'));
-    }
-    const swapQuoteOk = swapQRes.data.ok;
-    const swapDepositAddr = swapQuoteOk.quote.depositAddress;
-    const { appFee: _ignoredFee, ...quoteWithoutFee } = swapQuoteOk;
-
-    const { res: swapIntentRes } = await nearcomAuthedRequest(creds, '/api/swap/intent', {
-      method: 'POST',
-      body: {
-        depositAddress: swapDepositAddr,
-        signerId: creds.signerId,
-        standard: 'nep413',
-        quote: quoteWithoutFee
-      },
-      timeoutMs: 12000
-    });
-    if (!swapIntentRes || !swapIntentRes.ok || !swapIntentRes.data || !swapIntentRes.data.ok || !swapIntentRes.data.ok.intent) {
-      throw new Error((swapIntentRes && swapIntentRes.data && swapIntentRes.data.err) || t('生成机密兑换签名失败', 'Failed to generate confidential swap intent'));
-    }
-
-    const signedSwap = await signConfidentialNep413Intent({
-      wallet,
-      generatedIntent: swapIntentRes.data.ok.intent,
-      expectedRecipient: swapDepositAddr
-    });
-    const { res: swapSubmitRes } = await nearcomAuthedRequest(creds, '/api/swap/submit', {
-      method: 'POST',
-      body: { depositAddress: swapDepositAddr, signedIntent: signedSwap },
-      timeoutMs: 15000
-    });
-    if (!swapSubmitRes || !swapSubmitRes.ok || !swapSubmitRes.data || !swapSubmitRes.data.ok || !swapSubmitRes.data.ok.intentHash) {
-      throw new Error((swapSubmitRes && swapSubmitRes.data && swapSubmitRes.data.err) || t('提交机密兑换签名失败', 'Failed to submit confidential swap'));
-    }
-    const swapIntentHash = swapSubmitRes.data.ok.intentHash;
-
-    // Poll /api/swap/status until SUCCESS
-    let settledOutStr = String(swapQuoteOk.quote.amountOut || '0');
-    let swapSettled = false;
-    const pollDeadline = Date.now() + 45_000;
-    while (Date.now() < pollDeadline) {
-      const { res: stRes } = await nearcomAuthedRequest(creds, '/api/swap/status', {
-        method: 'POST',
-        body: { depositAddress: swapDepositAddr },
-        timeoutMs: 8000
-      }).catch(() => ({ res: null }));
-      const stOk = stRes && stRes.ok && stRes.data && stRes.data.ok;
-      if (stOk) {
-        const statusUpper = String(stOk.status || '').toUpperCase();
-        if (statusUpper === 'SUCCESS') {
-          if (stOk.amountOut && /^\d+$/.test(String(stOk.amountOut))) {
-            settledOutStr = String(stOk.amountOut);
-          }
-          swapSettled = true;
-          break;
-        }
-        if (statusUpper === 'FAILED' || statusUpper === 'REFUNDED') {
-          throw new Error(t(`机密兑换未成交 (${statusUpper})`, `Confidential swap ${statusUpper}`));
-        }
-      }
-      await new Promise((r) => setTimeout(r, 1500));
-    }
+    let swapQuoteOk = null;
+    let swapDepositAddr = String(existingSwapDepositAddress || '').trim();
+    let swapIntentHash = String(existingSwapIntentHash || '').trim();
+    let settledOutStr = (existingSettledOutRaw && /^\d+$/.test(String(existingSettledOutRaw)) && BigInt(String(existingSettledOutRaw)) > 0n)
+      ? String(existingSettledOutRaw)
+      : '0';
+    let swapSettled = BigInt(settledOutStr) > 0n;
 
     if (!swapSettled) {
-      const pendingErr = new Error(
-        t('机密兑换仍在处理中，请稍后刷新查看状态', 'Confidential swap is still processing. Please refresh status shortly.')
-      );
-      pendingErr.code = 'CONFIDENTIAL_SWAP_PENDING';
-      pendingErr.swapIntentHash = swapIntentHash;
-      pendingErr.swapDepositAddress = swapDepositAddr;
-      throw pendingErr;
+      if (!swapDepositAddr) {
+        // Check confidential balance for originAsset so slight deposit variance never causes insufficient balance
+        let swapInBig = BigInt(String(amountInRaw || '0'));
+        const balRes = await fetchNearcomConfidentialBalances(wallet).catch(() => null);
+        if (balRes && balRes.ok && Array.isArray(balRes.balances)) {
+          const hit = balRes.balances.find((b) => String(b.tokenId || '').toLowerCase() === String(originAsset || '').toLowerCase());
+          if (hit && /^\d+$/.test(String(hit.available))) {
+            const availBig = BigInt(String(hit.available));
+            if (availBig > 0n && availBig < swapInBig) swapInBig = availBig;
+          }
+        }
+        if (swapInBig <= 0n) {
+          throw new Error(t('机密账户余额不足以发起兑换', 'Insufficient confidential balance for swap'));
+        }
+
+        // Step A: Confidential Swap (/api/swap/quote -> /intent -> NEP-413 sign -> /submit -> /status)
+        const { res: swapQRes } = await nearcomAuthedRequest(creds, '/api/swap/quote', {
+          method: 'POST',
+          body: {
+            dry: false,
+            swapType: 'EXACT_INPUT',
+            originAsset,
+            destinationAsset,
+            amount: swapInBig.toString(),
+            slippageTolerance: Number(slippageBps) || 100,
+            deadline: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+            userAddress: creds.signerId,
+            authMethod: 'near',
+            idempotencyKey: generateNearcomUuidV4()
+          },
+          timeoutMs: 12000
+        });
+        if (!swapQRes || !swapQRes.ok || !swapQRes.data || !swapQRes.data.ok || !swapQRes.data.ok.quote) {
+          throw new Error((swapQRes && swapQRes.data && (swapQRes.data.err || swapQRes.data.error)) || t('创建机密兑换订单失败', 'Failed to create confidential swap quote'));
+        }
+        swapQuoteOk = swapQRes.data.ok;
+        swapDepositAddr = swapQuoteOk.quote.depositAddress;
+        const { appFee: _ignoredFee, ...quoteWithoutFee } = swapQuoteOk;
+
+        const { res: swapIntentRes } = await nearcomAuthedRequest(creds, '/api/swap/intent', {
+          method: 'POST',
+          body: {
+            depositAddress: swapDepositAddr,
+            signerId: creds.signerId,
+            standard: 'nep413',
+            quote: quoteWithoutFee
+          },
+          timeoutMs: 12000
+        });
+        if (!swapIntentRes || !swapIntentRes.ok || !swapIntentRes.data || !swapIntentRes.data.ok || !swapIntentRes.data.ok.intent) {
+          throw new Error((swapIntentRes && swapIntentRes.data && swapIntentRes.data.err) || t('生成机密兑换签名失败', 'Failed to generate confidential swap intent'));
+        }
+
+        const signedSwap = await signConfidentialNep413Intent({
+          wallet,
+          generatedIntent: swapIntentRes.data.ok.intent,
+          expectedRecipient: swapDepositAddr
+        });
+        const { res: swapSubmitRes } = await nearcomAuthedRequest(creds, '/api/swap/submit', {
+          method: 'POST',
+          body: { depositAddress: swapDepositAddr, signedIntent: signedSwap },
+          timeoutMs: 15000
+        });
+        if (!swapSubmitRes || !swapSubmitRes.ok || !swapSubmitRes.data || !swapSubmitRes.data.ok || !swapSubmitRes.data.ok.intentHash) {
+          throw new Error((swapSubmitRes && swapSubmitRes.data && swapSubmitRes.data.err) || t('提交机密兑换签名失败', 'Failed to submit confidential swap'));
+        }
+        swapIntentHash = swapSubmitRes.data.ok.intentHash;
+        settledOutStr = String(swapQuoteOk.quote.amountOut || '0');
+      }
+
+      // Poll /api/swap/status until SUCCESS
+      const pollDeadline = Date.now() + 45_000;
+      while (Date.now() < pollDeadline) {
+        const { res: stRes } = await nearcomAuthedRequest(creds, '/api/swap/status', {
+          method: 'POST',
+          body: { depositAddress: swapDepositAddr },
+          timeoutMs: 8000
+        }).catch(() => ({ res: null }));
+        const stOk = stRes && stRes.ok && stRes.data && stRes.data.ok;
+        if (stOk) {
+          const statusUpper = String(stOk.status || '').toUpperCase();
+          if (statusUpper === 'SUCCESS') {
+            if (stOk.amountOut && /^\d+$/.test(String(stOk.amountOut))) {
+              settledOutStr = String(stOk.amountOut);
+            }
+            swapSettled = true;
+            break;
+          }
+          if (statusUpper === 'FAILED' || statusUpper === 'REFUNDED') {
+            throw new Error(t(`机密兑换未成交 (${statusUpper})`, `Confidential swap ${statusUpper}`));
+          }
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+
+      if (!swapSettled) {
+        const pendingErr = new Error(
+          t('机密兑换仍在处理中，请稍后刷新查看状态', 'Confidential swap is still processing. Please refresh status shortly.')
+        );
+        pendingErr.code = 'CONFIDENTIAL_SWAP_PENDING';
+        pendingErr.swapIntentHash = swapIntentHash;
+        pendingErr.swapDepositAddress = swapDepositAddr;
+        throw pendingErr;
+      }
+
+      if (typeof onStepASettled === 'function') {
+        try {
+          onStepASettled({
+            swapDepositAddress: swapDepositAddr,
+            swapIntentHash,
+            settledOutRaw: settledOutStr
+          });
+        } catch (_) {}
+      }
     }
 
     const settledOutBig = BigInt(settledOutStr);
@@ -590,7 +615,7 @@
     // Step B: 0.25% Fee Collection via Confidential Internal Send (best-effort; skip micro-dust < $0.01)
     let actualFeeSentBig = 0n;
     const effFeeBps = Number.isFinite(Number(feeBps)) ? Math.max(0, Math.round(Number(feeBps))) : 0;
-    const quoteOutUsd = swapQuoteOk.quote && swapQuoteOk.quote.amountOutUsd ? Number(swapQuoteOk.quote.amountOutUsd) : null;
+    const quoteOutUsd = swapQuoteOk?.quote?.amountOutUsd ? Number(swapQuoteOk.quote.amountOutUsd) : null;
     const estFeeUsd = (quoteOutUsd && effFeeBps > 0) ? (quoteOutUsd * effFeeBps) / 10000 : null;
     const minFeeUsd = (typeof APP_FEE_CONFIG !== 'undefined' && APP_FEE_CONFIG.CONFIDENTIAL_MIN_FEE_USD) || 0.01;
     const feeAboveMin = estFeeUsd === null || estFeeUsd >= minFeeUsd;

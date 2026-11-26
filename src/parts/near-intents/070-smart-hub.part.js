@@ -378,7 +378,7 @@
         })
       ]);
     }
-    const run = _execQuoteCrossChainWithDexRelay(params).then((res) => {
+    const run = _execQuoteCrossChainWithDexRelay({ ...params, signal: null }).then((res) => {
       if (res && res.ok) {
         _quoteCache.set(cacheKey, { ts: Date.now(), fetchRef: curFetch, val: res });
         if (_quoteCache.size > 60) _quoteCache.delete(_quoteCache.keys().next().value);
@@ -389,6 +389,14 @@
       if (cur && cur.promise === run) _quoteInFlight.delete(cacheKey);
     });
     _quoteInFlight.set(cacheKey, { fetchRef: curFetch, promise: run });
-    return run;
+    if (!signal) return run;
+    return Promise.race([
+      run,
+      new Promise((r) => {
+        const onA = () => r({ ok: false, error: t('请求已取消', 'Request aborted') });
+        if (signal.aborted) onA();
+        else signal.addEventListener('abort', onA, { once: true });
+      })
+    ]);
   }
 

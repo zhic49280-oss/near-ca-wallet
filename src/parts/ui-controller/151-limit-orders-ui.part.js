@@ -257,6 +257,7 @@
         showToast(st.limit.rateLimited ? rateLimitMsg : t('已刷新挂单列表', 'Orders refreshed'));
       }
     } catch (_) {
+      if (reqSeq !== _limitOrdSeq || (st.limit.chain || 'near') !== chain || st.getActiveWallet()?.id !== activeWalletId) return;
       if (showFeedback) showToast(t('获取挂单失败', 'Failed to load orders'));
     } finally {
       if (reqSeq === _limitOrdSeq) {
@@ -635,6 +636,7 @@
             return 1n;
           }
         })();
+        let allowanceConfirmed = false;
         if (owner && typeof lo.checkEvmCowAllowance === 'function') {
           const pollDelays = [250, 350, 1000, 1500, 2000, 2000, 2000, 2000];
           for (let i = 0; i < pollDelays.length; i++) {
@@ -649,6 +651,7 @@
               st.limit.evmAllowanceFailed = false;
               renderLimitOrderCalculations();
               if (BigInt(nextAllow) >= (sellBaseNeeded > 0n ? sellBaseNeeded : 1n)) {
+                allowanceConfirmed = true;
                 showToast(t(`${sellToken.symbol} 授权已确认`, `${sellToken.symbol} allowance confirmed`));
                 break;
               }
@@ -657,7 +660,15 @@
         }
         if (stepper) {
           stepper.setStep(1, 'done');
-          stepper.finish(true, t(`${sellToken.symbol} 授权已确认`, `${sellToken.symbol} allowance confirmed`));
+          stepper.finish(
+            true,
+            allowanceConfirmed
+              ? t(`${sellToken.symbol} 授权已确认`, `${sellToken.symbol} allowance confirmed`)
+              : t('授权交易已提交，请稍后刷新确认', 'Approval tx submitted; refresh shortly to confirm')
+          );
+        }
+        if (!allowanceConfirmed) {
+          showToast(t('授权交易已提交，请稍后刷新确认', 'Approval tx submitted; refresh shortly to confirm'));
         }
         await refreshLimitMarketContextAsync();
         return;
@@ -747,10 +758,11 @@
       }
 
       if (typeof resetFormFields === 'function') {
-        resetFormFields(['limit-amount-in', 'limit-target-rate'], st.limit, { amountIn: '', targetRate: '' });
+        resetFormFields(['limit-amount-in', 'limit-target-rate'], st.limit, { amountIn: '', targetRate: '', snappedPoint: null });
       } else {
         st.limit.amountIn = '';
         st.limit.targetRate = '';
+        st.limit.snappedPoint = null;
         if ($('limit-amount-in')) $('limit-amount-in').value = '';
         if ($('limit-target-rate')) $('limit-target-rate').value = '';
       }
@@ -765,6 +777,19 @@
         stepper.finish(false, st.limit.errorMsg);
       }
       showToast(st.limit.errorMsg);
+      if (err && Array.isArray(err.partialTxHashes) && err.partialTxHashes.length > 0) {
+        if (typeof resetFormFields === 'function') {
+          resetFormFields(['limit-amount-in', 'limit-target-rate'], st.limit, { amountIn: '', targetRate: '', snappedPoint: null });
+        } else {
+          st.limit.amountIn = '';
+          st.limit.targetRate = '';
+          st.limit.snappedPoint = null;
+          if ($('limit-amount-in')) $('limit-amount-in').value = '';
+          if ($('limit-target-rate')) $('limit-target-rate').value = '';
+        }
+        refreshAllBalancesAsync(true).catch(() => {});
+        refreshLimitOrdersAsync(false).catch(() => {});
+      }
     } finally {
       _limitOrderActionInFlight = false;
       st.limit.submitting = false;

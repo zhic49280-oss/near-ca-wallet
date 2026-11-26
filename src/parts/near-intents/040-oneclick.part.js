@@ -82,7 +82,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(reqBody),
-          signal: isDry && _oneClickQuoteInFlight.has(ocKey) ? undefined : signal
+          signal: isDry ? undefined : signal
         },
         dry ? 7000 : DEFAULT_TIMEOUT_MS
       );
@@ -161,19 +161,26 @@
     };
 
     if (!isDry) return runOneClick();
-    const ocPromise = runOneClick();
-    _oneClickQuoteInFlight.set(ocKey, { fetchRef: curFetch, promise: ocPromise });
-    try {
-      const result = await ocPromise;
+    const ocPromise = runOneClick().then((result) => {
       if (result && result.ok) {
         _oneClickQuoteCache.set(ocKey, { ts: Date.now(), fetchRef: curFetch, val: result });
         if (_oneClickQuoteCache.size > 100) _oneClickQuoteCache.delete(_oneClickQuoteCache.keys().next().value);
       }
       return result;
-    } finally {
+    }).finally(() => {
       const cur = _oneClickQuoteInFlight.get(ocKey);
       if (cur && cur.promise === ocPromise) _oneClickQuoteInFlight.delete(ocKey);
-    }
+    });
+    _oneClickQuoteInFlight.set(ocKey, { fetchRef: curFetch, promise: ocPromise });
+    if (!signal) return ocPromise;
+    return Promise.race([
+      ocPromise,
+      new Promise((r) => {
+        const onA = () => r({ ok: false, status: 0, aborted: true, error: t('请求已取消', 'Request aborted') });
+        if (signal.aborted) onA();
+        else signal.addEventListener('abort', onA, { once: true });
+      })
+    ]);
   }
 
   /**

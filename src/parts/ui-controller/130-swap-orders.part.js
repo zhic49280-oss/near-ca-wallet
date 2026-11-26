@@ -127,6 +127,10 @@
     if (qrWrap) {
       if (isAuto) {
         qrWrap.classList.add('hidden');
+        const fw = typeof getFramework === 'function' ? getFramework() : null;
+        if (fw && typeof fw.render === 'function') {
+          try { fw.render(null, qrWrap); } catch (_) {}
+        }
         qrWrap.innerHTML = '';
       } else {
         qrWrap.classList.remove('hidden');
@@ -253,7 +257,16 @@
           slippageBps: conf.slippageBps || 100,
           recipient: conf.recipient,
           feeBps: conf.feeBps !== undefined ? conf.feeBps : 25,
-          feeRecipient: conf.feeRecipient || intents.DEFAULT_REFERRAL_ACCOUNT
+          feeRecipient: conf.feeRecipient || intents.DEFAULT_REFERRAL_ACCOUNT,
+          swapDepositAddress: conf.swapDepositAddress || '',
+          swapIntentHash: conf.swapIntentHash || '',
+          settledOutRaw: conf.settledOutRaw || '',
+          onStepASettled: ({ swapDepositAddress, swapIntentHash, settledOutRaw }) => {
+            conf.swapDepositAddress = swapDepositAddress;
+            conf.swapIntentHash = swapIntentHash;
+            conf.settledOutRaw = settledOutRaw;
+            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+          }
         });
         order.status = 'COMPLETED';
         order.followUpExecuted = true;
@@ -288,7 +301,7 @@
             const preBridgeBal = outFollow
               ? await intents.fetchNearNep141Balances(nearId, { [follow.tokenOut]: outFollow.hubDecimals || 8 }).catch(() => null)
               : (dclFollow ? await intents.fetchNearNep141Balances(nearId, { [dclFollow.tokenIn]: 6 }).catch(() => null) : null);
-            const preOutRaw = BigInt(preBridgeBal?.[follow.tokenOut]?.raw || '0');
+            const preOutRaw = preBridgeBal?.[follow.tokenOut]?.raw != null ? BigInt(preBridgeBal[follow.tokenOut].raw) : null;
             const swapRes = swapFn === 'dcl'
               ? await contracts.executeNearDclPoolSwap({
                   wallet,
@@ -314,9 +327,12 @@
 
             if (dclFollow && typeof contracts.executeNearDclPoolSwap === 'function') {
               const postUsdcBal = await intents.fetchNearNep141Balances(nearId, { [dclFollow.tokenIn]: 6 }).catch(() => null);
-              const postUsdcRaw = BigInt(postUsdcBal?.[dclFollow.tokenIn]?.raw || '0');
-              const deltaUsdc = postUsdcRaw > preOutRaw ? (postUsdcRaw - preOutRaw) : BigInt(swapRes.amountOut || '0');
-              const dclInRaw = (deltaUsdc > 0n ? deltaUsdc : BigInt(swapRes.amountOut || '0')).toString();
+              const expectedUsdc = BigInt(swapRes.amountOut || '0');
+              let deltaUsdc = (preOutRaw !== null && postUsdcBal?.[dclFollow.tokenIn]?.raw != null)
+                ? (BigInt(postUsdcBal[dclFollow.tokenIn].raw) > preOutRaw ? (BigInt(postUsdcBal[dclFollow.tokenIn].raw) - preOutRaw) : expectedUsdc)
+                : expectedUsdc;
+              if (expectedUsdc > 0n && deltaUsdc > expectedUsdc) deltaUsdc = expectedUsdc;
+              const dclInRaw = (deltaUsdc > 0n ? deltaUsdc : expectedUsdc).toString();
               // Promote nested DCL step before executing so retries never re-run Ref Finance
               order.followUpRefSwap = null;
               order.followUpDclSwap = { ...dclFollow, amountRaw: dclInRaw };
@@ -328,7 +344,7 @@
                 slippageBps: dclFollow.slippageBps || follow.slippageBps || 100
               });
               if (!dclQ || !dclQ.ok) {
-                throw new Error((dclQ && dclQ.error) || t('DCL 第二阶段询价失败', 'DCL stage 2 quote failed'));
+                throw new Error((dclQ && dclQ.error) || t('第二阶段兑换询价失败', 'Stage 2 swap quote failed'));
               }
               const dclRes = await contracts.executeNearDclPoolSwap({
                 wallet,
@@ -352,8 +368,11 @@
 
             if (outFollow && outFollow.destinationAsset) {
               const postOutBal = await intents.fetchNearNep141Balances(nearId, { [follow.tokenOut]: outFollow.hubDecimals || 8 }).catch(() => null);
-              const postOutRaw = BigInt(postOutBal?.[follow.tokenOut]?.raw || '0');
-              const deltaOut = postOutRaw > preOutRaw ? (postOutRaw - preOutRaw) : BigInt(swapRes.amountOut || outFollow.expectedInRaw || '0');
+              const expectedOut = BigInt(swapRes.amountOut || outFollow.expectedInRaw || '0');
+              let deltaOut = (preOutRaw !== null && postOutBal?.[follow.tokenOut]?.raw != null)
+                ? (BigInt(postOutBal[follow.tokenOut].raw) > preOutRaw ? (BigInt(postOutBal[follow.tokenOut].raw) - preOutRaw) : expectedOut)
+                : expectedOut;
+              if (expectedOut > 0n && deltaOut > expectedOut) deltaOut = expectedOut;
               const bridgeInRaw = (deltaOut > 0n ? deltaOut : BigInt(outFollow.expectedInRaw || '0')).toString();
               // Promote nested BridgeOut step before executing so retries never re-run Ref Finance
               order.followUpRefSwap = null;
@@ -388,7 +407,7 @@
           slippageBps: dclFollow.slippageBps || 100
         });
         if (!dclQ || !dclQ.ok) {
-          throw new Error((dclQ && dclQ.error) || t('DCL 第二阶段询价失败', 'DCL stage 2 quote failed'));
+          throw new Error((dclQ && dclQ.error) || t('第二阶段兑换询价失败', 'Stage 2 swap quote failed'));
         }
         const dclRes = await contracts.executeNearDclPoolSwap({
           wallet,
@@ -585,7 +604,11 @@
               : maxSpendableArc6;
             if (bridgeArc6 <= 0n) throw new Error(t('Arc USDC 余额不足或不足预留 Gas 以发起跨链至 Base', 'Insufficient Arc USDC (after gas reserve) to bridge to Base'));
             const preBaseRes = await contracts.fetchEvmNativeAndErc20Balance('base', evmAddr, intents.BASE_USDC_EVM, 6).catch(() => null);
-            const isBaseUsdcDest = String(follow.destinationAsset || '') === intents.BASE_USDC_ASSET_ID;
+            const destLower = String(follow.destinationAsset || '').toLowerCase();
+            const isBaseUsdcDest = Boolean(
+              (intents.BASE_USDC_1CLICK_ID && destLower === String(intents.BASE_USDC_1CLICK_ID).toLowerCase()) ||
+              (intents.BASE_USDC_EVM && destLower === String(intents.BASE_USDC_EVM).toLowerCase())
+            );
             const relayLive = await intents.quoteRelayBridge({
               user: evmAddr,
               recipient: (isBaseUsdcDest && follow.recipient && /^0x[0-9a-fA-F]{40}$/.test(follow.recipient)) ? follow.recipient : evmAddr,
@@ -803,6 +826,10 @@
         }
       }
     } catch (err) {
+      if (err && err.code === 'CONFIDENTIAL_SWAP_PENDING' && order.followUpConfidentialSwap) {
+        if (err.swapDepositAddress) order.followUpConfidentialSwap.swapDepositAddress = err.swapDepositAddress;
+        if (err.swapIntentHash) order.followUpConfidentialSwap.swapIntentHash = err.swapIntentHash;
+      }
       order.followUpExecuted = false;
       order.followUpFailed = true;
       order.followUpError = toUserFriendlyError(err, '后续自动兑换执行失败，请稍后重试', 'Follow-up swap execution failed. Please try again.');
@@ -847,7 +874,13 @@
     }
     const isStalePoll = () => mySeq !== _orderPollSeq || st.swap.activeOrder !== order;
     try {
-      if (order.followUpBaseOneClick && !order.followUpExecuted && !order.followUpFailed && order.status === 'PENDING_BASE_BRIDGE') {
+      if (order.followUpBaseOneClick && !order.followUpExecuted && !order.followUpFailed && ['PENDING_BASE_BRIDGE', 'SUCCESS'].includes(order.status)) {
+        if (order.status === 'SUCCESS') {
+          if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
+          await runActiveSwapFollowUp(order);
+          refreshAllBalancesAsync(false);
+          return;
+        }
         const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
         const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
         if (evmAddr && contracts) {
@@ -869,7 +902,13 @@
         if (manual) showToast(`${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
         return;
       }
-      if (order.followUpArcDexSwap && !order.followUpExecuted && !order.followUpFailed && order.status === 'PENDING_ARC_BRIDGE') {
+      if (order.followUpArcDexSwap && !order.followUpExecuted && !order.followUpFailed && ['PENDING_ARC_BRIDGE', 'SUCCESS'].includes(order.status)) {
+        if (order.status === 'SUCCESS') {
+          if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
+          await runActiveSwapFollowUp(order);
+          refreshAllBalancesAsync(false);
+          return;
+        }
         const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
         const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
         if (evmAddr && contracts) {

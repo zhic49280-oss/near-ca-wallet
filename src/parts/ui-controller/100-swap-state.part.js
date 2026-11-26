@@ -431,7 +431,7 @@
     return false;
   }
 
-  function syncSwapRecipientInputState(wallet, fromToken, toToken, quoteData = null) {
+  function syncSwapRecipientInputState(wallet, fromToken, toToken, quoteData = null, opts = {}) {
     const st = getState();
     const recInput = $('swap-recipient-input');
     const contactsBtn = $('swap-recipient-contacts-btn');
@@ -451,10 +451,13 @@
     } else {
       recInput.disabled = false;
       if (contactsBtn) contactsBtn.disabled = false;
-      if (!st.swap.recipientAddress && toToken) {
+      if (opts && opts.autoFillDefault && !st.swap.recipientAddress && toToken) {
         st.swap.recipientAddress = getWalletDefaultRecipientForChain(wallet, toToken.blockchain);
       }
-      recInput.value = st.swap.recipientAddress || '';
+      const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+      if (activeEl !== recInput) {
+        recInput.value = st.swap.recipientAddress || '';
+      }
     }
     return locked;
   }

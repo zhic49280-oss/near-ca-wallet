@@ -3,7 +3,7 @@
         const solAddr = wallet.solAddress;
         if (!solAddr) throw new Error(t('缺少 Solana 收款地址', 'Missing Solana address'));
         const preSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
-        const preLamports = BigInt(preSolRes?.nativeLamports || '0');
+        const preLamports = preSolRes?.nativeLamports != null ? BigInt(preSolRes.nativeLamports) : null;
 
         const s1Quote = (activeQuote.stage1DexQuote && activeQuote.stage1DexQuote.outAmount)
           ? activeQuote.stage1DexQuote
@@ -43,7 +43,11 @@
         }
         const solGasReserve = typeof contracts.getNativeGasReserve === 'function' ? contracts.getNativeGasReserve('sol') : 0.002;
         const reserveLamports = BigInt(contracts.toBaseUnits(String(solGasReserve), 9));
-        const deltaLamports = postLamports > preLamports ? (postLamports - preLamports) : BigInt(s1Quote.outAmount || '0');
+        const expectedLamports = BigInt(s1Quote.outAmount || '0');
+        let deltaLamports = (preLamports !== null && postSolRes?.nativeLamports != null)
+          ? (postLamports > preLamports ? (postLamports - preLamports) : expectedLamports)
+          : expectedLamports;
+        if (expectedLamports > 0n && deltaLamports > expectedLamports) deltaLamports = expectedLamports;
         const maxSendable = postLamports > reserveLamports ? (postLamports - reserveLamports) : 0n;
         const sendLamports = deltaLamports > maxSendable ? maxSendable : deltaLamports;
         if (sendLamports <= 0n) throw new Error(t('SOL 余额不足以执行跨链第二阶段', 'Insufficient SOL for Stage 2 bridge'));
@@ -452,13 +456,15 @@
         const srcContract = (fromToken.contractAddress || intents.ARC_USDC_CONTRACT).toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
           ? intents.ARC_USDC_CONTRACT
           : fromToken.contractAddress;
-        let arcUsdcRaw = amountRaw;
-        let arcStep = 0;
         const isArcSwapStage1 = srcContract.toLowerCase() !== intents.ARC_USDC_CONTRACT.toLowerCase();
+        let arcUsdcRaw = (!isArcSwapStage1 && Number(fromToken.decimals) === 18)
+          ? (BigInt(amountRaw) / 1000000000000n).toString()
+          : amountRaw;
+        let arcStep = 0;
         if (isArcSwapStage1) {
           advanceStep(arcStep, 'active');
           const preArcRes = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
-          const preArcWei = BigInt(preArcRes?.nativeRaw || '0');
+          const preArcWei = preArcRes?.nativeRaw != null ? BigInt(preArcRes.nativeRaw) : null;
           const s1Q = activeQuote.stage1DexQuote?.routeData
             ? activeQuote.stage1DexQuote
             : await contracts.quoteEvmDexSwap({
@@ -506,7 +512,9 @@
           }
           const reserveArcWei = BigInt(intents.toBaseUnits('0.02', 18));
           const maxSpendableWei = postArcWei > reserveArcWei ? (postArcWei - reserveArcWei) : 0n;
-          const deltaArcWei = postArcWei > preArcWei ? (postArcWei - preArcWei) : 0n;
+          const deltaArcWei = (preArcWei !== null && postArcRes?.nativeRaw != null && postArcWei > preArcWei)
+            ? (postArcWei - preArcWei)
+            : 0n;
           const expectedArcWei = BigInt(s1Q.amountOut || '0') * 1000000000000n;
           let bridgeArcWei = deltaArcWei > 0n ? deltaArcWei : expectedArcWei;
           if (expectedArcWei > 0n && bridgeArcWei > expectedArcWei) bridgeArcWei = expectedArcWei;

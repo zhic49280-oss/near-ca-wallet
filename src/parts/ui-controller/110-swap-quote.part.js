@@ -71,7 +71,10 @@
       routeBadge.title = routeBadge.textContent || '';
     }
 
-    syncSwapRecipientInputState(wallet, fromToken, toToken, st.swap.quoteData || null);
+    const pairKey = `${fromToken?.assetId || ''}|${toToken?.assetId || ''}`;
+    const pairChanged = st.swap._recipientPairKey !== pairKey;
+    st.swap._recipientPairKey = pairKey;
+    syncSwapRecipientInputState(wallet, fromToken, toToken, st.swap.quoteData || null, { autoFillDefault: pairChanged });
 
     const amtInp = $('swap-amount-in');
     if (amtInp && amtInp.value !== String(st.swap.amountIn || '')) {
@@ -210,8 +213,25 @@
     handleSwapAmountInput();
   }
 
+  function cancelPendingSwapQuote() {
+    if (_swapQuoteTimer) {
+      clearTimeout(_swapQuoteTimer);
+      _swapQuoteTimer = null;
+    }
+    const st = getState();
+    if (st && st.swap) {
+      if (st.swap._quoteAbortCtrl) {
+        try { st.swap._quoteAbortCtrl.abort(); } catch (_) {}
+        st.swap._quoteAbortCtrl = null;
+      }
+      st.swap._quotePending = false;
+      st.swap._quoting = false;
+    }
+  }
+
   function clearSwapAmountAndQuote() {
     const st = getState();
+    cancelPendingSwapQuote();
     resetFormFields(['swap-amount-in'], st.swap, { amountIn: '', _lastError: '' });
     resetSwapQuoteDisplay();
     updateSwapPrimaryButtonState();
@@ -219,6 +239,7 @@
 
   function flipSwapTokens() {
     const st = getState();
+    cancelPendingSwapQuote();
     const tmp = st.swap.fromAssetId;
     st.swap.fromAssetId = st.swap.toAssetId;
     st.swap.toAssetId = tmp;
@@ -238,13 +259,8 @@
   const _swapQuoteCache = new Map();
 
   function scheduleSwapQuote() {
-    if (_swapQuoteTimer) clearTimeout(_swapQuoteTimer);
+    cancelPendingSwapQuote();
     const st = getState();
-    if (st && st.swap && st.swap._quoteAbortCtrl) {
-      try { st.swap._quoteAbortCtrl.abort(); } catch (_) {}
-      st.swap._quoteAbortCtrl = null;
-    }
-    st.swap._quoting = false;
     const amtNum = Number(st.swap.amountIn);
     st.swap._quotePending = Number.isFinite(amtNum) && amtNum > 0;
     st.swap._lastError = '';
@@ -512,18 +528,21 @@
       }
       const outHuman = q.amountOutFormatted || intents.fromBaseUnits(q.amountOut || '0', toToken.decimals);
       const routeText = q.routeLabel || (q.compositeType === 'PRL_TO_NEAR_DCL'
-        ? (q.bridgeQuote ? '1Click (Pearl➔NEAR) + Rhea DCL' : 'Ref + Rhea')
+        ? (q.bridgeQuote ? t('跨链聚合 + 链上流动性池', 'Cross-Chain + Liquidity Pool') : t('链上流动性池', 'On-Chain Liquidity Pool'))
         : (q.compositeType === 'PRL_TO_EXTERNAL' || q.compositeType === 'EXTERNAL_TO_PRL'
-            ? 'Ref + 1Click'
+            ? t('链上流动性 + 跨链聚合路由', 'Liquidity + Cross-Chain Route')
             : (q.compositeType === 'PRL_TO_NEAR_REF' || q.compositeType === 'NEAR_TO_PRL_REF'
-                ? (q.bridgeQuote ? '1Click (Pearl➔NEAR) + Ref Finance' : 'Ref Finance')
-                : '1Click Cross-Chain')));
+                ? (q.bridgeQuote ? t('跨链聚合 + 链上流动性池', 'Cross-Chain + Liquidity Pool') : t('链上流动性池', 'On-Chain Liquidity Pool'))
+                : t('跨链聚合路由', 'Cross-Chain Route'))));
       applyAndCacheQuote(q, routeText, Number(outHuman), q.amountInUsd, q.amountOutUsd);
     } catch (e) {
-      if (isCancelledOrStale() || (e && (e.name === 'AbortError' || /abort|取消/i.test(String(e.message || ''))))) return;
+      if (isCancelledOrStale()) return;
       st.swap._quoting = false;
       resetSwapQuoteDisplay();
-      setSwapError(toUserFriendlyError(e, '获取报价失败，请稍后重试', 'Failed to fetch quote. Please try again.'));
+      const isTimeout = e && (e.name === 'AbortError' || /abort|timeout|超时/i.test(String(e.message || '')));
+      setSwapError(isTimeout
+        ? t('获取报价超时，请稍后重试', 'Quote request timed out. Please try again.')
+        : toUserFriendlyError(e, '获取报价失败，请稍后重试', 'Failed to fetch quote. Please try again.'));
     } finally {
       if (st.swap._quoteAbortCtrl === abortCtrl) st.swap._quoteAbortCtrl = null;
     }

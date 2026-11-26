@@ -39,7 +39,7 @@
             autoBroadcasted: true,
             createdAt: Date.now(),
             followUpFailed: true,
-            followUpError: bridgeQuote.error || t('获取 PRL 跨链桥路由失败，请点击继续重试', 'Failed to get PRL bridge route; tap Resume to retry'),
+            followUpError: toUserFriendlyError(bridgeQuote.error, '获取 PRL 跨链桥路由失败，请点击继续重试', 'Failed to get PRL bridge route; tap Resume to retry'),
             followUpBridgeOut: {
               originAsset: intents.PRL_NEAR_ASSET_ID,
               hubContract: intents.PRL_NEAR_CONTRACT,
@@ -232,7 +232,7 @@
       // Sub-route B: PRL (NEAR) -> External chain (e.g. SOL / ETH / BNB)
       if (!isDirect1ClickPrl && originIsPrl && !destIsPrl && fromToken.blockchain === 'near') {
         const preUsdc = await intents.fetchNearNep141Balances(nearId, { usdc: intents.NEAR_USDC_CONTRACT }).catch(() => null);
-        const preUsdcRaw = BigInt(preUsdc?.usdc?.raw || '0');
+        const preUsdcRaw = preUsdc?.usdc?.raw != null ? BigInt(preUsdc.usdc.raw) : null;
         const step1Q = (st.swap.quoteData && st.swap.quoteData.refQuote)
           ? st.swap.quoteData.refQuote
           : await contracts.quoteNearRefFinanceSwap({
@@ -272,8 +272,12 @@
 
         // Verify actual post-swap USDC increase on NEAR before step 2
         const postUsdc = await intents.fetchNearNep141Balances(nearId, { usdc: intents.NEAR_USDC_CONTRACT }).catch(() => null);
-        const postUsdcRaw = BigInt(postUsdc?.usdc?.raw || '0');
-        const deltaRaw = postUsdcRaw > preUsdcRaw ? (postUsdcRaw - preUsdcRaw) : BigInt(step1Q.minAmountOut || step1Q.amountOut);
+        const expectedUsdc = BigInt(step1Q.amountOut || step1Q.minAmountOut || '0');
+        const fallbackUsdc = BigInt(step1Q.minAmountOut || step1Q.amountOut || '0');
+        let deltaRaw = (preUsdcRaw !== null && postUsdc?.usdc?.raw != null)
+          ? (BigInt(postUsdc.usdc.raw) > preUsdcRaw ? (BigInt(postUsdc.usdc.raw) - preUsdcRaw) : fallbackUsdc)
+          : fallbackUsdc;
+        if (expectedUsdc > 0n && deltaRaw > expectedUsdc) deltaRaw = expectedUsdc;
         const sendUsdcRaw = deltaRaw > 0n ? deltaRaw.toString() : String(step1Q.amountOut);
 
         // If destination is QTC on NEAR, execute atomic Step 2 directly on Rhea CLMM (dclv2.ref-labs.near) when quoted

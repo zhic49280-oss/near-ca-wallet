@@ -1,3 +1,5 @@
+  let _solverRelay403Until = 0;
+
   async function _execQuoteCrossChainWithDexRelay(params = {}) {
     const { fromToken, toToken, signal = null } = params;
     if (!fromToken || !toToken) return quoteCrossChainWithDexRelayLegacy(params);
@@ -768,6 +770,13 @@
       return executeOnChain();
     }
 
+    if (Date.now() < _solverRelay403Until) {
+      if (fallbackOnChain && nearPrivateKey) {
+        return executeOnChain();
+      }
+      throw new Error('HTTP 403: Solver relay cooldown active');
+    }
+
     try {
       const resp = await fetchJsonWithTimeout(
         SOLVER_RELAY_URL,
@@ -789,6 +798,9 @@
         12000
       );
 
+      if (resp.status === 403) {
+        _solverRelay403Until = Date.now() + 10 * 60 * 1000;
+      }
       if (!resp.ok || !resp.data) {
         throw new Error(`HTTP ${resp.status}: ${resp.statusText || 'Solver relay failed'}`);
       }

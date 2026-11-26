@@ -172,6 +172,18 @@
     st.swap._executing = true;
     let _swapAbortedOrFailed = false;
     try {
+      if (!st.swap.quoteData) {
+        if (typeof fetchLiveSwapQuoteAsync === 'function') {
+          await fetchLiveSwapQuoteAsync();
+        }
+        if (!st.swap.quoteData) {
+          _swapAbortedOrFailed = true;
+          const errText = st.swap._lastError || t('暂无可用报价，请稍后重试', 'No quote available. Please try again.');
+          setSwapError(errText);
+          showToast(errText);
+          return;
+        }
+      }
       if (st.swap.quoteData && st.swap.quoteData.quotedAt && (Date.now() - Number(st.swap.quoteData.quotedAt)) > 30000) {
         if (typeof fetchLiveSwapQuoteAsync === 'function') {
           await fetchLiveSwapQuoteAsync();
@@ -478,7 +490,7 @@
           if (origStage.chain === 'sol') {
             const solAddr = wallet.solAddress;
             const preSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
-            const preLamports = BigInt(preSolRes?.nativeLamports || '0');
+            const preLamports = preSolRes?.nativeLamports != null ? BigInt(preSolRes.nativeLamports) : null;
             const s0Quote = origStage.quote || await contracts.quoteSolanaJupiterSwap({
               inputMint: fromToken.contractAddress,
               outputMint: 'So11111111111111111111111111111111111111112',
@@ -505,16 +517,19 @@
               await contracts.waitForSolanaTxConfirmation(origTx.txHash, 45000);
             }
             const postSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
-            const postLamports = BigInt(postSolRes?.nativeLamports || '0');
-            const deltaL = postLamports > preLamports ? (postLamports - preLamports) : BigInt(s0Quote.outAmount || '0');
-            stageAmtRaw = (deltaL > 0n ? deltaL : BigInt(s0Quote.outAmount || '0')).toString();
+            const expectedL = BigInt(s0Quote.outAmount || '0');
+            let deltaL = (preLamports !== null && postSolRes?.nativeLamports != null)
+              ? (BigInt(postSolRes.nativeLamports) > preLamports ? (BigInt(postSolRes.nativeLamports) - preLamports) : expectedL)
+              : expectedL;
+            if (expectedL > 0n && deltaL > expectedL) deltaL = expectedL;
+            stageAmtRaw = (deltaL > 0n ? deltaL : expectedL).toString();
             advanceStep(smartStep, 'done', { txHash: origTx?.txHash, chain: 'sol' });
             smartStep += 1;
           } else {
             await ensureEthersLoaded();
             const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
             const preEvm = await contracts.fetchEvmNativeAndErc20Balance(origStage.chain, evmAddr).catch(() => null);
-            const preWei = BigInt(preEvm?.nativeRaw || '0');
+            const preWei = preEvm?.nativeRaw != null ? BigInt(preEvm.nativeRaw) : null;
             const s0Q = origStage.quote || await contracts.quoteEvmDexSwap({
               chainKey: origStage.chain,
               srcToken: fromToken.contractAddress,
@@ -550,9 +565,12 @@
               await contracts.waitForEvmTxConfirmation(origStage.chain, origTx.txHash, 45000);
             }
             const postEvm = await contracts.fetchEvmNativeAndErc20Balance(origStage.chain, evmAddr).catch(() => null);
-            const postWei = BigInt(postEvm?.nativeRaw || '0');
-            const deltaW = postWei > preWei ? (postWei - preWei) : BigInt(s0Q.amountOut || '0');
-            stageAmtRaw = (deltaW > 0n ? deltaW : BigInt(s0Q.amountOut || '0')).toString();
+            const expectedW = BigInt(s0Q.amountOut || '0');
+            let deltaW = (preWei !== null && postEvm?.nativeRaw != null)
+              ? (BigInt(postEvm.nativeRaw) > preWei ? (BigInt(postEvm.nativeRaw) - preWei) : expectedW)
+              : expectedW;
+            if (expectedW > 0n && deltaW > expectedW) deltaW = expectedW;
+            stageAmtRaw = (deltaW > 0n ? deltaW : expectedW).toString();
             advanceStep(smartStep, 'done', { txHash: origTx?.txHash, chain: origStage.chain });
             smartStep += 1;
           }
@@ -720,8 +738,6 @@
           }).catch(() => {});
           renderSwapOrderCard();
           startOrderStatusPolling();
-          if (smartStep + 1 < flowPlan.steps.length) advanceStep(smartStep + 1, 'done', { txHash: sendBridge.txHash, chain: 'near' });
-          stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
           showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
           return;
         }
@@ -731,7 +747,7 @@
           const preOutBal = outLeg
             ? await intents.fetchNearNep141Balances(nearId, { [first.tokenOut]: first.outDecimals || 8 }).catch(() => null)
             : null;
-          const preOutRaw = BigInt(preOutBal?.[first.tokenOut]?.raw || '0');
+          const preOutRaw = preOutBal?.[first.tokenOut]?.raw != null ? BigInt(preOutBal[first.tokenOut].raw) : null;
           advanceStep(smartStep, 'active');
           const swapRes = await contracts.executeNearRefFinanceSwap({
             wallet,
@@ -769,8 +785,11 @@
             title: `${fromToken.symbol} ➔ ${first.outSymbol || toToken.symbol} (Stage 1)`
           });
           const postOutBal = await intents.fetchNearNep141Balances(nearId, { [first.tokenOut]: first.outDecimals || 8 }).catch(() => null);
-          const postOutRaw = BigInt(postOutBal?.[first.tokenOut]?.raw || '0');
-          const deltaOut = postOutRaw > preOutRaw ? (postOutRaw - preOutRaw) : BigInt(swapRes.amountOut || first.expectedOut || '0');
+          const expectedOut = BigInt(swapRes.amountOut || first.expectedOut || '0');
+          let deltaOut = (preOutRaw !== null && postOutBal?.[first.tokenOut]?.raw != null)
+            ? (BigInt(postOutBal[first.tokenOut].raw) > preOutRaw ? (BigInt(postOutBal[first.tokenOut].raw) - preOutRaw) : expectedOut)
+            : expectedOut;
+          if (expectedOut > 0n && deltaOut > expectedOut) deltaOut = expectedOut;
           const bridgeInRaw = (deltaOut > 0n ? deltaOut : BigInt(first.expectedOut || '0')).toString();
           const destFollow = await buildDestDexFollowUp(outLeg.expectedOut);
           let liveOut;

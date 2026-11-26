@@ -61,6 +61,15 @@
   const PINNED_PICKER_CHAINS = ['near', 'sol', 'eth', 'hood', 'arc'];
   const PREFERRED_PICKER_CHAINS = ['near', 'sol', 'eth', 'hood', 'arc', 'hype', 'prl', 'qtc', 'base', 'arb', 'bsc', 'btc', 'op', 'pol', 'avax'];
 
+  function clearPickerContainerSafely(el) {
+    if (!el) return;
+    const fw = typeof getFramework === 'function' ? getFramework() : null;
+    if (fw && typeof fw.render === 'function') {
+      try { fw.render(null, el); } catch (_) {}
+    }
+    el.innerHTML = '';
+  }
+
   function renderTokenPickerList() {
     const st = getState();
     const tokens = getTokens();
@@ -73,12 +82,12 @@
       const favBar = $('token-picker-favorites');
       if (favBar) {
         favBar.classList.add('hidden');
-        favBar.innerHTML = '';
+        clearPickerContainerSafely(favBar);
       }
       const moreEl = $('token-picker-more-chains');
       if (moreEl) {
         moreEl.classList.add('hidden');
-        moreEl.innerHTML = '';
+        clearPickerContainerSafely(moreEl);
       }
       const chainBar = $('token-picker-chains');
       if (chainBar) {
@@ -170,7 +179,7 @@
         `).join('');
       } else {
         favBar.classList.add('hidden');
-        favBar.innerHTML = '';
+        clearPickerContainerSafely(favBar);
       }
     }
 
@@ -221,7 +230,7 @@
         }).join('');
       } else {
         moreChainsEl.classList.add('hidden');
-        moreChainsEl.innerHTML = '';
+        clearPickerContainerSafely(moreChainsEl);
       }
     }
 
@@ -355,6 +364,7 @@
       refreshLimitMarketContextAsync().catch(() => {});
       return;
     }
+    if (typeof cancelPendingSwapQuote === 'function') cancelPendingSwapQuote();
     if (st.swap.pickerSide === 'from') {
       if (assetId === st.swap.toAssetId) st.swap.toAssetId = st.swap.fromAssetId;
       st.swap.fromAssetId = assetId;

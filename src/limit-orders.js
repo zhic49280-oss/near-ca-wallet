@@ -293,7 +293,22 @@
     const str = String(amountInput || '').trim();
     const num = Number(str);
     if (!Number.isFinite(num) || num <= 0) return '0';
-    const [wholeRaw, fracRaw = ''] = str.split('.');
+    let norm = str;
+    if (/^[+-]?\d+(?:\.\d+)?[eE][+-]?\d+$/.test(norm)) {
+      const [mantissa, expStr] = norm.toLowerCase().split('e');
+      const exp = parseInt(expStr, 10);
+      const [mWhole, mFrac = ''] = mantissa.replace(/^[+-]/, '').split('.');
+      const digits = mWhole + mFrac;
+      const pos = mWhole.length + exp;
+      if (pos <= 0) {
+        norm = '0.' + '0'.repeat(-pos) + digits;
+      } else if (pos >= digits.length) {
+        norm = digits + '0'.repeat(pos - digits.length);
+      } else {
+        norm = digits.slice(0, pos) + '.' + digits.slice(pos);
+      }
+    }
+    const [wholeRaw, fracRaw = ''] = norm.split('.');
     const whole = (wholeRaw || '0').replace(/\D/g, '') || '0';
     const frac = fracRaw.replace(/\D/g, '').slice(0, dec).padEnd(dec, '0');
     return (whole + frac).replace(/^0+/, '') || '0';
@@ -618,7 +633,7 @@
       resolvedWallet,
       accountId: sender,
       tokenContract: buyId
-    }).catch(() => {});
+    });
 
     if (!storageState.registered) {
       await contracts.signAndSendNearFunctionCall({
@@ -844,13 +859,19 @@
       body: JSON.stringify({ requestId, signedTransaction: signedBase64 })
     }, 15_000).catch((err) => ({ ok: false, status: 0, error: err && err.message }));
 
-    if (execRes && execRes.ok && execRes.data && (execRes.data.signature || execRes.data.status === 'Success')) {
-      const txHash = execRes.data.signature || execRes.data.txid || '';
-      return {
-        ok: true,
-        txHash,
-        explorerUrl: txHash ? `https://solscan.io/tx/${txHash}` : ''
-      };
+    if (execRes && execRes.ok && execRes.data) {
+      const statusLower = String(execRes.data.status || '').toLowerCase();
+      if (statusLower === 'failed' || (execRes.data.error && statusLower !== 'success')) {
+        throw new Error(execRes.data.error || execRes.data.message || 'Jupiter Trigger execution failed');
+      }
+      if (statusLower === 'success' || (!execRes.data.error && execRes.data.signature)) {
+        const txHash = execRes.data.signature || execRes.data.txid || '';
+        return {
+          ok: true,
+          txHash,
+          explorerUrl: txHash ? `https://solscan.io/tx/${txHash}` : ''
+        };
+      }
     }
 
     if (execRes && execRes.status >= 400 && execRes.status < 500) {
@@ -911,7 +932,7 @@
     const isNativeSol = inputMint === SOL_NATIVE_MINT;
     if (isNativeSol) {
       const solAvail = Number(contracts.resolveWalletChainBalance(resolvedWallet, 'sol') || 0);
-      if (solAvail < humanSell + SOL_LIMIT_GAS_RESERVE) {
+      if (solAvail + 1e-9 < humanSell + SOL_LIMIT_GAS_RESERVE) {
         throw new Error(
           t(
             `SOL 余额不足 (需保留 ${SOL_LIMIT_GAS_RESERVE} SOL 作可退租金与 Gas，当前可用: ${solAvail.toFixed(4)})`,
@@ -1379,6 +1400,9 @@
     getNearLimitSellTokens,
     getNearLimitCounterTokens,
     fetchNearDclPoolInfo,
+    feeToPointDelta,
+    clampDclPoint,
+    parsePoolDescriptor,
     priceToDclPoint,
     dclPointToPrice,
     resolveSplitTwoTickPoints,
