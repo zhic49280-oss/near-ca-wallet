@@ -158,6 +158,7 @@
     if ($('send-amount-input')) $('send-amount-input').value = '';
     if ($('send-detected-net')) $('send-detected-net').textContent = '';
     $('send-route-preview')?.classList.add('hidden');
+    if (typeof resetSendTxReceipt === 'function') resetSendTxReceipt();
     $('send-gas-fix-banner')?.classList.add('hidden');
     _sendCachedCrossQuote = null;
     const confirmBtn = $('btn-confirm-send');
@@ -253,6 +254,7 @@
     populateSendSourceSelect(sym);
     const amtInput = $('send-amount-input');
     if (amtInput) amtInput.value = '';
+    if (typeof resetSendTxReceipt === 'function') resetSendTxReceipt();
     updateSendAvailabilityUI();
     const asset = getSelectedSendAsset();
     if (asset && EVM_CHAIN_KEYS.includes(asset.blockchain)) {
@@ -954,7 +956,7 @@
         const feeVal = isUtxo ? (sent.fee || 0) : null;
         const netSent = isUtxo ? (sent.netSent || amountNum) : amountNum;
         if (isUtxo) applyOptimisticChainSpend(wallet, asset.blockchain, netSent, feeVal, sent.txHash);
-        recordWalletActivity(wallet, {
+        const activityItem = {
           type: 'send',
           symbol: asset.symbol,
           chain: asset.blockchain,
@@ -964,9 +966,15 @@
           counterparty: isUtxo ? recipient : undefined,
           txHash: sent.txHash,
           title: `${t('转账至', 'Sent to')} ${shortenAddr(recipient)}`
-        });
-        showToast(`✅ ${sent.tag} ${t('广播成功', 'Sent')}: ${shortenAddr(sent.txHash)}`);
-        closeAllSheets();
+        };
+        recordWalletActivity(wallet, activityItem);
+        const sentMsg = t('转账已发出', 'Transfer sent');
+        if (typeof renderSendTxReceipt === 'function') {
+          renderSendTxReceipt({ chain: asset.blockchain, symbol: asset.symbol, amount: netSent, recipient, txHash: sent.txHash, statusText: sentMsg, activityItem });
+        } else {
+          closeAllSheets();
+        }
+        showToast(`✅ ${sentMsg}: ${shortenAddr(sent.txHash)}`);
         refreshAllBalancesAsync(false);
         return;
       }
@@ -1007,7 +1015,7 @@
       renderSwapOrderCard();
       startOrderStatusPolling();
 
-      recordWalletActivity(wallet, {
+      const crossActivityItem = {
         type: 'send',
         symbol: asset.symbol,
         chain: asset.blockchain,
@@ -1017,9 +1025,15 @@
         counterparty: recipient,
         txHash: depositTxHash,
         title: `${t('跨链转账至', 'Cross-chain to')} ${shortenAddr(recipient)}`
-      });
-      showToast(`✅ ${t('跨链转账已广播', 'Cross-chain transfer sent')}: ${shortenAddr(depositTxHash)}`);
-      closeAllSheets();
+      };
+      recordWalletActivity(wallet, crossActivityItem);
+      const crossMsg = t('跨链处理中，预计几分钟到账', 'Cross-chain transfer processing, arriving in a few minutes');
+      if (typeof renderSendTxReceipt === 'function') {
+        renderSendTxReceipt({ chain: asset.blockchain, symbol: asset.symbol, amount: amountNum, recipient, txHash: depositTxHash, statusText: crossMsg, activityItem: crossActivityItem });
+      } else {
+        closeAllSheets();
+      }
+      showToast(`✅ ${crossMsg}: ${shortenAddr(depositTxHash)}`);
       refreshAllBalancesAsync(false);
     } catch (err) {
       showToast(toUserFriendlyError(err, '转账失败，请重试', 'Transfer failed. Please try again.'));

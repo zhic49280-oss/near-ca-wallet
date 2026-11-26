@@ -63,7 +63,7 @@ test('Phase 6.3: Unqueried ERC-20 stays null (--), tools preserve button disable
   assert.ok(!nearKeys.includes('else if (fnStatus === 404) {\n              fastNearConfirmedZero = true;'));
 
   const contacts = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/220-contacts.part.js'), 'utf8');
-  assert.ok(contacts.includes('confirmWithUserIfSupported'));
+  assert.ok(contacts.includes('showConfirmDialogAsync('));
 
   const wc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/230-walletconnect.part.js'), 'utf8');
   assert.ok(wc.includes('getJsQrFn'), 'iOS WebView must support jsQR canvas fallback');

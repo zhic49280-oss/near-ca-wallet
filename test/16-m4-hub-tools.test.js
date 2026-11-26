@@ -30,17 +30,17 @@ test('M4.1: 180-near-keys reorders confirmWithUserIfSupported BEFORE verifySecur
   assert.ok(bindFnStart !== -1 && restoreFnStart !== -1 && rotateFnStart !== -1);
 
   const bindBody = src180.slice(bindFnStart, restoreFnStart);
-  assert.ok(bindBody.indexOf('confirmWithUserIfSupported(') < bindBody.indexOf('verifySecurityAuthAsync('),
-    'bindOrReplacePrlMnemonicUI must confirm with user before biometric/PIN auth');
+  assert.ok(bindBody.indexOf('showConfirmDialogAsync(') < bindBody.indexOf('verifySecurityAuthAsync('),
+    'bindOrReplacePrlMnemonicUI must confirm with user before biometric auth');
 
   const restoreBody = src180.slice(restoreFnStart, rotateFnStart);
-  assert.ok(restoreBody.indexOf('confirmWithUserIfSupported(') < restoreBody.indexOf('verifySecurityAuthAsync('),
-    'restoreDefaultPrlAccountUI must confirm with user before biometric/PIN auth');
+  assert.ok(restoreBody.indexOf('showConfirmDialogAsync(') < restoreBody.indexOf('verifySecurityAuthAsync('),
+    'restoreDefaultPrlAccountUI must confirm with user before biometric auth');
 
   const rotateEnd = src180.indexOf('function openWalletAddressesSheet()', rotateFnStart);
   const rotateBody = src180.slice(rotateFnStart, rotateEnd);
-  assert.ok(rotateBody.indexOf('confirmWithUserIfSupported(') < rotateBody.indexOf('verifySecurityAuthAsync('),
-    'confirmRotateNearAccountKey must confirm with user before biometric/PIN auth');
+  assert.ok(rotateBody.indexOf('showConfirmDialogAsync(') < rotateBody.indexOf('verifySecurityAuthAsync('),
+    'confirmRotateNearAccountKey must confirm with user before biometric auth');
 });
 
 test('M4.2: Developer jargon sanitized across NEAR Keys, SOL Rent, NEAR Storage, Mining & WalletConnect parts', () => {

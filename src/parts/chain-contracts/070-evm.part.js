@@ -1101,7 +1101,7 @@
       }
       const txReq = lData && lData.transactionRequest;
       if (!txReq || !txReq.to || !txReq.data) {
-        throw new Error(toUserFriendlyError(lData && lData.message, t('兑换交易构建失败，请刷新报价后重试', 'Swap transaction build failed. Please refresh quote and retry.')));
+        throw new Error(toUserFriendlyError(lData && lData.message, '兑换交易构建失败，请刷新报价后重试', 'Swap transaction build failed. Please refresh quote and retry.'));
       }
       toAddr = txReq.to;
       txData = txReq.data;
@@ -1132,10 +1132,10 @@
         },
         12000
       ).catch((err) => {
-        throw new Error(toUserFriendlyError(err, t('兑换交易构建失败，请稍后重试', 'Swap transaction build failed. Please try again.')));
+        throw new Error(toUserFriendlyError(err, '兑换交易构建失败，请稍后重试', 'Swap transaction build failed. Please try again.'));
       });
       if (!pBuild || !pBuild.to || !pBuild.data) {
-        throw new Error(toUserFriendlyError(pBuild && pBuild.error, t('兑换交易构建失败，请刷新报价后重试', 'Swap transaction build failed. Please refresh quote and retry.')));
+        throw new Error(toUserFriendlyError(pBuild && pBuild.error, '兑换交易构建失败，请刷新报价后重试', 'Swap transaction build failed. Please refresh quote and retry.'));
       }
       toAddr = pBuild.to;
       txData = pBuild.data;
@@ -1152,11 +1152,11 @@
         if (err && (err.status === 403 || err.status === 429 || err.status >= 500)) {
           markAggCooldown('openocean', err.status === 403 ? 10 * 60_000 : 120_000);
         }
-        throw new Error(toUserFriendlyError(err, t('兑换路由暂时不可用，请刷新报价后重试', 'Swap route temporarily unavailable. Please refresh quote and retry.')));
+        throw new Error(toUserFriendlyError(err, '兑换路由暂时不可用，请刷新报价后重试', 'Swap route temporarily unavailable. Please refresh quote and retry.'));
       });
       const ooData = ooBuild && Number(ooBuild.code) === 200 ? ooBuild.data : null;
       if (!ooData || !ooData.to || !ooData.data) {
-        throw new Error(toUserFriendlyError(ooBuild && ooBuild.message, t('兑换交易构建失败，请刷新报价后重试', 'Swap transaction build failed. Please refresh quote and retry.')));
+        throw new Error(toUserFriendlyError(ooBuild && ooBuild.message, '兑换交易构建失败，请刷新报价后重试', 'Swap transaction build failed. Please refresh quote and retry.'));
       }
       toAddr = ooData.to;
       txData = ooData.data;
@@ -1181,11 +1181,11 @@
         },
         12000
       ).catch((err) => {
-        throw new Error(toUserFriendlyError(err, t('兑换交易构建失败，请稍后重试', 'Swap transaction build failed. Please try again.')));
+        throw new Error(toUserFriendlyError(err, '兑换交易构建失败，请稍后重试', 'Swap transaction build failed. Please try again.'));
       });
       const buildData = buildRes && buildRes.code === 0 ? buildRes.data : null;
       if (!buildData || !buildData.routerAddress || !buildData.data) {
-        throw new Error(toUserFriendlyError(buildRes && buildRes.message, t('兑换交易构建失败，请刷新报价后重试', 'Swap transaction build failed. Please refresh quote and retry.')));
+        throw new Error(toUserFriendlyError(buildRes && buildRes.message, '兑换交易构建失败，请刷新报价后重试', 'Swap transaction build failed. Please refresh quote and retry.'));
       }
       toAddr = buildData.routerAddress;
       txData = buildData.data;

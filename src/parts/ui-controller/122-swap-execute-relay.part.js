@@ -1,7 +1,7 @@
       // Super-Aggregator Route 1: SOL DEX Token (e.g. NVDAx / TSLAx / JUP) -> SOL (Jupiter/Raydium) -> 1Click External Token
       if (activeQuote?.compositeType === 'SOL_DEX_TO_CROSS_CHAIN') {
         const solAddr = wallet.solAddress;
-        if (!solAddr) throw new Error(t('缺少 Solana MPC 地址', 'Missing Solana MPC address'));
+        if (!solAddr) throw new Error(t('缺少 Solana 收款地址', 'Missing Solana address'));
         const preSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
         const preLamports = BigInt(preSolRes?.nativeLamports || '0');
 
@@ -119,14 +119,14 @@
         });
         renderSwapOrderCard();
         startOrderStatusPolling();
-        showToast(`✅ ${t('已换出 SOL 并发送跨链交付至目标链', 'Swapped to SOL & bridging cross-chain')}`);
+        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
         return;
       }
 
       // Super-Aggregator Route 2: Cross-Chain (1Click -> SOL) + Auto Stage 2 Solana DEX Swap (e.g. NEAR -> NVDAx / TSLAx / JUP)
       if (activeQuote?.compositeType === 'CROSS_CHAIN_TO_SOL_DEX') {
         const solRecip = wallet.solAddress;
-        if (!solRecip) throw new Error(t('缺少 Solana MPC 地址', 'Missing Solana MPC address'));
+        if (!solRecip) throw new Error(t('缺少 Solana 收款地址', 'Missing Solana address'));
         const preSolRes = await contracts.fetchSolanaNativeAndSplBalances(solRecip, []).catch(() => null);
         const liveQuote = await intents.quoteIntentSwapOrWithdraw({
           originAsset: fromToken.assetId,
@@ -184,7 +184,7 @@
           nearSenderAccount: nearId
         }).catch(() => {});
         renderSwapOrderCard();
-        showToast(`✅ ${t('跨链第一阶段已发送，到账 SOL 后将自动买入', 'Stage 1 sent; will auto-buy')} ${toToken.symbol}`);
+        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
         startOrderStatusPolling();
         return;
       }
@@ -193,7 +193,7 @@
       if (activeQuote?.compositeType === 'CROSS_CHAIN_TO_EVM_DEX') {
         const targetBc = String(toToken.blockchain || '').toLowerCase();
         const evmRecip = wallet.mpcEvmAddress || wallet.evmAddress;
-        if (!evmRecip) throw new Error(t('缺少 EVM MPC 地址', 'Missing EVM MPC address'));
+        if (!evmRecip) throw new Error(t('缺少 EVM 收款地址', 'Missing EVM address'));
         const preEvmRes = await contracts.fetchEvmNativeAndErc20Balance(targetBc, evmRecip).catch(() => null);
         const liveQuote = await intents.quoteIntentSwapOrWithdraw({
           originAsset: fromToken.assetId,
@@ -252,7 +252,7 @@
           nearSenderAccount: nearId
         }).catch(() => {});
         renderSwapOrderCard();
-        showToast(`✅ ${t('跨链第一阶段已发送，到账后将自动执行 DEX 兑换', 'Stage 1 sent; will auto-swap via DEX on arrival')}`);
+        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
         startOrderStatusPolling();
         return;
       }
@@ -261,7 +261,7 @@
       if (activeQuote?.compositeType === 'EVM_TO_ARC_MAINNET' && typeof contracts.executeEvmRawSteps === 'function') {
         await ensureEthersLoaded();
         const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
-        if (!evmAddr) throw new Error(t('缺少 EVM MPC 地址', 'Missing EVM MPC address'));
+        if (!evmAddr) throw new Error(t('缺少 EVM 收款地址', 'Missing EVM address'));
         const origChain = String(fromToken.blockchain || '').toLowerCase();
         const cfgOrig = contracts.EVM_CHAINS && contracts.EVM_CHAINS[origChain];
         const bQuote = activeQuote.bridgeQuote;
@@ -300,7 +300,7 @@
             destinationCurrency: intents.ARC_USDC_CONTRACT,
             amount: amountRaw
           });
-          if (!liveRelay.ok || !liveRelay.steps?.length) throw new Error(liveRelay.error || t('Relay 构建 Arc 跨链失败', 'Relay Arc build failed'));
+          if (!liveRelay.ok || !liveRelay.steps?.length) throw new Error(liveRelay.error || t('跨链服务暂时不可用，请稍后重试', 'Cross-chain service temporarily unavailable'));
           bridgeResTx = await contracts.executeEvmRawSteps({ wallet, chainKey: origChain, steps: liveRelay.steps });
         }
         recordWalletActivity(wallet, {
@@ -334,10 +334,10 @@
           if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
           renderSwapOrderCard();
           startOrderStatusPolling();
-          showToast(`✅ ${t('已跨链至 Arc 主网，到账后将自动兑换为', 'Bridged to Arc Mainnet; will auto-swap to')} ${toToken.symbol}`);
+          showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
           return;
         }
-        showToast(`✅ ${t('已发送至 Arc Mainnet', 'Sent to Arc Mainnet')}: ${shortenAddr(bridgeResTx.txHash)}`);
+        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}: ${shortenAddr(bridgeResTx.txHash)}`);
         refreshAllBalancesAsync(false);
         return;
       }
@@ -345,7 +345,7 @@
       // Super-Aggregator Route 5: Cross-Chain (1Click -> Base USDC) + Relay (Base -> Arc 5042) + optional Arc KyberSwap
       if (activeQuote?.compositeType === 'CROSS_CHAIN_TO_ARC_MAINNET') {
         const evmRecip = wallet.mpcEvmAddress || wallet.evmAddress;
-        if (!evmRecip) throw new Error(t('缺少 EVM MPC 地址', 'Missing EVM MPC address'));
+        if (!evmRecip) throw new Error(t('缺少 EVM 收款地址', 'Missing EVM address'));
         const preBaseRes = await contracts.fetchEvmNativeAndErc20Balance('base', evmRecip, intents.BASE_USDC_EVM, 6).catch(() => null);
         const liveQuote = await intents.quoteIntentSwapOrWithdraw({
           originAsset: fromToken.assetId,
@@ -412,7 +412,7 @@
           nearSenderAccount: nearId
         }).catch(() => {});
         renderSwapOrderCard();
-        showToast(`✅ ${t('第一阶段已发送，到账 Base 后将自动通过 Relay 跨链至 Arc 主网', 'Stage 1 sent; will auto-bridge Base -> Arc via Relay')}`);
+        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
         startOrderStatusPolling();
         return;
       }
@@ -421,7 +421,7 @@
       if (activeQuote?.compositeType === 'ARC_MAINNET_TO_CROSS_CHAIN' && typeof contracts.executeEvmRawSteps === 'function') {
         await ensureEthersLoaded();
         const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
-        if (!evmAddr) throw new Error(t('缺少 EVM MPC 地址', 'Missing EVM MPC address'));
+        if (!evmAddr) throw new Error(t('缺少 EVM 收款地址', 'Missing EVM address'));
         const srcContract = (fromToken.contractAddress || intents.ARC_USDC_CONTRACT).toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
           ? intents.ARC_USDC_CONTRACT
           : fromToken.contractAddress;
@@ -463,7 +463,7 @@
             txHash: s1Tx?.txHash || '',
             title: `${fromToken.symbol} ➔ USDC (Arc Stage 1)`
           });
-          showToast(`✅ ${t('Arc 第一步已换出 USDC，正在跨链至 Base', 'Arc USDC swapped; bridging to Base')}: ${shortenAddr(s1Tx.txHash)}`);
+          showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}: ${shortenAddr(s1Tx.txHash)}`);
         }
         const hasStage3 = Boolean(activeQuote.stage3Quote);
         const validRecipEvm = recipient && /^0x[0-9a-fA-F]{40}$/.test(recipient) ? recipient : evmAddr;
@@ -501,7 +501,7 @@
               destinationCurrency: intents.BASE_USDC_EVM,
               amount: arcUsdcRaw
             });
-            if (!liveRelay.ok || !liveRelay.steps?.length) throw new Error(liveRelay.error || t('Relay 从 Arc 跨链失败', 'Relay bridge from Arc failed'));
+            if (!liveRelay.ok || !liveRelay.steps?.length) throw new Error(liveRelay.error || t('跨链服务暂时不可用，请稍后重试', 'Cross-chain service temporarily unavailable'));
             bridgeOutRaw = String(liveRelay.amountOut || bridgeOutRaw);
             rTx = await contracts.executeEvmRawSteps({ wallet, chainKey: 'arc', steps: liveRelay.steps });
           }
@@ -565,10 +565,10 @@
           if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
           renderSwapOrderCard();
           startOrderStatusPolling();
-          showToast(`✅ ${t('Arc -> Base 跨链已广播，到账后将自动完成目标链兑换', 'Arc -> Base bridged; will auto-complete stage 3 swap')}: ${shortenAddr(rTx.txHash)}`);
+          showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}: ${shortenAddr(rTx.txHash)}`);
           return;
         }
-        showToast(`✅ ${t('Arc -> Base Relay 跨链已广播', 'Arc -> Base Relay tx broadcast')}: ${shortenAddr(rTx.txHash)}`);
+        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}: ${shortenAddr(rTx.txHash)}`);
         refreshAllBalancesAsync(false);
         return;
       }
@@ -728,12 +728,12 @@
         nearSenderAccount: nearId
       }).catch(() => {});
       renderSwapOrderCard();
-      showToast(`✅ ${t('源链已签名发送，正在跨链交付至', 'Origin tx sent, delivering to')} ${shortenAddr(effectiveRecipient)}`);
+      showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
       startOrderStatusPolling();
     } catch (err) {
       _swapAbortedOrFailed = true;
       st.swap._executing = false;
-      const friendly = toUserFriendlyError(err, t('兑换失败，请稍后重试', 'Swap failed. Please try again.'));
+      const friendly = toUserFriendlyError(err, '兑换失败，请稍后重试', 'Swap failed. Please try again.');
       setSwapError(friendly);
       showToast(friendly);
     } finally {

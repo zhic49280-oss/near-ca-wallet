@@ -689,7 +689,7 @@
     );
 
     if (!swapRes || !swapRes.swapTransaction) {
-      throw new Error(toUserFriendlyError(swapRes && swapRes.error, t('兑换交易构建失败，请稍后重试', 'Swap transaction build failed. Please try again.')));
+      throw new Error(toUserFriendlyError(swapRes && swapRes.error, '兑换交易构建失败，请稍后重试', 'Swap transaction build failed. Please try again.'));
     }
 
     return signAndBroadcastSolanaBase64Tx(swapRes.swapTransaction, wallet.solPrivateSeedHex || null, wallet, 'solana-1');

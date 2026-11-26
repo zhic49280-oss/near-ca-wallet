@@ -13,7 +13,7 @@
           tokenSymbol: fromToken.symbol
         });
         const prlOutRaw = refRes.amountOut || (st.swap.quoteData && st.swap.quoteData.refQuote && st.swap.quoteData.refQuote.amountOut);
-        if (!prlOutRaw) throw new Error(t('Ref Finance 成交后未获得预期 PRL 数量', 'Missing PRL amount after Ref swap'));
+        if (!prlOutRaw) throw new Error(t('兑换后未获得预期 PRL 数量', 'Missing PRL amount after swap'));
         const bridgeQuote = await intents.quoteIntentSwapOrWithdraw({
           originAsset: intents.PRL_NEAR_ASSET_ID,
           destinationAsset: intents.PRL_PEARL_ASSET_ID,
@@ -124,7 +124,7 @@
         });
         renderSwapOrderCard();
         startOrderStatusPolling();
-        showToast(`✅ ${t('已通过 Ref Finance 兑换并通过 1Click 桥接至 Pearl', 'Swapped via Ref & bridging PRL to Pearl')}`);
+        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
         return;
       }
 
@@ -156,7 +156,7 @@
             txHash: res.txHash,
             title: `${fromToken.symbol} ➔ ${toToken.symbol}`
           });
-          showToast(`✅ Ref Finance ${t('成交广播成功', 'Swap broadcast')}: ${shortenAddr(res.txHash)}`);
+          showToast(`✅ ${t('兑换已提交', 'Swap submitted')}: ${shortenAddr(res.txHash)}`);
           refreshAllBalancesAsync(false);
           return;
         }
@@ -214,7 +214,7 @@
         }).catch(() => {});
         renderSwapOrderCard();
         startOrderStatusPolling();
-        showToast(`✅ ${t('跨链已发送，到账后自动兑换', 'Bridge sent; auto-swap on arrival')}`);
+        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
         return;
       }
       // Sub-route B: PRL (NEAR) -> External chain (e.g. SOL / ETH / BNB)
@@ -230,7 +230,7 @@
               slippageBps: st.swap.slippageBps
             });
         if (!step1Q.ok || !step1Q.amountOut) {
-          throw new Error(step1Q.error || t('Ref Finance 暂无 PRL/USDC 路由', 'Ref Finance PRL/USDC route unavailable'));
+          throw new Error(step1Q.error || t('暂无可用兑换路径', 'No swap route available'));
         }
         const refPrlRes = await contracts.executeNearRefFinanceSwap({
           wallet,
@@ -301,7 +301,7 @@
                 txHash: dclRes.txHash,
                 title: `${fromToken.symbol} ➔ ${toToken.symbol}`
               });
-              showToast(`✅ ${t('已通过 Ref + Rhea CLMM 兑换为 QTC', 'Swapped PRL -> USDC -> QTC via Ref + Rhea CLMM')}: ${shortenAddr(dclRes.txHash)}`);
+              showToast(`✅ ${t('兑换已提交', 'Swap submitted')}: ${shortenAddr(dclRes.txHash)}`);
               refreshAllBalancesAsync(false);
               return;
             } catch (dclErr) {
@@ -315,7 +315,7 @@
                 autoBroadcasted: true,
                 createdAt: Date.now(),
                 followUpFailed: true,
-                followUpError: dclErr?.message || t('第二阶段 Rhea DCL 兑换失败，请点击继续重试', 'Stage 2 Rhea DCL swap failed; tap Resume'),
+                followUpError: toUserFriendlyError(dclErr, '后续兑换暂未完成，请点击继续重试', 'Follow-up swap incomplete; tap Resume to retry'),
                 followUpDclSwap: {
                   tokenIn: intents.NEAR_USDC_CONTRACT,
                   tokenOut: intents.QTC_NEAR_CONTRACT,
@@ -361,7 +361,7 @@
             dry: false
           });
           if (!step2Live.ok || !step2Live.depositAddress) {
-            throw new Error(step2Live.error || t('创建 USDC 跨链第二步订单失败', 'Failed to create 1Click step 2 order'));
+            throw new Error(step2Live.error || t('创建跨链订单失败，请重试', 'Failed to create cross-chain order'));
           }
           const usdcHuman = intents.fromBaseUnits(sendUsdcRaw, 6);
           const step2BalMap = await intents.fetchNearNep141Balances(nearId, { [intents.NEAR_USDC_CONTRACT]: 6 }).catch(() => null);
@@ -481,7 +481,7 @@
         });
         renderSwapOrderCard();
         startOrderStatusPolling();
-        showToast(`✅ ${t('已通过 Ref Finance 换出 USDC 并提交 1Click 跨链', 'Swapped PRL to USDC & sent cross-chain')}`);
+        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
         return;
       }
 
@@ -558,7 +558,7 @@
         }).catch(() => {});
         renderSwapOrderCard();
         startOrderStatusPolling();
-        showToast(`✅ ${t('跨链第一阶段已发送，成交后将自动兑换为 PRL', 'Step 1 sent; will auto-swap to PRL upon fill')}`);
+        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
         return;
       }
 

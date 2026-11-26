@@ -257,7 +257,7 @@
     const st = getState();
     const el = $('swap-error-banner');
     const routeEl = $('swap-quote-route');
-    const text = msg ? toUserFriendlyError(msg, String(msg)) : '';
+    const text = msg ? toUserFriendlyError(msg, '暂无可用报价，请稍后重试', 'No quote available. Please try again.') : '';
     if (el) {
       el.textContent = text;
       el.classList.toggle('hidden', !text);
@@ -467,7 +467,7 @@
         if (!evmQuote.ok) {
           st.swap._quoting = false;
           resetSwapQuoteDisplay();
-          setSwapError(toUserFriendlyError(evmQuote.error, t('暂无可用报价，请稍后重试', 'No quote available. Please try again.')));
+          setSwapError(toUserFriendlyError(evmQuote.error, '暂无可用报价，请稍后重试', 'No quote available. Please try again.'));
           return;
         }
         const routeText = evmQuote.routeLabel || evmQuote.label;
@@ -507,7 +507,7 @@
       if (!q || !q.ok) {
         st.swap._quoting = false;
         resetSwapQuoteDisplay();
-        setSwapError(toUserFriendlyError(q && q.error, t('暂无可用报价，请稍后重试', 'No quote available. Please try again.')));
+        setSwapError(toUserFriendlyError(q && q.error, '暂无可用报价，请稍后重试', 'No quote available. Please try again.'));
         return;
       }
       const outHuman = q.amountOutFormatted || intents.fromBaseUnits(q.amountOut || '0', toToken.decimals);
@@ -523,7 +523,7 @@
       if (isCancelledOrStale() || (e && (e.name === 'AbortError' || /abort|取消/i.test(String(e.message || ''))))) return;
       st.swap._quoting = false;
       resetSwapQuoteDisplay();
-      setSwapError(toUserFriendlyError(e, t('获取报价失败，请稍后重试', 'Failed to fetch quote. Please try again.')));
+      setSwapError(toUserFriendlyError(e, '获取报价失败，请稍后重试', 'Failed to fetch quote. Please try again.'));
     } finally {
       if (st.swap._quoteAbortCtrl === abortCtrl) st.swap._quoteAbortCtrl = null;
     }

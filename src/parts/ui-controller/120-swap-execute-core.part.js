@@ -160,7 +160,7 @@
         }
       }
     } catch (err) {
-      const friendly = toUserFriendlyError(err, t('兑换校验失败，请检查后重试', 'Swap validation failed. Please check and retry.'));
+      const friendly = toUserFriendlyError(err, '兑换校验失败，请检查后重试', 'Swap validation failed. Please check and retry.');
       setSwapError(friendly);
       showToast(friendly);
       return;
@@ -243,7 +243,7 @@
                 txHash: res.txHash,
                 title: `${fromToken.symbol} ➔ ${toToken.symbol}`
               });
-              showToast(`✅ ${refQ.isDcl ? 'Rhea CLMM' : 'Ref Finance'} ${t('成交广播成功', 'Swap broadcast')}: ${shortenAddr(res.txHash)}`);
+              showToast(`✅ ${t('兑换已提交', 'Swap submitted')}: ${shortenAddr(res.txHash)}`);
               refreshAllBalancesAsync(false);
               return;
             }
@@ -277,7 +277,7 @@
             txHash: res.txHash,
             title: `${fromToken.symbol} ➔ ${toToken.symbol}`
           });
-          showToast(`✅ ${quoteResp.bestSource || 'Jupiter'} ${t('成交广播成功', 'Swap broadcast')}: ${shortenAddr(res.txHash)}`);
+          showToast(`✅ ${t('兑换已提交', 'Swap submitted')}: ${shortenAddr(res.txHash)}`);
           refreshAllBalancesAsync(false);
           return;
         } else {
@@ -322,7 +322,7 @@
             txHash: res.txHash,
             title: `${fromToken.symbol} ➔ ${toToken.symbol}`
           });
-          showToast(`✅ ${q.label} ${t('MPC 兑换广播成功', 'MPC Swap broadcast')}: ${shortenAddr(res.txHash)}`);
+          showToast(`✅ ${t('兑换已提交', 'Swap submitted')}: ${shortenAddr(res.txHash)}`);
           refreshAllBalancesAsync(false);
           return;
         }
@@ -424,7 +424,7 @@
         });
         renderSwapOrderCard();
         startOrderStatusPolling();
-        showToast(`✅ ${t('源链入金已广播，到账后将自动完成机密兑换与提现', 'Deposit broadcast; will auto-complete confidential swap & withdraw')}`);
+        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
         return;
       }
 
@@ -664,7 +664,7 @@
           }).catch(() => {});
           renderSwapOrderCard();
           startOrderStatusPolling();
-          showToast(`✅ ${t('跨链第一阶段已发送，到账后将自动完成后续兑换', 'Stage 1 sent; will auto-complete remaining stages on arrival')}`);
+          showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
           return;
         }
 
@@ -694,7 +694,7 @@
               txHash: swapRes.txHash,
               title: `${fromToken.symbol} ➔ ${toToken.symbol}`
             });
-            showToast(`✅ Ref Finance ${t('成交广播成功', 'Swap broadcast')}: ${shortenAddr(swapRes.txHash)}`);
+            showToast(`✅ ${t('兑换已提交', 'Swap submitted')}: ${shortenAddr(swapRes.txHash)}`);
             refreshAllBalancesAsync(false);
             return;
           }
@@ -818,7 +818,7 @@
           });
           renderSwapOrderCard();
           startOrderStatusPolling();
-          showToast(`✅ ${t('已完成 NEAR 链内兑换并自动发起跨链交付', 'Swapped on NEAR & bridging to destination chain')}`);
+          showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
           return;
         }
       }

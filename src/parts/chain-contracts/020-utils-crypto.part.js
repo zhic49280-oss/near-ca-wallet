@@ -206,6 +206,34 @@
       return fallbackMsg;
     }
 
+    if (/insufficient lamports/i.test(inspectMsg)) {
+      return t('SOL 余额不足以支付网络手续费或账户租金，请充值后重试', 'Insufficient SOL balance for network fee or account rent. Please top up and retry.');
+    }
+
+    if (/TransactionExpiredBlockheightExceededError|blockhash not found/i.test(inspectMsg)) {
+      return t('交易已超时过期，请重试', 'Transaction expired. Please try again.');
+    }
+
+    if (/Transaction simulation failed/i.test(inspectMsg)) {
+      return t('交易预校验失败，请检查余额或交易参数后重试', 'Transaction simulation failed. Please check your balance or parameters and retry.');
+    }
+
+    if (/custom program error/i.test(inspectMsg)) {
+      return t('链上合约执行失败，请稍后重试', 'On-chain program execution failed. Please try again.');
+    }
+
+    if (/gas estimation failed/i.test(inspectMsg)) {
+      return t('网络手续费估算失败，请检查余额或稍后重试', 'Network fee estimation failed. Please check your balance or try again.');
+    }
+
+    if (/execution reverted/i.test(inspectMsg)) {
+      return t('合约执行失败，请检查交易参数或稍后重试', 'Transaction execution failed. Please check parameters or try again.');
+    }
+
+    if (statuses.includes(400) || /\bHTTP\s*400\b|\b400\s*Bad Request\b|\bBad Request\b/i.test(inspectMsg)) {
+      return t('请求参数有误，请检查输入后重试', 'Invalid request parameters. Please check your input and retry.');
+    }
+
     let cleaned = rawMsg
       .replace(/\r?\n\s*at\s+(?:[^\r\n(]+\s*\([^\r\n)]*(?::\d+|<anonymous>|native|https?:|file:|capacitor:|webpack|node:|\/|\\)[^\r\n)]*\)|(?:https?:|file:|capacitor:|webpack(?:-internal)?:|node:|\/|[A-Za-z]:\\|<anonymous>|VM\d+:\d+|[^\s:]+\.(?:[cm]?[jt]sx?|html):\d+))[\s\S]*/g, '')
       .replace(/\r?\n[ \t]*[^\r\n]*@(?:https?:\/\/|file:\/\/|capacitor:\/\/|moz-extension:\/\/|resource:\/\/|webpack(?:-internal)?:\/\/|debugger eval code:\d+(?::\d+)?|\S+:\d+)[\s\S]*/g, '')
@@ -230,6 +258,13 @@
       .trim();
 
     if (!cleaned || /^[\p{P}\p{S}\s]+$/u.test(cleaned)) {
+      return fallbackMsg;
+    }
+    if (
+      lang !== 'en' &&
+      !/[\u4e00-\u9fff]/.test(cleaned) &&
+      /(?:\b(?:error|exception|failed|failure|unable to|cannot|unexpected|unauthorized|forbidden|rejected|reverted|timeout|expired|overflow|underflow|panic|stack|trace|lamports?|wei|gwei|nonce|pubkey|signer|program|instruction|simulation|blockhash|underpriced|serialized?|borsh|errno|syscall|socket|econn\w*|enotfound|status\s*\d{3})\b|0x[0-9a-fA-F]{6,}|\b[A-Za-z]+Error\b)/i.test(cleaned)
+    ) {
       return fallbackMsg;
     }
     return cleaned;
