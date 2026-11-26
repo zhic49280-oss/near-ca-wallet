@@ -127,18 +127,12 @@
 
       if (chainKey === 'btc') {
         const btcAddr = wallet && wallet.btcAddress ? String(wallet.btcAddress).trim() : '';
-        const [utxos, mempoolFees, blockstreamFees] = await Promise.all([
+        const [utxos, sharedFeeRate] = await Promise.all([
           btcAddr ? btcApiRequestJson(`/address/${encodeURIComponent(btcAddr)}/utxo`, {}, 5000).catch(() => null) : Promise.resolve(null),
-          fetchJsonWithTimeout('https://mempool.space/api/v1/fees/recommended', {}, 4500).catch(() => null),
-          fetchJsonWithTimeout('https://blockstream.info/api/fee-estimates', {}, 4500).catch(() => null)
+          fetchBtcFeeRateSatVb(4500).catch(() => 0)
         ]);
 
-        let satPerVbyte = 0;
-        if (mempoolFees && Number(mempoolFees.halfHourFee || mempoolFees.fastestFee) > 0) {
-          satPerVbyte = Math.ceil(Number(mempoolFees.halfHourFee || mempoolFees.fastestFee));
-        } else if (blockstreamFees && Number(blockstreamFees['2'] || blockstreamFees['3'] || blockstreamFees['1']) > 0) {
-          satPerVbyte = Math.ceil(Number(blockstreamFees['2'] || blockstreamFees['3'] || blockstreamFees['1']));
-        }
+        let satPerVbyte = Number(sharedFeeRate) > 0 ? Number(sharedFeeRate) : 0;
         if (!Number.isFinite(satPerVbyte) || satPerVbyte <= 0) return makeFallback();
         satPerVbyte = Math.max(1, satPerVbyte);
 

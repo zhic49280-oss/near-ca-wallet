@@ -48,6 +48,30 @@
     kryptexFeePercent: null
   };
 
+  let _heroStatsCache = { ts: 0, res: null };
+  let _heroStatsInFlight = null;
+  async function fetchHeroMinersStatsCached(ttlMs = 60_000) {
+    const now = Date.now();
+    if (_heroStatsCache.res && _heroStatsCache.res.ok && now - _heroStatsCache.ts < ttlMs) {
+      return _heroStatsCache.res;
+    }
+    if (_heroStatsInFlight) return _heroStatsInFlight;
+    _heroStatsInFlight = fetchJsonSafe(`${HEROMINERS_API_BASE}/stats`)
+      .then((res) => {
+        if (res && res.ok && res.data) {
+          _heroStatsCache = { ts: Date.now(), res };
+        }
+        return res;
+      })
+      .finally(() => {
+        _heroStatsInFlight = null;
+      });
+    return _heroStatsInFlight;
+  }
+
+  const _oneClickDryQuoteCache = new Map();
+  const _oneClickQuoteInFlight = new Map();
+
   // ======================== Bech32m Address Validation ========================
 
   const BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
@@ -314,14 +338,22 @@
     const hasAbort = typeof AbortController !== 'undefined';
     const controller = hasAbort ? new AbortController() : null;
     const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    const extSignal = options && options.signal ? options.signal : null;
+    let onExtAbort = null;
+    if (extSignal && controller) {
+      if (extSignal.aborted) controller.abort();
+      else {
+        onExtAbort = () => controller.abort();
+        extSignal.addEventListener('abort', onExtAbort, { once: true });
+      }
+    }
     try {
       const reqOptions = Object.assign({}, options);
-      if (controller && !reqOptions.signal) {
-        reqOptions.signal = controller.signal;
-      }
+      if (controller) reqOptions.signal = controller.signal;
       return await fetchFn(url, reqOptions);
     } finally {
       if (timer) clearTimeout(timer);
+      if (extSignal && onExtAbort) extSignal.removeEventListener('abort', onExtAbort);
     }
   }
 
@@ -583,7 +615,7 @@
         fetchJsonSafe(`${baseUrl}/status`),
         fetchJsonSafe(`${baseUrl}/blocks?limit=20`),
         fetchJsonSafe(`${baseUrl}/pools`),
-        fetchJsonSafe(`${HEROMINERS_API_BASE}/stats`),
+        fetchHeroMinersStatsCached(),
         fetchKryptexResource('/prl/api/v1/pool/info', 'json')
       ]);
       const statusRes = _settledValue(settled[0]) || { ok: false, data: null };
@@ -1089,7 +1121,7 @@
     }
     if (payoutThresholdPrl === null) {
       if (poolConfigCache.heroMinPaymentPrl === null) {
-        const poolStatsRes = await fetchJsonSafe(`${HEROMINERS_API_BASE}/stats`);
+        const poolStatsRes = await fetchHeroMinersStatsCached();
         if (poolStatsRes.ok && poolStatsRes.data && poolStatsRes.data.config) {
           const cfg = poolStatsRes.data.config;
           const units = toPositiveOrZeroNumber(cfg.coinUnits) || GRAINS_PER_PRL;
@@ -1527,11 +1559,19 @@
       throw err;
     }
 
-    // Step 2: Request real 1Click quote
+    // Step 2: Request real 1Click quote (dry=true 10s 短缓存 + 并发 in-flight 去重)
     const dest = resolveDestinationTarget(destinationAsset);
+    const isDryQuote = Boolean(dry);
+    const quoteCacheKey = `${isDryQuote ? 'dry' : 'live'}:${dest.assetId}:${amountGrainsStr}:${sourcePrlAddress}:${nearTarget}:${Number(slippageTolerance) || 100}`;
+    if (isDryQuote) {
+      const hit = _oneClickDryQuoteCache.get(quoteCacheKey);
+      if (hit && Date.now() - hit.ts < 10_000) {
+        return { ...hit.val };
+      }
+    }
     const deadline = new Date(Date.now() + 30 * 60 * 1000).toISOString();
     const requestPayload = {
-      dry: Boolean(dry),
+      dry: isDryQuote,
       swapType: 'EXACT_INPUT',
       slippageTolerance: Number(slippageTolerance) || 100,
       originAsset: PRL_ORIGIN_ASSET_ID,
@@ -1545,28 +1585,38 @@
       deadline
     };
 
-    const res = await fetchWithTimeout(
-      ONECLICK_QUOTE_URL,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json'
-        },
-        body: JSON.stringify(requestPayload)
-      },
-      DEFAULT_TIMEOUT_MS
-    );
+    let quotePromise = _oneClickQuoteInFlight.get(quoteCacheKey);
+    if (!quotePromise) {
+      quotePromise = (async () => {
+        const res = await fetchWithTimeout(
+          ONECLICK_QUOTE_URL,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json'
+            },
+            body: JSON.stringify(requestPayload)
+          },
+          DEFAULT_TIMEOUT_MS
+        );
 
-    const parsed = await res.json().catch(() => null);
-    if (!res.ok || !parsed || !parsed.quote) {
-      const reason = (parsed && (parsed.message || parsed.error)) || `HTTP ${res.status}`;
-      const err = new Error(`1Click quote failed: ${reason}`);
-      err.code = 'ONECLICK_QUOTE_FAILED';
-      err.status = res.status;
-      throw err;
+        const parsed = await res.json().catch(() => null);
+        if (!res.ok || !parsed || !parsed.quote) {
+          const reason = (parsed && (parsed.message || parsed.error)) || `HTTP ${res.status}`;
+          const err = new Error(`1Click quote failed: ${reason}`);
+          err.code = 'ONECLICK_QUOTE_FAILED';
+          err.status = res.status;
+          throw err;
+        }
+        return parsed;
+      })().finally(() => {
+        _oneClickQuoteInFlight.delete(quoteCacheKey);
+      });
+      _oneClickQuoteInFlight.set(quoteCacheKey, quotePromise);
     }
 
+    const parsed = await quotePromise;
     const quote = parsed.quote;
     const depositAddress = parsed.depositAddress || quote.depositAddress || null;
     const depositMemo = parsed.memo || quote.depositMemo || null;
@@ -1577,7 +1627,7 @@
       throw err;
     }
 
-    return {
+    const quoteOut = {
       originChain: 'prl',
       destinationChain: 'near',
       originAsset: PRL_ORIGIN_ASSET_ID,
@@ -1590,7 +1640,7 @@
       feeBufferPrl: buffer,
       amountPrl: amountNum,
       amountGrains: amountGrainsStr,
-      dry: Boolean(dry),
+      dry: isDryQuote,
       depositAddress,
       depositMemo,
       amountOut: quote.amountOut || null,
@@ -1605,6 +1655,13 @@
       quote,
       rawResponse: parsed
     };
+    if (isDryQuote) {
+      _oneClickDryQuoteCache.set(quoteCacheKey, { ts: Date.now(), val: quoteOut });
+      if (_oneClickDryQuoteCache.size > 40) {
+        _oneClickDryQuoteCache.delete(_oneClickDryQuoteCache.keys().next().value);
+      }
+    }
+    return quoteOut;
   }
 
   return {

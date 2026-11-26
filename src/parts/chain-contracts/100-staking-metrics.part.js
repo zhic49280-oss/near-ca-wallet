@@ -661,23 +661,8 @@
       // Fallback when explorer.arc.io returns HTTP 403/unavailable: query Steakhouse vault directly on rpc.mainnet.arc.io
       const arcRpcCall = async (data) => {
         const viaChain = await ethReadCall('arc', '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', data, 5000).catch(() => null);
-        if (viaChain) return viaChain;
-        const direct = await fetchJsonWithTimeout(
-          'https://rpc.mainnet.arc.io',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              jsonrpc: '2.0',
-              id: 'arc_steak_fallback',
-              method: 'eth_call',
-              params: [{ to: '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', data }, 'latest']
-            })
-          },
-          5000
-        ).catch(() => null);
-        const resHex = direct && direct.data && typeof direct.data.result === 'string' ? direct.data.result : null;
-        return resHex && resHex !== '0x' ? resHex : null;
+        // ethReadCall 已走 rpc.mainnet.arc.io 主节点；此处不再对同一节点重复请求
+        return viaChain || null;
       };
       const [fbAssets, fbPreview] = await Promise.all([
         arcAssetsHex ? Promise.resolve(arcAssetsHex) : arcRpcCall('0x01e1d114'),

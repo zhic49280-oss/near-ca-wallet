@@ -118,24 +118,22 @@
         fetchAux('hyperliquid', 'https://api.hyperliquid.xyz/info', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'allMids' }) }, 4200),
         fetchAux('ref_list', 'https://indexer.ref.finance/list-token', {}, 4200),
         fetchAux('coingecko', 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=250&page=1', {}, 4200),
-        fetchAux('jup_xstock', 'https://lite-api.jup.ag/tokens/v2/search?query=xStock', {}, 4200),
+        fetchAux('jup_xstock', `${JUPITER_BASE_URL}/tokens/v2/search?query=xStock`, {}, 4200),
         fetchAux('kyber_tokens', 'https://ks-setting.kyberswap.com/api/v1/tokens?chainIds=5042,1,8453,42161,56,999&page=1&pageSize=100&isWhitelisted=true', {}, 4200),
         fetchAux('lifi_arc', 'https://li.quest/v1/tokens?chains=5042', {}, 4200),
-        (sig) => {
-          const idxCall = isSourceCooling('ref_price_idx')
-            ? Promise.resolve(null)
-            : fetchJsonWithTimeout('https://indexer.ref.finance/list-token-price', { signal: sig }, 4200)
-                .then((r) => { if ((!r || !r.ok) && !(sig && sig.aborted)) markSourceCool('ref_price_idx', 20_000); return r; })
-                .catch(() => { if (!(sig && sig.aborted)) markSourceCool('ref_price_idx', 20_000); return null; });
-          const apiCall = isSourceCooling('ref_price_api')
-            ? Promise.resolve(null)
-            : fetchJsonWithTimeout('https://api.ref.finance/list-token-price', { signal: sig }, 4200)
-                .then((r) => { if ((!r || !r.ok) && !(sig && sig.aborted)) markSourceCool('ref_price_api', 20_000); return r; })
-                .catch(() => { if (!(sig && sig.aborted)) markSourceCool('ref_price_api', 20_000); return null; });
-          return Promise.all([idxCall, apiCall]).then(([a, b]) => {
-            if (a && a.ok && a.data && b && b.ok && b.data) return { ok: true, status: 200, data: { ...b.data, ...a.data } };
-            return (a && a.ok && a.data) ? a : (b && b.ok && b.data ? b : null);
-          });
+        async (sig) => {
+          if (!isSourceCooling('ref_price_idx')) {
+            const a = await fetchJsonWithTimeout('https://indexer.ref.finance/list-token-price', { signal: sig }, 4200).catch(() => null);
+            if (a && a.ok && a.data) return a;
+            if (!(sig && sig.aborted)) markSourceCool('ref_price_idx', 20_000);
+          }
+          if (sig && sig.aborted) return null;
+          if (!isSourceCooling('ref_price_api')) {
+            const b = await fetchJsonWithTimeout('https://api.ref.finance/list-token-price', { signal: sig }, 4200).catch(() => null);
+            if (b && b.ok && b.data) return b;
+            if (!(sig && sig.aborted)) markSourceCool('ref_price_api', 20_000);
+          }
+          return null;
         },
         arcDexUrl ? fetchAux('dex_arc', arcDexUrl, {}, 4200) : () => Promise.resolve(null)
       ];

@@ -38,6 +38,12 @@ function jsonResponse(body, status = 200, statusText = 'OK') {
 
 async function withMockedFetch(handler, fn) {
   const originalFetch = globalThis.fetch;
+  const resetNearCooldown = () => {
+    if (globalThis.__nearRpc429Until && typeof globalThis.__nearRpc429Until === 'object') {
+      for (const k of Object.keys(globalThis.__nearRpc429Until)) delete globalThis.__nearRpc429Until[k];
+    }
+  };
+  resetNearCooldown();
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url: String(url), options });
@@ -47,6 +53,7 @@ async function withMockedFetch(handler, fn) {
     return await fn(calls);
   } finally {
     globalThis.fetch = originalFetch;
+    resetNearCooldown();
   }
 }
 

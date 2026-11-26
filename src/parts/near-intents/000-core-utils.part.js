@@ -17,7 +17,8 @@
     CONFIDENTIAL_MIN_FEE_USD: 0.01
   };
   const DEFAULT_TIMEOUT_MS = 8000;
-  const _rpc429Until = Object.create(null);
+  const JUPITER_BASE_URL = (root && root.NEXUS_JUPITER_BASE_URL) || 'https://lite-api.jup.ag';
+  const _rpc429Until = root.__nearRpc429Until || (root.__nearRpc429Until = Object.create(null));
   const _rpcInFlight = new Map();
   const _quoteCache = new Map();
   const _quoteInFlight = new Map();
@@ -302,19 +303,25 @@
     return /MethodNotFound|ExecutionError|ContractExecutionError|AccountDoesNotExist|HostError/i.test(serialized);
   }
 
-  async function _execNearRpcQueryWithFallback(body, timeoutMs) {
+  async function _execNearRpcQueryWithFallback(body, timeoutMs, signal = null) {
     const now = Date.now();
     let ordered = NEAR_RPC_ENDPOINTS.filter((u) => !(_rpc429Until[u] > now));
     if (ordered.length === 0) ordered = NEAR_RPC_ENDPOINTS.slice();
     let lastResp = null;
     for (const rpcUrl of ordered) {
+      if (signal && signal.aborted) {
+        const abortErr = new Error(t('请求已取消', 'Request aborted'));
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
       try {
         const resp = await fetchJsonWithTimeout(
           rpcUrl,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body
+            body,
+            signal: signal || undefined
           },
           timeoutMs
         );
@@ -335,7 +342,12 @@
           continue;
         }
         return resp;
-      } catch (_) {
+      } catch (err) {
+        if (signal && signal.aborted) {
+          const abortErr = new Error(t('请求已取消', 'Request aborted'));
+          abortErr.name = 'AbortError';
+          throw abortErr;
+        }
         _rpc429Until[rpcUrl] = Date.now() + 90_000;
       }
     }
@@ -349,26 +361,58 @@
       throw abortErr;
     }
     const body = typeof payloadObj === 'string' ? payloadObj : JSON.stringify(payloadObj);
-    let inflight = _rpcInFlight.get(body);
-    if (!inflight) {
-      inflight = _execNearRpcQueryWithFallback(body, timeoutMs).finally(() => {
-        if (_rpcInFlight.get(body) === inflight) _rpcInFlight.delete(body);
+    let entry = _rpcInFlight.get(body);
+    if (!entry) {
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const promise = _execNearRpcQueryWithFallback(body, timeoutMs, ctrl ? ctrl.signal : null).finally(() => {
+        if (_rpcInFlight.get(body) === entry) _rpcInFlight.delete(body);
       });
-      _rpcInFlight.set(body, inflight);
+      entry = { promise, ctrl, waiters: 0 };
+      _rpcInFlight.set(body, entry);
     }
-    if (!signal) return inflight;
-    return Promise.race([
-      inflight,
-      new Promise((_, reject) => {
-        const onAbort = () => {
-          const abortErr = new Error(t('请求已取消', 'Request aborted'));
-          abortErr.name = 'AbortError';
-          reject(abortErr);
-        };
-        if (signal.aborted) onAbort();
-        else signal.addEventListener('abort', onAbort, { once: true });
-      })
-    ]);
+    entry.waiters += 1;
+    if (!signal) {
+      return entry.promise.finally(() => {
+        entry.waiters = Math.max(0, entry.waiters - 1);
+      });
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        if (onAbort) {
+          try { signal.removeEventListener('abort', onAbort); } catch (_) {}
+        }
+      };
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        entry.waiters = Math.max(0, entry.waiters - 1);
+        if (entry.waiters === 0 && entry.ctrl && !entry.ctrl.signal.aborted) {
+          try { entry.ctrl.abort(); } catch (_) {}
+        }
+        const abortErr = new Error(t('请求已取消', 'Request aborted'));
+        abortErr.name = 'AbortError';
+        reject(abortErr);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      entry.promise.then(
+        (res) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          entry.waiters = Math.max(0, entry.waiters - 1);
+          resolve(res);
+        },
+        (err) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          entry.waiters = Math.max(0, entry.waiters - 1);
+          reject(err);
+        }
+      );
+    });
   }
 
   /**

@@ -1,28 +1,28 @@
-const CACHE_NAME = 'nexus-wallet-v6.73';
+const CACHE_NAME = 'nexus-wallet-v6.74';
 const CORE_ASSETS = [
   './',
   './index.html',
   './manifest.json',
-  './style.css?v=6.73',
-  './assets/favicon.png?v=6.73',
-  './assets/nexus-logo-192.png?v=6.73',
-  './assets/nexus-logo-512.png?v=6.73',
-  './bip39-wordlist.js?v=6.73',
-  './src/crypto-engine.js?v=6.73',
-  './src/token-registry.js?v=6.73',
-  './src/near-intents.js?v=6.73',
-  './src/chain-contracts.js?v=6.73',
-  './src/limit-orders.js?v=6.73',
-  './src/hyperliquid-perps.js?v=6.73',
-  './src/state.js?v=6.73',
-  './src/dapp-browser.js?v=6.73',
-  './src/framework-ui.js?v=6.73',
-  './src/jsqr-lazy.js?v=6.73',
-  './src/ui-controller.js?v=6.73',
-  './src/mining-pro.js?v=6.73',
-  './ethers.umd.min.js?v=6.73',
-  './qrcode.min.js?v=6.73',
-  './walletconnect.umd.min.js?v=6.73'
+  './style.css?v=6.74',
+  './assets/favicon.png?v=6.74',
+  './assets/nexus-logo-192.png?v=6.74',
+  './assets/nexus-logo-512.png?v=6.74',
+  './bip39-wordlist.js?v=6.74',
+  './src/crypto-engine.js?v=6.74',
+  './src/token-registry.js?v=6.74',
+  './src/near-intents.js?v=6.74',
+  './src/chain-contracts.js?v=6.74',
+  './src/limit-orders.js?v=6.74',
+  './src/hyperliquid-perps.js?v=6.74',
+  './src/state.js?v=6.74',
+  './src/dapp-browser.js?v=6.74',
+  './src/framework-ui.js?v=6.74',
+  './src/jsqr-lazy.js?v=6.74',
+  './src/ui-controller.js?v=6.74',
+  './src/mining-pro.js?v=6.74',
+  './ethers.umd.min.js?v=6.74',
+  './qrcode.min.js?v=6.74',
+  './walletconnect.umd.min.js?v=6.74'
 ];
 
 self.addEventListener('install', (event) => {
@@ -72,23 +72,34 @@ self.addEventListener('fetch', (event) => {
             caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
           }
           return netRes;
-        });
+        }).catch(() => caches.match(event.request, { ignoreSearch: true }).then((fallback) => fallback || Response.error()));
       })
     );
     return;
   }
+  const htmlCtrl = typeof AbortController === 'function' ? new AbortController() : null;
+  let htmlTimer = null;
   event.respondWith(
     Promise.race([
-      fetch(event.request),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('SW network timeout')), 3000))
+      fetch(event.request, htmlCtrl ? { signal: htmlCtrl.signal } : undefined),
+      new Promise((_, reject) => {
+        htmlTimer = setTimeout(() => {
+          try { if (htmlCtrl) htmlCtrl.abort(); } catch (_) {}
+          reject(new Error('SW network timeout'));
+        }, 3000);
+      })
     ])
       .then((netRes) => {
+        clearTimeout(htmlTimer);
         if (netRes && netRes.ok) {
           const copy = netRes.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
         }
         return netRes;
       })
-      .catch(() => caches.match(event.request, { ignoreSearch: true }))
+      .catch(() => {
+        clearTimeout(htmlTimer);
+        return caches.match(event.request, { ignoreSearch: true }).then((c) => c || Response.error());
+      })
   );
 });

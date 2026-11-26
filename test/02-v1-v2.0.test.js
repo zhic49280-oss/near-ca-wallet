@@ -735,7 +735,7 @@ test('v1.9 Requirement #6: Rhea 3 pools + 16-pool Staking Hub live rates, tx sig
   const padHex = (v) => `0x${BigInt(v).toString(16).padStart(64, '0')}`;
 
   await withMockedFetch(async (url, opts) => {
-    if (url.includes('rpc.mainnet.near.org') && opts?.body) {
+    if ((url.includes('rpc.mainnet.near.org') || url.includes('near.drpc.org')) && opts?.body) {
       const b = JSON.parse(opts.body);
       const acc = b?.params?.account_id;
       const m = b?.params?.method_name;
@@ -1049,7 +1049,7 @@ test('v2.0 Fix 2: 1 RHEA -> oRHEA via Ref V2 Pool #6573, dynamic pool lookup, 2-
     if (url.includes('smartrouter.ref.finance/findPath')) {
       return jsonResponse({ result_code: 1008, result_message: 'Pool TVL too low', result_data: { routes: [] } });
     }
-    if (url.includes('rpc.mainnet.near.org') && opts?.body) {
+    if ((url.includes('rpc.mainnet.near.org') || url.includes('near.drpc.org')) && opts?.body) {
       const b = JSON.parse(opts.body);
       if (b?.params?.account_id === 'v2.ref-finance.near' && b?.params?.method_name === 'get_return') {
         const args = JSON.parse(Buffer.from(b.params.args_base64, 'base64').toString('utf8'));
@@ -1138,7 +1138,7 @@ test('v2.0 Fix 3: Jupiter DAO Staking (JUP -> Staked JUP) PDA derivation, pre-va
         return jsonResponse({ jsonrpc: '2.0', result: '5jupDaoStakeSig111111111111111111111111111' });
       }
     }
-    if (url.includes('rpc.mainnet.near.org') && opts?.body) {
+    if ((url.includes('rpc.mainnet.near.org') || url.includes('near.drpc.org')) && opts?.body) {
       const rpc = JSON.parse(opts.body);
       if (rpc.method === 'query' && rpc.params?.request_type === 'view_access_key') {
         return jsonResponse({ jsonrpc: '2.0', id: rpc.id, result: { nonce: 11, block_hash: dummyBlockHash } });

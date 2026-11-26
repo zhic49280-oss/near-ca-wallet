@@ -8,42 +8,65 @@
     const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
 
     if (isReadOnly && active.length > 1) {
+      // 延迟 hedged 请求：主节点先发，约 800ms 未返回再并发备用节点，避免每次读操作双倍消耗配额
       const raceCtrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const runOne = async (rpcUrl) => {
+        try {
+          const res = await fetchJsonWithTimeout(
+            rpcUrl,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body,
+              signal: raceCtrl ? raceCtrl.signal : undefined
+            },
+            timeoutMs
+          );
+          if (res && !res.error && res.result !== undefined) {
+            if (raceCtrl && !raceCtrl.signal.aborted) raceCtrl.abort();
+            return res.result;
+          }
+          const msg = (res && res.error && res.error.message) || JSON.stringify(res?.error || 'RPC error');
+          if (res && res.error && !isDeterministicJsonRpcError(res.error)) {
+            _solRpcCooldownUntil[rpcUrl] = Date.now() + 90_000;
+          }
+          throw new Error(msg);
+        } catch (err) {
+          if (!(raceCtrl && raceCtrl.signal.aborted) && shouldCooldownRpcError(err)) {
+            _solRpcCooldownUntil[rpcUrl] = Date.now() + 90_000;
+          }
+          throw err;
+        }
+      };
+      let hedgeTimer = null;
       try {
-        return await Promise.any(
-          active.slice(0, 2).map(async (rpcUrl) => {
-            try {
-              const res = await fetchJsonWithTimeout(
-                rpcUrl,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body,
-                  signal: raceCtrl ? raceCtrl.signal : undefined
-                },
-                timeoutMs
-              );
-              if (res && !res.error && res.result !== undefined) {
-                if (raceCtrl && !raceCtrl.signal.aborted) raceCtrl.abort();
-                return res.result;
-              }
-              const msg = (res && res.error && res.error.message) || JSON.stringify(res?.error || 'RPC error');
-              if (res && res.error && !isDeterministicJsonRpcError(res.error)) {
-                _solRpcCooldownUntil[rpcUrl] = Date.now() + 90_000;
-              }
-              throw new Error(msg);
-            } catch (err) {
-              if (!(raceCtrl && raceCtrl.signal.aborted) && shouldCooldownRpcError(err)) {
-                _solRpcCooldownUntil[rpcUrl] = Date.now() + 90_000;
-              }
-              throw err;
+        const primaryUrl = active[0];
+        const backupUrl = active[1];
+        const primaryPromise = runOne(primaryUrl);
+        let backupTriggered = false;
+        const backupPromise = new Promise((resolve, reject) => {
+          const trigger = () => {
+            if (backupTriggered) return;
+            backupTriggered = true;
+            if (hedgeTimer) {
+              clearTimeout(hedgeTimer);
+              hedgeTimer = null;
             }
-          })
-        );
+            if (raceCtrl && raceCtrl.signal.aborted) {
+              reject(new Error('Aborted'));
+              return;
+            }
+            runOne(backupUrl).then(resolve, reject);
+          };
+          hedgeTimer = setTimeout(trigger, 800);
+          primaryPromise.catch(() => trigger());
+        });
+        return await Promise.any([primaryPromise, backupPromise]);
       } catch (aggErr) {
         const errs = aggErr && Array.isArray(aggErr.errors) ? aggErr.errors : [aggErr];
         throw errs[0] || new Error('Solana RPC call failed');
       } finally {
+        if (hedgeTimer) clearTimeout(hedgeTimer);
         if (raceCtrl && !raceCtrl.signal.aborted) raceCtrl.abort();
       }
     }
@@ -227,7 +250,22 @@
 
     return withQuoteCacheAndDedup(cacheKey, 10_000, async () => {
       const feeParam = solFeeBps > 0 ? `&platformFeeBps=${solFeeBps}` : '';
-      const jupUrl = `${JUPITER_API_URL}/quote?inputMint=${encodeURIComponent(inputMint)}&outputMint=${encodeURIComponent(outputMint)}&amount=${encodeURIComponent(amtStr)}&slippageBps=${slip}${feeParam}`;
+      const jupPath = `/quote?inputMint=${encodeURIComponent(inputMint)}&outputMint=${encodeURIComponent(outputMint)}&amount=${encodeURIComponent(amtStr)}&slippageBps=${slip}${feeParam}`;
+      const fetchJupWithFallback = async (sig) => {
+        const bases = Array.isArray(JUPITER_API_FALLBACK_URLS) && JUPITER_API_FALLBACK_URLS.length > 0 ? JUPITER_API_FALLBACK_URLS : [JUPITER_API_URL];
+        let lastErr = null;
+        for (const base of bases) {
+          try {
+            const res = await fetchJsonWithTimeout(`${base}${jupPath}`, { signal: sig }, 4500);
+            if (res && res.outAmount) return res;
+          } catch (e) {
+            lastErr = e;
+            if (sig && sig.aborted) throw e;
+          }
+        }
+        if (lastErr) throw lastErr;
+        return null;
+      };
       const rayUrl = `${RAYDIUM_API_URL}/compute/swap-base-in?inputMint=${encodeURIComponent(inputMint)}&outputMint=${encodeURIComponent(outputMint)}&amount=${encodeURIComponent(amtStr)}&slippageBps=${slip}&txVersion=V0`;
 
       const localCtrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -246,7 +284,7 @@
       try {
         const [jRes, rRes] = await raceWithGraceWindow(
           [
-            fetchJsonWithTimeout(jupUrl, { signal: mergedSig }, 4500),
+            fetchJupWithFallback(mergedSig),
             fetchJsonWithTimeout(rayUrl, { signal: mergedSig }, 4500).catch(() => null)
           ],
           (v) => Boolean(v && (v.outAmount || (v.success && v.data && v.data.outputAmount))),

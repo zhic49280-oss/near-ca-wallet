@@ -463,7 +463,7 @@
     if (!q) return [];
     try {
       const resp = await fetchJsonWithTimeout(
-        `https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(q)}`,
+        `${JUPITER_BASE_URL}/tokens/v2/search?query=${encodeURIComponent(q)}`,
         {},
         DEFAULT_TIMEOUT_MS
       );

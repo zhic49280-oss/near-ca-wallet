@@ -14,7 +14,8 @@
   const DCL_STORAGE_DEPOSIT_YOCTO = '500000000000000000000000';
   const DCL_GAS_RESERVE_NEAR = 0.05;
 
-  const JUPITER_TRIGGER_URL = 'https://lite-api.jup.ag/trigger/v1';
+  const JUPITER_BASE_URL = (root && root.NEXUS_JUPITER_BASE_URL) || 'https://lite-api.jup.ag';
+  const JUPITER_TRIGGER_URL = `${JUPITER_BASE_URL}/trigger/v1`;
   const SOL_LIMIT_MIN_USD = 5;
   const SOL_LIMIT_RENT_SOL = 0.0025;
   const SOL_LIMIT_GAS_RESERVE = 0.005;
@@ -247,10 +248,19 @@
     if (!fetchFn) throw new Error('fetch API unavailable');
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    const extSignal = options && options.signal ? options.signal : null;
+    let onExtAbort = null;
+    if (extSignal && controller) {
+      if (extSignal.aborted) controller.abort();
+      else {
+        onExtAbort = () => controller.abort();
+        extSignal.addEventListener('abort', onExtAbort, { once: true });
+      }
+    }
     try {
       const res = await fetchFn(url, {
         ...options,
-        signal: controller ? controller.signal : undefined,
+        signal: controller ? controller.signal : extSignal || undefined,
         headers: {
           Accept: 'application/json',
           ...((options && options.headers) || {})
@@ -270,6 +280,7 @@
       return { ok: Boolean(res.ok), status: res.status || 0, data, rawText: text };
     } finally {
       if (timer) clearTimeout(timer);
+      if (extSignal && onExtAbort) extSignal.removeEventListener('abort', onExtAbort);
     }
   }
 

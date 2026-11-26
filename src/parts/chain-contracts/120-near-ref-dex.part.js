@@ -1,8 +1,9 @@
+  const _sharedNearIntents = (root && root.NearCAIntents) || null;
   const REF_FINANCE_CONTRACT = 'v2.ref-finance.near';
-  const REF_SMART_ROUTER_URL = 'https://smartrouter.ref.finance/findPath';
-  const DCL_CONTRACT_ID = 'dclv2.ref-labs.near';
+  const REF_SMART_ROUTER_URL = (_sharedNearIntents && _sharedNearIntents.REF_SMART_ROUTER_URL) || 'https://smartrouter.ref.finance/findPath';
+  const DCL_CONTRACT_ID = (_sharedNearIntents && _sharedNearIntents.DCL_CONTRACT_ID) || 'dclv2.ref-labs.near';
   const WRAP_NEAR_CONTRACT = 'wrap.near';
-  const NEAR_USDC_CONTRACT_REF = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
+  const NEAR_USDC_CONTRACT_REF = (_sharedNearIntents && _sharedNearIntents.NEAR_USDC_CONTRACT) || '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
   const KNOWN_REF_V2_POOLS = {
     'otoken.rhealab.near|token.rhealab.near': 6573,
     'token.rhealab.near|xtoken.rhealab.near': 6472,
@@ -14,7 +15,7 @@
     'meta-pool.near|wrap.near': 3514,
     'linear-protocol.near|wrap.near': 3515
   };
-  const NEAR_DCL_POOLS = {
+  const NEAR_DCL_POOLS = (_sharedNearIntents && _sharedNearIntents.NEAR_DCL_POOLS) || {
     '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1|qtc.omft.near': [
       '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1|qtc.omft.near|2000'
     ],
@@ -93,6 +94,29 @@
     const poolIdsList = resolveNearDclPoolIds(inId, outId);
     if (poolIdsList.length === 0) {
       return { ok: false, isDcl: true, dclContract: DCL_CONTRACT_ID, poolIds: [], amountOut: null, minAmountOut: '0', error: t('未配置该交易对 DCL 池', 'No DCL pool configured for this pair') };
+    }
+
+    const intentsRef = (root && root.NearCAIntents) || null;
+    if (intentsRef && typeof intentsRef.quoteNearDclPoolSwap === 'function') {
+      const delegated = await intentsRef.quoteNearDclPoolSwap({
+        tokenIn: inId,
+        tokenOut: outId,
+        amountRaw: amtStr,
+        slippageBps,
+        signal
+      });
+      if (delegated && delegated.ok) {
+        return {
+          ...delegated,
+          contractId: DCL_CONTRACT_ID,
+          label: 'Rhea CLMM (dclv2.ref-labs.near)',
+          routeSource: 'Ref DCL',
+          tokenIn: inId,
+          tokenOut: outId,
+          amountIn: amtStr
+        };
+      }
+      return delegated || { ok: false, isDcl: true, dclContract: DCL_CONTRACT_ID, poolIds: [poolIdsList[0]], amountOut: null, minAmountOut: '0', error: t('流动池暂无可用报价', 'Liquidity pool returned zero quote') };
     }
 
     try {

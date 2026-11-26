@@ -8,7 +8,7 @@
     NEAR_RPC_URL,
     'https://near.drpc.org'
   ];
-  const _nearRpc429Until = {};
+  const _nearRpc429Until = root.__nearRpc429Until || (root.__nearRpc429Until = Object.create(null));
   const _solRpcCooldownUntil = {};
   const _aggCooldownUntil = {};
   const _evmRpcCooldownUntil = {};
@@ -79,7 +79,9 @@
   const NEAR_EXPLORER_TX = 'https://nearblocks.io/txns/';
   const SOLANA_RPC_ENDPOINTS = ['https://api.mainnet-beta.solana.com', 'https://solana-rpc.publicnode.com'];
   const SOLSCAN_TX = 'https://solscan.io/tx/';
-  const JUPITER_API_URL = 'https://lite-api.jup.ag/swap/v1';
+  const JUPITER_BASE_URL = (root && root.NEXUS_JUPITER_BASE_URL) || 'https://lite-api.jup.ag';
+  const JUPITER_API_URL = `${JUPITER_BASE_URL}/swap/v1`;
+  const JUPITER_API_FALLBACK_URLS = Array.from(new Set([JUPITER_API_URL, 'https://lite-api.jup.ag/swap/v1']));
   const RAYDIUM_API_URL = 'https://transaction-v1.raydium.io';
   const OPENOCEAN_API_URL = 'https://open-api.openocean.finance/v4';
   const SPL_TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
