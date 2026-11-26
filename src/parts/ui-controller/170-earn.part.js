@@ -588,7 +588,13 @@
     updateEarnEstimatedOut();
   }
 
+  let _earnSearchTimer = null;
+
   function setEarnPoolFilter(filterKey) {
+    if (_earnSearchTimer) {
+      clearTimeout(_earnSearchTimer);
+      _earnSearchTimer = null;
+    }
     const st = getState();
     st.staking.filter = String(filterKey || 'featured').toLowerCase();
     st.staking.search = '';
@@ -596,8 +602,20 @@
     renderEarnView();
   }
 
-  function handleEarnPoolSearch(query) {
+  function handleEarnPoolSearch(query, useDebounce = false) {
     getState().staking.search = String(query || '');
+    if (_earnSearchTimer) {
+      clearTimeout(_earnSearchTimer);
+      _earnSearchTimer = null;
+    }
+    if (useDebounce && typeof setTimeout === 'function') {
+      _earnSearchTimer = setTimeout(() => {
+        _earnSearchTimer = null;
+        renderEarnView();
+      }, 150);
+      if (_earnSearchTimer && typeof _earnSearchTimer.unref === 'function') _earnSearchTimer.unref();
+      return;
+    }
     renderEarnView();
   }
 
@@ -794,7 +812,7 @@
     } catch (err) {
       const msg = contracts && typeof contracts.toUserFriendlyError === 'function'
         ? contracts.toUserFriendlyError(err, '无法发起质押，请检查余额后重试', 'Unable to stake. Please check your balance and try again.')
-        : (err && err.message ? err.message : t('无法发起质押', 'Unable to stake'));
+        : t('无法发起质押，请检查余额后重试', 'Unable to stake. Please check your balance and try again.');
       showToast(msg);
       return;
     }
@@ -834,7 +852,7 @@
           });
         } else {
           rec.innerHTML = `
-          <div class="meta-row"><span class="meta-key">TxHash</span><span class="mono text-emerald">${escapeHtml(shortenAddr(res.txHash, 10, 8))}</span></div>
+          <div class="meta-row"><span class="meta-key">${t('交易哈希', 'Transaction ID')}</span><span class="mono text-emerald">${escapeHtml(shortenAddr(res.txHash, 10, 8))}</span></div>
           ${res.explorerUrl && isValidHttpsUrl(res.explorerUrl) ? `<a href="${escapeHtml(res.explorerUrl)}" target="_blank" rel="noopener noreferrer" class="text-cyan" style="font-size:11.5px;">${t('在区块浏览器查看 ↗', 'View on Explorer ↗')}</a>` : ''}
         `;
         }
@@ -855,7 +873,7 @@
     } catch (err) {
       const msg = contracts && typeof contracts.toUserFriendlyError === 'function'
         ? contracts.toUserFriendlyError(err, '质押失败，请稍后重试', 'Staking failed. Please try again.')
-        : (err && err.message ? err.message : t('质押失败', 'Staking failed'));
+        : t('质押失败，请稍后重试', 'Staking failed. Please try again.');
       showToast(msg);
     } finally {
       if (btn) {
@@ -1125,7 +1143,7 @@
     } catch (err) {
       const msg = contracts && typeof contracts.toUserFriendlyError === 'function'
         ? contracts.toUserFriendlyError(err, '赎回失败，请稍后重试', 'Redemption failed. Please try again.')
-        : (err && err.message ? err.message : t('赎回失败', 'Redemption failed'));
+        : t('赎回失败，请稍后重试', 'Redemption failed. Please try again.');
       showToast(msg);
     } finally {
       _earnActionInFlight = false;

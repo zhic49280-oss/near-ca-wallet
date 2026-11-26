@@ -215,8 +215,8 @@
                   <span id="perp-ls-short-label" class="mono text-rose">--</span>
                 </div>
                 <div class="perp-ob-power-track">
-                  <div id="perp-ls-long-bar" class="perp-ob-power-bid" style="width: 50%;"></div>
-                  <div id="perp-ls-short-bar" class="perp-ob-power-ask" style="width: 50%;"></div>
+                  <div id="perp-ls-long-bar" class="perp-ob-power-bid" style="transform: scaleX(0.5);"></div>
+                  <div id="perp-ls-short-bar" class="perp-ob-power-ask" style="transform: scaleX(0.5);"></div>
                 </div>
               </div>
 
@@ -226,20 +226,20 @@
                   <span id="perp-ob-ask-summary" class="mono text-rose">--</span>
                 </div>
                 <div class="perp-ob-power-track">
-                  <div id="perp-ob-bid-bar" class="perp-ob-power-bid" style="width: 50%;"></div>
-                  <div id="perp-ob-ask-bar" class="perp-ob-power-ask" style="width: 50%;"></div>
+                  <div id="perp-ob-bid-bar" class="perp-ob-power-bid" style="transform: scaleX(0.5);"></div>
+                  <div id="perp-ob-ask-bar" class="perp-ob-power-ask" style="transform: scaleX(0.5);"></div>
                 </div>
               </div>
 
               <div id="perp-ob-header" class="perp-ob-header" style="grid-template-columns: 1fr;">
                 <div class="perp-ob-hcol">
-                  <span id="perp-ob-bid-sz-hdr">数量</span>
-                  <span id="perp-ob-ask-sz-hdr" style="display:none;">数量</span>
+                  <span id="perp-ob-bid-sz-hdr" data-i18n="perp.obSizeHdr">数量</span>
+                  <span id="perp-ob-ask-sz-hdr" data-i18n="perp.obSizeHdr" style="display:none;">数量</span>
                   <span data-i18n="perp.obBidPx">价格 (USDC)</span>
                 </div>
               </div>
 
-              <div class="perp-ob-grid perp-ob-stacked" id="perp-orderbook-box">
+              <div class="perp-ob-grid perp-ob-stacked">
                 <div class="perp-ob-col" id="perp-ob-asks"></div>
                 <div id="perp-ob-mid-badge" class="perp-ob-mid-badge mono">--</div>
                 <div class="perp-ob-col" id="perp-ob-bids"></div>

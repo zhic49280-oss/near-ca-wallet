@@ -86,6 +86,112 @@
       `<span>${escapeHtml(t('总量', 'Vol'))}: ${escapeHtml(totalVol > 0 ? formatBal(totalVol, 1) : '--')}</span>`;
   }
 
+  let _perpMaCache = {
+    ref: null,
+    len: 0,
+    firstT: 0,
+    lastT: 0,
+    lastC: 0,
+    ma5: [],
+    ma10: [],
+    ma20: []
+  };
+
+  function computeMaSeriesFast(fullList, period) {
+    const out = new Array(fullList.length);
+    let sum = 0;
+    for (let i = 0; i < fullList.length; i++) {
+      sum += Number(fullList[i].c || 0);
+      if (i >= period) sum -= Number(fullList[i - period].c || 0);
+      const count = i < period ? i + 1 : period;
+      out[i] = sum / count;
+    }
+    return out;
+  }
+
+  function getCachedPerpMa(fullList) {
+    const len = fullList.length;
+    const firstT = len > 0 ? Number(fullList[0].t || 0) : 0;
+    const lastT = len > 0 ? Number(fullList[len - 1].t || 0) : 0;
+    const lastC = len > 0 ? Number(fullList[len - 1].c || 0) : 0;
+    if (
+      _perpMaCache.ref === fullList
+      && _perpMaCache.len === len
+      && _perpMaCache.firstT === firstT
+      && _perpMaCache.lastT === lastT
+      && _perpMaCache.lastC === lastC
+    ) {
+      return _perpMaCache;
+    }
+    _perpMaCache = {
+      ref: fullList,
+      len,
+      firstT,
+      lastT,
+      lastC,
+      ma5: computeMaSeriesFast(fullList, 5),
+      ma10: computeMaSeriesFast(fullList, 10),
+      ma20: computeMaSeriesFast(fullList, 20)
+    };
+    return _perpMaCache;
+  }
+
+  function updatePerpCrosshairOverlay(host, candles, selectedIdx) {
+    if (!host || typeof host.querySelector !== 'function') return false;
+    const chGroup = host.querySelector('#perp-chart-crosshair');
+    if (!chGroup) return false;
+    const { fullList, list } = getPerpChartWindow(candles);
+    if (
+      fullList.length < 2
+      || list.length < 2
+      || !Number.isInteger(selectedIdx)
+      || selectedIdx < 0
+      || selectedIdx >= list.length
+    ) {
+      if (chGroup.style) chGroup.style.display = 'none';
+      if (typeof chGroup.setAttribute === 'function') chGroup.setAttribute('display', 'none');
+      return true;
+    }
+    const plotL = 6;
+    const plotR = 354;
+    const plotW = plotR - plotL;
+    const candleTop = 22;
+    const candleBottom = 186;
+    const volBottom = 244;
+    let minLow = Infinity;
+    let maxHigh = -Infinity;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if (c.l < minLow) minLow = c.l;
+      if (c.h > maxHigh) maxHigh = c.h;
+    }
+    const span = maxHigh - minLow || 1;
+    const step = plotW / list.length;
+    const yOf = (p) => Math.max(candleTop, Math.min(candleBottom, candleBottom - ((p - minLow) / span) * (candleBottom - candleTop)));
+    const selC = list[selectedIdx];
+    const cx = (plotL + selectedIdx * step + step / 2).toFixed(1);
+    const cy = yOf(selC.c).toFixed(1);
+
+    const vLine = chGroup.querySelector('[data-ch="v"]');
+    const hLine = chGroup.querySelector('[data-ch="h"]');
+    const dot = chGroup.querySelector('[data-ch="dot"]');
+    if (!vLine || !hLine || !dot) return false;
+
+    vLine.setAttribute('x1', cx);
+    vLine.setAttribute('x2', cx);
+    vLine.setAttribute('y1', String(candleTop));
+    vLine.setAttribute('y2', String(volBottom));
+    hLine.setAttribute('x1', String(plotL));
+    hLine.setAttribute('x2', String(plotR));
+    hLine.setAttribute('y1', cy);
+    hLine.setAttribute('y2', cy);
+    dot.setAttribute('cx', cx);
+    dot.setAttribute('cy', cy);
+    if (chGroup.style) chGroup.style.display = '';
+    if (typeof chGroup.setAttribute === 'function') chGroup.setAttribute('display', 'inline');
+    return true;
+  }
+
   function inspectPerpCandle(idx) {
     const st = getState();
     const list = getVisiblePerpCandles(st.perp && st.perp.candles);
@@ -98,7 +204,9 @@
     const market = getSelectedPerpMarket();
     const chartSvgEl = $('perp-chart-svg');
     if (chartSvgEl) {
-      chartSvgEl.innerHTML = renderPerpCandleSvg(st.perp.candles, market, st.perp.inspectedCandleIdx);
+      if (!updatePerpCrosshairOverlay(chartSvgEl, st.perp.candles, st.perp.inspectedCandleIdx)) {
+        chartSvgEl.innerHTML = renderPerpCandleSvg(st.perp.candles, market, st.perp.inspectedCandleIdx);
+      }
     }
     renderPerpCandleDetailBar(st.perp.candles, st.perp.inspectedCandleIdx);
   }
@@ -108,15 +216,10 @@
     if (fullList.length < 2 || list.length < 2) {
       return `<div style="text-align:center; padding: 64px 0; font-size: 11.5px; color: var(--text-muted);">--</div>`;
     }
-    const computeMa = (period) => fullList.map((_, i) => {
-      const s = Math.max(0, i - period + 1);
-      let sum = 0;
-      for (let k = s; k <= i; k++) sum += Number(fullList[k].c || 0);
-      return sum / (i - s + 1);
-    });
-    const ma5All = computeMa(5);
-    const ma10All = computeMa(10);
-    const ma20All = computeMa(20);
+    const cachedMa = getCachedPerpMa(fullList);
+    const ma5All = cachedMa.ma5;
+    const ma10All = cachedMa.ma10;
+    const ma20All = cachedMa.ma20;
 
     const ma5Vis = ma5All.slice(start, end);
     const ma10Vis = ma10All.slice(start, end);
@@ -237,17 +340,19 @@
         `<text x="322" y="${(pillY + 10).toFixed(1)}" text-anchor="middle" fill="#00ec97" font-size="8.2" font-weight="700" font-family="ui-monospace, monospace">${escapeHtml(formatPerpPx(livePx))}</text>`;
     }
 
-    // Active Crosshair Overlay
-    let crosshairSvg = '';
-    if (Number.isInteger(selectedIdx) && selectedIdx >= 0 && selectedIdx < list.length) {
-      const selC = list[selectedIdx];
-      const cx = plotL + selectedIdx * step + step / 2;
-      const cy = yOf(selC.c);
-      crosshairSvg =
-        `<line x1="${cx.toFixed(1)}" y1="${candleTop}" x2="${cx.toFixed(1)}" y2="${volBottom}" stroke="#38bdf8" stroke-dasharray="2.5 2.5" stroke-width="1" stroke-opacity="0.9" />` +
-        `<line x1="${plotL}" y1="${cy.toFixed(1)}" x2="${plotR}" y2="${cy.toFixed(1)}" stroke="#38bdf8" stroke-dasharray="2.5 2.5" stroke-width="0.85" stroke-opacity="0.75" />` +
-        `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3" fill="#38bdf8" stroke="#06080f" stroke-width="1" />`;
-    }
+    // Active Crosshair Overlay (always present so scrub updates coordinates without rebuilding SVG)
+    const hasSel = Number.isInteger(selectedIdx) && selectedIdx >= 0 && selectedIdx < list.length;
+    const chIdx = hasSel ? selectedIdx : 0;
+    const selC = list[chIdx];
+    const cx = plotL + chIdx * step + step / 2;
+    const cy = yOf(selC.c);
+    const chDisplay = hasSel ? 'inline' : 'none';
+    const crosshairSvg =
+      `<g id="perp-chart-crosshair" class="perp-chart-crosshair" display="${chDisplay}" style="display:${chDisplay};">` +
+      `<line data-ch="v" x1="${cx.toFixed(1)}" y1="${candleTop}" x2="${cx.toFixed(1)}" y2="${volBottom}" stroke="#38bdf8" stroke-dasharray="2.5 2.5" stroke-width="1" stroke-opacity="0.9" />` +
+      `<line data-ch="h" x1="${plotL}" y1="${cy.toFixed(1)}" x2="${plotR}" y2="${cy.toFixed(1)}" stroke="#38bdf8" stroke-dasharray="2.5 2.5" stroke-width="0.85" stroke-opacity="0.75" />` +
+      `<circle data-ch="dot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3" fill="#38bdf8" stroke="#06080f" stroke-width="1" />` +
+      `</g>`;
 
     // Transparent Interactive Hit Targets per Candle
     const hitTargetsSvg = list.map((_, idx) => {
@@ -272,6 +377,7 @@
     let startVisibleCount = 48;
     let longPressTimer = null;
     let rafId = 0;
+    let scrubRafId = 0;
 
     const clientXToCandleIdx = (clientX) => {
       const rect = typeof host.getBoundingClientRect === 'function' ? host.getBoundingClientRect() : null;
@@ -279,6 +385,26 @@
       if (!rect || !rect.width || list.length === 0) return null;
       const rel = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
       return Math.max(0, Math.min(list.length - 1, Math.floor(rel * list.length)));
+    };
+
+    const scheduleCrosshairUpdate = () => {
+      const applyOverlay = () => {
+        const st = getState();
+        if (!updatePerpCrosshairOverlay(host, st.perp.candles, st.perp.inspectedCandleIdx)) {
+          const market = getSelectedPerpMarket();
+          host.innerHTML = renderPerpCandleSvg(st.perp.candles, market, st.perp.inspectedCandleIdx);
+        }
+        renderPerpCandleDetailBar(st.perp.candles, st.perp.inspectedCandleIdx);
+      };
+      if (typeof requestAnimationFrame !== 'function') {
+        applyOverlay();
+        return;
+      }
+      if (scrubRafId) return;
+      scrubRafId = requestAnimationFrame(() => {
+        scrubRafId = 0;
+        applyOverlay();
+      });
     };
 
     const scheduleChartRedraw = () => {
@@ -323,7 +449,7 @@
           const idx = clientXToCandleIdx(touchX);
           if (idx !== null) {
             st.perp.inspectedCandleIdx = idx;
-            scheduleChartRedraw();
+            scheduleCrosshairUpdate();
           }
         }, 180);
       }
@@ -365,7 +491,7 @@
           const idx = clientXToCandleIdx(curX);
           if (idx !== null && idx !== st.perp.inspectedCandleIdx) {
             st.perp.inspectedCandleIdx = idx;
-            scheduleChartRedraw();
+            scheduleCrosshairUpdate();
           }
         } else if (mode === 'pan') {
           if (e.cancelable) e.preventDefault();

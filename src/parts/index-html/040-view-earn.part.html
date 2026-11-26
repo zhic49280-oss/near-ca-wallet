@@ -8,7 +8,7 @@
           <button type="button" id="btn-earn-refresh" class="btn-ghost-sm" onclick="refreshStakingMetrics(true)" data-i18n="earn.refreshBtn">刷新利率</button>
         </div>
 
-        <input id="earn-pool-search" type="text" class="input-field" data-i18n-placeholder="earnSearchPlaceholder" placeholder="搜索质押代币、协议或合约 (如 RHEA, JUP, NEAR, SOL, USDC)..." oninput="handleEarnPoolSearch(this.value)" />
+        <input id="earn-pool-search" type="text" class="input-field" data-i18n-placeholder="earnSearchPlaceholder" placeholder="搜索质押代币、协议或合约 (如 RHEA, JUP, NEAR, SOL, USDC)..." oninput="handleEarnPoolSearch(this.value, true)" />
 
         <div id="earn-pool-filters" class="pill-scroll">
           <button type="button" class="filter-pill active" data-filter="featured" onclick="setEarnPoolFilter('featured')" data-i18n="earn.filterFeatured">🔥 热门大池</button>

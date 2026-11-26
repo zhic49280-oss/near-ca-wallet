@@ -556,10 +556,6 @@
       st.syncWalletCompatBalances(wallet);
       st.saveWallets();
       renderAll();
-      const detailSheet = $('sheet-token-detail');
-      if (detailSheet && detailSheet.classList && detailSheet.classList.contains('open')) {
-        renderTokenDetailSheet();
-      }
 
       const anyTimedOut = (nearAccountId && nearBalRes === null) ||
         (wallet.solAddress && solBalRes === null) ||
@@ -711,8 +707,17 @@
     let startY = null;
     let pulling = false;
     let latestDy = 0;
+    let ptrRafId = 0;
+    let pendingPullPx = 0;
     const MAX_PULL = 68;
     const THRESHOLD = 46;
+
+    const cancelPtrRaf = () => {
+      if (ptrRafId && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(ptrRafId);
+      }
+      ptrRafId = 0;
+    };
 
     const getScrollTop = () => {
       if (typeof window !== 'undefined' && typeof window.scrollY === 'number' && window.scrollY > 0) {
@@ -730,12 +735,27 @@
       }
     };
 
+    const applyPullFrame = () => {
+      if (!pulling) return;
+      ind.classList.add('pulling');
+      setPullVisual(pendingPullPx, false);
+      if (txt) {
+        txt.textContent = _isRefreshing
+          ? t('正在同步多链资产...', 'Syncing multi-chain balances...')
+          : (pendingPullPx >= THRESHOLD
+              ? t('释放立即刷新', 'Release to refresh')
+              : t('下拉刷新链上余额', 'Pull down to refresh'));
+      }
+    };
+
     viewWallet.addEventListener('touchstart', (e) => {
       if (!e.touches || e.touches.length !== 1) return;
       if (getScrollTop() > 2) return;
+      cancelPtrRaf();
       startX = e.touches[0].clientX;
       startY = e.touches[0].clientY;
       latestDy = 0;
+      pendingPullPx = 0;
       pulling = false;
       viewWallet.classList.remove('ptr-spring');
     }, { passive: true });
@@ -757,7 +777,9 @@
           startX = null;
         }
         if (pulling) {
+          cancelPtrRaf();
           ind.classList.remove('pulling');
+          viewWallet.classList.remove('ptr-pulling');
           setPullVisual(0, true);
           pulling = false;
         }
@@ -766,29 +788,34 @@
       if (dist <= 4 && !pulling) return;
       pulling = true;
       latestDy = dy;
+      viewWallet.classList.add('ptr-pulling');
       if (e.cancelable && typeof e.preventDefault === 'function') {
         e.preventDefault();
       }
-      const pullPx = computePtrPullDistance(dy, MAX_PULL);
-      ind.classList.add('pulling');
-      setPullVisual(pullPx, false);
-      if (txt) {
-        txt.textContent = _isRefreshing
-          ? t('正在同步多链资产...', 'Syncing multi-chain balances...')
-          : (pullPx >= THRESHOLD
-              ? t('释放立即刷新', 'Release to refresh')
-              : t('下拉刷新链上余额', 'Pull down to refresh'));
+      pendingPullPx = computePtrPullDistance(dy, MAX_PULL);
+      if (typeof requestAnimationFrame === 'function') {
+        if (!ptrRafId) {
+          ptrRafId = requestAnimationFrame(() => {
+            ptrRafId = 0;
+            applyPullFrame();
+          });
+        }
+      } else {
+        applyPullFrame();
       }
     }, { passive: false });
 
     const endPull = () => {
       if (startY === null) return;
+      cancelPtrRaf();
       const pullPx = computePtrPullDistance(latestDy, MAX_PULL);
       const triggered = pulling && pullPx >= THRESHOLD;
       startX = null;
       startY = null;
       pulling = false;
       latestDy = 0;
+      pendingPullPx = 0;
+      viewWallet.classList.remove('ptr-pulling');
       if (triggered) {
         setPullVisual(42, true);
         refreshAllBalancesAsync(true);
@@ -807,10 +834,13 @@
     viewWallet.addEventListener('touchend', endPull, { passive: true });
 
     viewWallet.addEventListener('touchcancel', () => {
+      cancelPtrRaf();
       startX = null;
       startY = null;
       pulling = false;
       latestDy = 0;
+      pendingPullPx = 0;
+      viewWallet.classList.remove('ptr-pulling');
       ind.classList.remove('pulling');
       setPullVisual(0, true);
     }, { passive: true });

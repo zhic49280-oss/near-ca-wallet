@@ -19,6 +19,102 @@
     }
   }
 
+  function bindSheetHandleDrag(sheet) {
+    if (!sheet || typeof sheet.querySelector !== 'function') return;
+    const handle = sheet.querySelector('.sheet-handle');
+    if (!handle || (handle.dataset && handle.dataset.handleGestureBound === '1') || typeof handle.addEventListener !== 'function') return;
+    if (handle.dataset) handle.dataset.handleGestureBound = '1';
+
+    let startX = 0;
+    let startY = 0;
+    let active = false;
+    let dragging = false;
+    let lastDy = 0;
+    let rafId = 0;
+
+    const cancelFrame = () => {
+      if (rafId && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(rafId);
+      }
+      rafId = 0;
+    };
+
+    const applySheetOffset = (dyPx) => {
+      if (sheet.style) {
+        sheet.style.transform = `translate(-50%, ${dyPx.toFixed(1)}px)`;
+      }
+    };
+
+    handle.addEventListener('touchstart', (ev) => {
+      if (!ev.touches || ev.touches.length !== 1) return;
+      cancelFrame();
+      startX = ev.touches[0].clientX;
+      startY = ev.touches[0].clientY;
+      active = true;
+      dragging = false;
+      lastDy = 0;
+    }, { passive: true });
+
+    handle.addEventListener('touchmove', (ev) => {
+      if (!active || !ev.touches || ev.touches.length !== 1) return;
+      const dx = ev.touches[0].clientX - startX;
+      const dy = ev.touches[0].clientY - startY;
+      const dist = Math.hypot(dx, dy);
+      // 7px deadzone so initial tap jitter does not trigger drag
+      if (!dragging) {
+        if (dist < 7) return;
+        if (dy <= 0 || Math.abs(dx) > Math.abs(dy) * 1.2) {
+          active = false;
+          return;
+        }
+        dragging = true;
+        if (sheet.style) sheet.style.transition = 'none';
+      }
+      if (ev.cancelable && typeof ev.preventDefault === 'function') {
+        ev.preventDefault();
+      }
+      // Damped downward drag
+      const dampedDy = dy <= 0 ? 0 : (dy <= 160 ? dy : 160 + (dy - 160) * 0.35);
+      lastDy = dampedDy;
+      if (typeof requestAnimationFrame === 'function') {
+        if (!rafId) {
+          rafId = requestAnimationFrame(() => {
+            rafId = 0;
+            if (dragging) applySheetOffset(lastDy);
+          });
+        }
+      } else {
+        applySheetOffset(dampedDy);
+      }
+    }, { passive: false });
+
+    const finishDrag = () => {
+      if (!active) return;
+      active = false;
+      cancelFrame();
+      if (!dragging) return;
+      dragging = false;
+      if (sheet.style) sheet.style.transition = '';
+      const sheetH = sheet.offsetHeight || 360;
+      const dismissThreshold = Math.min(120, Math.max(72, sheetH * 0.25));
+      if (sheet.style) sheet.style.transform = '';
+      if (lastDy >= dismissThreshold) {
+        closeAllSheets();
+      }
+      lastDy = 0;
+    };
+
+    handle.addEventListener('touchend', finishDrag, { passive: true });
+    handle.addEventListener('touchcancel', finishDrag, { passive: true });
+  }
+
+  function bindAllBottomSheetHandleGestures() {
+    if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
+    document.querySelectorAll('.bottom-sheet').forEach((sheet) => {
+      bindSheetHandleDrag(sheet);
+    });
+  }
+
   function ensureSheetInteractionGuards() {
     if (_sheetScrollBound || typeof document === 'undefined') return;
     _sheetScrollBound = true;
@@ -39,6 +135,7 @@
       window.visualViewport.addEventListener('scroll', updateVisualViewportVars);
     }
     updateVisualViewportVars();
+    bindAllBottomSheetHandleGestures();
   }
 
   function syncSheetScrollLock() {
@@ -84,6 +181,7 @@
       backdrop.classList.add('open');
     }
     if (sheet) {
+      bindSheetHandleDrag(sheet);
       sheet.classList.add('open');
       sheet.setAttribute('aria-hidden', 'false');
     }
@@ -114,6 +212,12 @@
       st.send.detectedNetwork = null;
       st.send.quote = null;
     }
+    const sendRec = $('send-tx-receipt');
+    if (sendRec) {
+      sendRec.classList.add('hidden');
+      sendRec.innerHTML = '';
+    }
+    if ($('btn-confirm-send')) $('btn-confirm-send').classList.remove('hidden');
     if (typeof _sendCrossQuoteTimer !== 'undefined' && _sendCrossQuoteTimer) {
       clearTimeout(_sendCrossQuoteTimer);
       _sendCrossQuoteTimer = null;

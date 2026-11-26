@@ -59,6 +59,9 @@
   let _perpObRenderTimer = null;
   let _perpPollTimer = null;
   let _perpTradeActionBusy = false;
+  let _perpMidsRenderTimer = null;
+  let _perpMidsRenderTs = 0;
+  let _perpMidsRafId = 0;
 
   function stopPerpLiveFeed() {
     if (_perpPollTimer) {
@@ -77,11 +80,64 @@
       clearTimeout(_perpObRenderTimer);
       _perpObRenderTimer = null;
     }
+    if (_perpMidsRenderTimer) {
+      clearTimeout(_perpMidsRenderTimer);
+      _perpMidsRenderTimer = null;
+    }
+    if (_perpMidsRafId && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(_perpMidsRafId);
+      _perpMidsRafId = 0;
+    }
     if (_perpWs) {
       const prev = _perpWs;
       _perpWs = null;
       _perpWsCoin = '';
       try { prev.onclose = null; prev.close(); } catch (_) {}
+    }
+  }
+
+  function flushAllMidsRender() {
+    const m = getSelectedPerpMarket();
+    const nextPx = m && Number(m.markPx);
+    if (Number.isFinite(nextPx) && nextPx > 0) {
+      const fmtPxStr = `$${formatPerpPx(nextPx)}`;
+      if ($('perp-mark-px')) $('perp-mark-px').textContent = fmtPxStr;
+      if ($('perp-ob-mid-badge')) $('perp-ob-mid-badge').textContent = fmtPxStr;
+      evaluatePerpOrderUI(false);
+    }
+  }
+
+  function scheduleThrottledAllMidsRender() {
+    const runFrame = () => {
+      if (typeof requestAnimationFrame === 'function') {
+        if (_perpMidsRafId) return;
+        _perpMidsRafId = requestAnimationFrame(() => {
+          _perpMidsRafId = 0;
+          _perpMidsRenderTs = Date.now();
+          flushAllMidsRender();
+        });
+      } else {
+        _perpMidsRenderTs = Date.now();
+        flushAllMidsRender();
+      }
+    };
+    const now = Date.now();
+    const elapsed = now - _perpMidsRenderTs;
+    if (elapsed >= 200) {
+      if (_perpMidsRenderTimer) {
+        clearTimeout(_perpMidsRenderTimer);
+        _perpMidsRenderTimer = null;
+      }
+      runFrame();
+      return;
+    }
+    if (_perpMidsRenderTimer) return;
+    _perpMidsRenderTimer = setTimeout(() => {
+      _perpMidsRenderTimer = null;
+      runFrame();
+    }, Math.max(20, 200 - elapsed));
+    if (_perpMidsRenderTimer && typeof _perpMidsRenderTimer.unref === 'function') {
+      _perpMidsRenderTimer.unref();
     }
   }
 
@@ -166,10 +222,7 @@
               const nextPx = Number(msg.data.mids[s.perp.selectedCoin]);
               if (m && Number.isFinite(nextPx) && nextPx > 0) {
                 m.markPx = nextPx;
-                const fmtPxStr = `$${formatPerpPx(nextPx)}`;
-                if ($('perp-mark-px')) $('perp-mark-px').textContent = fmtPxStr;
-                if ($('perp-ob-mid-badge')) $('perp-ob-mid-badge').textContent = fmtPxStr;
-                evaluatePerpOrderUI(false);
+                scheduleThrottledAllMidsRender();
               }
             } else if (msg && msg.channel === 'webData2' && msg.data) {
               const curW = s.getActiveWallet();
@@ -236,7 +289,7 @@
     const contracts = getContracts();
     let msg = contracts && typeof contracts.toUserFriendlyError === 'function'
       ? contracts.toUserFriendlyError(err, fallbackZh, fallbackEn)
-      : ((err && err.message) || t(fallbackZh, fallbackEn));
+      : t(fallbackZh, fallbackEn);
     msg = String(msg || '')
       .replace(/\bHyperliquid\s*(?:info\s*)?API\b/gi, '')
       .replace(/\s{2,}/g, ' ')

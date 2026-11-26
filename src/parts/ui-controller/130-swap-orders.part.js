@@ -801,7 +801,7 @@
     } catch (err) {
       order.followUpExecuted = false;
       order.followUpFailed = true;
-      order.followUpError = toUserFriendlyError(err, t('后续自动兑换执行失败，请稍后重试', 'Follow-up swap execution failed. Please try again.'));
+      order.followUpError = toUserFriendlyError(err, '后续自动兑换执行失败，请稍后重试', 'Follow-up swap execution failed. Please try again.');
       if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
       renderSwapOrderCard();
       showToast(order.followUpError);
@@ -896,7 +896,7 @@
         if (typeof intents.fetchNearcomConfidentialDepositStatus === 'function') {
           const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
           if (wallet) {
-            const depRes = await intents.fetchNearcomConfidentialDepositStatus({ wallet, proof: order.followUpConfidentialSwap.depositProof }).catch((e) => ({ ok: false, error: e && e.message }));
+            const depRes = await intents.fetchNearcomConfidentialDepositStatus({ wallet, proof: order.followUpConfidentialSwap.depositProof }).catch((e) => ({ ok: false, error: e }));
             if (isStalePoll()) return;
             if (depRes && depRes.ok && depRes.status) {
               order.status = depRes.status;
@@ -914,7 +914,7 @@
               return;
             }
             if (manual) {
-              showToast((depRes && depRes.error) || `${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
+              showToast((depRes && depRes.error) ? toUserFriendlyError(depRes.error, '暂未获取到新状态，请稍后重试', 'No update yet. Please try again.') : `${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
             }
             return;
           }
@@ -922,7 +922,7 @@
         if (manual) showToast(`${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
         return;
       }
-      const res = await intents.fetchSwapOrderStatus(order.depositAddress).catch((e) => ({ ok: false, error: e && e.message }));
+      const res = await intents.fetchSwapOrderStatus(order.depositAddress).catch((e) => ({ ok: false, error: e }));
       if (isStalePoll()) return;
       if (res && res.ok && res.status) {
         order.status = res.status;
@@ -938,7 +938,7 @@
         }
         if (manual) showToast(`${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
       } else if (manual) {
-        showToast((res && res.error) || `${t('暂未获取到新状态，当前', 'No update yet; status')}: ${getSwapOrderStatusLabel(order.status)}`);
+        showToast((res && res.error) ? toUserFriendlyError(res.error, '暂未获取到新状态，请稍后重试', 'No update yet. Please try again.') : `${t('暂未获取到新状态，当前', 'No update yet; status')}: ${getSwapOrderStatusLabel(order.status)}`);
       }
     } finally {
       if (mySeq === _orderPollSeq) {
@@ -951,15 +951,26 @@
     }
   }
 
+  function stopOrderStatusPolling() {
+    if (_orderPollTimer) {
+      clearInterval(_orderPollTimer);
+      _orderPollTimer = null;
+    }
+  }
+
   function startOrderStatusPolling(immediate = true) {
-    if (_orderPollTimer) clearInterval(_orderPollTimer);
+    stopOrderStatusPolling();
+    if (typeof document !== 'undefined' && document.hidden) return;
     _orderPollCount = 0;
     if (immediate) refreshActiveSwapOrderStatus();
     _orderPollTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        stopOrderStatusPolling();
+        return;
+      }
       _orderPollCount += 1;
       if (_orderPollCount > 240) {
-        clearInterval(_orderPollTimer);
-        _orderPollTimer = null;
+        stopOrderStatusPolling();
         if ($('swap-order-status')) {
           $('swap-order-status').textContent = t('仍在确认中 · 点击刷新', 'Still confirming · Tap Refresh');
         }
@@ -967,6 +978,7 @@
       }
       refreshActiveSwapOrderStatus();
     }, 6000);
+    if (_orderPollTimer && typeof _orderPollTimer.unref === 'function') _orderPollTimer.unref();
   }
 
   async function submitSwapOrderTxHash() {
@@ -976,7 +988,7 @@
     const order = st.swap.activeOrder;
     const hash = ($('swap-order-txhash-input')?.value || '').trim();
     if (!order || !order.depositAddress || !hash) {
-      showToast(t('请输入有效的 TxHash', 'Enter a valid TxHash'));
+      showToast(t('请输入有效的交易哈希', 'Enter a valid Transaction ID'));
       return;
     }
     const btn = $('btn-submit-swap-order-txhash');
@@ -995,7 +1007,7 @@
         showToast(t('已提交充值凭证，加速确认中', 'Deposit hash submitted'));
         refreshActiveSwapOrderStatus();
       } else {
-        showToast(res.error || t('提交失败', 'Submit failed'));
+        showToast(toUserFriendlyError(res && res.error, '提交失败，请稍后重试', 'Submit failed. Please try again.'));
       }
     } finally {
       if (btn) {

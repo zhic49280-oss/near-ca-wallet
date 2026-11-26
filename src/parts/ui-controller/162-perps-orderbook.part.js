@@ -34,8 +34,8 @@
       }
       if (bidSumEl) bidSumEl.textContent = '--';
       if (askSumEl) askSumEl.textContent = '--';
-      if (bidBarEl) bidBarEl.style.width = '50%';
-      if (askBarEl) askBarEl.style.width = '50%';
+      if (bidBarEl) bidBarEl.style.transform = 'scaleX(0.5)';
+      if (askBarEl) askBarEl.style.transform = 'scaleX(0.5)';
       return;
     }
 
@@ -48,8 +48,10 @@
     if (askSumEl) {
       askSumEl.textContent = `${t('卖', 'Ask')} ${formatBal(askTot, 2)} ${coin}`;
     }
-    if (bidBarEl) bidBarEl.style.width = `${Math.max(5, Math.min(95, ratio)).toFixed(1)}%`;
-    if (askBarEl) askBarEl.style.width = `${Math.max(5, Math.min(95, 100 - ratio)).toFixed(1)}%`;
+    const bidFrac = Math.max(0.05, Math.min(0.95, ratio / 100));
+    const askFrac = Math.max(0.05, Math.min(0.95, 1 - bidFrac));
+    if (bidBarEl) bidBarEl.style.transform = `scaleX(${bidFrac.toFixed(3)})`;
+    if (askBarEl) askBarEl.style.transform = `scaleX(${askFrac.toFixed(3)})`;
 
     const bidRows = ob.bids.slice(0, 10);
     const askRows = [...ob.asks.slice(0, 10)].reverse();
@@ -628,8 +630,8 @@
       if (wrap.style) wrap.style.opacity = '0.55';
       if ($('perp-ls-long-label')) $('perp-ls-long-label').textContent = `${t('做多', 'Long')} --`;
       if ($('perp-ls-short-label')) $('perp-ls-short-label').textContent = `-- ${t('做空', 'Short')}`;
-      if ($('perp-ls-long-bar')) $('perp-ls-long-bar').style.width = '50%';
-      if ($('perp-ls-short-bar')) $('perp-ls-short-bar').style.width = '50%';
+      if ($('perp-ls-long-bar')) $('perp-ls-long-bar').style.transform = 'scaleX(0.5)';
+      if ($('perp-ls-short-bar')) $('perp-ls-short-bar').style.transform = 'scaleX(0.5)';
       return;
     }
     if (wrap.style) wrap.style.opacity = '1';
@@ -637,7 +639,7 @@
     const shortPct = Math.max(1, Math.min(99, 100 - longPct));
     if ($('perp-ls-long-label')) $('perp-ls-long-label').textContent = `${t('做多', 'Long')} ${ls.longPct.toFixed(1)}%`;
     if ($('perp-ls-short-label')) $('perp-ls-short-label').textContent = `${ls.shortPct.toFixed(1)}% ${t('做空', 'Short')}`;
-    if ($('perp-ls-long-bar')) $('perp-ls-long-bar').style.width = `${longPct.toFixed(1)}%`;
-    if ($('perp-ls-short-bar')) $('perp-ls-short-bar').style.width = `${shortPct.toFixed(1)}%`;
+    if ($('perp-ls-long-bar')) $('perp-ls-long-bar').style.transform = `scaleX(${(longPct / 100).toFixed(3)})`;
+    if ($('perp-ls-short-bar')) $('perp-ls-short-bar').style.transform = `scaleX(${(shortPct / 100).toFixed(3)})`;
   }
 

@@ -200,7 +200,7 @@ test('M3.4: #perp-ls-ratio-wrap has Zero CLS fixed-height placeholder and stays 
     uiController.renderPerpLongShortBar();
     assert.equal(wrap.classList.contains('hidden'), false);
     assert.match(longLbl.textContent, /--/);
-    assert.equal(longBar.style.width, '50%');
+    assert.equal(longBar.style.transform, 'scaleX(0.5)');
   } finally {
     globalThis.document = prevDoc;
   }

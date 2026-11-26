@@ -492,6 +492,7 @@
     }
     if (isHidden) {
       if (typeof stopPerpLiveFeed === 'function') stopPerpLiveFeed();
+      if (typeof stopOrderStatusPolling === 'function') stopOrderStatusPolling();
       if (_appLockState.authenticating) return;
       if (!_appLockState.backgroundedAt) {
         _appLockState.backgroundedAt = Number(nowMs) || Date.now();
