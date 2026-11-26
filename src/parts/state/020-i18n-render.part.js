@@ -32,44 +32,6 @@
     return out;
   }
 
-  const VAULT_SECRET_FIELDS = [
-    'mnemonic', 'prlMnemonic', 'btcMnemonic', 'legacyEvmMnemonic', 'legacySolMnemonic',
-    'nearPrivateKey', 'nearPrivateSeedHex', 'evmPrivateKey', 'solPrivateSeedHex',
-    'privateKeyHex', 'tweakedPrivateKeyHex', 'btcPrivateKeyHex', 'btcTweakedPrivateKeyHex'
-  ];
-
-  async function encryptWalletSecretsToVaultAsync(wallet, pin) {
-    const cryptoLib = (typeof root !== 'undefined' && root.NearCACrypto) || (typeof globalThis !== 'undefined' && globalThis.NearCACrypto);
-    const cleanPin = String(pin || '').trim();
-    if (!wallet || !cleanPin || !cryptoLib || typeof cryptoLib.encryptVaultJsonAsync !== 'function') return null;
-    const secrets = {};
-    for (const k of VAULT_SECRET_FIELDS) {
-      if (wallet[k]) secrets[k] = wallet[k];
-    }
-    if (Object.keys(secrets).length === 0 && wallet.encryptedVault && wallet.encryptedVault.ctBase64) {
-      return null;
-    }
-    const envelope = await cryptoLib.encryptVaultJsonAsync(secrets, cleanPin);
-    wallet.encryptedVault = envelope;
-    wallet._vaultUnlockedInSession = true;
-    return envelope;
-  }
-
-  async function unlockWalletVaultSecretsAsync(wallet, pin) {
-    const cryptoLib = (typeof root !== 'undefined' && root.NearCACrypto) || (typeof globalThis !== 'undefined' && globalThis.NearCACrypto);
-    const cleanPin = String(pin || '').trim();
-    if (!wallet || !wallet.encryptedVault || !cleanPin || !cryptoLib || typeof cryptoLib.decryptVaultJsonAsync !== 'function') return false;
-    const secrets = await cryptoLib.decryptVaultJsonAsync(wallet.encryptedVault, cleanPin);
-    if (secrets && typeof secrets === 'object') {
-      for (const k of VAULT_SECRET_FIELDS) {
-        if (secrets[k]) wallet[k] = secrets[k];
-      }
-      wallet._vaultUnlockedInSession = true;
-      return true;
-    }
-    return false;
-  }
-
   let _saveWalletsTimer = null;
 
   function saveWallets() {
@@ -84,12 +46,6 @@
       delete copy.nearBalance;
       delete copy.balance;
       delete copy._needsSelfHealSave;
-      delete copy._vaultUnlockedInSession;
-      if (copy.encryptedVault && typeof copy.encryptedVault === 'object' && copy.encryptedVault.ctBase64) {
-        for (const k of VAULT_SECRET_FIELDS) {
-          delete copy[k];
-        }
-      }
       copy.erc20Balances = serializeCompactErc20Map(w.erc20Balances);
       return copy;
     });
@@ -722,9 +678,6 @@
   state.saveWallets = saveWallets;
   state.saveWalletsDebounced = saveWalletsDebounced;
   state.loadWallets = loadWallets;
-  state.hasWalletPin = hasWalletPin;
-  state.setWalletPinAsync = setWalletPinAsync;
-  state.verifyWalletPinAsync = verifyWalletPinAsync;
   state.saveSwapPair = saveSwapPair;
   state.loadSwapPair = loadSwapPair;
   state.saveActiveSwapOrder = saveActiveSwapOrder;
@@ -748,8 +701,6 @@
   state.setWalletErc20Balance = setWalletErc20Balance;
   state.getWalletErc20Balance = getWalletErc20Balance;
   state.createEmptyNativeBalances = createEmptyNativeBalances;
-  state.encryptWalletSecretsToVaultAsync = encryptWalletSecretsToVaultAsync;
-  state.unlockWalletVaultSecretsAsync = unlockWalletVaultSecretsAsync;
   state.initState = initState;
 
   if (root) {

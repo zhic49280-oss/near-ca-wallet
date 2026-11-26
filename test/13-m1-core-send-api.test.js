@@ -275,8 +275,8 @@ test('M1.4: toUserFriendlyError strips HTTP/JSON/RPC/WebAuthn/dev jargon and pre
   assert.match(friendlyBal, /0\.1000\s+NEAR/);
 });
 
-test('M1.5: NEAR key self-healing, vault lock preservation, null-balance verification, security/navigation/sync/receive fixes', async () => {
-  // 1. Self-healing NEAR keys in normalizeWalletRecord while keeping encryptedVault locked
+test('M1.5: NEAR key self-healing, null-balance verification, security/navigation/sync/receive fixes', async () => {
+  // 1. Self-healing NEAR keys in normalizeWalletRecord
   const expectedNear = await cryptoEngine.deriveNearFromSeedAsync(TEST_MNEMONIC, 0);
   const healed = state.normalizeWalletRecord({ id: 'w_old_mnemonic_only', mnemonic: TEST_MNEMONIC });
   assert.equal(healed.nearAddress, expectedNear.nearAddress);
@@ -284,11 +284,6 @@ test('M1.5: NEAR key self-healing, vault lock preservation, null-balance verific
   assert.equal(healed.nearPrivateKey, expectedNear.nearPrivateKey);
   assert.equal(healed.nearPrivateSeedHex, expectedNear.nearPrivateSeedHex);
   assert.ok(healed.mpcEvmAddress && healed.evmAddress && healed.solAddress && healed.address && healed.btcAddress);
-
-  const env = await cryptoEngine.encryptVaultJsonAsync({ mnemonic: TEST_MNEMONIC }, '123456', 1000);
-  const locked = state.normalizeWalletRecord({ id: 'w_locked_vault', encryptedVault: env, mnemonic: '' });
-  assert.equal(locked.mnemonic, '');
-  assert.equal(locked.nearPrivateKey, '');
 
   // 2. Null-balance live verification in Pearl / BTC / NEAR
   await withMockedFetch(async () => jsonResponse({}, 500), async () => {
@@ -319,14 +314,11 @@ test('M1.5: NEAR key self-healing, vault lock preservation, null-balance verific
 
   await withMockedStorage({}, async () => {
     state.initState();
-    const w = state.normalizeWalletRecord({ id: 'w_m1_sec', mnemonic: TEST_MNEMONIC, pin: '123456', encryptedVault: env });
-    // Simulate locked vault wallet with encryptedVault + PIN
-    w.mnemonic = '';
-    w.nearPrivateKey = '';
+    const w = state.normalizeWalletRecord({ id: 'w_m1_sec', mnemonic: TEST_MNEMONIC });
     state.wallets = [w];
     state.activeWalletId = w.id;
 
-    // Cold-boot unlockAppLockNow with encryptedVault + PIN skips biometrics (authCalls === 0)
+    // Cold-boot unlockAppLockNow uses device-native biometrics
     const prevDoc = globalThis.document;
     const prevWin = globalThis.window;
     const prevEvent = globalThis.event;
@@ -335,11 +327,6 @@ test('M1.5: NEAR key self-healing, vault lock preservation, null-balance verific
       ['app-lock-overlay', createMockDomElement('app-lock-overlay')],
       ['app-lock-status', createMockDomElement('app-lock-status')],
       ['btn-app-lock-unlock', createMockDomElement('btn-app-lock-unlock')],
-      ['btn-app-lock-pin', createMockDomElement('btn-app-lock-pin')],
-      ['sheet-security-auth', createMockDomElement('sheet-security-auth')],
-      ['security-pin-section', createMockDomElement('security-pin-section')],
-      ['security-pin-dots', createMockDomElement('security-pin-dots')],
-      ['btn-security-biometric', createMockDomElement('btn-security-biometric')],
       ['sheet-backdrop', createMockDomElement('sheet-backdrop')],
       ['sheet-backup', createMockDomElement('sheet-backup', { classes: ['open'] })],
       ['toast', createMockDomElement('toast')],
@@ -375,11 +362,9 @@ test('M1.5: NEAR key self-healing, vault lock preservation, null-balance verific
       globalThis.copyTextValue('secret-phrase-123', 'Phrase');
       assert.match(domMap.get('toast').textContent, /显示助记词|Reveal/i);
 
-      const unlockP = uiController.unlockAppLockNow();
-      await new Promise((r) => setTimeout(r, 20));
-      assert.equal(bioCalls, 0, 'Cold-boot locked vault with PIN must go straight to PIN without prompting biometrics');
-      uiController.cancelSecurityAuthModal();
-      await unlockP;
+      const unlocked = await uiController.unlockAppLockNow();
+      assert.equal(bioCalls, 1, 'Cold-boot unlockAppLockNow must invoke NativeSecurity biometrics');
+      assert.equal(unlocked, true);
 
       // closeAllSheets resets st.send, st.perp funding/search & DOM
       state.send.recipient = 'alice.near';

@@ -182,9 +182,15 @@
     const contracts = getContracts();
     const wallet = st.getActiveWallet();
     if (!wallet || !contracts) return;
-    if (!(await verifySecurityAuthAsync(wallet, t('删除 NEAR 访问密钥', 'Delete NEAR Access Key')))) return;
     _nearKeyActionBusy = true;
+    const delBtn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
+    const prevDelText = delBtn ? delBtn.textContent : '';
+    if (delBtn) {
+      delBtn.disabled = true;
+      delBtn.textContent = t('删除中...', 'Deleting...');
+    }
     try {
+      if (!(await verifySecurityAuthAsync(wallet, t('删除 NEAR 访问密钥', 'Delete NEAR Access Key')))) return;
       showToast(t('正在提交删除密钥请求...', 'Removing key on-chain...'));
       const res = await contracts.deleteNearAccessKeyAsync({ wallet, targetPublicKeyStr });
       showToast(`✅ ${t('密钥已删除', 'Key deleted')}: ${shortenAddr(res.txHash, 8, 6)}`);
@@ -193,6 +199,10 @@
       showToast(toUserFriendlyError(e, '删除密钥失败', 'Failed to delete key'));
     } finally {
       _nearKeyActionBusy = false;
+      if (delBtn) {
+        delBtn.disabled = false;
+        delBtn.textContent = prevDelText;
+      }
     }
   }
 
@@ -209,8 +219,6 @@
       showToast(check.error || t('请先生成或输入有效助记词', 'Generate or enter a valid mnemonic'));
       return;
     }
-    if (!(await verifySecurityAuthAsync(wallet, t('为 NEAR 账户添加新密钥', 'Add New Key to NEAR Account')))) return;
-
     _nearKeyActionBusy = true;
     const addBtn = $('btn-near-keys-add-only');
     const prevAddText = addBtn ? addBtn.textContent : '';
@@ -219,6 +227,7 @@
       addBtn.textContent = t('添加中...', 'Adding...');
     }
     try {
+      if (!(await verifySecurityAuthAsync(wallet, t('为 NEAR 账户添加新密钥', 'Add New Key to NEAR Account')))) return;
       showToast(t('正在添加新密钥...', 'Adding new key on-chain...'));
       const res = await contracts.rotateNearAccountKeyAsync({
         wallet,
@@ -649,9 +658,6 @@
         parts.push(profile.platform === 'ios' ? 'Face ID / Touch ID' : t('生物识别', 'Biometrics'));
       }
       if (getNativeSecurityPlugin()) parts.push(t('锁屏密码', 'Passcode'));
-      if (typeof st.hasWalletPin === 'function' ? st.hasWalletPin(wallet) : Boolean(wallet.pin || wallet.pinHash)) parts.push('PIN');
-      const pinBtn = $('btn-hub-set-pin');
-      if (pinBtn) pinBtn.classList.remove('hidden');
       statusBadge.textContent = parts.length ? parts.join(' + ') : t('未设置', 'Not set');
       statusBadge.className = parts.length ? 'badge badge-emerald' : 'badge badge-cyan';
     }
@@ -671,11 +677,7 @@
       showToast(t('已取消验证', 'Verification cancelled'));
       return;
     }
-    showToast(res.error || t('当前环境不支持系统生物识别，请使用交易 PIN', 'System biometrics unavailable; use PIN'));
-  }
-
-  function openSetWalletPinPrompt() {
-    openPinSheet();
+    showToast(res.error || t('当前环境不支持系统生物识别，建议开启系统锁屏保护', 'System biometrics unavailable; enable device screen lock in system settings'));
   }
 
   async function registerNearDomainFromHub() {
@@ -694,7 +696,6 @@
       showToast(t('请输入要注册的 .near 域名', 'Enter .near domain'));
       return;
     }
-    if (!(await verifySecurityAuthAsync(wallet, `${t('注册域名', 'Register domain')} ${domain}`))) return;
     _nearKeyActionBusy = true;
     const regBtn = $('btn-register-near-domain');
     const prevRegText = regBtn ? regBtn.textContent : '';
@@ -703,6 +704,7 @@
       regBtn.textContent = t('注册中...', 'Registering...');
     }
     try {
+      if (!(await verifySecurityAuthAsync(wallet, `${t('注册域名', 'Register domain')} ${domain}`))) return;
       const res = await contracts.registerNearNamedAccountOnChain({
         wallet,
         newAccountId: domain
@@ -750,7 +752,6 @@
       showToast(t('请输入有效的 .near / .tg 账号', 'Enter a valid .near / .tg account'));
       return;
     }
-    if (!(await verifySecurityAuthAsync(wallet, `${t('绑定 NEAR 命名账号', 'Bind NEAR Named Account')}: ${domain}`))) return;
     const authSecret = ($('hub-near-bind-auth-input')?.value || '').trim();
     _nearKeyActionBusy = true;
     const bindBtn = $('btn-bind-near-domain');
@@ -760,6 +761,7 @@
       bindBtn.textContent = t('绑定中...', 'Binding...');
     }
     try {
+      if (!(await verifySecurityAuthAsync(wallet, `${t('绑定 NEAR 命名账号', 'Bind NEAR Named Account')}: ${domain}`))) return;
       await contracts.ensureWalletSigningKeysAsync(wallet);
       const creds = contracts.getWalletNearSignerCredentials(wallet);
       const targetPub = creds.publicKeyStr;

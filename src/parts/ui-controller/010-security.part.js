@@ -1,14 +1,6 @@
   // ==================== Native Biometrics, WebAuthn & Security Modal ====================
 
   let _cachedBioProfile = null;
-  let _secAuthState = {
-    resolve: null,
-    wallet: null,
-    reason: '',
-    pinBuffer: '',
-    expectedLen: 6
-  };
-
   function getNativeSecurityPlugin(explicitPlugin) {
     if (explicitPlugin) return explicitPlugin;
     const cap = (typeof window !== 'undefined' && window.Capacitor)
@@ -228,15 +220,15 @@
       if (!deviceModel) deviceModel = 'Windows PC';
       if (biometryType === 'none') biometryType = 'windowsHello';
       if (methods.length === 0) {
-        methods = ['Windows Hello', t('指纹 / 人脸 / PIN', 'Fingerprint / Face / PIN')];
+        methods = ['Windows Hello', t('指纹 / 人脸 / 系统密码', 'Fingerprint / Face / Device Password')];
       }
     } else {
       brand = 'Web';
       if (!deviceModel) deviceModel = t('当前设备', 'Current Device');
       if (methods.length === 0) {
         methods = hasWebAuthnPlatform
-          ? [t('平台生物识别通行密钥', 'Platform Passkey'), t('安全 PIN', 'Wallet PIN')]
-          : [t('安全 PIN', 'Wallet PIN')];
+          ? [t('平台生物识别通行密钥', 'Platform Passkey')]
+          : [t('设备锁屏', 'Device Lock')];
       }
     }
 
@@ -276,16 +268,16 @@
   async function registerOrVerifyWebAuthnPasskeyAsync(reason, wallet, overrides = {}) {
     const nav = getNavigatorObj(overrides);
     if (!nav || !nav.credentials || typeof nav.credentials.create !== 'function') {
-      return { ok: false, error: t('当前浏览器不支持设备通行密钥', 'Biometric passkey unsupported') };
+      return { ok: false, unavailable: true, error: t('当前浏览器不支持设备通行密钥', 'Biometric passkey unsupported') };
     }
     if (typeof location !== 'undefined' && location.protocol === 'file:' && !overrides.navigator) {
-      return { ok: false, error: t('本地文件协议不支持设备通行密钥', 'Passkey requires HTTPS or localhost') };
+      return { ok: false, unavailable: true, error: t('本地文件协议不支持设备通行密钥', 'Passkey requires HTTPS or localhost') };
     }
     const PubKeyCred = getPublicKeyCredCtor(overrides);
     if (PubKeyCred && typeof PubKeyCred.isUserVerifyingPlatformAuthenticatorAvailable === 'function') {
       const avail = await PubKeyCred.isUserVerifyingPlatformAuthenticatorAvailable().catch(() => false);
       if (!avail) {
-        return { ok: false, error: t('未检测到平台生物识别验证器', 'Platform authenticator unavailable') };
+        return { ok: false, unavailable: true, error: t('未检测到平台生物识别验证器', 'Platform authenticator unavailable') };
       }
     }
 
@@ -358,7 +350,7 @@
       const unavailable = name === 'SecurityError' || name === 'NotSupportedError' || name === 'InvalidStateError' || /unavailable|not supported/i.test(rawMsg);
       const msg = cancelled
         ? t('已取消生物识别验证', 'Biometric verification cancelled')
-        : toUserFriendlyError(err, '生物识别验证失败，请重试或使用安全密码', 'Biometric verification failed. Please retry or use your PIN.');
+        : toUserFriendlyError(err, '生物识别验证失败，请重试', 'Biometric verification failed. Please retry.');
       return { ok: false, cancelled, unavailable, error: msg };
     }
   }
@@ -371,31 +363,12 @@
     lifecycleBound: false
   };
 
-  function hasConfiguredWalletPin(wallet) {
-    const st = getState();
-    return Boolean(wallet && (typeof st.hasWalletPin === 'function' ? st.hasWalletPin(wallet) : Boolean(wallet.pin || wallet.pinHash)));
-  }
-
   function isWalletBiometricAllowed(wallet) {
     return Boolean(wallet && wallet.biometricEnabled !== false);
   }
 
-  function isWalletVaultLocked(wallet) {
-    if (!wallet || !wallet.encryptedVault || !wallet.encryptedVault.ctBase64) return false;
-    if (wallet._vaultUnlockedInSession) return false;
-    return Boolean(!wallet.mnemonic && !wallet.nearPrivateKey);
-  }
-
   function isAppLocked() {
     return Boolean(_appLockState.locked);
-  }
-
-  function openSetWalletPinPromptSafe() {
-    const sheet = $('sheet-pin');
-    if (sheet && sheet.classList && _appLockState.locked) {
-      sheet.classList.add('auth-top');
-    }
-    if (typeof openPinSheet === 'function') openPinSheet();
   }
 
   function shouldEnableAppLockForWallet(wallet, overrides = {}) {
@@ -403,7 +376,7 @@
     const bioAllowed = isWalletBiometricAllowed(wallet);
     const nativePlugin = bioAllowed ? getNativeSecurityPlugin(overrides.nativePlugin) : null;
     const hasWebAuthn = bioAllowed ? Boolean(wallet.webauthnCredentialId) : false;
-    return Boolean(nativePlugin || hasWebAuthn || hasConfiguredWalletPin(wallet));
+    return Boolean(nativePlugin || hasWebAuthn);
   }
 
   function setRootClass(cls, enabled) {
@@ -447,8 +420,6 @@
     setRootClass('nexus-locked', true);
     const overlay = $('app-lock-overlay');
     if (overlay) overlay.setAttribute('aria-hidden', 'false');
-    const pinBtn = $('btn-app-lock-pin');
-    if (pinBtn) pinBtn.classList.toggle('hidden', !hasConfiguredWalletPin(wallet));
     const statusEl = $('app-lock-status');
     if (statusEl) {
       statusEl.textContent = t('请通过生物识别或锁屏密码解锁', 'Unlock with Biometrics or Device Passcode');
@@ -473,39 +444,28 @@
     if (statusEl) statusEl.textContent = t('正在验证身份...', 'Verifying identity...');
 
     const bioAllowed = isWalletBiometricAllowed(wallet);
-    const hasPin = hasConfiguredWalletPin(wallet);
-    const vaultLocked = isWalletVaultLocked(wallet);
     const nativePlugin = bioAllowed ? getNativeSecurityPlugin(overrides.nativePlugin) : null;
     const profile = !bioAllowed
       ? { supported: false }
       : (nativePlugin ? { supported: true } : (_cachedBioProfile || await detectDeviceBiometricProfileAsync(overrides)));
     try {
-      if (profile && profile.supported && !(vaultLocked && hasPin)) {
+      if (profile && profile.supported) {
         const res = await requestBiometricAuth(
           t('验证身份以解锁 Nexus Wallet', 'Verify identity to unlock Nexus Wallet'),
           wallet,
           overrides
         );
         if (res && res.ok) {
-          if (isWalletVaultLocked(wallet) && hasConfiguredWalletPin(wallet)) {
-            return unlockAppLockWithPin();
-          }
           clearAppLock();
           return true;
         }
         const bioUnavailable = Boolean(
           res && (res.unavailable || res.code === 'AUTH_UNAVAILABLE' || /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(String(res.error || '')))
         );
-        if (bioUnavailable && hasConfiguredWalletPin(wallet)) {
-          return unlockAppLockWithPin();
-        }
-        if (bioUnavailable && !hasConfiguredWalletPin(wallet)) {
-          if (statusEl) {
-            statusEl.textContent = t('设备生物识别不可用且未设置 PIN，请先设置安全 PIN', 'Device biometrics unavailable and no PIN set. Please set a security PIN.');
-          }
-          showToast(t('设备生物识别不可用，请先设置安全 PIN', 'Biometrics unavailable, please set a security PIN first'));
-          openSetWalletPinPromptSafe();
-          return false;
+        if (bioUnavailable) {
+          hintEnableDeviceLock();
+          clearAppLock();
+          return true;
         }
         if (statusEl) {
           statusEl.textContent = (res && res.cancelled)
@@ -514,9 +474,6 @@
         }
         return false;
       }
-      if (hasPin) {
-        return unlockAppLockWithPin();
-      }
       clearAppLock();
       return true;
     } finally {
@@ -524,22 +481,6 @@
     }
   }
 
-  async function unlockAppLockWithPin() {
-    const st = getState();
-    const wallet = st.getActiveWallet();
-    if (!wallet) {
-      clearAppLock();
-      return true;
-    }
-    if (!hasConfiguredWalletPin(wallet)) return false;
-    const ok = await openPinModalForWalletAsync(
-      wallet,
-      t('输入交易 PIN 解锁钱包', 'Enter PIN to unlock wallet'),
-      false
-    );
-    if (ok) clearAppLock();
-    return ok;
-  }
 
   function handleAppVisibilityChange(isHidden, nowMs = Date.now(), overrides = {}) {
     const st = getState();
@@ -654,7 +595,7 @@
           const cancelled = errCode === 'AUTH_CANCELLED' || /AUTH_CANCELLED|取消|cancel|abort|dismiss/i.test(rawMsg);
           const msg = cancelled
             ? t('已取消生物识别验证', 'Biometric verification cancelled')
-            : toUserFriendlyError(err, '生物识别验证异常，请重试或使用 PIN', 'Biometric verification failed; please retry or use PIN');
+            : toUserFriendlyError(err, '生物识别验证异常，请重试', 'Biometric verification failed; please retry');
           return {
             ok: false,
             code: errCode,
@@ -681,224 +622,35 @@
     }
   }
 
-  function renderSecurityPinDots() {
-    const dotsWrap = $('security-pin-dots');
-    if (dotsWrap) {
-      const dots = dotsWrap.querySelectorAll('.bio-pin-dot');
-      const targetLen = _secAuthState.expectedLen || 6;
-      const enteredLen = (_secAuthState.pinBuffer || '').length;
-      dots.forEach((dot, idx) => {
-        dot.style.display = idx < targetLen ? '' : 'none';
-        dot.classList.toggle('filled', idx < enteredLen);
-      });
-    }
-    const confirmBtn = $('btn-security-pin-confirm');
-    if (confirmBtn) {
-      const enteredLen = (_secAuthState.pinBuffer || '').length;
-      const showConfirm = Boolean(_secAuthState.allowShortSubmit && enteredLen >= 4 && enteredLen < (_secAuthState.expectedLen || 6));
-      confirmBtn.classList.toggle('hidden', !showConfirm);
-    }
-  }
-
-  function finishSecurityAuthModal(accepted) {
-    const resolver = _secAuthState.resolve;
-    _secAuthState = {
-      resolve: null,
-      wallet: null,
-      reason: '',
-      pinBuffer: '',
-      expectedLen: 6
-    };
-    const backdrop = $('sheet-backdrop');
-    const sheet = $('sheet-security-auth');
-    if (sheet) {
-      sheet.classList.remove('open');
-      sheet.setAttribute('aria-hidden', 'true');
-    }
-    if (backdrop) {
-      backdrop.classList.remove('auth-top');
-      const stillOpen = typeof document !== 'undefined' && document.querySelector('.bottom-sheet.open');
-      if (!stillOpen) backdrop.classList.remove('open');
-    }
-    if (typeof syncSheetScrollLock === 'function') syncSheetScrollLock();
-    if (typeof resolver === 'function') {
-      resolver(Boolean(accepted));
-    }
-  }
-
-  function cancelSecurityAuthModal() {
-    finishSecurityAuthModal(false);
-  }
-
-  async function triggerSecurityBiometricNow() {
-    const wallet = _secAuthState.wallet || getState().getActiveWallet();
-    const reason = _secAuthState.reason || t('请验证身份以继续', 'Authenticate to continue');
-    if (isWalletVaultLocked(wallet)) {
-      showToast(t('当前钱包密钥尚未解锁，请输入交易 PIN 解密', 'Wallet vault is locked; enter PIN to decrypt'));
-      return false;
-    }
-    const btn = $('btn-security-biometric');
-    if (btn) btn.disabled = true;
-    try {
-      const res = await requestBiometricAuth(reason, wallet);
-      if (res.ok) {
-        finishSecurityAuthModal(true);
-        return true;
-      }
-      showToast(res.cancelled
-        ? t('已取消生物识别验证', 'Biometric verification cancelled')
-        : toUserFriendlyError(res.error, '生物识别验证未通过，请输入 PIN', 'Biometric failed; use PIN'));
-      return false;
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  }
-
-  async function submitSecurityPin() {
-    const st = getState();
-    const w = _secAuthState.wallet;
-    if (!w || !(typeof st.hasWalletPin === 'function' ? st.hasWalletPin(w) : Boolean(w.pin)) || _secAuthState.verifying) return;
-    const candidate = String(_secAuthState.pinBuffer || '');
-    if (candidate.length < 4) return;
-    _secAuthState.verifying = true;
-    try {
-      const ok = typeof st.verifyWalletPinAsync === 'function'
-        ? await st.verifyWalletPinAsync(w, candidate)
-        : candidate === String(w.pin);
-      if (ok) {
-        if (w.encryptedVault && typeof st.unlockWalletVaultSecretsAsync === 'function') {
-          await st.unlockWalletVaultSecretsAsync(w, candidate).catch(() => false);
-        }
-        if (!w.pinLen || w.pinLen !== candidate.length) {
-          w.pinLen = candidate.length;
-          if (typeof st.saveWallets === 'function') st.saveWallets();
-        }
-        finishSecurityAuthModal(true);
-      } else {
-        showToast(t('交易密码错误', 'Incorrect PIN'));
-        _secAuthState.pinBuffer = '';
-        renderSecurityPinDots();
-      }
-    } finally {
-      _secAuthState.verifying = false;
-    }
-  }
-
-  async function pressSecurityPinDigit(digit) {
-    const st = getState();
-    const w = _secAuthState.wallet;
-    if (!w || !(typeof st.hasWalletPin === 'function' ? st.hasWalletPin(w) : Boolean(w.pin)) || _secAuthState.verifying) return;
-    const clean = String(digit || '').replace(/\D/g, '').slice(0, 1);
-    if (!clean) return;
-    if (_secAuthState.pinBuffer.length >= _secAuthState.expectedLen) return;
-    _secAuthState.pinBuffer += clean;
-    renderSecurityPinDots();
-    if (_secAuthState.pinBuffer.length >= _secAuthState.expectedLen) {
-      await submitSecurityPin();
-    }
-  }
-
-  function clearSecurityPin() {
-    if (_secAuthState.verifying) return;
-    _secAuthState.pinBuffer = '';
-    renderSecurityPinDots();
-  }
-
-  function backspaceSecurityPin() {
-    if (_secAuthState.verifying) return;
-    _secAuthState.pinBuffer = _secAuthState.pinBuffer.slice(0, -1);
-    renderSecurityPinDots();
-  }
-
-  async function openPinModalForWalletAsync(w, reason = '', bioSupported = false) {
-    const st = getState();
-    if (!w) return false;
-    const modalEl = $('sheet-security-auth');
-    if (!modalEl || typeof document === 'undefined') {
-      showToast(t('安全验证窗口不可用', 'Security verification dialog unavailable'));
-      return false;
-    }
-
-    if (typeof _secAuthState.resolve === 'function') {
-      _secAuthState.resolve(false);
-    }
-
-    const knownLen = w.pinLen >= 4 ? Math.min(6, w.pinLen) : (w.pin && String(w.pin).length >= 4 ? Math.min(6, String(w.pin).length) : 0);
-    const expectedLen = knownLen || 6;
-    _secAuthState = {
-      resolve: null,
-      wallet: w,
-      reason: String(reason || ''),
-      pinBuffer: '',
-      expectedLen,
-      allowShortSubmit: knownLen === 0,
-      verifying: false
-    };
-
-    const reasonEl = $('security-auth-reason');
-    if (reasonEl) reasonEl.textContent = reason || t('请输入 PIN', 'Enter PIN');
-    const pinSection = $('security-pin-section');
-    if (pinSection) pinSection.classList.remove('hidden');
-    renderSecurityPinDots();
-
-    const bioBtn = $('btn-security-biometric');
-    if (bioBtn) bioBtn.classList.toggle('hidden', !bioSupported);
-
-    openSheet('sheet-security-auth');
-    const backdrop = $('sheet-backdrop');
-    if (backdrop && _appLockState.locked) backdrop.classList.add('auth-top');
-
-    return new Promise((resolve) => {
-      _secAuthState.resolve = resolve;
-    });
+  // 设备能力不足时的友好提示（每次会话仅提示一次，避免打扰）
+  let _noDeviceAuthHinted = false;
+  function hintEnableDeviceLock() {
+    if (_noDeviceAuthHinted) return;
+    _noDeviceAuthHinted = true;
+    showToast(t('建议在系统设置中开启锁屏密码或生物识别，以更好保护资产', 'Enable a device screen lock or biometrics in system settings to better protect your assets'));
   }
 
   async function verifySecurityAuthAsync(wallet, reason = '') {
     const st = getState();
     const w = wallet || st.getActiveWallet();
     if (!w) return false;
-    const hasPin = typeof st.hasWalletPin === 'function' ? st.hasWalletPin(w) : Boolean(w.pin);
-    const bioAllowed = isWalletBiometricAllowed(w);
-    const profile = !bioAllowed ? { supported: false } : (_cachedBioProfile || await detectDeviceBiometricProfileAsync());
-    const bioSupported = Boolean(bioAllowed && profile && profile.supported);
-    const nativeAuth = Boolean(bioAllowed && getNativeSecurityPlugin());
-    const vaultLocked = isWalletVaultLocked(w);
-
-    // 1. Always try system biometrics first when allowed (unless Vault still needs PIN to decrypt)
-    if (bioSupported && !(vaultLocked && hasPin)) {
-      const bioRes = await requestBiometricAuth(reason, w);
-      if (bioRes.ok) return true;
-      const bioUnavailable = Boolean(
-        bioRes.unavailable ||
-        bioRes.code === 'AUTH_UNAVAILABLE' ||
-        /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(String(bioRes.error || ''))
-      );
-      if (!bioUnavailable && !hasPin) {
-        if (bioRes.cancelled) {
-          showToast(t('已取消验证', 'Verification cancelled'));
-        } else if (!nativeAuth) {
-          showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
-          openSetWalletPinPromptSafe();
-        } else {
-          showToast(toUserFriendlyError(bioRes.error, '验证未通过，请重试', 'Verification failed'));
-        }
-        return false;
-      }
-      if (bioUnavailable && !hasPin) {
-        showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
-        openSetWalletPinPromptSafe();
-        return false;
-      }
-    } else if (!hasPin) {
-      showToast(t('请先设置安全 PIN', 'Set a security PIN first'));
-      openSetWalletPinPromptSafe();
-      return false;
+    if (!isWalletBiometricAllowed(w)) return true;
+    const profile = _cachedBioProfile || await detectDeviceBiometricProfileAsync();
+    if (!(profile && profile.supported)) {
+      hintEnableDeviceLock();
+      return true;
     }
-
-    // 2. PIN fallback (PBKDF2 SHA-256 verified + Vault decryption; hide biometric button if Vault is still locked)
-    return openPinModalForWalletAsync(w, reason, bioSupported && !vaultLocked);
-  }
-  function verifyPinIfNeeded(wallet, reason = '') {
-    return verifySecurityAuthAsync(wallet, reason);
+    const res = await requestBiometricAuth(reason, w);
+    if (res && res.ok) return true;
+    if (res && res.unavailable) {
+      hintEnableDeviceLock();
+      return true;
+    }
+    if (res && res.cancelled) {
+      showToast(t('已取消验证', 'Verification cancelled'));
+    } else {
+      showToast(toUserFriendlyError(res && res.error, '验证未通过，请重试', 'Verification failed. Please retry.'));
+    }
+    return false;
   }
 

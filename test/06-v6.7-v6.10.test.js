@@ -82,8 +82,7 @@ test('v6.7 Stage A: Zero-flash App Lock, 1-minute auto-lock, Native Privacy Blur
       ['app-lock-overlay', createMockDomElement('app-lock-overlay')],
       ['app-privacy-shield', createMockDomElement('app-privacy-shield')],
       ['app-lock-status', createMockDomElement('app-lock-status')],
-      ['btn-app-lock-unlock', createMockDomElement('btn-app-lock-unlock')],
-      ['btn-app-lock-pin', createMockDomElement('btn-app-lock-pin', { classes: ['hidden'] })]
+      ['btn-app-lock-unlock', createMockDomElement('btn-app-lock-unlock')]
     ]);
     globalThis.document = {
       documentElement: { classList: rootClassList },
@@ -114,7 +113,6 @@ test('v6.7 Stage A: Zero-flash App Lock, 1-minute auto-lock, Native Privacy Blur
       assert.equal(uiController.shouldEnableAppLockForWallet(w), true);
       uiController.engageAppLock(false);
       assert.equal(rootClassList.contains('nexus-locked'), true);
-      assert.equal(domMap.get('btn-app-lock-pin').classList.contains('hidden'), true, 'PIN button stays hidden when no wallet PIN is set');
 
       assert.equal(await uiController.unlockAppLockNow(), true);
       assert.equal(authCalls, 1);

@@ -72,12 +72,7 @@
     ensureSheetInteractionGuards();
     const backdrop = $('sheet-backdrop');
     const sheet = $(sheetId);
-    if (sheetId !== 'sheet-security-auth' && typeof _secAuthState.resolve === 'function') {
-      const pending = _secAuthState.resolve;
-      _secAuthState = { resolve: null, wallet: null, reason: '', pinBuffer: '', expectedLen: 6 };
-      pending(false);
-    }
-    if (typeof document !== 'undefined' && sheetId !== 'sheet-security-auth') {
+    if (typeof document !== 'undefined') {
       document.querySelectorAll('.bottom-sheet.open').forEach((s) => {
         if (s.id !== sheetId) {
           s.classList.remove('open');
@@ -87,9 +82,6 @@
     }
     if (backdrop) {
       backdrop.classList.add('open');
-      if (sheetId === 'sheet-security-auth') {
-        backdrop.classList.add('auth-top');
-      }
     }
     if (sheet) {
       sheet.classList.add('open');
@@ -102,16 +94,6 @@
     if (typeof stopQrScannerStream === 'function') stopQrScannerStream();
     const st = getState();
     if (st && st.limit) st.limit.pickerSide = null;
-    if (typeof _secAuthState.resolve === 'function') {
-      if (typeof cancelSecurityAuthModal === 'function') {
-        cancelSecurityAuthModal();
-      } else {
-        const pending = _secAuthState.resolve;
-        _secAuthState = { resolve: null, wallet: null, reason: '', pinBuffer: '', expectedLen: 6, verifying: false };
-        pending(false);
-      }
-      return;
-    }
     if (typeof _dappSession !== 'undefined' && _dappSession && _dappSession.pendingApproval && typeof _dappSession.pendingApproval.resolve === 'function') {
       if (typeof rejectDAppApproval === 'function') {
         rejectDAppApproval();
@@ -156,7 +138,6 @@
         'perp-withdraw-amount',
         'perp-pos-tp-input',
         'perp-pos-sl-input',
-        'pin-input',
         'contact-name-input',
         'contact-addr-input',
         'prl-bind-mnemonic-input',

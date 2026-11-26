@@ -64,36 +64,6 @@ function mockJsonResponse(payload, status = 200) {
   };
 }
 
-async function enterPinDigits(session, pinStr) {
-  for (const ch of String(pinStr)) {
-    await session.click(`.bio-key[onclick="pressSecurityPinDigit('${ch}')"]`);
-  }
-  await session.flushMicrotasks(10);
-}
-
-let _cachedEncryptedWalletJson = null;
-async function getEncryptedVaultStoragePayload(pin = '135790') {
-  if (_cachedEncryptedWalletJson && pin === '135790') {
-    return _cachedEncryptedWalletJson;
-  }
-  const boot = await createWalletAppSession({ viewportWidth: 375 });
-  try {
-    await boot.click('#onboard-choice-panel button[onclick*="openCreateWalletFlow"]');
-    await boot.setInputValue('#onboard-create-name', 'Vault Main');
-    await boot.setInputValue('#onboard-create-pin', pin);
-    await boot.click('#btn-confirm-create-wallet');
-    await boot.waitFor(() => boot.isVisible('#view-wallet'), 5000);
-    const stored = boot.localStorage.getItem('near_ca_wallets_v1');
-    assert.ok(stored, 'Onboarding with PIN must persist near_ca_wallets_v1');
-    if (pin === '135790') _cachedEncryptedWalletJson = stored;
-    return stored;
-  } finally {
-    boot.assertNoRealBroadcasts();
-    boot.assertNoRuntimeErrors();
-    boot.cleanup();
-  }
-}
-
 function createMockWalletConnectSdk(options = {}) {
   const calls = {
     pair: [],
@@ -213,187 +183,44 @@ function createMockNativeDAppBrowser() {
 }
 
 // =====================================================================
-// FEATURE 9 — SECURITY, VAULT & APP LOCK (TIER 1: 6 TESTS)
+// FEATURE 9 — DEVICE-NATIVE SECURITY & APP LOCK (TIER 1)
 // =====================================================================
 
-test('F9 Tier 1.1: PIN setup via onboarding & Hub #sheet-pin encrypts 13 VAULT_SECRET_FIELDS into AES-256-GCM vault', async () => {
-  // Part A: Onboarding PIN setup
-  const onboardedJson = await getEncryptedVaultStoragePayload('135790');
-  const parsedOnboard = JSON.parse(onboardedJson);
-  const wOnboard = parsedOnboard.wallets[0];
-  assert.ok(wOnboard.pinHash && wOnboard.pinSalt, 'Onboarding PIN must persist pinHash and pinSalt');
-  assert.equal(wOnboard.pin, '', 'Plaintext pin must be cleared');
-  assert.ok(wOnboard.encryptedVault && wOnboard.encryptedVault.ctBase64, 'Onboarding PIN must encrypt secrets into encryptedVault');
-  assert.equal(wOnboard.encryptedVault.alg, 'AES-256-GCM');
-  assert.equal(wOnboard.encryptedVault.kdf, 'PBKDF2-SHA256');
-  const VAULT_SECRET_FIELDS = [
-    'mnemonic', 'prlMnemonic', 'btcMnemonic', 'legacyEvmMnemonic', 'legacySolMnemonic',
-    'nearPrivateKey', 'nearPrivateSeedHex', 'evmPrivateKey', 'solPrivateSeedHex',
-    'privateKeyHex', 'tweakedPrivateKeyHex', 'btcPrivateKeyHex', 'btcTweakedPrivateKeyHex'
-  ];
-  for (const field of VAULT_SECRET_FIELDS) {
-    assert.equal(Object.prototype.hasOwnProperty.call(wOnboard, field), false, `Persisted wallet must strip ${field}`);
-  }
-
-  // Part B: Hub #hub-security-bio-card -> #sheet-pin setup on un-PINned wallet
-  const wallet = createSeededWallet();
+test('F9 Tier 1.1: Device-native auth only — PIN/Vault completely removed & legacy PIN fields stripped on boot', async () => {
+  const legacyWallet = {
+    ...createSeededWallet(),
+    pin: '135790',
+    pinHash: 'deadbeef',
+    pinSalt: '1234',
+    pinIterations: 100000,
+    pinLen: 6,
+    encryptedVault: { v: 1, ctBase64: 'abc' }
+  };
   const session = await createWalletAppSession({
     viewportWidth: 375,
+    capacitor: makeBioCapacitorMock(),
     localStorage: {
-      near_ca_wallets_v1: JSON.stringify({ wallets: [wallet], activeWalletId: wallet.id })
+      near_ca_wallets_v1: JSON.stringify({ wallets: [legacyWallet], activeWalletId: legacyWallet.id })
     }
   });
   try {
+    await session.waitFor(() => !session.document.documentElement.classList.contains('nexus-locked'), 3000);
+    assert.equal(session.document.getElementById('sheet-pin'), null, '#sheet-pin must be removed');
+    assert.equal(session.document.getElementById('sheet-security-auth'), null, '#sheet-security-auth must be removed');
+    assert.equal(session.document.getElementById('btn-app-lock-pin'), null, '#btn-app-lock-pin must be removed');
+
+    const active = session.window.NearCAState.getActiveWallet();
+    assert.equal(active.pin, undefined);
+    assert.equal(active.pinHash, undefined);
+    assert.equal(active.encryptedVault, undefined);
+
     await session.switchTab('hub');
     await session.click('#hub-security-bio-card');
-    assert.equal(session.hasClass('#sheet-pin', 'open'), true);
-
-    await session.setInputValue('#pin-input', '246810');
-    await session.click('#sheet-pin button[onclick*="saveWalletPin"]');
-    await session.waitFor(() => !session.hasClass('#sheet-pin', 'open'), 3000);
-
-    const saved = JSON.parse(session.localStorage.getItem('near_ca_wallets_v1'));
-    const wSaved = saved.wallets[0];
-    assert.ok(wSaved.pinHash && wSaved.encryptedVault && wSaved.encryptedVault.ctBase64, 'Hub PIN save must create encryptedVault');
-    for (const field of VAULT_SECRET_FIELDS) {
-      assert.equal(Object.prototype.hasOwnProperty.call(wSaved, field), false, `Hub PIN save must strip ${field}`);
-    }
-    assert.ok(session.getVisibleText('#hub-bio-status-badge').includes('PIN'), '#hub-bio-status-badge must include PIN');
+    await session.flushMicrotasks(8);
     assert.ok(
-      session.getToastHistory().some((x) => /安全密码已更新|PIN updated/.test(x.text)),
-      'Toast must confirm PIN updated'
+      session.getToastHistory().some((x) => /生物识别验证通过|Biometric check passed/.test(x.text)),
+      'Hub security card must trigger NativeSecurity biometric check'
     );
-    session.assertNoRuntimeErrors();
-    session.assertNoRealBroadcasts();
-  } finally {
-    session.cleanup();
-  }
-});
-
-test('F9 Tier 1.2: PIN change & PIN clear with encryptedVault stacks #sheet-security-auth over #sheet-pin and persists across cold boot', async () => {
-  const encryptedJson = await getEncryptedVaultStoragePayload('135790');
-  const session = await createWalletAppSession({
-    viewportWidth: 375,
-    localStorage: {
-      near_ca_wallets_v1: encryptedJson
-    }
-  });
-  let updatedStorageJson = '';
-  try {
-    // Unlock initial cold-boot app lock with old PIN 135790
-    await session.waitFor(() => session.hasClass('#sheet-security-auth', 'open'), 3000);
-    await enterPinDigits(session, '135790');
-    await session.waitFor(() => !session.document.documentElement.classList.contains('nexus-locked'), 3000);
-
-    // Open #sheet-pin from Hub and change PIN to 4-digit "2468"
-    await session.switchTab('hub');
-    await session.click('#hub-security-bio-card');
-    assert.equal(session.hasClass('#sheet-pin', 'open'), true);
-    await session.setInputValue('#pin-input', '2468');
-    await session.click('#sheet-pin button[onclick*="saveWalletPin"]');
-    await session.waitFor(() => session.hasClass('#sheet-security-auth', 'open'), 2000);
-
-    // Both #sheet-pin and #sheet-security-auth remain open during stacked auth
-    assert.equal(session.hasClass('#sheet-pin', 'open'), true, '#sheet-pin must remain open underneath #sheet-security-auth');
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), true);
-
-    await enterPinDigits(session, '135790');
-    await session.waitFor(() => !session.hasClass('#sheet-pin', 'open'), 3000);
-
-    updatedStorageJson = session.localStorage.getItem('near_ca_wallets_v1');
-    const parsed = JSON.parse(updatedStorageJson);
-    assert.equal(parsed.wallets[0].pinLen, 4, 'pinLen must update to 4');
-    assert.ok(parsed.wallets[0].encryptedVault && parsed.wallets[0].encryptedVault.ctBase64, 'Vault must remain encrypted');
-    assert.ok(session.getToastHistory().some((x) => /安全密码已更新|PIN updated/.test(x.text)));
-
-    session.assertNoRuntimeErrors();
-    session.assertNoRealBroadcasts();
-  } finally {
-    session.cleanup();
-  }
-
-  // Cold-boot second session with updated vault -> unlock with new 4-digit PIN "2468", then clear PIN
-  const session2 = await createWalletAppSession({
-    viewportWidth: 375,
-    localStorage: {
-      near_ca_wallets_v1: updatedStorageJson
-    }
-  });
-  try {
-    await session2.waitFor(() => session2.hasClass('#sheet-security-auth', 'open'), 3000);
-    await enterPinDigits(session2, '2468');
-    await session2.waitFor(() => !session2.document.documentElement.classList.contains('nexus-locked'), 3000);
-
-    await session2.switchTab('hub');
-    await session2.click('#hub-security-bio-card');
-    await session2.setInputValue('#pin-input', '');
-    await session2.click('#sheet-pin button[onclick*="saveWalletPin"]');
-    await session2.waitFor(() => session2.hasClass('#sheet-security-auth', 'open'), 2000);
-    await enterPinDigits(session2, '2468');
-    await session2.waitFor(() => !session2.hasClass('#sheet-pin', 'open'), 3000);
-
-    const cleared = JSON.parse(session2.localStorage.getItem('near_ca_wallets_v1'));
-    assert.equal(cleared.wallets[0].pinHash, '', 'Clearing PIN must clear pinHash');
-    assert.equal(cleared.wallets[0].encryptedVault, null, 'Clearing PIN must clear encryptedVault');
-    assert.equal(cleared.wallets[0].pinLen, 0);
-    assert.ok(cleared.wallets[0].mnemonic && cleared.wallets[0].mnemonic.split(/\s+/).length >= 12, 'Decrypted mnemonic must be preserved after PIN clear');
-    assert.ok(session2.getToastHistory().some((x) => /已清除安全密码|PIN cleared/.test(x.text)));
-
-    session2.assertNoRuntimeErrors();
-    session2.assertNoRealBroadcasts();
-  } finally {
-    session2.cleanup();
-  }
-});
-
-test('F9 Tier 1.3: Cold-boot unlockAppLockNow (!(vaultLocked && hasPin)) skips biometric prompt and triggers deferred sync after PIN unlock', async () => {
-  const encryptedJson = await getEncryptedVaultStoragePayload('135790');
-  let bioCalls = 0;
-  let balanceFetchCount = 0;
-  let perpFetchCount = 0;
-
-  const session = await createWalletAppSession({
-    viewportWidth: 375,
-    localStorage: {
-      near_ca_wallets_v1: encryptedJson
-    },
-    capacitor: {
-      isNativePlatform: () => true,
-      Plugins: {
-        NativeSecurity: {
-          async getBiometricStatus() { return { available: true, biometryType: 'face' }; },
-          async authenticateWithBiometrics() {
-            bioCalls += 1;
-            return { verified: true };
-          }
-        }
-      }
-    },
-    fetchMock: async (url) => {
-      if (/hyperliquid\.xyz\/info/i.test(url)) {
-        perpFetchCount += 1;
-        return mockJsonResponse([{ universe: [] }, []]);
-      }
-      balanceFetchCount += 1;
-      return mockJsonResponse({ jsonrpc: '2.0', id: 1, result: '0x0' });
-    }
-  });
-  try {
-    await session.waitFor(() => session.hasClass('#sheet-security-auth', 'open'), 3000);
-    assert.equal(session.document.documentElement.classList.contains('nexus-locked'), true, 'Cold boot must engage nexus-locked');
-    assert.equal(session.document.getElementById('app-lock-overlay').getAttribute('aria-hidden'), 'false');
-    assert.equal(bioCalls, 0, 'Locked vault with PIN must skip biometric prompt (single-prompt unlock)');
-    assert.equal(session.hasClass('#btn-security-biometric', 'hidden'), true, 'Biometric button must stay hidden while vault is locked');
-
-    const beforeUnlockNetworkCalls = balanceFetchCount + perpFetchCount;
-    await enterPinDigits(session, '135790');
-    await session.waitFor(() => !session.document.documentElement.classList.contains('nexus-locked'), 3000);
-    await session.waitFor(() => (balanceFetchCount + perpFetchCount) > beforeUnlockNetworkCalls, 3000);
-
-    assert.equal(session.document.getElementById('app-lock-overlay').getAttribute('aria-hidden'), 'true');
-    assert.equal(bioCalls, 0, 'Biometric must still not have been invoked');
-    assert.ok(balanceFetchCount > 0 || perpFetchCount > 0, 'Deferred boot sync must execute after PIN unlock');
-
     session.assertNoRuntimeErrors();
     session.assertNoRealBroadcasts();
   } finally {
@@ -426,7 +253,6 @@ test('F9 Tier 1.4: Biometric-only cold-boot unlock (WebAuthn) & Backup sheet rev
   try {
     await session.waitFor(() => !session.document.documentElement.classList.contains('nexus-locked'), 3000);
     assert.ok(getCallCount >= 1, 'Biometric-only cold boot must invoke WebAuthn get()');
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false, 'No PIN modal should open when WebAuthn succeeds');
 
     // Open Backup sheet via Hub -> triggers WebAuthn auth -> starts masked -> blocks unrevealed copy -> reveals -> copies
     await session.switchTab('hub');
@@ -462,12 +288,13 @@ test('F9 Tier 1.4: Biometric-only cold-boot unlock (WebAuthn) & Backup sheet rev
 });
 
 test('F9 Tier 1.5: Visibility privacy shield, <60s foreground resume refreshes Perps/Limit Orders without relocking & >=60s relocks', async () => {
-  const wallet = createSeededWallet({ pin: '135790', pinLen: 6 });
+  const wallet = createSeededWallet();
   let perpAccountCalls = 0;
   let limitOrderCalls = 0;
 
   const session = await createWalletAppSession({
     viewportWidth: 375,
+    capacitor: makeBioCapacitorMock(),
     localStorage: {
       near_ca_wallets_v1: JSON.stringify({ wallets: [wallet], activeWalletId: wallet.id })
     },
@@ -502,9 +329,7 @@ test('F9 Tier 1.5: Visibility privacy shield, <60s foreground resume refreshes P
     }
   });
   try {
-    // Unlock initial cold boot
-    await session.waitFor(() => session.hasClass('#sheet-security-auth', 'open'), 3000);
-    await enterPinDigits(session, '135790');
+    // Unlock initial cold boot via NativeSecurity
     await session.waitFor(() => !session.document.documentElement.classList.contains('nexus-locked'), 3000);
 
     // 1. Switch to Perp view, trigger DOM visibilitychange hidden=true -> privacy shield engages
@@ -559,13 +384,9 @@ test('F9 Tier 1.5: Visibility privacy shield, <60s foreground resume refreshes P
   }
 });
 
-test('F9 Tier 1.6: NativeSecurity biometric-only unlock & #sheet-security-auth z-index 10010 overlay stacking', async () => {
-  const { css } = loadDistAssets();
-  assert.match(css, /\.sheet-backdrop\.auth-top\s*\{[^}]*z-index:\s*10005/i, '.sheet-backdrop.auth-top must use z-index 10005');
-  assert.match(css, /#sheet-security-auth\s*\{[^}]*z-index:\s*10010/i, '#sheet-security-auth must use z-index 10010');
-
+test('F9 Tier 1.6: NativeSecurity biometric-only unlock & deferred boot sync', async () => {
   let nativeBioCalls = 0;
-  const wallet = createSeededWallet(); // no PIN, native biometric active
+  const wallet = createSeededWallet();
   const session = await createWalletAppSession({
     viewportWidth: 375,
     localStorage: {
@@ -588,7 +409,6 @@ test('F9 Tier 1.6: NativeSecurity biometric-only unlock & #sheet-security-auth z
     await session.waitFor(() => !session.document.documentElement.classList.contains('nexus-locked'), 3000);
     assert.ok(nativeBioCalls >= 1, 'NativeSecurity biometric cold-boot unlock must succeed');
     assert.equal(session.document.getElementById('app-lock-overlay').getAttribute('aria-hidden'), 'true');
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false);
     assert.equal(session.isVisible('#view-wallet'), true);
 
     session.assertNoRuntimeErrors();
@@ -599,143 +419,23 @@ test('F9 Tier 1.6: NativeSecurity biometric-only unlock & #sheet-security-auth z
 });
 
 // =====================================================================
-// FEATURE 9 — SECURITY, VAULT & APP LOCK (TIER 2: 6 TESTS)
+// FEATURE 9 — SECURITY & APP LOCK (TIER 2)
 // =====================================================================
 
-test('F9 Tier 2.1: Invalid / short / non-numeric / empty PIN rejected in #onboard-create-pin & #sheet-pin without mutating vault', async () => {
-  // Part A: Onboarding invalid PINs
-  const boot = await createWalletAppSession({ viewportWidth: 375 });
-  try {
-    await boot.click('#onboard-choice-panel button[onclick*="openCreateWalletFlow"]');
-    for (const badPin of ['123', '12ab']) {
-      await boot.setInputValue('#onboard-create-pin', badPin);
-      await boot.click('#btn-confirm-create-wallet');
-      assert.equal(boot.isVisible('#view-onboarding'), true, `Invalid onboarding PIN "${badPin}" must block creation`);
-    }
-    assert.ok(
-      boot.getToastHistory().some((x) => /4-6 位数字|4-6 digits/.test(x.text)),
-      'Onboarding must show 4-6 digit PIN error toast'
-    );
-    boot.assertNoRuntimeErrors();
-    boot.assertNoRealBroadcasts();
-  } finally {
-    boot.cleanup();
-  }
-
-  // Part B: Hub #sheet-pin invalid PINs on unset wallet
+test('F9 Tier 2.3: Backup secrets re-mask on blur and wipe on closeAllSheets', async () => {
   const wallet = createSeededWallet();
   const session = await createWalletAppSession({
     viewportWidth: 375,
+    capacitor: makeBioCapacitorMock(),
     localStorage: {
       near_ca_wallets_v1: JSON.stringify({ wallets: [wallet], activeWalletId: wallet.id })
     }
   });
   try {
-    await session.switchTab('hub');
-    await session.click('#hub-security-bio-card');
-    for (const badPin of ['', '12', '123', 'abcd', '1234567']) {
-      await session.setInputValue('#pin-input', badPin);
-      await session.click('#sheet-pin button[onclick*="saveWalletPin"]');
-      assert.equal(session.hasClass('#sheet-pin', 'open'), true, `Invalid PIN "${badPin}" must keep #sheet-pin open`);
-      const persisted = JSON.parse(session.localStorage.getItem('near_ca_wallets_v1')).wallets[0];
-      assert.ok(!persisted.pinHash, `Invalid PIN "${badPin}" must NOT persist pinHash`);
-      assert.ok(!persisted.encryptedVault, `Invalid PIN "${badPin}" must NOT create encryptedVault`);
-    }
-    for (const toast of session.getToastHistory()) {
-      assertZeroDevJargon(toast.text, 'invalid PIN toast');
-    }
-    session.assertNoRuntimeErrors();
-    session.assertNoRealBroadcasts();
-  } finally {
-    session.cleanup();
-  }
-});
-
-test('F9 Tier 2.2: Wrong PIN keypad entry (1,2,3,⌫,C), 4-digit confirm & wrong PIN clears dots without unlocking vault', async () => {
-  const encryptedJson = await getEncryptedVaultStoragePayload('135790');
-  const beforeParsed = JSON.parse(encryptedJson);
-  const originalCt = beforeParsed.wallets[0].encryptedVault.ctBase64;
-  // Clear pinLen so keypad exercises allowShortSubmit (#btn-security-pin-confirm) at 4 digits
-  beforeParsed.wallets[0].pinLen = 0;
-
-  const session = await createWalletAppSession({
-    viewportWidth: 375,
-    localStorage: {
-      near_ca_wallets_v1: JSON.stringify(beforeParsed)
-    }
-  });
-  try {
-    await session.waitFor(() => session.hasClass('#sheet-security-auth', 'open'), 3000);
-
-    // Press 1, 2, 3 -> 3 filled dots
-    await enterPinDigits(session, '123');
-    assert.equal(session.document.querySelectorAll('#security-pin-dots .bio-pin-dot.filled').length, 3);
-    assert.equal(session.hasClass('#btn-security-pin-confirm', 'hidden'), true, '<4 digits must keep confirm button hidden');
-
-    // Backspace -> 2 filled dots
-    await session.click('.bio-key[onclick="backspaceSecurityPin()"]');
-    assert.equal(session.document.querySelectorAll('#security-pin-dots .bio-pin-dot.filled').length, 2);
-
-    // Clear ('C') -> 0 filled dots
-    await session.click('.bio-key[onclick="clearSecurityPin()"]');
-    assert.equal(session.document.querySelectorAll('#security-pin-dots .bio-pin-dot.filled').length, 0);
-
-    // Enter 4 wrong digits -> confirm button appears -> submit -> error toast & dots cleared (PBKDF2 is async)
-    await enterPinDigits(session, '9999');
-    assert.equal(session.hasClass('#btn-security-pin-confirm', 'hidden'), false, '4 digits with unknown pinLen must reveal #btn-security-pin-confirm');
-    await session.click('#btn-security-pin-confirm');
-    await session.waitFor(() => session.document.querySelectorAll('#security-pin-dots .bio-pin-dot.filled').length === 0, 3000);
-
-    assert.equal(session.document.querySelectorAll('#security-pin-dots .bio-pin-dot.filled').length, 0, 'Wrong PIN must clear filled dots');
-    assert.equal(session.document.documentElement.classList.contains('nexus-locked'), true, 'Wrong PIN must keep nexus-locked');
-    assert.ok(
-      session.getToastHistory().some((x) => /交易密码错误|Incorrect PIN/.test(x.text)),
-      'Wrong PIN must display localized error toast'
-    );
-    const afterCt = JSON.parse(session.localStorage.getItem('near_ca_wallets_v1')).wallets[0].encryptedVault.ctBase64;
-    assert.equal(afterCt, originalCt, 'Wrong PIN must leave encryptedVault untouched');
-
-    session.assertNoRuntimeErrors();
-    session.assertNoRealBroadcasts();
-  } finally {
-    session.cleanup();
-  }
-});
-
-test('F9 Tier 2.3: Cancel #sheet-security-auth preserves underlying #sheet-pin & backup secrets re-mask/wipe on blur and closeAllSheets', async () => {
-  const wallet = createSeededWallet({ pin: '135790', pinLen: 6 });
-  const session = await createWalletAppSession({
-    viewportWidth: 375,
-    localStorage: {
-      near_ca_wallets_v1: JSON.stringify({ wallets: [wallet], activeWalletId: wallet.id })
-    }
-  });
-  try {
-    await session.waitFor(() => session.hasClass('#sheet-security-auth', 'open'), 3000);
-    await enterPinDigits(session, '135790');
     await session.waitFor(() => !session.document.documentElement.classList.contains('nexus-locked'), 3000);
 
-    // 1. Open #sheet-pin, enter new PIN, trigger #sheet-security-auth, then cancel via closeSheet() (#sheet-backdrop)
     await session.switchTab('hub');
-    await session.click('#hub-security-bio-card');
-    await session.setInputValue('#pin-input', '654321');
-    await session.click('#sheet-pin button[onclick*="saveWalletPin"]');
-    await session.waitFor(() => session.hasClass('#sheet-security-auth', 'open'), 2000);
-
-    await session.closeSheet();
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false, 'closeSheet() must cancel #sheet-security-auth');
-    assert.equal(session.hasClass('#sheet-pin', 'open'), true, 'Cancelling #sheet-security-auth must preserve underlying #sheet-pin');
-    assert.equal(session.document.getElementById('pin-input').value, '654321');
-
-    // Close #sheet-pin cleanly
-    await session.closeSheet('sheet-pin');
-    assert.equal(session.hasClass('#sheet-pin', 'open'), false);
-    assert.equal(session.document.getElementById('pin-input').value, '', 'Closing #sheet-pin must clear #pin-input');
-
-    // 2. Open Backup sheet, authenticate, reveal secrets, trigger window blur -> re-masks; re-reveal & closeAllSheets -> wipes DOM
     await session.click('#view-hub button[onclick*="openBackupKeysSheet"]');
-    await session.waitFor(() => session.hasClass('#sheet-security-auth', 'open'), 2000);
-    await enterPinDigits(session, '135790');
     await session.waitFor(() => session.hasClass('#sheet-backup', 'open'), 2000);
 
     await session.click('#btn-backup-reveal-toggle');
@@ -792,7 +492,7 @@ test('F9 Tier 2.4: [POST-FIX] WebAuthn & NativeSecurity errors (NotAllowedError,
     sessionA.cleanup();
   }
 
-  // Part B: NativeSecurity AUTH_UNAVAILABLE with no PIN -> opens #sheet-pin, plus [POST-FIX] testBiometricAuthNow raw error sanitization
+  // Part B: NativeSecurity AUTH_UNAVAILABLE degrades gracefully without deadlocking wallet, plus [POST-FIX] testBiometricAuthNow raw error sanitization
   const walletB = createSeededWallet();
   let nativeRes = { verified: false, code: 'AUTH_UNAVAILABLE', error: 'WebView LocalAuthentication AUTH_UNAVAILABLE HTTP 500' };
   const sessionB = await createWalletAppSession({
@@ -811,9 +511,11 @@ test('F9 Tier 2.4: [POST-FIX] WebAuthn & NativeSecurity errors (NotAllowedError,
     }
   });
   try {
-    await sessionB.waitFor(() => sessionB.hasClass('#sheet-pin', 'open'), 3000);
-    assert.equal(sessionB.hasClass('#sheet-pin', 'auth-top'), true, 'AUTH_UNAVAILABLE with no PIN must open #sheet-pin with .auth-top');
-    assertZeroDevJargon(sessionB.getVisibleText('#app-lock-status'), 'AUTH_UNAVAILABLE lock status');
+    await sessionB.waitFor(() => !sessionB.document.documentElement.classList.contains('nexus-locked'), 3000);
+    assert.ok(
+      sessionB.getToastHistory().some((x) => /锁屏|screen lock|biometrics/i.test(x.text)),
+      'AUTH_UNAVAILABLE must show friendly device lock recommendation toast'
+    );
     for (const toast of sessionB.getToastHistory()) {
       assertZeroDevJargon(toast.text, 'AUTH_UNAVAILABLE toast');
     }
@@ -833,8 +535,7 @@ test('F9 Tier 2.4: [POST-FIX] WebAuthn & NativeSecurity errors (NotAllowedError,
   }
 });
 
-test('F9 Tier 2.5: Corrupted encryptedVault ciphertext fails safely & biometricEnabled: false clears cold-boot lock', async () => {
-  // Part A: biometricEnabled: false with webauthnCredentialId and no PIN -> lock cleared on boot
+test('F9 Tier 2.5: biometricEnabled: false clears cold-boot lock', async () => {
   const walletNoBio = createSeededWallet({ webauthnCredentialId: 'cred_disabled', biometricEnabled: false });
   const sessionA = await createWalletAppSession({
     viewportWidth: 375,
@@ -844,72 +545,41 @@ test('F9 Tier 2.5: Corrupted encryptedVault ciphertext fails safely & biometricE
   });
   try {
     await sessionA.flushMicrotasks(12);
-    assert.equal(sessionA.document.documentElement.classList.contains('nexus-locked'), false, 'biometricEnabled: false without PIN must clear cold-boot lock');
+    assert.equal(sessionA.document.documentElement.classList.contains('nexus-locked'), false, 'biometricEnabled: false must clear cold-boot lock');
     assert.equal(sessionA.document.getElementById('app-lock-overlay').getAttribute('aria-hidden'), 'true');
     sessionA.assertNoRuntimeErrors();
     sessionA.assertNoRealBroadcasts();
   } finally {
     sessionA.cleanup();
   }
-
-  // Part B: Corrupted encryptedVault ciphertext with valid pinHash
-  const validJson = await getEncryptedVaultStoragePayload('135790');
-  const corrupted = JSON.parse(validJson);
-  corrupted.wallets[0].encryptedVault.ctBase64 = 'AAAA_CORRUPTED_BASE64';
-
-  const sessionB = await createWalletAppSession({
-    viewportWidth: 375,
-    localStorage: {
-      near_ca_wallets_v1: JSON.stringify(corrupted)
-    }
-  });
-  try {
-    await sessionB.waitFor(() => sessionB.hasClass('#sheet-security-auth', 'open'), 3000);
-    await enterPinDigits(sessionB, '135790');
-    await sessionB.waitFor(() => !sessionB.hasClass('#sheet-security-auth', 'open'), 3000);
-    await sessionB.flushMicrotasks(6);
-
-    const active = sessionB.window.NearCAState.getActiveWallet();
-    assert.equal(Boolean(active.mnemonic), false, 'Corrupted encryptedVault must NOT populate mnemonic');
-    assert.equal(Boolean(active._vaultUnlockedInSession), false, 'Corrupted encryptedVault must NOT mark _vaultUnlockedInSession');
-    for (const toast of sessionB.getToastHistory()) {
-      assertZeroDevJargon(toast.text, 'corrupted vault toast');
-    }
-    sessionB.assertNoRuntimeErrors();
-    sessionB.assertNoRealBroadcasts();
-  } finally {
-    sessionB.cleanup();
-  }
 });
 
-test('F9 Tier 2.6: [POST-FIX] Closing auto-opened #sheet-pin cleans .auth-top & cancelling backup auth leaves #sheet-backup closed', async () => {
-  const wallet = createSeededWallet({ pin: '135790', pinLen: 6 });
+test('F9 Tier 2.6: [POST-FIX] Cancelling biometric backup auth leaves #sheet-backup closed', async () => {
+  const wallet = createSeededWallet();
+  let allowUnlock = true;
   const session = await createWalletAppSession({
     viewportWidth: 375,
+    capacitor: {
+      isNativePlatform: () => true,
+      Plugins: {
+        NativeSecurity: {
+          async getBiometricStatus() { return { available: true, biometryType: 'face' }; },
+          async authenticateWithBiometrics() {
+            return allowUnlock ? { verified: true, type: 'face' } : { verified: false, code: 'AUTH_CANCELLED', cancelled: true };
+          }
+        }
+      }
+    },
     localStorage: {
       near_ca_wallets_v1: JSON.stringify({ wallets: [wallet], activeWalletId: wallet.id })
     }
   });
   try {
-    await session.waitFor(() => session.hasClass('#sheet-security-auth', 'open'), 3000);
-    await enterPinDigits(session, '135790');
     await session.waitFor(() => !session.document.documentElement.classList.contains('nexus-locked'), 3000);
 
-    // Simulate auto-opened #sheet-pin during lock state, then close without saving
-    session.document.getElementById('sheet-pin').classList.add('auth-top');
-    await session.openSheet('sheet-pin');
-    await session.closeSheet('sheet-pin');
-    assert.equal(
-      session.hasClass('#sheet-pin', 'auth-top'),
-      false,
-      'closeAllSheets() must remove stale .auth-top class from #sheet-pin'
-    );
-
-    // Click Backup in Hub -> cancel auth -> #sheet-backup must remain closed & empty
+    allowUnlock = false;
     await session.switchTab('hub');
     await session.click('#view-hub button[onclick*="openBackupKeysSheet"]');
-    await session.waitFor(() => session.hasClass('#sheet-security-auth', 'open'), 2000);
-    await session.click('#sheet-security-auth button[onclick*="cancelSecurityAuthModal"]');
     await session.flushMicrotasks(8);
     assert.equal(session.hasClass('#sheet-backup', 'open'), false, 'Cancelled auth must NOT open #sheet-backup');
     assert.equal(session.document.getElementById('backup-keys-content').innerHTML, '');
@@ -1512,13 +1182,11 @@ test('F10 Tier 2.2: [POST-FIX] Invalid inputs rejected before RPC/auth: invalid 
     // Invalid mnemonic on rotate & PRL bind rejected before auth/RPC
     await session.setInputValue('#near-keys-rotate-mnemonic', 'abandon abandon abandon');
     await session.click('#btn-near-keys-rotate-confirm');
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false, 'Invalid mnemonic must NOT trigger security auth');
     await session.closeSheet('sheet-near-account');
 
     await session.click('#view-hub button[onclick*="openWalletAddressesSheet"]');
     await session.setInputValue('#prl-bind-mnemonic-input', 'not a valid twelve word mnemonic phrase at all');
     await session.click('#sheet-wallet-addresses button[onclick*="bindOrReplacePrlMnemonicUI"]');
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false);
     await session.closeSheet('sheet-wallet-addresses');
 
     // 2. Contacts invalid inputs + [POST-FIX] bad-checksum EVM & PRL rejection
@@ -1595,12 +1263,18 @@ test('F10 Tier 2.3: Pre-execution balance & safety guards on SOL Rent & NEAR Sto
 
   // Part B: Low SOL / Low NEAR blocks execution pre-broadcast, and dust ATA displays BURN warning in auth reason
   const lowGasWallet = createSeededWallet({
-    pin: '135790',
-    pinLen: 6,
     nativeBalances: { ...createSeededWallet().nativeBalances, sol: 0.000001, near: 0.0002 }
   });
+  const authReasons = [];
+  const bioCap = makeBioCapacitorMock();
+  const origAuth = bioCap.Plugins.NativeSecurity.authenticateWithBiometrics;
+  bioCap.Plugins.NativeSecurity.authenticateWithBiometrics = async (opts) => {
+    if (opts && opts.reason) authReasons.push(opts.reason);
+    return origAuth(opts);
+  };
   const sessionB = await createWalletAppSession({
     viewportWidth: 375,
+    capacitor: bioCap,
     localStorage: {
       near_ca_wallets_v1: JSON.stringify({ wallets: [lowGasWallet], activeWalletId: lowGasWallet.id })
     },
@@ -1639,8 +1313,6 @@ test('F10 Tier 2.3: Pre-execution balance & safety guards on SOL Rent & NEAR Sto
     }
   });
   try {
-    await sessionB.waitFor(() => sessionB.hasClass('#sheet-security-auth', 'open'), 3000);
-    await enterPinDigits(sessionB, '135790');
     await sessionB.waitFor(() => !sessionB.document.documentElement.classList.contains('nexus-locked'), 3000);
 
     // SOL Rent dust burn warning + insufficient SOL pre-check
@@ -1648,16 +1320,13 @@ test('F10 Tier 2.3: Pre-execution balance & safety guards on SOL Rent & NEAR Sto
     await sessionB.click('#view-hub button[onclick*="openSolRentReclaimSheet"]');
     await sessionB.waitFor(() => sessionB.document.querySelector('input[data-action="toggle-sol-rent"]'), 3000);
     await sessionB.setChecked('input[data-action="toggle-sol-rent"]', true);
-    await sessionB.click('#btn-execute-sol-rent');
-    await sessionB.waitFor(() => sessionB.hasClass('#sheet-security-auth', 'open'), 2000);
-    assert.ok(/BURN|销毁/.test(sessionB.getVisibleText('#security-auth-reason')), 'Dust burn must warn user in auth prompt');
     const solToastsBefore = sessionB.getToastHistory().length;
-    await enterPinDigits(sessionB, '135790');
-    await sessionB.waitFor(() => !sessionB.hasClass('#sheet-security-auth', 'open'), 3000);
+    await sessionB.click('#btn-execute-sol-rent');
     await sessionB.waitFor(
       () => sessionB.getToastHistory().slice(solToastsBefore).some((x) => /SOL 余额不足|Insufficient SOL/i.test(x.text)),
       3000
     );
+    assert.ok(authReasons.some((r) => /BURN|销毁/.test(r)), 'Dust burn must warn user in auth prompt');
     await sessionB.flushMicrotasks(12);
     assert.equal(sessionB.getNetworkLog().filter((x) => x.blocked).length, 0, 'Insufficient SOL must block BEFORE sendTransaction broadcast');
     await sessionB.closeSheet('sheet-sol-rent');
@@ -1665,11 +1334,8 @@ test('F10 Tier 2.3: Pre-execution balance & safety guards on SOL Rent & NEAR Sto
     // NEAR Storage insufficient NEAR pre-check
     await sessionB.click('#view-hub button[onclick*="openNearStorageReclaimSheet"]');
     await sessionB.waitFor(() => sessionB.document.querySelector('input[data-action="toggle-near-storage"]'), 3000);
-    await sessionB.click('#btn-execute-near-storage');
-    await sessionB.waitFor(() => sessionB.hasClass('#sheet-security-auth', 'open'), 2000);
     const nearToastsBefore = sessionB.getToastHistory().length;
-    await enterPinDigits(sessionB, '135790');
-    await sessionB.waitFor(() => !sessionB.hasClass('#sheet-security-auth', 'open'), 3000);
+    await sessionB.click('#btn-execute-near-storage');
     await sessionB.waitFor(
       () => sessionB.getToastHistory().slice(nearToastsBefore).some((x) => /NEAR 余额不足|Insufficient NEAR/i.test(x.text)),
       3000
@@ -1791,7 +1457,6 @@ test('F10 Tier 2.5: Multi-wallet delete boundaries (1-wallet block, 1st tap prom
     await multiSession.click('#wallets-switcher-list [data-action="delete-wallet"][data-wallet-id="w2"]');
     assert.equal(JSON.parse(multiSession.localStorage.getItem('near_ca_wallets_v1')).wallets.length, 2, '1st tap must NOT delete wallet');
     assert.equal(multiAuthCalls, 0, '1st tap must NOT trigger auth');
-    assert.equal(multiSession.hasClass('#sheet-security-auth', 'open'), false, '1st tap must NOT trigger auth');
 
     await multiSession.click('#wallets-switcher-list [data-action="delete-wallet"][data-wallet-id="w2"]');
     await multiSession.waitFor(() => JSON.parse(multiSession.localStorage.getItem('near_ca_wallets_v1')).wallets.length === 1, 3000);

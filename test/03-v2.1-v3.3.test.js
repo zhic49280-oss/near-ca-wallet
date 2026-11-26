@@ -250,37 +250,17 @@ test('v2.1 Native Capacitor Auth, WebAuthn Passkey & Interactive #sheet-security
     assert.equal(getCalls, 1);
     assert.deepEqual(Array.from(lastAllowCredBytes), [10, 20, 30, 40, 50, 60, 70, 80]);
 
-    // 3. Test Interactive #sheet-security-auth 6-Digit PIN Keypad & Hub Biometric Toggle
+    // 3. Test Device-Native Security Auth (Capacitor NativeSecurity + WebAuthn fallback + Hub Biometric Card)
     const prevDoc = globalThis.document;
     const prevWin = globalThis.window;
-    const pinDots = Array.from({ length: 6 }, (_, i) => createMockDomElement(`dot_${i}`, { classes: ['bio-pin-dot'] }));
     const domMap = new Map([
-      ['sheet-backdrop', createMockDomElement('sheet-backdrop')],
-      ['sheet-security-auth', createMockDomElement('sheet-security-auth', { classes: ['bottom-sheet'] })],
-      ['security-auth-device-badge', createMockDomElement('security-auth-device-badge')],
-      ['security-auth-reason', createMockDomElement('security-auth-reason')],
-      ['btn-security-biometric', createMockDomElement('btn-security-biometric')],
-      ['security-pin-section', createMockDomElement('security-pin-section')],
-      ['security-pin-dots', createMockDomElement('security-pin-dots', { querySelectorAll: () => pinDots })],
       ['hub-security-bio-card', createMockDomElement('hub-security-bio-card')],
-      ['hub-bio-status-badge', createMockDomElement('hub-bio-status-badge')],
-      ['hub-bio-device-model', createMockDomElement('hub-bio-device-model')],
-      ['hub-bio-methods', createMockDomElement('hub-bio-methods')]
+      ['hub-bio-status-badge', createMockDomElement('hub-bio-status-badge')]
     ]);
     globalThis.document = {
       getElementById: (id) => domMap.get(id) || null,
-      querySelectorAll: (sel) => {
-        if (sel === '.bottom-sheet.open') {
-          return Array.from(domMap.values()).filter((el) => el.classList.contains('bottom-sheet') && el.classList.contains('open'));
-        }
-        return [];
-      },
-      querySelector: (sel) => {
-        if (sel === '.bottom-sheet.open') {
-          return Array.from(domMap.values()).find((el) => el.classList.contains('bottom-sheet') && el.classList.contains('open')) || null;
-        }
-        return null;
-      }
+      querySelectorAll: () => [],
+      querySelector: () => null
     };
     globalThis.window = {
       navigator: mockNav,
@@ -300,43 +280,20 @@ test('v2.1 Native Capacitor Auth, WebAuthn Passkey & Interactive #sheet-security
     };
 
     try {
-      // Biometrics (native mock) pass automatically without opening the PIN sheet
+      // Biometrics (native mock) pass automatically
       assert.equal(await uiController.verifySecurityAuthAsync(w, 'Confirm Transfer'), true);
-      assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), false);
 
-      // Native failure falls back to wallet PIN when wallet has a PIN configured
+      // Native failure blocks transfer (no PIN fallback)
       const nativeAuthFn = globalThis.window.Capacitor.Plugins.NativeSecurity.authenticateWithBiometrics;
       globalThis.window.Capacitor.Plugins.NativeSecurity.authenticateWithBiometrics = async () => ({ authenticated: false, error: 'fail' });
-      const nativeFallbackPromise = uiController.verifySecurityAuthAsync(w, 'Fallback PIN');
-      await new Promise((r) => setTimeout(r, 15));
-      assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), true);
-      for (const d of ['1', '2', '3', '4', '5', '6']) await uiController.pressSecurityPinDigit(d);
-      assert.equal(await nativeFallbackPromise, true);
-      assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), false);
+      assert.equal(await uiController.verifySecurityAuthAsync(w, 'Confirm Transfer'), false);
       globalThis.window.Capacitor.Plugins.NativeSecurity.authenticateWithBiometrics = nativeAuthFn;
 
-      // Web (no native plugin): PIN keypad fallback
+      // Web (no native plugin, no WebAuthn): degrades gracefully without deadlocking wallet
       delete globalThis.window.Capacitor;
       globalThis.window.navigator = {};
-      const authPromise = uiController.verifySecurityAuthAsync(w, 'Confirm Transfer');
-      await new Promise((r) => setTimeout(r, 15));
-      assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), true);
-      assert.equal(domMap.get('security-auth-reason').textContent, 'Confirm Transfer');
-
-      for (const d of ['9', '9', '9', '9', '9', '9']) await uiController.pressSecurityPinDigit(d);
-      assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), true);
-      assert.equal(pinDots.filter((d) => d.classList.contains('filled')).length, 0);
-
-      await uiController.pressSecurityPinDigit('1');
-      await uiController.pressSecurityPinDigit('9');
-      uiController.backspaceSecurityPin();
-      assert.equal(pinDots.filter((d) => d.classList.contains('filled')).length, 1);
-      uiController.clearSecurityPin();
-      assert.equal(pinDots.filter((d) => d.classList.contains('filled')).length, 0);
-
-      for (const d of ['1', '2', '3', '4', '5', '6']) await uiController.pressSecurityPinDigit(d);
-      assert.equal(await authPromise, true);
-      assert.equal(domMap.get('sheet-security-auth').classList.contains('open'), false);
+      await uiController.detectDeviceBiometricProfileAsync?.();
+      assert.equal(await uiController.verifySecurityAuthAsync(w, 'Confirm Transfer'), true);
       await uiController.renderHubBiometricCardAsync?.();
     } finally {
       globalThis.document = prevDoc;

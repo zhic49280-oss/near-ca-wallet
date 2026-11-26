@@ -18,31 +18,27 @@ const {
   createMockDomElement
 } = require('./helpers.js');
 
-test('v6.36 Audit Fixes: 4/5-digit PIN length preserved across normalizeWalletRecord and head pre-paint lock supports object storage', () => {
-  const normalized4 = state.normalizeWalletRecord({
-    id: 'w_pin4',
-    name: 'PIN4',
+test('v6.36 Audit Fixes: legacy PIN/Vault fields are dropped by normalizeWalletRecord and head pre-paint lock supports object storage', () => {
+  const normalized = state.normalizeWalletRecord({
+    id: 'w_legacy',
+    name: 'Legacy',
     mnemonic: TEST_MNEMONIC,
+    pin: '1234',
     pinHash: 'abcd',
     pinSalt: '1234',
     pinIterations: 100000,
-    pinLen: 4
+    pinLen: 4,
+    encryptedVault: { ctBase64: 'abc' }
   });
-  assert.equal(normalized4.pinLen, 4);
-
-  const normalized5 = state.normalizeWalletRecord({
-    id: 'w_pin5',
-    name: 'PIN5',
-    mnemonic: TEST_MNEMONIC,
-    pinHash: 'abcd',
-    pinSalt: '1234',
-    pinIterations: 100000,
-    pinLen: 5
-  });
-  assert.equal(normalized5.pinLen, 5);
+  assert.equal(normalized.pin, undefined);
+  assert.equal(normalized.pinHash, undefined);
+  assert.equal(normalized.pinSalt, undefined);
+  assert.equal(normalized.pinLen, undefined);
+  assert.equal(normalized.encryptedVault, undefined);
 
   const headHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/index-html/000-head-shell.part.html'), 'utf8');
   assert.ok(headHtml.includes('Array.isArray(parsed.wallets)'), 'Pre-paint lock must unpack { wallets: [...] } object');
+  assert.equal(/pinHash|btn-app-lock-pin/.test(headHtml), false, 'Pre-paint lock must not reference PIN');
 });
 
 test('v6.36 Audit Fixes: Receive EVM address matches local evmPrivateKey wallet & APP_FEE_CONFIG is exported', async () => {

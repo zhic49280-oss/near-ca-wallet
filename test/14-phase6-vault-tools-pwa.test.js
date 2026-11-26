@@ -16,35 +16,25 @@ test('Phase 6.1: Vault AES-256-GCM encrypts wallet secrets, strips plaintext fro
     state.initState();
     const w = state.normalizeWalletRecord({
       id: 'w_vault_test',
-      name: 'Vault Wallet',
+      name: 'Wallet',
       mnemonic: TEST_MNEMONIC,
       nearPrivateKey: 'ed25519:fakekey',
-      evmPrivateKey: '0x1234',
-      pin: '123456'
+      evmPrivateKey: '0x1234'
     });
     state.wallets = [w];
     state.activeWalletId = w.id;
 
-    const env = await state.encryptWalletSecretsToVaultAsync(w, '123456');
-    assert.ok(env && env.ctBase64 && env.alg === 'AES-256-GCM');
+    assert.equal(state.encryptWalletSecretsToVaultAsync, undefined);
+    assert.equal(state.unlockWalletVaultSecretsAsync, undefined);
     state.saveWallets();
 
     const rawStored = storage.getItem('near_ca_wallets_v1');
     assert.ok(rawStored);
     const parsed = JSON.parse(rawStored);
     const storedW = parsed.wallets[0];
-    assert.equal(storedW.mnemonic, undefined, 'Plaintext mnemonic must be stripped when encryptedVault exists');
-    assert.equal(storedW.nearPrivateKey, undefined, 'Plaintext nearPrivateKey must be stripped');
-    assert.equal(storedW.evmPrivateKey, undefined, 'Plaintext evmPrivateKey must be stripped');
-    assert.ok(storedW.encryptedVault && storedW.encryptedVault.ctBase64);
-
-    // Unlock restores secrets into memory
-    const lockedCopy = state.normalizeWalletRecord(storedW);
-    assert.equal(lockedCopy.mnemonic, '');
-    const unlocked = await state.unlockWalletVaultSecretsAsync(lockedCopy, '123456');
-    assert.equal(unlocked, true);
-    assert.equal(lockedCopy.mnemonic, TEST_MNEMONIC);
-    assert.equal(lockedCopy.nearPrivateKey, 'ed25519:fakekey');
+    assert.equal(storedW.mnemonic, TEST_MNEMONIC, 'saveWallets must persist mnemonic directly without Vault stripping');
+    assert.equal(storedW.nearPrivateKey, 'ed25519:fakekey');
+    assert.equal(storedW.encryptedVault, undefined);
   });
 });
 

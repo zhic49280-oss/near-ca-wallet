@@ -354,7 +354,7 @@
         }).catch(() => {});
       }
     } finally {
-      if (_dappSession.nativeOpen && !$('sheet-dapp-approve')?.classList?.contains('open') && !$('sheet-security-auth')?.classList?.contains('open')) {
+      if (_dappSession.nativeOpen && !$('sheet-dapp-approve')?.classList?.contains('open')) {
         await setNativeBrowserOverlayVisible(true);
       }
     }

@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#06080F" />
   <title>Nexus Wallet — NEAR Chain Abstraction</title>
-  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon.png?v=6.73" />
-  <link rel="apple-touch-icon" sizes="192x192" href="assets/nexus-logo-192.png?v=6.73" />
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon.png?v=6.74" />
+  <link rel="apple-touch-icon" sizes="192x192" href="assets/nexus-logo-192.png?v=6.74" />
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=6.73" />
+  <link rel="stylesheet" href="style.css?v=6.74" />
   <script>
     (function () {
       try {
@@ -22,7 +22,7 @@
           (typeof location !== 'undefined' && location.protocol === 'capacitor:') ||
           (cap && ((cap.Plugins && cap.Plugins.NativeSecurity) || (typeof cap.isNativePlatform === 'function' && cap.isNativePlatform())))
         );
-        var hasSec = list.some(function (w) { return Boolean(w && (w.pinHash || w.pin || w.webauthnCredentialId)); });
+        var hasSec = list.some(function (w) { return Boolean(w && (w.webauthnCredentialId)); });
         if (isNative || hasSec) {
           document.documentElement.classList.add('nexus-locked');
         }
@@ -33,18 +33,17 @@
 <body>
   <div id="app-privacy-shield" class="app-privacy-shield" aria-hidden="true">
     <div class="app-lock-card">
-      <img src="assets/nexus-logo-192.png?v=6.73" alt="Nexus Wallet" class="app-lock-logo" />
+      <img src="assets/nexus-logo-192.png?v=6.74" alt="Nexus Wallet" class="app-lock-logo" />
       <div class="app-lock-brand">Nexus Wallet</div>
     </div>
   </div>
   <div id="app-lock-overlay" class="app-lock-overlay" role="dialog" aria-modal="true" aria-hidden="true">
     <div class="app-lock-card">
-      <img src="assets/nexus-logo-192.png?v=6.73" alt="Nexus Wallet" class="app-lock-logo" />
+      <img src="assets/nexus-logo-192.png?v=6.74" alt="Nexus Wallet" class="app-lock-logo" />
       <div class="app-lock-brand">Nexus Wallet</div>
       <div id="app-lock-title" class="app-lock-title" data-i18n="lock.title">安全锁定</div>
       <div id="app-lock-status" class="app-lock-status" data-i18n="lock.hint">请通过生物识别或锁屏密码解锁</div>
       <button type="button" id="btn-app-lock-unlock" class="btn-primary" style="width: 100%;" onclick="unlockAppLockNow()" data-i18n="lock.unlockBtn">生物识别 / 锁屏密码解锁</button>
-      <button type="button" id="btn-app-lock-pin" class="btn-ghost-sm hidden" onclick="unlockAppLockWithPin()" data-i18n="lock.pinFallbackBtn">使用交易 PIN 解锁</button>
     </div>
   </div>
   <div class="ambient-bg" aria-hidden="true"></div>

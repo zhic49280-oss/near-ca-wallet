@@ -993,12 +993,7 @@ test('v6.23 Swap Recipient: same-chain 1Click unlocks custom recipient, locks 1C
       }
       return jsonResponse({}, 400);
     }, async () => {
-      const execPromise = uiController.executeActiveSwap();
-      await new Promise((r) => setTimeout(r, 15));
-      if (getOrMake('sheet-security-auth').classList.contains('open')) {
-        for (const d of ['1', '2', '3', '4', '5', '6']) await uiController.pressSecurityPinDigit(d);
-      }
-      await execPromise;
+      await uiController.executeActiveSwap();
       assert.equal(broadcastCount, 0, 'Must abort without broadcasting DEX tx when 3rd-party recipient is set');
       assert.ok(
         /第三方|third-party/i.test(state.swap._lastError),
@@ -1411,26 +1406,13 @@ test('v6.31: independent PRL mining mnemonic bind/switch/restore, wallet mining 
 
     state.wallets = [w1, w2];
     state.activeWalletId = w1.id;
-    await state.setWalletPinAsync(w1, '123456');
-
-    const withPinAuth = async (fn) => {
-      const p = fn();
-      for (let i = 0; i < 50; i++) {
-        await new Promise((r) => setTimeout(r, 10));
-        if (getOrMake('sheet-security-auth').classList.contains('open')) break;
-      }
-      for (const d of ['1', '2', '3', '4', '5', '6']) {
-        await uiController.pressSecurityPinDigit(d);
-      }
-      return p;
-    };
 
     await withMockedFetch(async () => jsonResponse({}), async () => {
       // 1. Bind custom PRL mining mnemonic on w1 without touching NEAR or MPC EVM
       const origNearAddr = w1.nearAddress;
       const origEvmAddr = w1.mpcEvmAddress;
       getOrMake('prl-bind-mnemonic-input').value = ALT_MNEMONIC_1;
-      await withPinAuth(() => uiController.bindOrReplacePrlMnemonicUI());
+      await uiController.bindOrReplacePrlMnemonicUI();
       assert.equal(w1.address, expectedAltPrl1, 'PRL address must update to custom mining seed');
       assert.equal(w1.prlMnemonic, ALT_MNEMONIC_1);
       assert.equal(w1.nearAddress, origNearAddr, 'NEAR master address must remain unchanged');
@@ -1443,12 +1425,12 @@ test('v6.31: independent PRL mining mnemonic bind/switch/restore, wallet mining 
 
       // 2. Switch to another PRL mnemonic
       getOrMake('prl-bind-mnemonic-input').value = ALT_MNEMONIC_2;
-      await withPinAuth(() => uiController.bindOrReplacePrlMnemonicUI());
+      await uiController.bindOrReplacePrlMnemonicUI();
       assert.equal(w1.address, expectedAltPrl2);
       assert.equal(w1.prlMnemonic, ALT_MNEMONIC_2);
 
       // 3. Restore default derived PRL account
-      await withPinAuth(() => uiController.restoreDefaultPrlAccountUI());
+      await uiController.restoreDefaultPrlAccountUI();
       assert.equal(w1.address, defaultW1Prl);
       assert.equal(w1.prlMnemonic, '');
 
@@ -2008,18 +1990,7 @@ test('v6.67: Security Auth overlay sheet preservation, DApp MPC yParity recovery
   };
 
   try {
-    // 1. Opening sheet-security-auth overlays on top of an active business sheet without closing it
-    const sendSheet = getOrMake('sheet-send');
-    const authSheet = getOrMake('sheet-security-auth');
-    const backdrop = getOrMake('sheet-backdrop');
-    uiController.openSheet('sheet-send');
-    assert.equal(sendSheet.classList.contains('open'), true);
-    uiController.openSheet('sheet-security-auth');
-    assert.equal(sendSheet.classList.contains('open'), true, 'PIN verification sheet must not close underlying sheet-send');
-    assert.equal(authSheet.classList.contains('open'), true);
-    assert.equal(backdrop.classList.contains('auth-top'), true);
-
-    // 2. DApp Browser MPC personal_sign recovers exact wallet EVM address even if recovery_id is inverted
+    // DApp Browser MPC personal_sign recovers exact wallet EVM address even if recovery_id is inverted
     const wallet = new ethersLib.Wallet('0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef');
     const msg = 'Sign in to Nexus DApp';
     const digestHex = ethersLib.hashMessage(msg);

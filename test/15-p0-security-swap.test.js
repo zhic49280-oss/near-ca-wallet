@@ -19,46 +19,21 @@ const {
 test('P0.1: Vault refuses empty overwrite & biometricEnabled=false disables biometric lock', async () => {
   await withMockedStorage({}, async () => {
     state.initState();
-    const w = state.normalizeWalletRecord({
-      id: 'w_p0_vault',
-      name: 'Vault P0',
-      mnemonic: TEST_MNEMONIC,
-      nearPrivateKey: 'ed25519:testkey',
-      pin: '123456',
-      webauthnCredentialId: 'cred-1',
-      biometricEnabled: false
-    });
-    const env = await state.encryptWalletSecretsToVaultAsync(w, '123456');
-    assert.ok(env && env.ctBase64);
+    assert.equal(state.encryptWalletSecretsToVaultAsync, undefined);
+    assert.equal(state.unlockWalletVaultSecretsAsync, undefined);
 
-    // Strip all plaintext secrets (simulating locked wallet B after cold load)
-    for (const k of [
-      'mnemonic', 'prlMnemonic', 'btcMnemonic', 'legacyEvmMnemonic', 'legacySolMnemonic',
-      'nearPrivateKey', 'nearPrivateSeedHex', 'evmPrivateKey', 'solPrivateSeedHex',
-      'privateKeyHex', 'tweakedPrivateKeyHex', 'btcPrivateKeyHex', 'btcTweakedPrivateKeyHex'
-    ]) {
-      w[k] = '';
-    }
-    const overwriteAttempt = await state.encryptWalletSecretsToVaultAsync(w, '999999');
-    assert.equal(overwriteAttempt, null, 'Must refuse to overwrite existing encryptedVault with empty secrets');
-    assert.equal(w.encryptedVault.ctBase64, env.ctBase64, 'Original vault ciphertext must remain intact');
-
-    // Verify unlock still works with original PIN
-    const unlocked = await state.unlockWalletVaultSecretsAsync(w, '123456');
-    assert.equal(unlocked, true);
-    assert.equal(w.mnemonic, TEST_MNEMONIC);
-
-    // Verify biometricEnabled=false prevents biometric-only app lock when no PIN
-    const noPinBioOff = state.normalizeWalletRecord({
+    // Verify biometricEnabled=false prevents biometric-only app lock
+    const bioOff = state.normalizeWalletRecord({
       id: 'w_p0_bio_off',
       webauthnCredentialId: 'cred-2',
       biometricEnabled: false
     });
-    assert.equal(uiController.shouldEnableAppLockForWallet(noPinBioOff, { nativePlugin: {} }), false);
+    assert.equal(uiController.shouldEnableAppLockForWallet(bioOff, { nativePlugin: {} }), false);
 
-    // Verify zero calls to nonexistent openSetWalletPinPrompt(...)
+    // Verify zero calls to removed PIN helpers in 010-security.part.js
     const secSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/010-security.part.js'), 'utf8');
-    assert.equal(/\bopenSetWalletPinPrompt\s*\(/.test(secSrc), false, 'Must not call nonexistent openSetWalletPinPrompt()');
+    assert.equal(/\bopenSetWalletPinPrompt\s*\(/.test(secSrc), false);
+    assert.equal(/\bhasConfiguredWalletPin\b/.test(secSrc), false);
   });
 });
 

@@ -32,16 +32,11 @@ test('Phase 1.1: Address checksum helper rejects bad EIP-55 & Pearl addresses an
   assert.ok(evmPart.includes('ARC_USDC_PRECOMPILE'), 'executeEvmTransfer must recognize Arc native precompile');
 });
 
-test('Phase 1.2: Security lock allows PIN fallback on nativeAuth & blocks silent unlock when bioUnavailable without PIN', () => {
+test('Phase 1.2: Security lock uses device-native auth without PIN/Vault fallback and degrades gracefully when unavailable', () => {
   const secPart = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/010-security.part.js'), 'utf8');
-  assert.ok(!secPart.includes('if (!bioUnavailable && (!hasPin || nativeAuth))'), 'Must allow PIN fallback even when nativeAuth is present');
-  assert.ok(secPart.includes('if (!bioUnavailable && !hasPin)'));
-  // Ensure bioUnavailable && !hasConfiguredWalletPin(wallet) does not clearAppLock() and return true
-  const idx = secPart.indexOf('if (bioUnavailable && !hasConfiguredWalletPin(wallet))');
-  assert.ok(idx > 0);
-  const block = secPart.slice(idx, idx + 650);
-  assert.ok(!block.includes('clearAppLock()'), 'Must not silently clearAppLock when bioUnavailable and no PIN');
-  assert.ok(block.includes('return false;'));
+  assert.ok(!secPart.includes('hasConfiguredWalletPin'), 'PIN must be completely removed');
+  assert.ok(!secPart.includes('isWalletVaultLocked'), 'Vault lock must be completely removed');
+  assert.ok(secPart.includes('hintEnableDeviceLock()'), 'Must hint user to enable device lock when biometrics unavailable');
 });
 
 test('Phase 1.3: EVM MPC signing is outside failover loop and supports yParity ^ 1 recovery', async () => {

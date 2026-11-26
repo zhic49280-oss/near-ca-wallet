@@ -97,7 +97,7 @@
     if (st.pendingMnemonic) copyText(st.pendingMnemonic, t('助记词', 'Seed Phrase'));
   }
 
-  async function buildWalletFromMnemonic(mnemonic, name = '', pin = '') {
+  async function buildWalletFromMnemonic(mnemonic, name = '') {
     const crypto = getCrypto();
     const contracts = getContracts();
     const st = getState();
@@ -107,7 +107,6 @@
       id: `near_ca_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       name: String(name || '').trim() || `Account ${idx}`,
       mnemonic: String(mnemonic).trim(),
-      pin: '',
       nearNamedAccount: '',
       nearAddress: derived.nearAddress,
       nearPublicKey: derived.nearPublicKey,
@@ -124,16 +123,6 @@
       btcPrivateKeyHex: derived.btcPrivateKeyHex,
       btcTweakedPrivateKeyHex: derived.btcTweakedPrivateKeyHex
     });
-    if (pin && typeof st.setWalletPinAsync === 'function') {
-      await st.setWalletPinAsync(wallet, pin);
-      wallet.pinLen = String(pin).trim().length;
-    } else if (pin) {
-      wallet.pin = String(pin).trim();
-      wallet.pinLen = wallet.pin.length;
-    }
-    if (pin && typeof st.encryptWalletSecretsToVaultAsync === 'function') {
-      await st.encryptWalletSecretsToVaultAsync(wallet, String(pin).trim());
-    }
     // Non-blocking background discovery of linked .near domain
     if (contracts && typeof contracts.discoverNearAccountsByPublicKeyAsync === 'function' && derived.nearPublicKey) {
       contracts.discoverNearAccountsByPublicKeyAsync(derived.nearPublicKey).then((discovered) => {
@@ -158,11 +147,6 @@
     const phrase = st.pendingMnemonic;
     if (!phrase) return;
     const name = $('onboard-create-name')?.value || '';
-    const pin = ($('onboard-create-pin')?.value || '').trim();
-    if (pin && !/^\d{4,6}$/.test(pin)) {
-      showToast(t('PIN 密码需为 4-6 位数字', 'PIN must be 4-6 digits'));
-      return;
-    }
     _onboardingBusy = true;
     const btn = $('btn-confirm-create-wallet');
     const prevBtnText = btn ? btn.textContent : '';
@@ -171,12 +155,11 @@
       btn.textContent = t('正在创建钱包...', 'Creating wallet...');
     }
     try {
-      const wallet = await buildWalletFromMnemonic(phrase, name, pin);
+      const wallet = await buildWalletFromMnemonic(phrase, name);
       st.wallets.push(wallet);
       st.activeWalletId = wallet.id;
       st.pendingMnemonic = '';
       if ($('onboard-create-name')) $('onboard-create-name').value = '';
-      if ($('onboard-create-pin')) $('onboard-create-pin').value = '';
       resetPerWalletTransientState(wallet);
       _isAddingAdditionalWallet = false;
       st.activeTab = 'wallet';
@@ -362,6 +345,7 @@
   function resetPerWalletTransientState(nextWallet) {
     const st = getState();
     st.expandedSymbol = null;
+    if (typeof stopPerpLiveFeed === 'function') stopPerpLiveFeed();
     if (st.swap) {
       st.swap.quoteData = null;
       st.swap.recipientAddress = '';
@@ -613,57 +597,5 @@
       return;
     }
     if (val) copyText(val, label);
-  }
-
-  function openPinSheet() {
-    const inp = $('pin-input');
-    if (inp) inp.value = '';
-    openSheet('sheet-pin');
-  }
-
-  async function saveWalletPin() {
-    const st = getState();
-    const wallet = st.getActiveWallet();
-    if (!wallet) return;
-    const nextPin = ($('pin-input')?.value || '').trim();
-    if (nextPin && !/^\d{4,6}$/.test(nextPin)) {
-      showToast(t('请输入 4-6 位数字密码', 'Enter a 4-6 digit PIN'));
-      return;
-    }
-    const hadPin = typeof st.hasWalletPin === 'function' ? st.hasWalletPin(wallet) : Boolean(wallet.pin);
-    if (!hadPin && !nextPin) {
-      showToast(t('请输入 4-6 位数字密码', 'Enter a 4-6 digit PIN'));
-      return;
-    }
-    if (hadPin) {
-      const needVaultDecrypt = Boolean(wallet.encryptedVault && wallet.encryptedVault.ctBase64 && !wallet._vaultUnlockedInSession);
-      const authOk = needVaultDecrypt
-        ? await openPinModalForWalletAsync(wallet, t('请输入旧 PIN 解锁并修改安全密码', 'Enter current PIN to unlock and update'), false)
-        : await verifySecurityAuthAsync(wallet, t('修改钱包安全密码', 'Update wallet PIN'));
-      if (!authOk) return;
-    }
-    if (wallet.encryptedVault && wallet.encryptedVault.ctBase64 && !wallet._vaultUnlockedInSession && !wallet.mnemonic && !wallet.nearPrivateKey) {
-      showToast(t('请先输入旧 PIN 解锁钱包密钥后再修改密码', 'Unlock wallet secrets with current PIN before updating'));
-      return;
-    }
-    if (typeof st.setWalletPinAsync === 'function') {
-      await st.setWalletPinAsync(wallet, nextPin);
-      wallet.pinLen = nextPin ? nextPin.length : 0;
-    } else {
-      wallet.pin = nextPin;
-      wallet.pinLen = nextPin ? nextPin.length : 0;
-    }
-    if (nextPin && typeof st.encryptWalletSecretsToVaultAsync === 'function') {
-      await st.encryptWalletSecretsToVaultAsync(wallet, nextPin);
-    } else if (!nextPin && wallet.encryptedVault) {
-      wallet.encryptedVault = null;
-    }
-    st.saveWallets();
-    const sheetPin = $('sheet-pin');
-    if (sheetPin && sheetPin.classList) sheetPin.classList.remove('auth-top');
-    if (nextPin && typeof clearAppLock === 'function') clearAppLock();
-    closeAllSheets();
-    renderHubBiometricCardAsync();
-    showToast(nextPin ? t('安全密码已更新', 'PIN updated') : t('已清除安全密码', 'PIN cleared'));
   }
 

@@ -31,8 +31,6 @@ function createSeededWallet(overrides = {}) {
     solAddress: TEST_SOL_ADDR,
     address: 'prl1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdj2x9v7',
     btcAddress: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4',
-    pin: '123456',
-    pinLen: 6,
     biometricEnabled: false,
     nativeBalances: {
       near: 12.5,
@@ -156,19 +154,9 @@ function buildSeededStorage(walletOverrides = {}, extraStorage = {}) {
   };
 }
 
-async function enterPinDigits(session, pinStr = '123456') {
-  for (const ch of String(pinStr)) {
-    await session.click(`.bio-key[onclick="pressSecurityPinDigit('${ch}')"]`);
-  }
-  await session.flushMicrotasks(12);
-}
-
 async function createUnlockedSession(options = {}) {
   const { evmPrivateKey, evmAddressOverride, ...sessionOpts } = options;
   const session = await createWalletAppSession(sessionOpts);
-  if (session.hasClass('#sheet-security-auth', 'open')) {
-    await enterPinDigits(session, '123456');
-  }
   if (evmPrivateKey) {
     const w = session.window.NearCAState?.getActiveWallet?.();
     if (w) {
@@ -582,8 +570,7 @@ test('F5-T1-04: Swap execution PIN gate, Broadcast Safety Guard & mocked-success
       await sessionGuard.waitFor(() => Number(sessionGuard.document.getElementById('swap-amount-out')?.value || 0) > 0, 3000);
 
       await sessionGuard.click('#btn-execute-swap');
-      assert.equal(sessionGuard.hasClass('#sheet-security-auth', 'open'), true);
-      await enterPinDigits(sessionGuard, '123456');
+      await sessionGuard.flushMicrotasks(12);
 
       await sessionGuard.waitFor(
         () => sessionGuard.getNetworkLog().some((r) => r.blocked),
@@ -646,7 +633,7 @@ test('F5-T1-04: Swap execution PIN gate, Broadcast Safety Guard & mocked-success
       await sessionSuccess.input('#swap-amount-in', '1');
       await sessionSuccess.waitFor(() => Number(sessionSuccess.document.getElementById('swap-amount-out')?.value || 0) > 0, 3000);
       await sessionSuccess.click('#btn-execute-swap');
-      await enterPinDigits(sessionSuccess, '123456');
+      await sessionSuccess.flushMicrotasks(12);
 
       await sessionSuccess.waitFor(() => sessionSuccess.isVisible('#swap-order-card'), 4000);
       assert.equal(sessionSuccess.document.getElementById('swap-amount-in')?.value, '', 'Successful swap must clear #swap-amount-in');
@@ -909,7 +896,6 @@ test('F5-T2-01: [POST-FIX] Local balance/gas pre-check, Gas-Fix banner & real to
       assert.equal(session.isDisabled('#btn-execute-swap'), true, '0 ETH gas must disable swap button');
       assert.match(session.getVisibleText('#btn-execute-swap'), /ETH|gas|Gas/i);
       await session.click('#btn-execute-swap');
-      assert.equal(session.hasClass('#sheet-security-auth', 'open'), false, '0 ETH gas must block before PIN modal');
       session.assertNoRealBroadcasts();
     } finally {
       session.cleanup();
@@ -1119,8 +1105,6 @@ test('F5-T2-04: 30-second quote expiry guard aborts before PIN/signing and refre
       () => session.getToastHistory().some((t) => /Quote expired|>30s|30 秒/i.test(t.text)),
       3000
     );
-
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false, 'Expired quote must abort before opening PIN');
     assert.ok(Number(session.window.NearCAState.swap.quoteData?.quotedAt || 0) > Date.now() - 5000, 'QuotedAt must refresh');
     session.assertNoRealBroadcasts();
     session.assertNoRuntimeErrors();
@@ -1199,7 +1183,6 @@ test('F5-T2-05: Form lifecycle dual-clear on token switch & active multi-stage o
       await sessionLock.input('#swap-amount-in', '10');
       await sessionLock.waitFor(() => !sessionLock.isDisabled('#btn-execute-swap'), 2500);
       await sessionLock.click('#btn-execute-swap');
-      assert.equal(sessionLock.hasClass('#sheet-security-auth', 'open'), false);
       assert.ok(sessionLock.getToastHistory().some((t) => /multi-step swap is in progress|多段闪兑/i.test(t.text)));
       sessionLock.assertNoRealBroadcasts();
       sessionLock.assertNoRuntimeErrors();
@@ -1510,8 +1493,7 @@ test('F5-T2-06: [POST-FIX] Swap error/jargon sanitization (1Click 429, OpenOcean
 
       // Execute Arc 0x3600... swap -> PIN -> reaches eth_sendRawTransaction Broadcast Guard
       await sessionArc.click('#btn-execute-swap');
-      assert.equal(sessionArc.hasClass('#sheet-security-auth', 'open'), true);
-      await enterPinDigits(sessionArc, '123456');
+      await sessionArc.flushMicrotasks(12);
       await sessionArc.waitFor(() => sessionArc.getNetworkLog().some((r) => r.blocked && /EVM JSON-RPC/i.test(r.reason)), 3500);
       sessionArc.assertNoRealBroadcasts();
       sessionArc.assertNoRuntimeErrors();
@@ -1877,7 +1859,7 @@ test('F6-T1-04: Solana Jupiter Trigger & EVM CoW limit order submission + Broadc
       await sessionGuard.click('#limit-offset-pills [data-offset-idx="1"]');
       await sessionGuard.waitFor(() => !sessionGuard.isDisabled('#btn-execute-limit'), 2500);
       await sessionGuard.click('#btn-execute-limit');
-      await enterPinDigits(sessionGuard, '123456');
+      await sessionGuard.flushMicrotasks(12);
       await sessionGuard.waitFor(() => sessionGuard.getNetworkLog().some((r) => r.blocked && /Jupiter Trigger/i.test(r.reason)), 3000);
 
       // EVM CoW
@@ -1887,7 +1869,7 @@ test('F6-T1-04: Solana Jupiter Trigger & EVM CoW limit order submission + Broadc
       await sessionGuard.input('#limit-target-rate', '3300');
       await sessionGuard.waitFor(() => !sessionGuard.isDisabled('#btn-execute-limit'), 2500);
       await sessionGuard.click('#btn-execute-limit');
-      await enterPinDigits(sessionGuard, '123456');
+      await sessionGuard.flushMicrotasks(12);
       await sessionGuard.waitFor(() => sessionGuard.getNetworkLog().some((r) => r.blocked && /CoW Protocol/i.test(r.reason)), 3000);
 
       sessionGuard.assertNoRealBroadcasts();
@@ -1923,7 +1905,7 @@ test('F6-T1-04: Solana Jupiter Trigger & EVM CoW limit order submission + Broadc
       await sessionSuccess.input('#limit-target-rate', '3300');
       await sessionSuccess.waitFor(() => !sessionSuccess.isDisabled('#btn-execute-limit'), 2500);
       await sessionSuccess.click('#btn-execute-limit');
-      await enterPinDigits(sessionSuccess, '123456');
+      await sessionSuccess.flushMicrotasks(12);
 
       await sessionSuccess.waitFor(() => sessionSuccess.document.getElementById('limit-amount-in')?.value === '', 3500);
       assert.notEqual(sessionSuccess.document.getElementById('limit-target-rate')?.value, '3300', 'Submitted target price 3300 must be cleared on reset');
@@ -2001,7 +1983,7 @@ test('F6-T1-05: Active & history limit orders rendering + Claim & Cancel across 
 
     // Click Claim on NEAR DCL active order -> PIN -> Broadcast Guard
     await session.click('#limit-orders-list [data-action="claim-limit-order"]');
-    await enterPinDigits(session, '123456');
+    await session.flushMicrotasks(12);
     await session.waitFor(() => session.getNetworkLog().some((r) => r.blocked && /NEAR JSON-RPC/i.test(r.reason)), 3000);
 
     // Switch to History tab and back
@@ -2013,14 +1995,14 @@ test('F6-T1-05: Active & history limit orders rendering + Claim & Cancel across 
     await session.click('#limit-chain-pills [data-limit-chain="sol"]');
     await session.waitFor(() => session.document.querySelector('#limit-orders-list [data-action="cancel-limit-order"][data-chain="sol"]'), 3000);
     await session.click('#limit-orders-list [data-action="cancel-limit-order"][data-chain="sol"]');
-    await enterPinDigits(session, '123456');
+    await session.flushMicrotasks(12);
     await session.waitFor(() => session.getNetworkLog().some((r) => r.blocked && /Jupiter Trigger/i.test(r.reason)), 3000);
 
     // Switch to ETH and click Cancel -> PIN -> CoW Protocol DELETE guard
     await session.click('#limit-chain-pills [data-limit-chain="eth"]');
     await session.waitFor(() => session.document.querySelector('#limit-orders-list [data-action="cancel-limit-order"][data-chain="eth"]'), 3000);
     await session.click('#limit-orders-list [data-action="cancel-limit-order"][data-chain="eth"]');
-    await enterPinDigits(session, '123456');
+    await session.flushMicrotasks(12);
     await session.waitFor(() => session.getNetworkLog().some((r) => r.blocked && /CoW Protocol/i.test(r.reason)), 3000);
 
     session.assertNoRealBroadcasts();
@@ -2272,7 +2254,7 @@ test('F6-T2-02: [POST-FIX] EVM native sell block, allowance retry/approve states
       assert.match(sessionB.getVisibleText('#btn-execute-limit'), /Approve|授权/i);
 
       await sessionB.click('#btn-execute-limit');
-      await enterPinDigits(sessionB, '123456');
+      await sessionB.flushMicrotasks(12);
       await sessionB.waitFor(() => approveSent && !sessionB.window.NearCAState.limit.submitting, 3000);
       await sessionB.waitFor(
         () => /Place Limit Order|提交限价单/i.test(sessionB.getVisibleText('#btn-execute-limit')),
@@ -2433,7 +2415,7 @@ test('F6-T2-03: [POST-FIX] Worse-than-market warning, unregistered wNEAR Max 0.5
       assert.ok(regMax >= 0.94 && regMax <= 0.98, `Registered 1.0 NEAR Max (${regMax}) must align within [0.94, 0.98]`);
       assert.equal(sessionReg.isDisabled('#btn-execute-limit'), false);
       await sessionReg.click('#btn-execute-limit');
-      await enterPinDigits(sessionReg, '123456');
+      await sessionReg.flushMicrotasks(12);
       await sessionReg.waitFor(() => sessionReg.getNetworkLog().some((r) => r.blocked && /NEAR JSON-RPC/i.test(r.reason)), 3500);
       sessionReg.assertNoRealBroadcasts();
     } finally {
@@ -2549,7 +2531,7 @@ test('F6-T2-04: [POST-FIX] Limit form & error/flag double-clear on chain switch,
       await session.input('#limit-target-rate', '3300');
       await session.waitFor(() => !session.isDisabled('#btn-execute-limit'), 2500);
       await session.click('#btn-execute-limit');
-      await enterPinDigits(session, '123456');
+      await session.flushMicrotasks(12);
       await session.waitFor(() => session.isVisible('#limit-error-banner'), 3500);
 
       // Flip pair -> must clear inputs AND #limit-error-banner
@@ -2753,7 +2735,7 @@ test('F6-T2-06: [POST-FIX] Zero developer jargon across Limit Orders panel, list
       await sessionBsc.input('#limit-target-rate', '650');
       await sessionBsc.waitFor(() => !sessionBsc.isDisabled('#btn-execute-limit'), 2500);
       await sessionBsc.click('#btn-execute-limit');
-      await enterPinDigits(sessionBsc, '123456');
+      await sessionBsc.flushMicrotasks(12);
       await sessionBsc.waitFor(() => placeHits >= 1 && sessionBsc.isVisible('#limit-error-banner'), 3500);
       assertZeroDevJargon(sessionBsc.getVisibleText('#limit-error-banner'), '[POST-FIX] BSC CoW place 429 #limit-error-banner');
 
@@ -2761,7 +2743,7 @@ test('F6-T2-06: [POST-FIX] Zero developer jargon across Limit Orders panel, list
       await sessionBsc.click('#header-lang-btn');
       await sessionBsc.waitFor(() => sessionBsc.document.querySelector('#limit-orders-list [data-action="cancel-limit-order"][data-chain="bsc"]'), 3000);
       await sessionBsc.click('#limit-orders-list [data-action="cancel-limit-order"][data-chain="bsc"]');
-      await enterPinDigits(sessionBsc, '123456');
+      await sessionBsc.flushMicrotasks(12);
       await sessionBsc.waitFor(() => cancelHits >= 1 && sessionBsc.getToastHistory().some((t) => /频繁|429|失败|rate|cancel|稍后/i.test(t.text)), 3500);
 
       for (const toast of sessionBsc.getToastHistory()) {
@@ -3064,7 +3046,7 @@ test('F7-T1-05: Perp order submit, bottom tabs, TP/SL modal, Reverse/Close/Cance
       // 1) Order submit -> PIN -> Broadcast Guard
       await sessionGuard.input('#perp-margin-input', '20');
       await sessionGuard.click('#btn-perp-submit');
-      await enterPinDigits(sessionGuard, '123456');
+      await sessionGuard.flushMicrotasks(12);
       await sessionGuard.waitFor(() => sessionGuard.getNetworkLog().filter((r) => r.blocked).length >= 1, 3500);
 
       // 2) Position TP/SL modal -> Save -> PIN -> Broadcast Guard
@@ -3073,27 +3055,27 @@ test('F7-T1-05: Perp order submit, bottom tabs, TP/SL modal, Reverse/Close/Cance
       await sessionGuard.input('#perp-pos-tp-input', '105000');
       await sessionGuard.input('#perp-pos-sl-input', '88000');
       await sessionGuard.click('#btn-perp-tpsl-save');
-      await enterPinDigits(sessionGuard, '123456');
+      await sessionGuard.flushMicrotasks(12);
       await sessionGuard.waitFor(() => sessionGuard.getNetworkLog().filter((r) => r.blocked).length >= 2, 3500);
       await sessionGuard.closeSheet('sheet-perp-tpsl');
 
       // 3) Reverse & Close -> Broadcast Guard
       await sessionGuard.click('#perp-bottom-list [data-action="reverse-perp-pos"][data-coin="BTC"]');
-      await enterPinDigits(sessionGuard, '123456');
+      await sessionGuard.flushMicrotasks(12);
       await sessionGuard.waitFor(() => sessionGuard.getNetworkLog().filter((r) => r.blocked).length >= 3, 3500);
 
       await sessionGuard.click('#perp-bottom-list [data-action="close-perp-pos"][data-coin="BTC"]');
-      await enterPinDigits(sessionGuard, '123456');
+      await sessionGuard.flushMicrotasks(12);
       await sessionGuard.waitFor(() => sessionGuard.getNetworkLog().filter((r) => r.blocked).length >= 4, 3500);
 
       // 4) Orders tab -> Cancel order & Cancel All + Fills tab
       await sessionGuard.click('#perp-tab-orders');
       await sessionGuard.click('#perp-bottom-list [data-action="cancel-perp-order"][data-coin="BTC"]');
-      await enterPinDigits(sessionGuard, '123456');
+      await sessionGuard.flushMicrotasks(12);
       await sessionGuard.waitFor(() => sessionGuard.getNetworkLog().filter((r) => r.blocked).length >= 5, 3500);
 
       await sessionGuard.click('#btn-perp-batch-action');
-      await enterPinDigits(sessionGuard, '123456');
+      await sessionGuard.flushMicrotasks(12);
       await sessionGuard.waitFor(() => sessionGuard.getNetworkLog().filter((r) => r.blocked).length >= 6, 3500);
 
       await sessionGuard.click('#perp-tab-fills');
@@ -3126,7 +3108,7 @@ test('F7-T1-05: Perp order submit, bottom tabs, TP/SL modal, Reverse/Close/Cance
 
       await sessionSuccess.input('#perp-margin-input', '20');
       await sessionSuccess.click('#btn-perp-submit');
-      await enterPinDigits(sessionSuccess, '123456');
+      await sessionSuccess.flushMicrotasks(12);
       await sessionSuccess.waitFor(() => sessionSuccess.document.getElementById('perp-margin-input')?.value === '', 3500);
       assert.ok(sessionSuccess.getToastHistory().some((t) => /Perp order submitted|合约委托已提交/i.test(t.text)));
       sessionSuccess.assertNoRealBroadcasts();
@@ -3186,7 +3168,7 @@ test('F7-T1-06: Perp funding sheet: 1Click quote/deposit polling, Arbitrum MAX, 
 
       // Spot -> Perp quick transfer hits Broadcast Guard
       await session.click('#perp-spot-banner button[onclick="quickTransferSpotToPerpUI()"]');
-      await enterPinDigits(session, '123456');
+      await session.flushMicrotasks(12);
       await session.waitFor(() => session.getNetworkLog().some((r) => r.blocked && /Hyperliquid exchange/i.test(r.reason)), 3500);
 
       // Open Deposit sheet -> 1Click debounced quote & #btn-perp-oc-deposit reaches Broadcast Guard
@@ -3196,7 +3178,7 @@ test('F7-T1-06: Perp funding sheet: 1Click quote/deposit polling, Arbitrum MAX, 
       await session.waitFor(() => session.getVisibleText('#perp-oc-quote-out').includes('9.90'), 3000);
       assert.equal(session.isDisabled('#btn-perp-oc-deposit'), false);
       await session.click('#btn-perp-oc-deposit');
-      await enterPinDigits(session, '123456');
+      await session.flushMicrotasks(12);
       await session.waitFor(() => session.getNetworkLog().some((r) => r.blocked && /NEAR JSON-RPC|1Click/i.test(r.reason)), 3500);
 
       // Switch to Arbitrum tab -> MAX
@@ -3271,7 +3253,7 @@ test('F7-T1-06: Perp funding sheet: 1Click quote/deposit polling, Arbitrum MAX, 
       await sessionPoll.input('#perp-oc-amount', '1');
       await sessionPoll.waitFor(() => sessionPoll.getVisibleText('#perp-oc-quote-out').includes('9.90'), 3000);
       await sessionPoll.click('#btn-perp-oc-deposit');
-      await enterPinDigits(sessionPoll, '123456');
+      await sessionPoll.flushMicrotasks(12);
 
       await sessionPoll.waitFor(() => depositSubmitCalled && sessionPoll.getToastHistory().some((t) => /Deposit sent|跨链充值已发送/i.test(t.text)), 3500);
       // Allow background deposit poll timer (if scheduled) a short window to fire
@@ -3329,7 +3311,7 @@ test('F7-T2-01: Perp margin excess, $10 min notional, #perp-reduce-only-chk bypa
       await session.flushMicrotasks(6);
       assert.equal(session.isDisabled('#btn-perp-submit'), false);
       await session.click('#btn-perp-submit');
-      await enterPinDigits(session, '123456');
+      await session.flushMicrotasks(12);
       await session.waitFor(() => /not activated|deposit USDC|尚未激活/i.test(session.getVisibleText('#perp-error-banner')), 3500);
       session.assertNoRealBroadcasts();
     } finally {
@@ -3373,7 +3355,7 @@ test('F7-T2-01: Perp margin excess, $10 min notional, #perp-reduce-only-chk bypa
       await sessionRO.flushMicrotasks(6);
       assert.equal(sessionRO.isDisabled('#btn-perp-submit'), false, 'Reduce-Only must bypass available-margin check');
       await sessionRO.click('#btn-perp-submit');
-      await enterPinDigits(sessionRO, '123456');
+      await sessionRO.flushMicrotasks(12);
       await sessionRO.waitFor(() => sessionRO.getNetworkLog().some((r) => r.blocked && /Hyperliquid exchange/i.test(r.reason)), 3500);
       sessionRO.assertNoRealBroadcasts();
     } finally {
@@ -3420,14 +3402,12 @@ test('F7-T2-02: Invalid TP/SL direction validation & onlyIsolated (xyz:CRCL) cro
     await session.click('#btn-perp-tpsl-toggle');
     await session.input('#perp-tp-input', '90000');
     await session.click('#btn-perp-submit');
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false);
     assert.ok(session.getToastHistory().some((t) => /TP|止盈/i.test(t.text)));
 
     // Position TP/SL modal with Long SL >= markPx -> toast before PIN
     await session.click('#perp-bottom-list [data-action="open-perp-pos-tpsl"][data-coin="BTC"]');
     await session.input('#perp-pos-sl-input', '99000');
     await session.click('#btn-perp-tpsl-save');
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false);
     assert.ok(session.getToastHistory().some((t) => /SL|止损/i.test(t.text)));
     await session.closeSheet('sheet-perp-tpsl');
 
@@ -3615,7 +3595,7 @@ test('F7-T2-04: [POST-FIX] Perp form dual-clear on side/coin/sheet close & rever
       queriedTriggerUsers.length = 0;
 
       await sessionB.click('#perp-bottom-list [data-action="reverse-perp-pos"][data-coin="BTC"]');
-      await enterPinDigits(sessionB, '123456');
+      await sessionB.flushMicrotasks(12);
       await sessionB.waitFor(() => sessionB.getNetworkLog().some((r) => r.blocked), 3500);
 
       assert.ok(
@@ -3803,7 +3783,7 @@ test('F7-T2-05: [POST-FIX] Zero-margin %, WS close on leave, Zero CLS L/S bar & 
 
       exchangeDelayMs = 220;
       await sessionWS.click('#perp-bottom-list [data-action="close-perp-pos"][data-coin="BTC"]');
-      await enterPinDigits(sessionWS, '123456');
+      await sessionWS.flushMicrotasks(12);
       await sessionWS.waitFor(() => exchangeInFlight, 2000);
 
       ws.onmessage({
@@ -3880,7 +3860,7 @@ test('F7-T2-05: [POST-FIX] Zero-margin %, WS close on leave, Zero CLS L/S bar & 
       assert.ok(batchBtn && !batchBtn.classList.contains('hidden'), '#btn-perp-batch-action must be visible with active position');
       exchangeDelayMs = 200;
       await sessionBatch.click('#btn-perp-batch-action');
-      await enterPinDigits(sessionBatch, '123456');
+      await sessionBatch.flushMicrotasks(12);
       await sessionBatch.waitFor(() => exchangeInFlight, 2000);
       assert.equal(batchBtn.disabled, true);
       assert.match(batchBtn.textContent, /Closing|Processing|处理中|平仓中/i, '[POST-FIX] #btn-perp-batch-action must display loading text while executing');
@@ -3981,7 +3961,7 @@ test('F7-T2-06: [POST-FIX] Zero dev jargon in Perps (no Bridge2, Pair/Vol, raw H
 
       await session.input('#perp-margin-input', '20');
       await session.click('#btn-perp-submit');
-      await enterPinDigits(session, '123456');
+      await session.flushMicrotasks(12);
       await session.waitFor(() => exchangeHits >= 1 && session.isVisible('#perp-error-banner'), 3500);
       assert.ok(exchangeHits >= 1, 'Expected POST /exchange to be invoked and hit 502 mock');
       assertZeroDevJargon(session.getVisibleText('#perp-error-banner'), '[POST-FIX] #perp-error-banner (EN) on /exchange 502');
@@ -3991,7 +3971,7 @@ test('F7-T2-06: [POST-FIX] Zero dev jargon in Perps (no Bridge2, Pair/Vol, raw H
       await session.click('#header-lang-btn');
       await session.input('#perp-margin-input', '20');
       await session.click('#btn-perp-submit');
-      await enterPinDigits(session, '123456');
+      await session.flushMicrotasks(12);
       await session.waitFor(() => exchangeHits >= 2 && session.isVisible('#perp-error-banner'), 3500);
       assertZeroDevJargon(session.getVisibleText('#perp-error-banner'), '[POST-FIX] #perp-error-banner (ZH) on /exchange 502');
       for (const toast of session.getToastHistory()) {
@@ -4287,8 +4267,7 @@ test('F8-T1-05: Stake execution PIN gate, Broadcast Guard, receipt & activity re
       await sessionGuard.click('#staking-pools-list [data-action="select-staking-pool"][data-pool-id="metapool_stnear"]');
       await sessionGuard.input('#earn-amount-in', '2');
       await sessionGuard.click('#btn-execute-stake');
-      assert.equal(sessionGuard.hasClass('#sheet-security-auth', 'open'), true);
-      await enterPinDigits(sessionGuard, '123456');
+      await sessionGuard.flushMicrotasks(12);
 
       await sessionGuard.waitFor(() => sessionGuard.getNetworkLog().some((r) => r.blocked), 3500);
       assert.ok(sessionGuard.getNetworkLog().some((r) => r.blocked && /NEAR JSON-RPC/i.test(r.reason)));
@@ -4322,7 +4301,7 @@ test('F8-T1-05: Stake execution PIN gate, Broadcast Guard, receipt & activity re
       await sessionSuccess.click('#staking-pools-list [data-action="select-staking-pool"][data-pool-id="metapool_stnear"]');
       await sessionSuccess.input('#earn-amount-in', '2');
       await sessionSuccess.click('#btn-execute-stake');
-      await enterPinDigits(sessionSuccess, '123456');
+      await sessionSuccess.flushMicrotasks(12);
 
       await sessionSuccess.waitFor(() => sessionSuccess.isVisible('#earn-tx-receipt'), 3500);
       assert.equal(sessionSuccess.document.getElementById('earn-amount-in')?.value, '');
@@ -4376,7 +4355,7 @@ test('F8-T1-06: My Staking Positions card rendering & multi-chain redemption rea
 
     // Click NEAR validator unstake -> PIN -> Broadcast Guard
     await session.click('#earn-my-positions-list [data-action="earn-pos-action"][data-type="near_unstake"]');
-    await enterPinDigits(session, '123456');
+    await session.flushMicrotasks(12);
     await session.waitFor(() => session.getNetworkLog().some((r) => r.blocked && /NEAR JSON-RPC/i.test(r.reason)), 3500);
     session.assertNoRealBroadcasts();
     session.assertNoRuntimeErrors();
@@ -4412,14 +4391,12 @@ test('F8-T2-01: Balance & native gas pre-checks BEFORE PIN modal or network RPC'
     await session.click('#staking-pools-list [data-action="select-staking-pool"][data-pool-id="rhea_rnear"]');
     await session.input('#earn-amount-in', '999');
     await session.click('#btn-execute-stake');
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false);
     await session.closeSheet('sheet-earn-stake');
 
     // 2) 10 USDC on aave_eth_usdc with 0 ETH gas
     await session.click('#staking-pools-list [data-action="select-staking-pool"][data-pool-id="aave_eth_usdc"]');
     await session.input('#earn-amount-in', '10');
     await session.click('#btn-execute-stake');
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false);
     assert.ok(session.getToastHistory().some((t) => /native gas|原生 Gas/i.test(t.text)));
     await session.closeSheet('sheet-earn-stake');
 
@@ -4427,7 +4404,6 @@ test('F8-T2-01: Balance & native gas pre-checks BEFORE PIN modal or network RPC'
     await session.click('#staking-pools-list [data-action="select-staking-pool"][data-pool-id="rhea_xrhea"]');
     await session.input('#earn-amount-in', '10');
     await session.click('#btn-execute-stake');
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false);
     assert.equal(session.getNetworkLog().length, callsBefore, 'Pre-checks must block without network RPC');
     session.assertNoRealBroadcasts();
   } finally {
@@ -4449,18 +4425,15 @@ test('F8-T2-02: Pool minimum stake (1 NEAR LST / 0.05 NEAR Burrow) & zero/empty 
     await session.click('#staking-pools-list [data-action="select-staking-pool"][data-pool-id="rhea_rnear"]');
     await session.input('#earn-amount-in', '0');
     await session.click('#btn-execute-stake');
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false);
 
     await session.input('#earn-amount-in', '0.5');
     await session.click('#btn-execute-stake');
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false);
     assert.ok(session.getToastHistory().some((t) => /Minimum stake.*1 NEAR|最低质押数量为 1 NEAR/i.test(t.text)));
     await session.closeSheet('sheet-earn-stake');
 
     await session.click('#staking-pools-list [data-action="select-staking-pool"][data-pool-id="burrow_near_wnear"]');
     await session.input('#earn-amount-in', '0.02');
     await session.click('#btn-execute-stake');
-    assert.equal(session.hasClass('#sheet-security-auth', 'open'), false);
     assert.ok(session.getToastHistory().some((t) => /Minimum stake.*0\.05|最低质押数量为 0\.05/i.test(t.text)));
     session.assertNoRealBroadcasts();
   } finally {
@@ -4484,7 +4457,7 @@ test('F8-T2-03: [POST-FIX] Burrow wNEAR+NEAR & Aave WETH+ETH combined wrap-suppl
       await sessionPass.click('#staking-pools-list [data-action="select-staking-pool"][data-pool-id="burrow_near_wnear"]');
       await sessionPass.input('#earn-amount-in', '1.2');
       await sessionPass.click('#btn-execute-stake');
-      assert.equal(sessionPass.hasClass('#sheet-security-auth', 'open'), true, 'Sufficient wrap + gas must reach PIN gate');
+      await sessionPass.waitFor(() => sessionPass.getNetworkLog().some((r) => r.blocked), 3500);
       sessionPass.assertNoRealBroadcasts();
     } finally {
       sessionPass.cleanup();
@@ -4507,11 +4480,6 @@ test('F8-T2-03: [POST-FIX] Burrow wNEAR+NEAR & Aave WETH+ETH combined wrap-suppl
       await sessionFail.click('#staking-pools-list [data-action="select-staking-pool"][data-pool-id="burrow_near_wnear"]');
       await sessionFail.input('#earn-amount-in', '1.2');
       await sessionFail.click('#btn-execute-stake');
-      assert.equal(
-        sessionFail.hasClass('#sheet-security-auth', 'open'),
-        false,
-        '[POST-FIX] 0.5 wNEAR + 0.75 NEAR staking 1.2 must fail native gas reserve check (0.75 < 0.7 + 0.12) before PIN'
-      );
       assert.ok(sessionFail.getToastHistory().some((t) => /native gas|原生 Gas/i.test(t.text)));
       sessionFail.assertNoRealBroadcasts();
     } finally {
@@ -4534,7 +4502,6 @@ test('F8-T2-03: [POST-FIX] Burrow wNEAR+NEAR & Aave WETH+ETH combined wrap-suppl
       await sessionAave.click('#staking-pools-list [data-action="select-staking-pool"][data-pool-id="aave_eth_weth"]');
       await sessionAave.input('#earn-amount-in', '0.5');
       await sessionAave.click('#btn-execute-stake');
-      assert.equal(sessionAave.hasClass('#sheet-security-auth', 'open'), false);
       assert.ok(sessionAave.getToastHistory().some((t) => /native gas|原生 Gas/i.test(t.text)));
       sessionAave.assertNoRealBroadcasts();
     } finally {
@@ -4787,7 +4754,7 @@ test('F8-T2-06: [POST-FIX] oRHEA 15~181 day lock notice & zero dev/broadcast jar
       await session.switchTab('earn');
       await session.click('#header-lang-btn'); // Switch to ZH to inspect Chinese redeem toast & RPC error toast
       await session.click('#earn-my-positions-list [data-action="earn-pos-action"][data-type="near_unstake"]');
-      await enterPinDigits(session, '123456');
+      await session.flushMicrotasks(12);
 
       // Wait explicitly for the settled/failure toast AFTER broadcast_tx_commit responds (do NOT match initial loading toast!)
       await session.waitFor(

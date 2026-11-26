@@ -291,7 +291,6 @@ test('F1-T1-01: Cold-boot create wallet flow derives all chains, encrypts vault,
     assert.equal(String(copiedPhrase || '').trim().split(/\s+/).length, 12);
 
     await session.setInputValue('#onboard-create-name', 'My Alpha');
-    await session.setInputValue('#onboard-create-pin', '123456');
 
     const confirmBtn = session.document.getElementById('btn-confirm-create-wallet');
     assert.ok(confirmBtn, '#btn-confirm-create-wallet must exist');
@@ -318,9 +317,9 @@ test('F1-T1-01: Cold-boot create wallet flow derives all chains, encrypts vault,
     assert.ok(w.solAddress && w.solAddress.length >= 32);
     assert.match(w.address, /^prl1p[0-9a-z]+$/);
     assert.match(w.btcAddress, /^bc1p[0-9a-z]+$/);
-    assert.ok(w.encryptedVault && w.encryptedVault.ctBase64, 'Encrypted vault must be persisted');
-    assert.ok(!w.mnemonic, 'Plaintext mnemonic must NOT be persisted when encryptedVault is active');
-    assert.ok(!w.pin, 'Plaintext pin must NOT be persisted');
+    assert.ok(w.mnemonic && w.mnemonic.split(/\s+/).length === 12, 'Mnemonic must be persisted directly');
+    assert.equal(w.encryptedVault, undefined, 'encryptedVault must NOT be persisted');
+    assert.equal(w.pin, undefined, 'pin must NOT be persisted');
 
     assertZeroDevJargon(session.getVisibleText('#view-onboarding'), 'view-onboarding zh');
     for (const toast of session.getToastHistory()) {
@@ -618,19 +617,14 @@ test('F1-T2-02: Dirty whitespace/mixed-case mnemonic normalizes & deduplicates a
   }
 });
 
-test('F1-T2-03: Create wallet rejects invalid PIN lengths/characters and keeps confirm button retryable', async () => {
+test('F1-T2-03: Onboarding has no #onboard-create-pin and creates wallet directly', async () => {
   const session = await createWalletAppSession({ viewportWidth: 375 });
   try {
     await session.click('#onboard-choice-panel button[onclick*="openCreateWalletFlow"]');
-    for (const badPin of ['12', 'abcdef']) {
-      await session.setInputValue('#onboard-create-pin', badPin);
-      await session.click('#btn-confirm-create-wallet');
-      const lastToast = session.getToastHistory().at(-1);
-      assert.ok(lastToast && /PIN.*4-6/.test(lastToast.text), `Expected PIN format toast, got ${lastToast?.text}`);
-      assert.equal(session.isDisabled('#btn-confirm-create-wallet'), false);
-      assert.equal(session.isVisible('#view-onboarding'), true);
-      assert.equal(session.localStorage.getItem('near_ca_wallets_v1'), null);
-    }
+    assert.equal(session.document.getElementById('onboard-create-pin'), null, '#onboard-create-pin must be removed');
+    await session.click('#btn-confirm-create-wallet');
+    await session.waitFor(() => session.isVisible('#view-wallet'), 5000);
+    assert.equal(session.isVisible('#view-wallet'), true);
 
     session.assertNoRuntimeErrors();
     session.assertNoRealBroadcasts();
@@ -639,52 +633,21 @@ test('F1-T2-03: Create wallet rejects invalid PIN lengths/characters and keeps c
   }
 });
 
-test('F1-T2-04: Vault-locked wallet stays locked on boot; unrevealed backup copy blocks without window.event', async () => {
-  // Step 1: Create a real encryptedVault wallet via onboarding
-  const setupSession = await createWalletAppSession({ viewportWidth: 375 });
-  let lockedStorageRaw = null;
-  try {
-    await setupSession.click('#onboard-choice-panel button[onclick*="openCreateWalletFlow"]');
-    await setupSession.setInputValue('#onboard-create-pin', '123456');
-    await setupSession.click('#btn-confirm-create-wallet');
-    await setupSession.waitFor(() => setupSession.isVisible('#view-wallet'), 5000);
-    lockedStorageRaw = setupSession.localStorage.getItem('near_ca_wallets_v1');
-    setupSession.assertNoRealBroadcasts();
-  } finally {
-    setupSession.cleanup();
-  }
-
-  // Step 2: Reboot with locked vault storage and verify secrets stay encrypted/empty
-  const lockedSession = await createWalletAppSession({
-    viewportWidth: 375,
-    localStorage: { near_ca_wallets_v1: lockedStorageRaw }
-  });
-  try {
-    const stored = JSON.parse(lockedSession.localStorage.getItem('near_ca_wallets_v1'));
-    assert.ok(stored.wallets[0].encryptedVault && stored.wallets[0].encryptedVault.ctBase64);
-    assert.equal(stored.wallets[0].mnemonic || '', '');
-    assert.equal(stored.wallets[0].nearPrivateKey || '', '');
-    const memWallet = lockedSession.window.NearCAState.getActiveWallet();
-    assert.ok(memWallet, 'Active wallet metadata must exist while vault is locked');
-    assert.equal(memWallet.mnemonic, '', 'In-memory mnemonic must remain empty while vault is locked');
-    assert.equal(memWallet.nearPrivateKey, '', 'In-memory nearPrivateKey must remain empty while vault is locked');
-    lockedSession.assertNoRealBroadcasts();
-  } finally {
-    lockedSession.cleanup();
-  }
-
-  // Step 3: Verify unrevealed backup secret copy guard works even when window.event is undefined
+test('F1-T2-04: Legacy PIN fields stripped on boot; unrevealed backup copy blocks without window.event', async () => {
   const unlockedSession = await createWalletAppSession({
     viewportWidth: 375,
     capacitor: makeBioCapacitorMock(),
     localStorage: {
       near_ca_wallets_v1: JSON.stringify({
-        wallets: [createSeededWallet({ mnemonic: TEST_MNEMONIC })],
+        wallets: [{ ...createSeededWallet({ mnemonic: TEST_MNEMONIC }), pin: '123456', pinHash: 'deadbeef' }],
         activeWalletId: 'e2e_wallet_1'
       })
     }
   });
   try {
+    const activeW = unlockedSession.window.NearCAState.getActiveWallet();
+    assert.equal(activeW.pin, undefined);
+    assert.equal(activeW.pinHash, undefined);
     await unlockedSession.waitFor(() => !unlockedSession.document.documentElement.classList.contains('nexus-locked'), 2000);
     delete unlockedSession.window.event;
     await unlockedSession.switchTab('hub');

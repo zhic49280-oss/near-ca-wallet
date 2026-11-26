@@ -252,121 +252,6 @@
     return out;
   }
 
-  // ======================== PIN PBKDF2 Hashing & AES-256-GCM Vault Encryption ========================
-
-  async function derivePbkdf2Sha256KeyBytesAsync(secretStr, saltBytes, iterations = 100_000) {
-    const passBytes = new TextEncoder().encode(String(secretStr || ''));
-    if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
-      try {
-        const baseKey = await globalThis.crypto.subtle.importKey('raw', passBytes, 'PBKDF2', false, ['deriveBits']);
-        const bits = await globalThis.crypto.subtle.deriveBits(
-          { name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations },
-          baseKey,
-          256
-        );
-        return new Uint8Array(bits);
-      } catch (_) {}
-    }
-    if (nodeCrypto && nodeCrypto.pbkdf2Sync) {
-      return new Uint8Array(nodeCrypto.pbkdf2Sync(passBytes, saltBytes, iterations, 32, 'sha256'));
-    }
-    throw new Error('PBKDF2-SHA256 unavailable');
-  }
-
-  async function hashPinAsync(pin, saltHex = null, iterations = 100_000) {
-    const cleanPin = String(pin || '').trim();
-    if (!cleanPin) throw new Error('PIN cannot be empty');
-    const saltBytes = saltHex ? hexToBytes(saltHex) : getRandomBytes(16);
-    const derived = await derivePbkdf2Sha256KeyBytesAsync(cleanPin, saltBytes, iterations);
-    return {
-      hashHex: bytesToHex(derived),
-      saltHex: bytesToHex(saltBytes),
-      iterations
-    };
-  }
-
-  async function verifyPinHashAsync(pin, expectedHashHex, saltHex, iterations = 100_000) {
-    if (!pin || !expectedHashHex || !saltHex) return false;
-    try {
-      const actual = await hashPinAsync(pin, saltHex, iterations);
-      const a = hexToBytes(actual.hashHex);
-      const b = hexToBytes(expectedHashHex);
-      if (a.length !== b.length) return false;
-      let diff = 0;
-      for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
-      return diff === 0;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  async function encryptVaultJsonAsync(obj, password, iterations = 100_000) {
-    const plainBytes = new TextEncoder().encode(JSON.stringify(obj));
-    const saltBytes = getRandomBytes(16);
-    const ivBytes = getRandomBytes(12);
-    const keyBytes = await derivePbkdf2Sha256KeyBytesAsync(password, saltBytes, iterations);
-
-    if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
-      const aesKey = await globalThis.crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt']);
-      const ctBuf = await globalThis.crypto.subtle.encrypt({ name: 'AES-GCM', iv: ivBytes }, aesKey, plainBytes);
-      return {
-        v: 1,
-        alg: 'AES-256-GCM',
-        kdf: 'PBKDF2-SHA256',
-        iter: iterations,
-        saltHex: bytesToHex(saltBytes),
-        ivHex: bytesToHex(ivBytes),
-        ctBase64: bytesToBase64(new Uint8Array(ctBuf))
-      };
-    }
-    if (nodeCrypto && nodeCrypto.createCipheriv) {
-      const cipher = nodeCrypto.createCipheriv('aes-256-gcm', keyBytes, ivBytes);
-      const enc = Buffer.concat([cipher.update(plainBytes), cipher.final()]);
-      const tag = cipher.getAuthTag();
-      return {
-        v: 1,
-        alg: 'AES-256-GCM',
-        kdf: 'PBKDF2-SHA256',
-        iter: iterations,
-        saltHex: bytesToHex(saltBytes),
-        ivHex: bytesToHex(ivBytes),
-        ctBase64: bytesToBase64(concatUint8Arrays([new Uint8Array(enc), new Uint8Array(tag)]))
-      };
-    }
-    throw new Error('AES-256-GCM unavailable');
-  }
-
-  async function decryptVaultJsonAsync(envelope, password) {
-    if (!envelope || typeof envelope !== 'object' || !envelope.ctBase64 || !envelope.saltHex || !envelope.ivHex) {
-      throw new Error(msg('安全密钥数据格式无效', 'Invalid encrypted vault data'));
-    }
-    const saltBytes = hexToBytes(envelope.saltHex);
-    const ivBytes = hexToBytes(envelope.ivHex);
-    const ctBytes = base64ToBytes(envelope.ctBase64);
-    const iterations = Number(envelope.iter) || 100_000;
-    const keyBytes = await derivePbkdf2Sha256KeyBytesAsync(password, saltBytes, iterations);
-
-    try {
-      if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
-        const aesKey = await globalThis.crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt']);
-        const ptBuf = await globalThis.crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivBytes }, aesKey, ctBytes);
-        return JSON.parse(new TextDecoder().decode(new Uint8Array(ptBuf)));
-      }
-      if (nodeCrypto && nodeCrypto.createDecipheriv) {
-        if (ctBytes.length < 16) throw new Error(msg('安全密钥数据格式无效', 'Invalid encrypted vault data'));
-        const data = ctBytes.slice(0, ctBytes.length - 16);
-        const tag = ctBytes.slice(ctBytes.length - 16);
-        const decipher = nodeCrypto.createDecipheriv('aes-256-gcm', keyBytes, ivBytes);
-        decipher.setAuthTag(tag);
-        const dec = Buffer.concat([decipher.update(data), decipher.final()]);
-        return JSON.parse(new TextDecoder().decode(new Uint8Array(dec)));
-      }
-    } catch (_) {
-      throw new Error(msg('密码校验未通过，无法解锁钱包密钥', 'Incorrect password; unable to unlock wallet secrets'));
-    }
-    throw new Error(msg('当前环境不支持安全解密', 'Secure decryption unavailable'));
-  }
-
   // ======================== Export Bundle ========================
 
   const NearCACrypto = {
@@ -438,13 +323,7 @@
     deriveNearMpcSolanaAddress,
     deriveNearMpcPearlAddress,
     deriveNearMpcBitcoinAddress,
-    deriveNearMpcAllAddresses,
-
-    // 6. PIN Hashing & Vault Encryption
-    hashPinAsync,
-    verifyPinHashAsync,
-    encryptVaultJsonAsync,
-    decryptVaultJsonAsync
+    deriveNearMpcAllAddresses
   };
 
   if (root) {

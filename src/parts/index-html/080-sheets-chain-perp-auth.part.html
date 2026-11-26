@@ -252,48 +252,6 @@
     </div>
   </div>
 
-  <!-- ==================== Sheet: Biometric & PIN Security Auth ==================== -->
-  <div id="sheet-security-auth" class="bottom-sheet" aria-hidden="true">
-    <div class="sheet-handle"></div>
-    <div class="sheet-header">
-      <h3 class="sheet-title" data-i18n="sheet.authTitle">安全验证</h3>
-      <button type="button" class="btn-ghost-sm" onclick="cancelSecurityAuthModal()" data-i18n="common.close">关闭</button>
-    </div>
-    <div class="sheet-body">
-      <div class="flex items-center justify-between gap-2">
-        <span id="security-auth-reason" style="font-size: 12px; color: var(--text-secondary); text-align: right;">--</span>
-      </div>
-      <button type="button" id="btn-security-biometric" class="btn-primary" onclick="triggerSecurityBiometricNow()" data-i18n="sheet.authBiometricBtn">👤 使用 Face ID / 指纹 / 人脸验证</button>
-      <div id="security-pin-section" class="flex flex-col gap-2">
-        <div class="text-center" style="font-size: 12px; color: var(--text-secondary);" data-i18n="sheet.authPinHint">或输入安全 PIN 密码</div>
-        <div id="security-pin-dots" class="bio-pin-dots">
-          <span class="bio-pin-dot"></span>
-          <span class="bio-pin-dot"></span>
-          <span class="bio-pin-dot"></span>
-          <span class="bio-pin-dot"></span>
-          <span class="bio-pin-dot"></span>
-          <span class="bio-pin-dot"></span>
-        </div>
-        <div class="bio-keypad">
-          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('1')">1</button>
-          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('2')">2</button>
-          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('3')">3</button>
-          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('4')">4</button>
-          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('5')">5</button>
-          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('6')">6</button>
-          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('7')">7</button>
-          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('8')">8</button>
-          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('9')">9</button>
-          <button type="button" class="bio-key bio-key-muted" onclick="clearSecurityPin()">C</button>
-          <button type="button" class="bio-key" onclick="pressSecurityPinDigit('0')">0</button>
-          <button type="button" class="bio-key bio-key-muted" onclick="backspaceSecurityPin()">⌫</button>
-        </div>
-        <button type="button" id="btn-security-pin-confirm" class="btn-secondary hidden" onclick="submitSecurityPin()" data-i18n="sheet.authConfirmPinBtn">确认 PIN</button>
-      </div>
-      <button type="button" class="btn-ghost-sm" onclick="cancelSecurityAuthModal()" data-i18n="sheet.authCancelBtn">取消验证</button>
-    </div>
-  </div>
-
   <!-- ==================== Sheet: Earn Liquid Staking Execute ==================== -->
   <div id="sheet-earn-stake" class="bottom-sheet" aria-hidden="true">
     <div class="sheet-handle"></div>

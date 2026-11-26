@@ -62,7 +62,7 @@ test('Integrity 2: Zero undefined/broken symbol references across src/', () => {
     }
   }
   const secSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/010-security.part.js'), 'utf8');
-  assert.equal(/\bopenSetWalletPinPrompt\s*\(/.test(secSrc), false, '010-security.part.js must use openSetWalletPinPromptSafe()');
+  assert.equal(/\bopenSetWalletPinPrompt\b/.test(secSrc), false, '010-security.part.js must not reference removed PIN prompts');
 });
 
 test('P0 Behavioral: Perps parseHlClearinghouseState, fetchHlOpenOrders, isAppLocked, clearActiveSwapOrder, wNEAR & WC 0-ETH', async () => {

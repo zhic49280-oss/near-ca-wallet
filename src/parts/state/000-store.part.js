@@ -333,9 +333,6 @@
       }
     }
 
-    const rawIter = Number(raw.pinIterations) || 100_000;
-    const pinIterations = Math.min(250_000, Math.max(1000, rawIter));
-
     const wallet = {
       id: String(raw.id || `w_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),
       accountType: acctType,
@@ -343,11 +340,6 @@
       mnemonic: mnemonicClean,
       prlMnemonic,
       btcMnemonic,
-      pin: String(raw.pin || ''),
-      pinHash: String(raw.pinHash || ''),
-      pinSalt: String(raw.pinSalt || ''),
-      pinIterations,
-      pinLen: (typeof raw.pinLen === 'number' && raw.pinLen >= 4 && raw.pinLen <= 6) ? raw.pinLen : undefined,
       biometricEnabled: raw.biometricEnabled !== undefined ? Boolean(raw.biometricEnabled) : true,
       biometricLocked: Boolean(raw.biometricLocked),
       webauthnCredentialId: String(raw.webauthnCredentialId || '').trim(),
@@ -371,6 +363,7 @@
       btcTweakedPrivateKeyHex,
       _mpcDerivedForNearId: mpcDerivedForNearId,
       qtcDepositAddress: String(raw.qtcDepositAddress || '').trim(),
+      qtcDepositAddressAt: Number(raw.qtcDepositAddressAt || 0) || 0,
       // Balances
       nearNep141Balances: (raw.nearNep141Balances && typeof raw.nearNep141Balances === 'object') ? { ...raw.nearNep141Balances } : {},
       intentsBalances: (raw.intentsBalances && typeof raw.intentsBalances === 'object') ? { ...raw.intentsBalances } : {},
@@ -382,7 +375,6 @@
       solStakingPositions: Array.isArray(raw.solStakingPositions) ? raw.solStakingPositions.slice() : [],
       evmStakingPositions: Array.isArray(raw.evmStakingPositions) ? raw.evmStakingPositions.slice() : [],
       activityHistory: Array.isArray(raw.activityHistory) ? raw.activityHistory.slice(0, 100) : [],
-      encryptedVault: (raw.encryptedVault && typeof raw.encryptedVault === 'object') ? raw.encryptedVault : null,
       legacyEvmMnemonic: String(raw.legacyEvmMnemonic || '').trim(),
       legacySolMnemonic: String(raw.legacySolMnemonic || '').trim()
     };
@@ -463,47 +455,5 @@
       }
     }
     return wallet;
-  }
-
-  function hasWalletPin(wallet) {
-    return Boolean(wallet && ((wallet.pinHash && wallet.pinSalt) || (wallet.pin && String(wallet.pin).trim())));
-  }
-
-  async function setWalletPinAsync(wallet, rawPin) {
-    if (!wallet || typeof wallet !== 'object') return false;
-    const clean = String(rawPin || '').trim();
-    if (!clean) {
-      wallet.pin = '';
-      wallet.pinHash = '';
-      wallet.pinSalt = '';
-      return true;
-    }
-    const cryptoEngine = getCryptoEngine();
-    if (cryptoEngine && typeof cryptoEngine.hashPinAsync === 'function') {
-      const h = await cryptoEngine.hashPinAsync(clean);
-      wallet.pinHash = h.hashHex;
-      wallet.pinSalt = h.saltHex;
-      wallet.pinIterations = h.iterations;
-      wallet.pin = '';
-      return true;
-    }
-    wallet.pin = clean;
-    return true;
-  }
-
-  async function verifyWalletPinAsync(wallet, enteredPin) {
-    if (!wallet) return false;
-    const clean = String(enteredPin || '').trim();
-    if (!clean) return false;
-    const cryptoEngine = getCryptoEngine();
-    if (wallet.pinHash && wallet.pinSalt && cryptoEngine && typeof cryptoEngine.verifyPinHashAsync === 'function') {
-      return cryptoEngine.verifyPinHashAsync(clean, wallet.pinHash, wallet.pinSalt, wallet.pinIterations || 100_000);
-    }
-    if (wallet.pin && wallet.pin === clean) {
-      await setWalletPinAsync(wallet, clean).catch(() => {});
-      saveWallets();
-      return true;
-    }
-    return false;
   }
 

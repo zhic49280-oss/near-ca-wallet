@@ -69,14 +69,10 @@ test('v6.0 Regression Suite: Bitcoin BIP-86/Taproot, PBKDF2 PIN, Checksums, Mult
   assert.throws(() => cryptoEngine.base58CheckDecode(mutatedLegacyBtc));
   assert.equal(cryptoEngine.validateChainAddress('btc', mutatedLegacyBtc).valid, false);
 
-  // 3. PBKDF2 PIN hashing (zero plaintext PIN storage)
-  const pinWallet = { id: 'w_v6_pin', name: 'PIN Vault' };
-  assert.equal(state.hasWalletPin(pinWallet), false);
-  await state.setWalletPinAsync(pinWallet, '246810');
-  assert.equal(state.hasWalletPin(pinWallet), true);
-  assert.ok(!pinWallet.pin && pinWallet.pinHash && pinWallet.pinSalt);
-  assert.equal(await state.verifyWalletPinAsync(pinWallet, '246810'), true);
-  assert.equal(await state.verifyWalletPinAsync(pinWallet, '000000'), false);
+  // 3. Legacy PIN/Vault helpers removed (device-native auth only)
+  assert.equal(state.hasWalletPin, undefined);
+  assert.equal(state.setWalletPinAsync, undefined);
+  assert.equal(state.verifyWalletPinAsync, undefined);
 
   // 4. Multicall3 round-trip & Ethena selectors (0x01320fe2 / 0x35269315)
   const sampleCalls = [
@@ -220,16 +216,18 @@ test('v6.1 Audit & Performance Regression Suite: Hydration, SWR Cache, Precheck,
     tokenRegistry.setLiveDefuseTokens(Array.isArray(prevLive) ? prevLive : []);
   }
 
-  // 2. state.js: op/pol/avax balance keys, accountType preservation, pinIterations clamp, and 24h SWR cache TTL
+  // 2. state.js: op/pol/avax balance keys, accountType preservation, legacy PIN fields stripped, and 24h SWR cache TTL
   const norm = state.normalizeWalletRecord({
     id: 'w_v61_norm',
     mnemonic: TEST_MNEMONIC,
     accountType: 'imported_key',
-    pinIterations: 50,
+    pin: '123456',
+    pinHash: 'deadbeef',
     nativeBalances: { op: 1.25, pol: 9.5, avax: 0.75 }
   });
   assert.equal(norm.accountType, 'imported_key');
-  assert.equal(norm.pinIterations, 1000);
+  assert.equal(norm.pin, undefined);
+  assert.equal(norm.pinHash, undefined);
   assert.equal(norm.nativeBalances.op, 1.25);
   assert.equal(norm.nativeBalances.pol, 9.5);
   assert.equal(norm.nativeBalances.avax, 0.75);

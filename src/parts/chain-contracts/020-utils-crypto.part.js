@@ -156,7 +156,7 @@
       names.includes('OperationError') ||
       /webauthn|publickeycredential|relying party|unable to authenticate|passkey|biometric/i.test(inspectMsg)
     ) {
-      return t('验证不可用或密码校验未通过，请重试或使用安全密码', 'Verification unavailable or failed. Please retry or use your wallet PIN.');
+      return t('生物识别验证不可用或未通过，请重试', 'Biometric verification unavailable or failed. Please retry.');
     }
 
     if (
