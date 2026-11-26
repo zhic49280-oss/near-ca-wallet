@@ -1,6 +1,9 @@
 import { h } from 'preact';
+import { useLang, useWalletState } from '../store/useWalletStore.js';
 
 export function HubView() {
+  useLang();
+  useWalletState(['wallet', 'lang']);
   return (
     <section id="view-hub" className="view-section hidden">
       {/* Identity Hero Card */}

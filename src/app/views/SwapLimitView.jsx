@@ -1,6 +1,12 @@
 import { h } from 'preact';
+import { useLang } from '../store/useWalletStore.js';
+import { PanelSlot } from '../components/PanelSlot.jsx';
+import { SwapRouteInfoPanel, SwapActiveOrderPanel } from '../components/SwapQuoteStatusPanel.jsx';
+import { SwapHistoryPanel } from '../components/SwapHistoryPanel.jsx';
+import { LimitOrdersPanel } from '../components/LimitOrdersPanel.jsx';
 
 export function SwapLimitView() {
+  useLang();
   return (
     <section id="view-swap" className="view-section hidden">
       <div className="section-header" style={{ marginBottom: '4px' }}>
@@ -167,7 +173,9 @@ export function SwapLimitView() {
             <div id="swap-details-body" className="meta-details-body hidden">
               <div className="meta-row">
                 <span className="meta-key" data-i18n="swap.routeLabel">执行路由</span>
-                <span id="swap-quote-route" className="meta-val">--</span>
+                <span id="swap-quote-route" className="meta-val">
+                  <PanelSlot slotId="swap-quote-route" component={SwapRouteInfoPanel} renderEmpty="--" />
+                </span>
               </div>
               <div className="meta-row">
                 <span className="meta-key" data-i18n="swap.feeLabel">服务费</span>
@@ -251,7 +259,9 @@ export function SwapLimitView() {
           <div className="meta-list">
             <div className="meta-row">
               <span className="meta-key" data-i18n="swap.orderStatus">订单状态</span>
-              <span id="swap-order-status" className="meta-val">--</span>
+              <span id="swap-order-status" className="meta-val">
+                <PanelSlot slotId="swap-order-status" component={SwapActiveOrderPanel} renderEmpty="--" />
+              </span>
             </div>
             <div id="swap-order-tx-row" className="meta-row hidden">
               <span className="meta-key" data-i18n="swap.orderTxHash">交易哈希</span>
@@ -318,7 +328,9 @@ export function SwapLimitView() {
           <div className="flex items-center justify-between">
             <span style={{ fontWeight: 700, fontSize: '14px' }} data-i18n="swap.historyTitle">闪兑记录</span>
           </div>
-          <div id="swap-history-list" className="flex flex-col gap-2"></div>
+          <div id="swap-history-list" className="flex flex-col gap-2">
+            <PanelSlot slotId="swap-history-list" component={SwapHistoryPanel} />
+          </div>
         </div>
       </div>
 
@@ -575,7 +587,9 @@ export function SwapLimitView() {
               </button>
             </div>
           </div>
-          <div id="limit-orders-list" className="flex flex-col gap-2"></div>
+          <div id="limit-orders-list" className="flex flex-col gap-2">
+            <PanelSlot slotId="limit-orders-list" component={LimitOrdersPanel} />
+          </div>
         </div>
       </div>
     </section>

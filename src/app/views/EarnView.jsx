@@ -1,6 +1,12 @@
 import { h } from 'preact';
+import { useLang, useWalletState } from '../store/useWalletStore.js';
+import { PanelSlot } from '../components/PanelSlot.jsx';
+import { EarnPoolsPanel } from '../components/EarnPoolsPanel.jsx';
+import { EarnValidatorsPanel } from '../components/EarnStakeSheetPanel.jsx';
 
 export function EarnView() {
+  useLang();
+  useWalletState(['earn', 'lang']);
   return (
     <section id="view-earn" className="view-section hidden">
       <div className="section-header-row">
@@ -49,10 +55,14 @@ export function EarnView() {
           <span style={{ fontWeight: 700, fontSize: '13.5px' }} data-i18n="earn.myPositionsTitle">我的质押仓位</span>
           <span id="earn-my-positions-count" className="ca-badge">0</span>
         </div>
-        <div id="earn-my-positions-list" className="flex flex-col gap-2"></div>
+        <div id="earn-my-positions-list" className="flex flex-col gap-2">
+          <PanelSlot slotId="earn-my-positions-list" component={EarnValidatorsPanel} />
+        </div>
       </div>
 
-      <div id="staking-pools-list" className="staking-pools-grid"></div>
+      <div id="staking-pools-list" className="staking-pools-grid">
+        <PanelSlot slotId="staking-pools-list" component={EarnPoolsPanel} />
+      </div>
     </section>
   );
 }

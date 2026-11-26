@@ -21,236 +21,203 @@ import { WcSessionsPanel, WcProposalPanel } from './components/WalletConnectPane
 import { DAppBookmarksPanel, DAppApprovePanel } from './components/DAppBrowserPanels.jsx';
 import { ToastBanner } from './components/ui/ToastBanner.jsx';
 import { TxFlowModal } from './components/TxFlowModals.jsx';
-import { useWalletState, notifyFrameworkState, useLang, useActiveWallet } from './store/useWalletStore.js';
+import {
+  useWalletState,
+  notifyFrameworkState,
+  useLang,
+  useActiveWallet,
+  registerPanelSlot,
+  isPanelSlotRegistered,
+  setPanelProps,
+  clearPanelProps,
+  usePanelProps
+} from './store/useWalletStore.js';
+
+function mountOrDispatch(containerEl, Component, props) {
+  if (!containerEl) return false;
+  const id = containerEl.id;
+  if (id && isPanelSlotRegistered(id)) {
+    setPanelProps(id, props || {});
+    return true;
+  }
+  render(h(Component, props || {}), containerEl);
+  return true;
+}
+
+function frameworkRender(vnode, containerEl) {
+  if (vnode === null && containerEl && containerEl.id && isPanelSlotRegistered(containerEl.id)) {
+    clearPanelProps(containerEl.id);
+    return;
+  }
+  return render(vnode, containerEl);
+}
 
 export function mountSwapHistory(containerEl, opts = {}) {
-  if (!containerEl) return false;
-  render(h(SwapHistoryPanel, { getStatusLabel: opts.getStatusLabel }), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, SwapHistoryPanel, { getStatusLabel: opts.getStatusLabel });
 }
 
 export function mountAssetList(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(AssetListPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, AssetListPanel, props);
 }
 
 export function mountTokenPicker(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(TokenPickerPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, TokenPickerPanel, props);
 }
 
 export function mountPerpOverview(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(PerpOverviewPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, PerpOverviewPanel, props);
 }
 
 export function mountPerpOrderbookSide(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(PerpOrderbookSidePanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, PerpOrderbookSidePanel, props);
 }
 
 export function mountPerpBottomList(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(PerpBottomListPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, PerpBottomListPanel, props);
 }
 
 export function mountPerpOverviewPositionsPanel(containerEl, props = {}) {
   if (!containerEl) return false;
   const positions = props && Array.isArray(props.positions) ? props.positions : [];
   if (!positions.length) {
-    render(null, containerEl);
+    if (containerEl.id && isPanelSlotRegistered(containerEl.id)) {
+      clearPanelProps(containerEl.id);
+    } else {
+      render(null, containerEl);
+    }
     return true;
   }
-  render(h(PerpOverviewPositionsPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, PerpOverviewPositionsPanel, props);
 }
 
 export function mountLimitOrdersPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(LimitOrdersPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, LimitOrdersPanel, props);
 }
 
 export function mountEarnPoolsPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(EarnPoolsPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, EarnPoolsPanel, props);
 }
 
 export function mountTokenHistoryPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(TokenHistoryPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, TokenHistoryPanel, props);
 }
 
 export function mountContactsPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(ContactsPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, ContactsPanel, props);
 }
 
 export function mountNearKeysPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(NearKeysPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, NearKeysPanel, props);
 }
 
 export function mountSolRentPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(SolRentPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, SolRentPanel, props);
 }
 
 export function mountNearStoragePanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(NearStoragePanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, NearStoragePanel, props);
 }
 
 export function mountWalletListPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(WalletListPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, WalletListPanel, props);
 }
 
 export function mountBackupSecretsPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(BackupSecretsPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, BackupSecretsPanel, props);
 }
 
 export function mountWalletAddressesPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(WalletAddressesPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, WalletAddressesPanel, props);
 }
 
 export function mountSendFeeSummaryPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(SendFeeSummaryPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, SendFeeSummaryPanel, props);
 }
 
 export function mountReceiveAddressListPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(ReceiveAddressListPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, ReceiveAddressListPanel, props);
 }
 
 export function mountTokenBreakdownPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(TokenBreakdownPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, TokenBreakdownPanel, props);
 }
 
 export function mountTxDetailPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(TxDetailPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, TxDetailPanel, props);
 }
 
 export function mountTxHistorySheetPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(TxHistorySheetPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, TxHistorySheetPanel, props);
 }
 
 export function mountSwapActiveOrderPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(SwapActiveOrderPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, SwapActiveOrderPanel, props);
 }
 
 export function mountSwapRouteInfoPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(SwapRouteInfoPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, SwapRouteInfoPanel, props);
 }
 
 export function mountPerpMarketsSheetPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(PerpMarketsSheetPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, PerpMarketsSheetPanel, props);
 }
 
 export function mountPerpFundingInfoPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(PerpFundingInfoPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, PerpFundingInfoPanel, props);
 }
 
 export function mountPerpChartHudPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(PerpChartHudPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, PerpChartHudPanel, props);
 }
 
 export function mountEarnStakeSheetPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(EarnStakeSheetPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, EarnStakeSheetPanel, props);
 }
 
 export function mountEarnValidatorsPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(EarnValidatorsPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, EarnValidatorsPanel, props);
 }
 
 export function mountMiningTelemetryPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(MiningTelemetryPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, MiningTelemetryPanel, props);
 }
 
 export function mountMiningWorkersPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(MiningWorkersPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, MiningWorkersPanel, props);
 }
 
 export function mountWcSessionsPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(WcSessionsPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, WcSessionsPanel, props);
 }
 
 export function mountWcProposalPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(WcProposalPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, WcProposalPanel, props);
 }
 
 export function mountDAppBookmarksPanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(DAppBookmarksPanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, DAppBookmarksPanel, props);
 }
 
 export function mountDAppApprovePanel(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(DAppApprovePanel, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, DAppApprovePanel, props);
 }
 
 export function mountToastBanner(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(ToastBanner, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, ToastBanner, props);
 }
 
 export function mountTxFlowModal(containerEl, props = {}) {
-  if (!containerEl) return false;
-  render(h(TxFlowModal, props), containerEl);
-  return true;
+  return mountOrDispatch(containerEl, TxFlowModal, props);
 }
 
-export { App };
+export {
+  App,
+  registerPanelSlot,
+  isPanelSlotRegistered,
+  setPanelProps,
+  clearPanelProps,
+  usePanelProps
+};
 
 export function mountAppRoot(rootEl) {
   if (!rootEl) return false;
@@ -260,13 +227,18 @@ export function mountAppRoot(rootEl) {
 
 const NearCAFramework = {
   h,
-  render,
+  render: frameworkRender,
   App,
   mountAppRoot,
   useWalletState,
   notifyFrameworkState,
   useLang,
   useActiveWallet,
+  registerPanelSlot,
+  isPanelSlotRegistered,
+  setPanelProps,
+  clearPanelProps,
+  usePanelProps,
   mountSwapHistory,
   mountAssetList,
   mountTokenPicker,

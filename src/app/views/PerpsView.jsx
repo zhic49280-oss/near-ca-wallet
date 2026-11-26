@@ -1,6 +1,12 @@
 import { h } from 'preact';
+import { useLang } from '../store/useWalletStore.js';
+import { PanelSlot } from '../components/PanelSlot.jsx';
+import { PerpOverviewPanel } from '../components/PerpOverviewPanel.jsx';
+import { PerpOrderbookSidePanel, PerpBottomListPanel, PerpOverviewPositionsPanel } from '../components/PerpOrderbookAndPositions.jsx';
+import { PerpChartHudPanel } from '../components/PerpDetailPanels.jsx';
 
 export function PerpView() {
+  useLang();
   return (
     <section id="view-perp" className="view-section hidden">
       {/* 1. Contract Wallet Summary (Always visible in Overview) */}
@@ -68,7 +74,9 @@ export function PerpView() {
             id="perp-overview-positions-wrap"
             className="hidden flex flex-col gap-2"
             style={{ paddingTop: '6px', borderTop: '1px solid rgba(255,255,255,0.06)' }}
-          ></div>
+          >
+            <PanelSlot slotId="perp-overview-positions-wrap" component={PerpOverviewPositionsPanel} />
+          </div>
         </div>
 
         {/* Market Overview List: Watchlist / Crypto / Stocks (HIP-3) / All */}
@@ -120,7 +128,9 @@ export function PerpView() {
             </div>
           </div>
 
-          <div id="perp-overview-list" className="flex flex-col gap-2"></div>
+          <div id="perp-overview-list" className="flex flex-col gap-2">
+            <PanelSlot slotId="perp-overview-list" component={PerpOverviewPanel} />
+          </div>
         </div>
       </div>
 
@@ -209,7 +219,9 @@ export function PerpView() {
               </div>
               <span id="perp-chart-hl" className="mono" style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>--</span>
             </div>
-            <div id="perp-candle-detail" className="perp-candle-inspect-bar mono"></div>
+            <div id="perp-candle-detail" className="perp-candle-inspect-bar mono">
+              <PanelSlot slotId="perp-candle-detail" component={PerpChartHudPanel} />
+            </div>
             <div id="perp-chart-svg"></div>
           </div>
         </div>
@@ -465,9 +477,13 @@ export function PerpView() {
             </div>
 
             <div className="perp-ob-grid perp-ob-stacked">
-              <div className="perp-ob-col" id="perp-ob-asks"></div>
+              <div className="perp-ob-col" id="perp-ob-asks">
+                <PanelSlot slotId="perp-ob-asks" component={PerpOrderbookSidePanel} />
+              </div>
               <div id="perp-ob-mid-badge" className="perp-ob-mid-badge mono">--</div>
-              <div className="perp-ob-col" id="perp-ob-bids"></div>
+              <div className="perp-ob-col" id="perp-ob-bids">
+                <PanelSlot slotId="perp-ob-bids" component={PerpOrderbookSidePanel} />
+              </div>
             </div>
           </div>
         </div>
@@ -513,7 +529,9 @@ export function PerpView() {
               --
             </button>
           </div>
-          <div id="perp-bottom-list" className="flex flex-col gap-2"></div>
+          <div id="perp-bottom-list" className="flex flex-col gap-2">
+            <PanelSlot slotId="perp-bottom-list" component={PerpBottomListPanel} />
+          </div>
         </div>
       </div>
     </section>

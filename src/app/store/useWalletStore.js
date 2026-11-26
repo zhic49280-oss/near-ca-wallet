@@ -92,3 +92,91 @@ export function useActiveWallet() {
   if (!st || typeof st.getActiveWallet !== 'function') return null;
   return st.getActiveWallet();
 }
+
+const _panelProps = new Map();
+const _panelListeners = new Map();
+const _registeredSlots = new Set();
+
+/**
+ * Registers a declarative PanelSlot ID so imperative mount* callers know it is tree-managed.
+ */
+export function registerPanelSlot(slotId) {
+  if (!slotId) return () => {};
+  _registeredSlots.add(slotId);
+  return () => {
+    _registeredSlots.delete(slotId);
+  };
+}
+
+/**
+ * Returns true when a PanelSlot with the given ID is currently mounted in the single-tree App.
+ */
+export function isPanelSlotRegistered(slotId) {
+  return Boolean(slotId && _registeredSlots.has(slotId));
+}
+
+/**
+ * Updates props for a specific PanelSlot and synchronously notifies only that slot's subscriber.
+ */
+export function setPanelProps(slotId, props) {
+  if (!slotId) return;
+  const next = props === undefined ? null : props;
+  if (next === null) {
+    _panelProps.delete(slotId);
+  } else {
+    _panelProps.set(slotId, next);
+  }
+  const listeners = _panelListeners.get(slotId);
+  if (listeners && listeners.size > 0) {
+    listeners.forEach((fn) => {
+      try {
+        fn(next);
+      } catch (_) {}
+    });
+  }
+}
+
+/**
+ * Clears props for a specific PanelSlot, reverting it to its empty state.
+ */
+export function clearPanelProps(slotId) {
+  setPanelProps(slotId, null);
+}
+
+/**
+ * Per-slot reactive hook: registers immediately on render so mountAppRoot() exposes slots synchronously,
+ * and subscribes only to updates targeting this specific slotId.
+ */
+export function usePanelProps(slotId) {
+  if (slotId) {
+    _registeredSlots.add(slotId);
+  }
+  const [props, setProps] = useState(() => (slotId && _panelProps.has(slotId) ? _panelProps.get(slotId) : null));
+
+  useEffect(() => {
+    if (!slotId) return undefined;
+    const unregister = registerPanelSlot(slotId);
+    let listeners = _panelListeners.get(slotId);
+    if (!listeners) {
+      listeners = new Set();
+      _panelListeners.set(slotId, listeners);
+    }
+    const onUpdate = (next) => {
+      const normalized = next === undefined ? null : next;
+      setProps(() => normalized);
+    };
+    listeners.add(onUpdate);
+    const latest = _panelProps.has(slotId) ? _panelProps.get(slotId) : null;
+    setProps((prev) => (prev === latest ? prev : latest));
+
+    return () => {
+      listeners.delete(onUpdate);
+      if (listeners.size === 0) {
+        _panelListeners.delete(slotId);
+      }
+      unregister();
+    };
+  }, [slotId]);
+
+  return props ?? null;
+}

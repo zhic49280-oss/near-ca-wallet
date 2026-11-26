@@ -1,4 +1,11 @@
 import { h, Fragment } from 'preact';
+import { PanelSlot } from '../components/PanelSlot.jsx';
+import { useLang } from '../store/useWalletStore.js';
+import { SendFeeSummaryPanel, ReceiveAddressListPanel } from '../components/SendReceivePanels.jsx';
+import { TokenBreakdownPanel } from '../components/TokenDetailPanels.jsx';
+import { TokenHistoryPanel } from '../components/TokenHistoryPanel.jsx';
+import { TokenPickerPanel } from '../components/TokenPickerPanel.jsx';
+import { TxFlowModal } from '../components/TxFlowModals.jsx';
 
 const callWin = (fn, ...args) => {
   const f = typeof window !== 'undefined' ? window[fn] : null;
@@ -7,6 +14,7 @@ const callWin = (fn, ...args) => {
 };
 
 export function CoreSheets() {
+  useLang();
   return (
     <Fragment>
       {/* ==================== Sheet Backdrop ==================== */}
@@ -79,7 +87,7 @@ export function CoreSheets() {
             </div>
           </div>
 
-          <div id="send-route-preview" class="meta-list hidden" />
+          <div id="send-route-preview" class="meta-list hidden"><PanelSlot slotId="send-route-preview" component={SendFeeSummaryPanel} /></div>
           <div id="send-tx-receipt" class="meta-list hidden" />
           <button type="button" id="btn-confirm-send" class="btn-primary" onClick={() => callWin('executeUnifiedSend')} data-i18n="sheet.sendConfirmBtn">确认发送</button>
         </div>
@@ -93,10 +101,10 @@ export function CoreSheets() {
           <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">关闭</button>
         </div>
         <div class="sheet-body" style={{ textAlign: 'center' }}>
-          <div id="receive-network-pills" class="pill-scroll" />
+          <div id="receive-network-pills" class="pill-scroll"><PanelSlot slotId="receive-network-pills" component={ReceiveAddressListPanel} /></div>
           <div id="receive-qr-container" class="qr-frame" />
           <div id="receive-addr-label" style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>--</div>
-          <div id="receive-addr-value" class="input-field mono" style={{ wordBreak: 'break-all', fontSize: '11.5px', textAlign: 'center' }}>--</div>
+          <div id="receive-addr-value" class="input-field mono" style={{ wordBreak: 'break-all', fontSize: '11.5px', textAlign: 'center' }}><PanelSlot slotId="receive-addr-value" component={ReceiveAddressListPanel} renderEmpty="--" /></div>
           <button type="button" class="btn-primary" onClick={() => callWin('copyReceiveAddress')} data-i18n="sheet.receiveCopyBtn">复制收款地址</button>
         </div>
       </div>
@@ -148,7 +156,7 @@ export function CoreSheets() {
           {/* Per-Chain Breakdown when 'all' is selected */}
           <div id="token-detail-breakdown-card" class="ios-glass-card flex flex-col gap-2">
             <span style={{ fontWeight: 700, fontSize: '13px' }} data-i18n="detail.chainBreakdownTitle">分链余额明细</span>
-            <div id="token-detail-breakdown-list" class="flex flex-col gap-2" />
+            <div id="token-detail-breakdown-list" class="flex flex-col gap-2"><PanelSlot slotId="token-detail-breakdown-list" component={TokenBreakdownPanel} /></div>
           </div>
 
           {/* Earn / Staking / Lending Section for this token */}
@@ -165,7 +173,7 @@ export function CoreSheets() {
                 <a id="token-detail-explorer-link" href="#" target="_blank" rel="noopener noreferrer" class="mono" style={{ fontSize: '11.5px', color: 'var(--near-emerald)', textDecoration: 'none' }} data-i18n="detail.openExplorerBtn">前往浏览器 ↗</a>
               </div>
             </div>
-            <div id="token-detail-history-list" class="flex flex-col gap-2" style={{ fontSize: '12px' }} />
+            <div id="token-detail-history-list" class="flex flex-col gap-2" style={{ fontSize: '12px' }}><PanelSlot slotId="token-detail-history-list" component={TokenHistoryPanel} /></div>
           </div>
 
           {/* Bottom Live Price Bar */}
@@ -195,7 +203,7 @@ export function CoreSheets() {
           <div id="token-picker-favorites" class="pill-scroll" />
           <div id="token-picker-chains" class="pill-scroll" />
           <div id="token-picker-more-chains" class="picker-more-chains-grid hidden" />
-          <div id="token-picker-list" class="flex flex-col gap-2" style={{ maxHeight: '46vh', overflowY: 'auto' }} />
+          <div id="token-picker-list" class="flex flex-col gap-2" style={{ maxHeight: '46vh', overflowY: 'auto' }}><PanelSlot slotId="token-picker-list" component={TokenPickerPanel} /></div>
         </div>
       </div>
 
@@ -218,7 +226,7 @@ export function CoreSheets() {
 
       {/* ==================== Sheet: Transaction Preview & Stepper Flow ==================== */}
       <div id="tx-flow-backdrop" class="tx-flow-backdrop hidden" aria-hidden="true" />
-      <div id="sheet-tx-flow" class="tx-flow-sheet" aria-hidden="true" />
+      <div id="sheet-tx-flow" class="tx-flow-sheet" aria-hidden="true"><PanelSlot slotId="sheet-tx-flow" component={TxFlowModal} /></div>
     </Fragment>
   );
 }

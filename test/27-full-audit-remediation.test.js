@@ -165,3 +165,47 @@ test('Wave 3 Live-Fix: #app-root width rule in style.css and /solana-rpc proxy i
   assert.ok(serverSrc.includes("reqPathname === '/solana-rpc'"), 'server.js must expose /solana-rpc proxy route');
   assert.ok(serverSrc.includes('api.mainnet-beta.solana.com'), 'server.js /solana-rpc must forward to api.mainnet-beta.solana.com');
 });
+
+test('Wave 4: 100% single-tree reactive Preact PanelSlot architecture', () => {
+  const storeSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/app/store/useWalletStore.js'), 'utf8');
+  assert.ok(storeSrc.includes('export function registerPanelSlot('), 'useWalletStore must export registerPanelSlot');
+  assert.ok(storeSrc.includes('export function isPanelSlotRegistered('), 'useWalletStore must export isPanelSlotRegistered');
+  assert.ok(storeSrc.includes('export function setPanelProps('), 'useWalletStore must export setPanelProps');
+  assert.ok(storeSrc.includes('export function clearPanelProps('), 'useWalletStore must export clearPanelProps');
+  assert.ok(storeSrc.includes('export function usePanelProps('), 'useWalletStore must export usePanelProps');
+
+  const panelSlotSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/app/components/PanelSlot.jsx'), 'utf8');
+  assert.ok(panelSlotSrc.includes('export function PanelSlot('), 'PanelSlot.jsx must export PanelSlot');
+  assert.ok(panelSlotSrc.includes('usePanelProps(slotId)'), 'PanelSlot must subscribe via usePanelProps(slotId)');
+
+  const viewFiles = fs.readdirSync(path.join(ROOT_DIR, 'src/app/views'))
+    .filter((f) => f.endsWith('.jsx') && f !== 'TradingViews.jsx')
+    .map((f) => path.join(ROOT_DIR, 'src/app/views', f));
+  const sheetFiles = fs.readdirSync(path.join(ROOT_DIR, 'src/app/sheets'))
+    .filter((f) => f.endsWith('.jsx'))
+    .map((f) => path.join(ROOT_DIR, 'src/app/sheets', f));
+
+  for (const filePath of [...viewFiles, ...sheetFiles]) {
+    const src = fs.readFileSync(filePath, 'utf8');
+    const usesHooks = /\b(useLang|useWalletState|usePanelProps)\b/.test(src);
+    assert.ok(usesHooks, `${path.basename(filePath)} must use Preact Hooks (useLang/useWalletState/usePanelProps)`);
+  }
+
+  const allAppSrc = [...viewFiles, ...sheetFiles]
+    .map((filePath) => fs.readFileSync(filePath, 'utf8'))
+    .join('\n');
+  for (const slotId of [
+    'earn-my-positions-list',
+    'home-unified-asset-list',
+    'swap-history-list',
+    'perp-ob-asks',
+    'sol-rent-list',
+    'sheet-tx-flow',
+    'toast-host'
+  ]) {
+    assert.ok(
+      allAppSrc.includes(`slotId="${slotId}"`) && allAppSrc.includes('<PanelSlot'),
+      `PanelSlot for "${slotId}" must be wired in src/app/`
+    );
+  }
+});

@@ -1,5 +1,8 @@
 import { h, Fragment } from 'preact';
 import { useLang, useActiveWallet, useWalletState } from '../store/useWalletStore.js';
+import { PanelSlot } from '../components/PanelSlot.jsx';
+import { ToastBanner } from '../components/ui/ToastBanner.jsx';
+import { AssetListPanel } from '../components/AssetListPanel.jsx';
 
 function shortenAddr(addr, head = 6, tail = 4) {
   const s = String(addr || '');
@@ -13,13 +16,13 @@ export function AppShellOverlays() {
     <Fragment>
       <div id="app-privacy-shield" className="app-privacy-shield" aria-hidden="true">
         <div className="app-lock-card">
-          <img src="assets/nexus-logo-192.png?v=6.80" alt="Nexus Wallet" className="app-lock-logo" />
+          <img src="assets/nexus-logo-192.png?v=6.81" alt="Nexus Wallet" className="app-lock-logo" />
           <div className="app-lock-brand">Nexus Wallet</div>
         </div>
       </div>
       <div id="app-lock-overlay" className="app-lock-overlay" role="dialog" aria-modal="true" aria-hidden="true">
         <div className="app-lock-card">
-          <img src="assets/nexus-logo-192.png?v=6.80" alt="Nexus Wallet" className="app-lock-logo" />
+          <img src="assets/nexus-logo-192.png?v=6.81" alt="Nexus Wallet" className="app-lock-logo" />
           <div className="app-lock-brand">Nexus Wallet</div>
           <div id="app-lock-title" className="app-lock-title" data-i18n="lock.title">安全锁定</div>
           <div id="app-lock-status" className="app-lock-status" data-i18n="lock.hint">请通过生物识别或锁屏密码解锁</div>
@@ -36,7 +39,9 @@ export function AppShellOverlays() {
         </div>
       </div>
       <div className="ambient-bg" aria-hidden="true"></div>
-      <div id="toast-host" className="toast-host" aria-live="polite" />
+      <div id="toast-host" className="toast-host" aria-live="polite">
+        <PanelSlot slotId="toast-host" component={ToastBanner} />
+      </div>
     </Fragment>
   );
 }
@@ -83,13 +88,14 @@ export function AppHeader() {
 }
 
 export function OnboardingAndWalletViews() {
+  useLang();
   return (
     <Fragment>
       {/* ==================== Onboarding View ==================== */}
       <section id="view-onboarding" className="view-section hidden">
         <div className="ios-glass-card hero-card" style={{ padding: '24px 18px', textAlign: 'center' }}>
           <img
-            src="assets/nexus-logo-512.png?v=6.80"
+            src="assets/nexus-logo-512.png?v=6.81"
             alt="Nexus Wallet"
             style={{
               width: '64px',
@@ -286,7 +292,9 @@ export function OnboardingAndWalletViews() {
           <h2 className="section-title" data-i18n="home.assetsTitle">聚合资产列表</h2>
         </div>
 
-        <div id="home-unified-asset-list" className="asset-list"></div>
+        <div id="home-unified-asset-list" className="asset-list">
+          <PanelSlot slotId="home-unified-asset-list" component={AssetListPanel} />
+        </div>
       </section>
     </Fragment>
   );

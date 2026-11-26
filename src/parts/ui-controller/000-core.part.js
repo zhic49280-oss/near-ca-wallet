@@ -58,7 +58,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.80');
+      await loadScriptOnce('ethers.umd.min.js?v=6.81');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -68,7 +68,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.80').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.81').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -78,7 +78,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.80').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.81').catch(() => false);
       return getMining();
     }
     return null;
@@ -330,6 +330,9 @@
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (fw && typeof fw.render === 'function') {
       try { fw.render(null, el); } catch (_) {}
+    }
+    if (fw && typeof fw.isPanelSlotRegistered === 'function' && el.id && fw.isPanelSlotRegistered(el.id)) {
+      return;
     }
     el.innerHTML = '';
   }

@@ -1,4 +1,15 @@
 import { h, Fragment } from 'preact';
+import { PanelSlot } from '../components/PanelSlot.jsx';
+import { useLang } from '../store/useWalletStore.js';
+import { MiningTelemetryPanel, MiningWorkersPanel } from '../components/MiningProPanel.jsx';
+import { TxHistorySheetPanel, TxDetailPanel } from '../components/TokenDetailPanels.jsx';
+import { WcProposalPanel, WcSessionsPanel } from '../components/WalletConnectPanel.jsx';
+import { ContactsPanel } from '../components/ContactsPanel.jsx';
+import { WalletListPanel, BackupSecretsPanel, WalletAddressesPanel } from '../components/WalletManagerPanels.jsx';
+import { NearKeysPanel, SolRentPanel, NearStoragePanel } from '../components/HubToolsPanels.jsx';
+import { PerpMarketsSheetPanel, PerpFundingInfoPanel } from '../components/PerpDetailPanels.jsx';
+import { EarnStakeSheetPanel } from '../components/EarnStakeSheetPanel.jsx';
+import { DAppBookmarksPanel, DAppApprovePanel } from '../components/DAppBrowserPanels.jsx';
 
 const callWin = (fn, ...args) => {
   const f = typeof window !== 'undefined' ? window[fn] : null;
@@ -7,6 +18,7 @@ const callWin = (fn, ...args) => {
 };
 
 export function ToolsAndChainSheets() {
+  useLang();
   return (
     <Fragment>
       {/* ==================== Sheet: Deep Mining Pro ==================== */}
@@ -23,7 +35,7 @@ export function ToolsAndChainSheets() {
             <button type="button" id="btn-mining-query" class="btn-secondary" onClick={() => callWin('runMiningDeepQuery')} data-i18n="sheet.miningQueryBtn">查询</button>
             <button type="button" class="btn-ghost-sm" onClick={() => callWin('saveCurrentMinerAddress')} data-i18n="sheet.miningSaveBtn">收藏</button>
           </div>
-          <div id="mining-watchlist" class="pill-scroll" />
+          <div id="mining-watchlist" class="pill-scroll"><PanelSlot slotId="mining-watchlist" component={MiningTelemetryPanel} /></div>
 
           {/* Pool Selector */}
           <div class="segmented-control">
@@ -34,7 +46,7 @@ export function ToolsAndChainSheets() {
           </div>
 
           {/* Network Telemetry Bar */}
-          <div id="mining-network-bar" class="meta-list" />
+          <div id="mining-network-bar" class="meta-list"><PanelSlot slotId="mining-network-bar" component={MiningTelemetryPanel} /></div>
 
           {/* 30m / 3h / 24h Hashrate KPIs */}
           <div class="kpi-grid-3">
@@ -83,7 +95,7 @@ export function ToolsAndChainSheets() {
                     <th data-i18n="sheet.miningColShares">份额</th>
                   </tr>
                 </thead>
-                <tbody id="mining-workers-tbody" />
+                <tbody id="mining-workers-tbody"><PanelSlot slotId="mining-workers-tbody" component={MiningWorkersPanel} /></tbody>
               </table>
             </div>
           </div>
@@ -94,7 +106,7 @@ export function ToolsAndChainSheets() {
               <span id="mining-payouts-title" style={{ fontSize: '12px', fontWeight: 700 }} data-i18n="sheet.miningPayoutsTitle">近期打款记录</span>
               <button type="button" id="mining-payouts-all-btn" class="btn-ghost-sm hidden" onClick={() => callWin('openAllMiningPayoutHistorySheet')} data-i18n="detail.allBtn">全部 ›</button>
             </div>
-            <div id="mining-payouts-list" class="flex flex-col gap-1" />
+            <div id="mining-payouts-list" class="flex flex-col gap-1"><PanelSlot slotId="mining-payouts-list" component={MiningTelemetryPanel} /></div>
           </div>
         </div>
       </div>
@@ -110,7 +122,7 @@ export function ToolsAndChainSheets() {
           <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">关闭</button>
         </div>
         <div class="sheet-body" style={{ maxHeight: '76vh', overflowY: 'auto' }}>
-          <div id="tx-history-full-list" class="flex flex-col gap-2" />
+          <div id="tx-history-full-list" class="flex flex-col gap-2"><PanelSlot slotId="tx-history-full-list" component={TxHistorySheetPanel} /></div>
         </div>
       </div>
 
@@ -124,7 +136,7 @@ export function ToolsAndChainSheets() {
           </div>
           <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">关闭</button>
         </div>
-        <div id="tx-detail-body" class="sheet-body flex flex-col gap-3" style={{ maxHeight: '76vh', overflowY: 'auto' }} />
+        <div id="tx-detail-body" class="sheet-body flex flex-col gap-3" style={{ maxHeight: '76vh', overflowY: 'auto' }}><PanelSlot slotId="tx-detail-body" component={TxDetailPanel} /></div>
       </div>
 
       {/* ==================== Sheet: WalletConnect v2 ==================== */}
@@ -152,7 +164,7 @@ export function ToolsAndChainSheets() {
           </div>
 
           {/* Pending Proposal */}
-          <div id="wc-proposal-card" class="hidden ios-glass-card flex flex-col gap-2" style={{ padding: '12px', borderColor: 'rgba(56,189,248,0.4)' }} />
+          <div id="wc-proposal-card" class="hidden ios-glass-card flex flex-col gap-2" style={{ padding: '12px', borderColor: 'rgba(56,189,248,0.4)' }}><PanelSlot slotId="wc-proposal-card" component={WcProposalPanel} /></div>
 
           {/* Pending Request */}
           <div id="wc-request-card" class="hidden ios-glass-card flex flex-col gap-2" style={{ padding: '12px', borderColor: 'rgba(0,236,151,0.4)' }}>
@@ -166,7 +178,7 @@ export function ToolsAndChainSheets() {
           </div>
 
           <div style={{ fontSize: '12px', fontWeight: 700 }} data-i18n="sheet.wcSessionsTitle">已连接应用</div>
-          <div id="wc-sessions-list" class="flex flex-col gap-2" />
+          <div id="wc-sessions-list" class="flex flex-col gap-2"><PanelSlot slotId="wc-sessions-list" component={WcSessionsPanel} /></div>
         </div>
       </div>
 
@@ -181,7 +193,7 @@ export function ToolsAndChainSheets() {
           <input id="contact-name-input" type="text" class="input-field" data-i18n-placeholder="sheet.contactsNamePlaceholder" placeholder="备注名称" />
           <input id="contact-addr-input" type="text" class="input-field mono" data-i18n-placeholder="sheet.contactsAddrPlaceholder" placeholder="钱包地址 (.near / 0x / Solana / prl1p)" />
           <button type="button" class="btn-primary" onClick={() => callWin('addContactFromSheet')} data-i18n="sheet.contactsAddBtn">添加联系人</button>
-          <div id="contacts-list" class="flex flex-col gap-2" />
+          <div id="contacts-list" class="flex flex-col gap-2"><PanelSlot slotId="contacts-list" component={ContactsPanel} /></div>
         </div>
       </div>
 
@@ -193,7 +205,7 @@ export function ToolsAndChainSheets() {
           <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">关闭</button>
         </div>
         <div class="sheet-body">
-          <div id="wallets-switcher-list" class="flex flex-col gap-2" />
+          <div id="wallets-switcher-list" class="flex flex-col gap-2"><PanelSlot slotId="wallets-switcher-list" component={WalletListPanel} /></div>
           <div class="flex gap-2">
             <button type="button" class="btn-primary flex-1" onClick={() => callWin('startAdditionalWalletCreate')} data-i18n="sheet.walletsCreateBtn">新建钱包</button>
             <button type="button" class="btn-secondary flex-1" onClick={() => callWin('startAdditionalWalletImport')} data-i18n="sheet.walletsImportBtn">导入助记词</button>
@@ -209,7 +221,7 @@ export function ToolsAndChainSheets() {
           <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">关闭</button>
         </div>
         <div class="sheet-body">
-          <div id="backup-keys-content" class="flex flex-col gap-2" />
+          <div id="backup-keys-content" class="flex flex-col gap-2"><PanelSlot slotId="backup-keys-content" component={BackupSecretsPanel} /></div>
         </div>
       </div>
 
@@ -221,7 +233,7 @@ export function ToolsAndChainSheets() {
           <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">关闭</button>
         </div>
         <div class="sheet-body" style={{ maxHeight: '76vh', overflowY: 'auto' }}>
-          <div id="hub-addresses-list" class="flex flex-col gap-2" />
+          <div id="hub-addresses-list" class="flex flex-col gap-2"><PanelSlot slotId="hub-addresses-list" component={WalletAddressesPanel} /></div>
           <div class="ios-glass-card flex flex-col gap-2" style={{ padding: '12px', marginTop: '4px' }}>
             <div class="flex items-center justify-between gap-2">
               <span style={{ fontSize: '12.5px', fontWeight: 700 }} data-i18n="sheet.prlBindTitle">PRL 专用助记词绑定 / 更换</span>
@@ -307,7 +319,7 @@ export function ToolsAndChainSheets() {
               <span style={{ fontSize: '12.5px', fontWeight: 700 }} data-i18n="sheet.keysListTitle">链上访问密钥</span>
               <button type="button" id="btn-refresh-near-keys" class="btn-ghost-sm" onClick={() => callWin('refreshNearAccessKeysSheet')} data-i18n="common.refresh">刷新</button>
             </div>
-            <div id="near-keys-list" class="flex flex-col gap-2" />
+            <div id="near-keys-list" class="flex flex-col gap-2"><PanelSlot slotId="near-keys-list" component={NearKeysPanel} /></div>
           </div>
 
           {/* Rotate Seed / Upgrade Key (Strictly hidden when account is unactivated) */}
@@ -338,7 +350,7 @@ export function ToolsAndChainSheets() {
               <button type="button" id="btn-refresh-sol-rent" class="btn-ghost-sm" onClick={() => callWin('scanSolRentReclaimUI')} data-i18n="common.refresh">刷新</button>
             </div>
           </div>
-          <div id="sol-rent-list" class="flex flex-col gap-2" style={{ maxHeight: '290px', overflowY: 'auto' }} />
+          <div id="sol-rent-list" class="flex flex-col gap-2" style={{ maxHeight: '290px', overflowY: 'auto' }}><PanelSlot slotId="sol-rent-list" component={SolRentPanel} /></div>
           <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }} data-i18n="sheet.solRentNote">仅关闭空账户或销毁勾选的微额粉尘代币以退回 SOL 租金，销毁后代币不可恢复。</div>
           <button type="button" id="btn-execute-sol-rent" class="btn-primary" onClick={() => callWin('executeSolRentReclaimUI')} data-i18n="sheet.solRentExecuteBtn">一键回收并领取</button>
         </div>
@@ -359,7 +371,7 @@ export function ToolsAndChainSheets() {
               <button type="button" id="btn-refresh-near-storage" class="btn-ghost-sm" onClick={() => callWin('scanNearStorageReclaimUI')} data-i18n="common.refresh">刷新</button>
             </div>
           </div>
-          <div id="near-storage-list" class="flex flex-col gap-2" style={{ maxHeight: '290px', overflowY: 'auto' }} />
+          <div id="near-storage-list" class="flex flex-col gap-2" style={{ maxHeight: '290px', overflowY: 'auto' }}><PanelSlot slotId="near-storage-list" component={NearStoragePanel} /></div>
           <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }} data-i18n="sheet.nearStorageNote">仅对当前代币余额为 0 的合约注销空账本并退回 NEAR 存储押金（每笔约消耗 0.00018 NEAR 手续费）。</div>
           <button type="button" id="btn-execute-near-storage" class="btn-primary" onClick={() => callWin('executeNearStorageReclaimUI')} data-i18n="sheet.nearStorageExecuteBtn">一键回收存储押金</button>
         </div>
@@ -384,7 +396,7 @@ export function ToolsAndChainSheets() {
             <button type="button" class="filter-pill" data-mkt-filter="gainers" onClick={() => callWin('setPerpMarketFilter', 'gainers')} data-i18n="perp.mktFilterGainers">涨幅榜</button>
             <button type="button" class="filter-pill" data-mkt-filter="vol" onClick={() => callWin('setPerpMarketFilter', 'vol')} data-i18n="perp.mktFilterVol">成交额</button>
           </div>
-          <div id="perp-market-list" class="flex flex-col gap-2" style={{ maxHeight: '55vh', overflowY: 'auto' }} />
+          <div id="perp-market-list" class="flex flex-col gap-2" style={{ maxHeight: '55vh', overflowY: 'auto' }}><PanelSlot slotId="perp-market-list" component={PerpMarketsSheetPanel} /></div>
         </div>
       </div>
 
@@ -413,7 +425,7 @@ export function ToolsAndChainSheets() {
               <div id="perp-oc-form" class="flex flex-col gap-3">
                 <div class="flex flex-col gap-1">
                   <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }} data-i18n="perp.ocOriginLabel">支付资产</span>
-                  <select id="perp-oc-origin-select" class="input-field" onChange={() => callWin('schedulePerpOneClickQuote')} />
+                  <select id="perp-oc-origin-select" class="input-field" onChange={() => callWin('schedulePerpOneClickQuote')}><PanelSlot slotId="perp-oc-origin-select" component={PerpFundingInfoPanel} /></select>
                 </div>
                 <div class="swap-box">
                   <div class="swap-box-top">
@@ -540,7 +552,7 @@ export function ToolsAndChainSheets() {
 
           <div id="earn-lock-row" class="hidden flex flex-col gap-2">
             <span class="meta-key" style={{ fontSize: '12px' }} data-i18n="earn.lockLabel">锁仓周期</span>
-            <div id="earn-lock-tiers" class="pill-scroll" />
+            <div id="earn-lock-tiers" class="pill-scroll"><PanelSlot slotId="earn-lock-tiers" component={EarnStakeSheetPanel} /></div>
           </div>
 
           <div class="meta-list">
@@ -570,7 +582,7 @@ export function ToolsAndChainSheets() {
 
           <button type="button" id="btn-execute-stake" class="btn-primary" onClick={() => callWin('executeSelectedStake')} data-i18n="earn.stakeBtn">确认链上质押</button>
 
-          <div id="earn-tx-receipt" class="hidden meta-list" style={{ borderColor: 'rgba(0,236,151,0.3)' }} />
+          <div id="earn-tx-receipt" class="hidden meta-list" style={{ borderColor: 'rgba(0,236,151,0.3)' }}><PanelSlot slotId="earn-tx-receipt" component={EarnStakeSheetPanel} /></div>
         </div>
       </div>
 
@@ -586,9 +598,9 @@ export function ToolsAndChainSheets() {
             <input id="dapp-url-input" type="url" class="input-field flex-1" data-i18n-placeholder="dapp.urlPlaceholder" placeholder="输入 DApp 网址 (https://...)" />
             <button type="button" id="btn-dapp-open" class="mini-action-btn primary" onClick={() => callWin('openDAppFromInput')} data-i18n="dapp.openBtn">访问</button>
           </div>
-          <div id="dapp-connected-section" class="dapp-connected-section hidden" />
-          <div id="dapp-filter-bar" class="pill-scroll" />
-          <div id="dapp-catalog-list" class="dapp-catalog-grid" />
+          <div id="dapp-connected-section" class="dapp-connected-section hidden"><PanelSlot slotId="dapp-connected-section" component={DAppBookmarksPanel} /></div>
+          <div id="dapp-filter-bar" class="pill-scroll"><PanelSlot slotId="dapp-filter-bar" component={DAppBookmarksPanel} /></div>
+          <div id="dapp-catalog-list" class="dapp-catalog-grid"><PanelSlot slotId="dapp-catalog-list" component={DAppBookmarksPanel} /></div>
         </div>
       </div>
 
@@ -599,7 +611,7 @@ export function ToolsAndChainSheets() {
           <h3 class="sheet-title" data-i18n="dapp.approveTitle">DApp 请求授权</h3>
           <button type="button" class="btn-ghost-sm" onClick={() => callWin('rejectDAppApproval')} data-i18n="common.close">关闭</button>
         </div>
-        <div class="sheet-body" />
+        <div id="dapp-approve-body" class="sheet-body"><PanelSlot slotId="dapp-approve-body" component={DAppApprovePanel} /></div>
       </div>
 
       {/* ==================== Sheet: Perp Position TP / SL Editor ==================== */}
