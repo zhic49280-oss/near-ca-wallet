@@ -27,7 +27,7 @@
 
 ## 5. 发布前验证流程
 - 每次修改后必须依次执行：
-  1. 递增缓存版本号与静态资源 `?v=` 参数（6 处：`sw.js`、`src/parts/index-html/{000-head-shell,010-view-onboarding-wallet,090-scripts-footer}.part.html`、`src/parts/ui-controller/{000-core,230-walletconnect}.part.js`）；
+  1. 递增缓存版本号与静态资源 `?v=` 参数（6 处：`sw.js`、`src/parts/index-html/{000-head-shell,090-scripts-footer}.part.html`、`src/app/views/AppShellViews.jsx`、`src/parts/ui-controller/{000-core,230-walletconnect}.part.js`）；
   2. 运行 `npm run build`（依次执行 `scripts/build-parts.js` 拼接分片、`npx vite build` 编译 `src/app/` -> `src/framework-ui.js`、`scripts/sync-assets.js` 使用 `esbuild` 压缩 `src/*.js`（跳过已压缩的 `src/jsqr-lazy.js` 与 `src/framework-ui.js`）与 `style.css` 并同步 23 个资源到 `dist/`、`android/`、`ios/`）；
   3. 运行 `npm test` 确认全部测试用例 100% 通过后方可提交本地 Git（CI 流程需在 `npm run build` 前执行 `npm ci`）。
 
@@ -37,7 +37,7 @@
 
 ## 7. 源码分片与 Vite + Preact 框架开发规范
 - **生成文件由分片自动拼接**：`index.html` 与 `src/{ui-controller,chain-contracts,near-intents,token-registry,state,crypto-engine}.js` 由 `scripts/build-parts.js` 按文件名顺序拼接 `src/parts/<name>/` 生成；`src/framework-ui.js` 由 `vite.config.mjs` 从 `src/app/main.jsx` 编译生成。**只改分片与 `src/app/`，禁止直接编辑生成文件**；改完运行 `npm run build`，`test/08-build-parts.test.js` 会校验分片同步。
-- **渐进式 Preact 框架层（`src/app/`）**：新增独立 UI 面板与交互组件优先写入 `src/app/components/*.jsx`，通过 `src/app/store/useWalletStore.js` 订阅 `NearCAState` 并由 `src/app/main.jsx` 挂载到对应容器，保持 Node 单测兼容降级。
+- **100% 单根 Preact 应用架构（`src/app/`）**：`src/parts/index-html/` 仅保留最小 HTML 外壳（`<div id="app-root"></div>`），全部主视图（`src/app/views/`）与弹窗（`src/app/sheets/`）由 `src/app/App.jsx` 组合，并在 `src/app/main.jsx` 执行末尾同步调用 `mountAppRoot()` 挂载到 `#app-root`；新增独立 UI 面板与交互组件优先写入 `src/app/components/*.jsx`，通过 `src/app/store/useWalletStore.js` 订阅 `NearCAState`，保持 Node 单测兼容降级。
 - **产物已移出 Git（`.gitignore`）**：上述 7 个拼接产物、`src/framework-ui.js`、`src/jsqr-lazy.js` 以及 `dist/`、`android/app/src/main/assets/public/`、`ios/App/App/public/` 均在 `.gitignore` 中排除，由本地及 GitHub Actions CI（`npm ci && npm run build`）自动生成并压缩。
 - **按需读取与分片上限**：定位代码后只读相关分片，禁止整读生成的大文件。新增页面/模块/链时新建分片（如 `125-xxx.part.js`），**单分片软上限 50 KB（硬上限 60 KB）**，禁止再出现百 KB 巨型分片；`globalHandlers` 与 `NearCAUI` 严禁重复键名。
 - **测试分文件**：公共工具在 `test/helpers.js`，新版本测试写入对应 `test/NN-*.test.js`（或新建），禁止再堆回单文件。
@@ -51,11 +51,10 @@
 ### 8.2 项目架构与分片索引（直达目标文件）
 - **权威功能规范文档**：`docs/FEATURES_SPEC.md`（全功能与交互逻辑唯一真相源，任何功能与交互修改必须同步更新此文档并清理废弃僵尸代码）。
 - **运行入口与构建**：`index.html` 按序加载全局 IIFE 脚本与 `src/framework-ui.js`；`scripts/build-parts.js` 拼接分片，`vite.config.mjs` 编译 Preact 组件，`scripts/sync-assets.js` 使用 `esbuild` 压缩并同步 23 个资源到 `dist/`、`android/`、`ios/`；`server.js` 提供本地静态服务与 `/pearl-proxy`、`/kryptex-proxy`；`sw.js` 管理 PWA 离线缓存；`style.css` 存放全局样式。
-- **Preact 框架目录（`src/app/` -> `src/framework-ui.js`）**：`main.jsx`（入口挂载与全局桥接 `window.NearCAFramework`，含 35 个挂载入口与共享组件，覆盖全部主视图与弹窗）、`store/useWalletStore.js`（微任务合并响应式状态订阅、`useLang` / `useActiveWallet`）、`components/ui/`（`ActionButton`、`EmptyState`、`StatusBadge`、`ToastBanner`）及业务面板组件；`jsQR` 由 `scripts/build-jsqr.js` 单独打包为 `src/jsqr-lazy.js` 按需懒加载。
+- **Preact 框架目录（`src/app/` -> `src/framework-ui.js`）**：`App.jsx`（单根应用外壳，使用 `memo` 稳定结构保护输入焦点，组合 `views/{AppShellViews,TradingViews}.jsx` 与 `sheets/{CoreSheets,ToolsAndChainSheets}.jsx`）、`main.jsx`（导出 `App` 与 `mountAppRoot`，在浏览器加载时同步挂载 `#app-root`，并暴露全局桥接 `window.NearCAFramework`，含挂载入口与共享组件）、`store/useWalletStore.js`（微任务合并响应式状态订阅、`useLang` / `useActiveWallet`）、`components/ui/`（`ActionButton`、`EmptyState`、`StatusBadge`、`ToastBanner`）及业务面板组件；`jsQR` 由 `scripts/build-jsqr.js` 单独打包为 `src/jsqr-lazy.js` 按需懒加载。
 - **原生插件（受保护，勿误删）**：Android (`android/app/src/main/{AndroidManifest.xml,java/io/nexus/wallet/{MainActivity,NativeSecurityPlugin}.java}`)；iOS (`ios/App/App/{Info.plist,MainViewController,NativeSecurityPlugin}.swift`)。CI 编译流在 `.github/workflows/{build-android-apk,build-ios-ipa}.yml`。
-- **`src/parts/index-html/`（10 个 HTML 片段 -> `index.html`）**：
-  - `000-head-shell` 锁屏/隐私遮罩与顶栏；`010-view-onboarding-wallet` 引导与资产首页；`020-view-swap-limit` 闪兑与限价单；`030-view-perp` 永续合约；`040-view-earn` 质押理财；`050-view-hub-nav` 枢纽设置与底栏；
-  - `060-sheets-core` 发送/收款/代币详情/选币；`070-sheets-tools` 矿机/历史/详情/WC/联系人/多钱包/备份/PIN/地址；`080-sheets-chain-perp-auth` NEAR账户密钥/SOL租金/NEAR存储/永续选币与出入金/生物识别锁；`090-scripts-footer` 脚本标签。
+- **`src/parts/index-html/`（2 个单根外壳 HTML 片段 -> `index.html`）**：
+  - `000-head-shell` `<!DOCTYPE html>`、`<head>`（含同步锁屏检测脚本与 `style.css?v=...`）与 `<body><div id="app-root"></div>`；`090-scripts-footer` 按序加载脚本（`src/framework-ui.js` 在 `src/ui-controller.js` 之前）。
 - **`src/parts/crypto-engine/`（5 个分片 -> `src/crypto-engine.js`）**：
   - `000-core-hash-bip39` 编码/Borsh/SHA/Keccak/PBKDF2/BIP39；`010-address-encoding` Base58/Bech32m/EIP55/各链地址校验；`020-secp256k1-bip32` Secp256k1/BIP32/BIP340 Schnorr；`030-ed25519-derivation` Ed25519/SLIP10/多链助记词派生；`040-intents-mpc-vault` NEP-413 签名/MPC 地址派生/Vault 加密。
 - **`src/parts/token-registry/`（5 个分片 -> `src/token-registry.js`）**：

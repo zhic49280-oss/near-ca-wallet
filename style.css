@@ -2799,37 +2799,59 @@ html.nexus-locked #app-lock-overlay {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
-  flex: 1 1 auto;
+  flex-shrink: 0;
 }
 
 .perp-trade-top-right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
+  gap: 5px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.perp-top-px-wrap {
+  text-align: right;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.perp-top-px-wrap > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.perp-top-icon-btn {
+  padding: 4px 6px;
   flex-shrink: 0;
+}
+
+.perp-top-act-btn {
+  padding: 4px 7px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .perp-back-btn {
   padding: 5px 8px;
   font-size: 11px;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 #perp-coin-btn {
-  flex-shrink: 1;
-  min-width: 0;
-  max-width: 100%;
-  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  min-width: fit-content;
+  gap: 5px;
   padding: 5px 9px 5px 6px;
   font-size: 12.5px;
 }
 
 .perp-coin-name-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
 }
 
 /* Interactive K-Line Candle Inspector Bar (Always-On Zero-Jitter) */
@@ -2894,6 +2916,12 @@ html.nexus-locked #app-lock-overlay {
   .perp-trade-top-bar {
     gap: 4px;
   }
+  .perp-trade-top-left {
+    gap: 4px;
+  }
+  .perp-trade-top-right {
+    gap: 3px;
+  }
   .perp-back-btn {
     padding: 4px 6px;
     font-size: 10.5px;
@@ -2901,6 +2929,15 @@ html.nexus-locked #app-lock-overlay {
   #perp-coin-btn {
     padding: 4px 7px 4px 5px;
     font-size: 12px;
+    gap: 4px;
+  }
+  #perp-mark-px {
+    font-size: 12.5px !important;
+  }
+  .perp-top-icon-btn,
+  .perp-top-act-btn {
+    padding: 4px 5px;
+    font-size: 10.5px;
   }
   .perp-okx-split-grid {
     grid-template-columns: 1.2fr 0.88fr;
@@ -2928,5 +2965,411 @@ html.nexus-locked #app-lock-overlay {
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 50%;
+  }
+}
+
+/* ==================== TxPreviewModal & TxStepperModal ==================== */
+.tx-flow-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 6, 14, 0.76);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 1180;
+  transition: opacity 0.2s ease;
+}
+
+.tx-flow-backdrop.hidden {
+  display: none;
+  pointer-events: none;
+}
+
+.tx-flow-sheet {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translate(-50%, 104%);
+  width: min(100%, 460px);
+  max-height: calc(var(--nexus-vv-height, 100vh) - 24px);
+  background: linear-gradient(180deg, rgba(16, 22, 36, 0.98) 0%, rgba(10, 14, 24, 0.99) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom: none;
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -16px 48px rgba(0, 0, 0, 0.55);
+  z-index: 1185;
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.tx-flow-sheet.open {
+  transform: translate(-50%, 0);
+}
+
+.tx-flow-container {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(var(--nexus-vv-height, 100vh) - 24px);
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  gap: 12px;
+}
+
+.tx-flow-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tx-flow-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.tx-flow-body {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 2px;
+}
+
+.tx-flow-rate-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tx-flow-rate-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.tx-flow-rate-val {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tx-flow-net-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.tx-flow-net-box {
+  border-radius: 11px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.tx-flow-net-pay {
+  background: rgba(244, 63, 94, 0.1);
+  border: 1px solid rgba(244, 63, 94, 0.28);
+}
+
+.tx-flow-net-pay .tx-flow-net-amt {
+  color: #fda4af;
+}
+
+.tx-flow-net-receive {
+  background: rgba(0, 236, 151, 0.1);
+  border: 1px solid rgba(0, 236, 151, 0.28);
+}
+
+.tx-flow-net-receive .tx-flow-net-amt {
+  color: #6ee7b7;
+}
+
+.tx-flow-net-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.tx-flow-net-amt {
+  font-size: 14px;
+  font-weight: 700;
+  word-break: break-all;
+}
+
+.tx-flow-net-usd {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.tx-flow-details-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.tx-flow-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.tx-flow-meta-key {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.tx-flow-meta-val {
+  color: var(--text-primary);
+  text-align: right;
+  word-break: break-all;
+}
+
+.tx-flow-steps-preview {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tx-flow-steps-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tx-flow-steps-count {
+  font-size: 11px;
+  color: var(--cyan-glow);
+}
+
+.tx-flow-steps-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.tx-flow-preview-step-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.tx-flow-preview-step-num {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(0, 236, 151, 0.16);
+  color: var(--cyan-glow);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.tx-flow-preview-step-title {
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.tx-flow-preview-step-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.tx-flow-progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.tx-flow-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #00ec97 0%, #38bdf8 100%);
+  transition: width 0.25s ease;
+}
+
+.tx-flow-progress-fill.is-error {
+  background: linear-gradient(90deg, #f43f5e 0%, #fb7185 100%);
+}
+
+.tx-flow-stepper-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tx-flow-step-card {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 13px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tx-flow-step-card.is-active,
+.tx-flow-step-card.is-auth {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.07);
+}
+
+.tx-flow-step-card.is-done {
+  border-color: rgba(0, 236, 151, 0.35);
+  background: rgba(0, 236, 151, 0.06);
+}
+
+.tx-flow-step-card.is-error {
+  border-color: rgba(244, 63, 94, 0.45);
+  background: rgba(244, 63, 94, 0.08);
+}
+
+.tx-flow-step-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tx-flow-step-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+}
+
+.tx-flow-step-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tx-flow-step-desc {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.tx-flow-step-hash-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+.tx-flow-step-hash {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.tx-flow-explorer-btn {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--cyan-glow);
+  text-decoration: none;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: rgba(0, 236, 151, 0.1);
+  border: 1px solid rgba(0, 236, 151, 0.25);
+  white-space: nowrap;
+}
+
+.tx-flow-step-error {
+  font-size: 11.5px;
+  color: #fda4af;
+  line-height: 1.4;
+}
+
+.tx-flow-summary-banner {
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.tx-flow-summary-banner.is-ok {
+  background: rgba(0, 236, 151, 0.1);
+  border: 1px solid rgba(0, 236, 151, 0.3);
+  color: #a7f3d0;
+}
+
+.tx-flow-summary-banner.is-error {
+  background: rgba(244, 63, 94, 0.1);
+  border: 1px solid rgba(244, 63, 94, 0.3);
+  color: #fecdd3;
+}
+
+.tx-flow-resumable-hint {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: #fde68a;
+}
+
+.tx-flow-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.tx-flow-wait-hint {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 8px 0;
+}
+
+.tx-flow-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--cyan-glow);
+  animation: txFlowPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes txFlowPulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+
+@media (max-width: 390px) {
+  .tx-flow-net-grid {
+    grid-template-columns: 1fr;
   }
 }

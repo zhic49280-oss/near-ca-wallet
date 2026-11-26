@@ -432,6 +432,7 @@
       });
     }
 
+    emitStateTopic('lang');
     for (const listener of _langListeners) {
       try {
         listener(normalized);

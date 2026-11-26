@@ -285,7 +285,7 @@ test('Item 10: setLanguage triggers onLanguageChange once without double lang to
       state.setLanguage('en');
       state.setLanguage('zh');
       assert.equal(langHookCount, 2);
-      assert.equal(emittedTopics.filter((t) => t === 'lang').length, 0);
+      assert.equal(emittedTopics.filter((t) => t === 'lang').length, 2);
     } finally {
       if (prevFw === undefined) delete globalThis.NearCAFramework;
       else globalThis.NearCAFramework = prevFw;

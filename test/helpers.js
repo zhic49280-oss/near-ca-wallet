@@ -147,6 +147,20 @@ function createMockDomElement(id, extra = {}) {
   };
 }
 
+function readPreactAppSources() {
+  const appDir = path.join(ROOT_DIR, 'src', 'app');
+  const chunks = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && entry.name.endsWith('.jsx')) chunks.push(fs.readFileSync(full, 'utf8'));
+    }
+  };
+  if (fs.existsSync(appDir)) walk(appDir);
+  return chunks.join('\n');
+}
+
 module.exports = {
   test,
   assert,
@@ -172,5 +186,6 @@ module.exports = {
   readBorshString,
   INITIAL_STAKING_SNAPSHOT,
   createMockClassList,
-  createMockDomElement
+  createMockDomElement,
+  readPreactAppSources
 };

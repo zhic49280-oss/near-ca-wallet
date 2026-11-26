@@ -358,10 +358,11 @@ test('v1.8: Official QTC icon, zero ref-new-1 S3 URLs, sanitizeImageUrl SVG/base
 });
 
 test('v1.8: Favorite tokens bar, Arc receive/hub/picker support, no xStocks filter pill, no mining sweep card', async () => {
-  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
-  assert.ok(indexHtml.includes('id="token-picker-favorites"'), 'index.html must contain #token-picker-favorites');
-  assert.equal(indexHtml.includes('mining-sweep-amount'), false, '#sheet-mining-pro must not contain redundant sweep card');
-  assert.equal(indexHtml.includes('mining-sweep-dest'), false, '#sheet-mining-pro must not contain redundant sweep dropdown');
+  const { readPreactAppSources } = require('./helpers.js');
+  const appUi = readPreactAppSources();
+  assert.ok(appUi.includes('id="token-picker-favorites"'), 'Preact app UI must contain #token-picker-favorites');
+  assert.equal(appUi.includes('mining-sweep-amount'), false, '#sheet-mining-pro must not contain redundant sweep card');
+  assert.equal(appUi.includes('mining-sweep-dest'), false, '#sheet-mining-pro must not contain redundant sweep dropdown');
   assert.ok(Array.isArray(tokenRegistry.DEX_CHAIN_TOKENS.arc) && tokenRegistry.DEX_CHAIN_TOKENS.arc[0].symbol === 'USDC');
 
   await withMockedStorage({}, async (storage) => {

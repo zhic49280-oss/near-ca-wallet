@@ -302,10 +302,10 @@ test('M1.5: NEAR key self-healing, null-balance verification, security/navigatio
   });
 
   // 3. Onboarding HTML IDs, zero global `event`, dead checksumValid removed & backup copy guard works without `event`
-  const onboardHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/index-html/010-view-onboarding-wallet.part.html'), 'utf8');
+  const onboardHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/AppShellViews.jsx'), 'utf8');
   assert.ok(onboardHtml.includes('id="btn-confirm-create-wallet"'));
   assert.ok(onboardHtml.includes('id="btn-confirm-import-wallet"'));
-  const sendHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/index-html/060-sheets-core.part.html'), 'utf8');
+  const sendHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/app/sheets/CoreSheets.jsx'), 'utf8');
   assert.ok(sendHtml.includes('id="btn-send-max"'));
 
   const onboardJs = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/030-onboarding.part.js'), 'utf8');
@@ -456,8 +456,8 @@ test('M1.6: All M1 part files obey <= 50 KB (51,200 B) soft cap', () => {
     ...fs.readdirSync(path.join(ROOT_DIR, 'src/parts/token-registry')).filter((f) => f.endsWith('.part.js')).map((f) => `src/parts/token-registry/${f}`),
     ...['000-config-evm-chains', '020-utils-crypto', '030-rpc-balances', '050-pearl', '060-bitcoin', '080-near', '135-live-gas-estimator', '140-exports'].map((n) => `src/parts/chain-contracts/${n}.part.js`),
     ...['000-core', '010-security', '020-navigation', '030-onboarding', '040-balance-sync', '050-token-list', '060-token-detail-core', '061-token-detail-ui', '070-home', '080-send', '090-receive'].map((n) => `src/parts/ui-controller/${n}.part.js`),
-    'src/parts/index-html/010-view-onboarding-wallet.part.html',
-    'src/parts/index-html/060-sheets-core.part.html'
+    'src/app/views/AppShellViews.jsx',
+    'src/app/sheets/CoreSheets.jsx'
   ];
   for (const rel of m1Files) {
     const sz = fs.statSync(path.join(ROOT_DIR, rel)).size;

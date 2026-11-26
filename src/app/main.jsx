@@ -1,4 +1,5 @@
 import { h, render } from 'preact';
+import { App } from './App.jsx';
 import { SwapHistoryPanel } from './components/SwapHistoryPanel.jsx';
 import { AssetListPanel } from './components/AssetListPanel.jsx';
 import { TokenPickerPanel } from './components/TokenPickerPanel.jsx';
@@ -19,6 +20,7 @@ import { MiningTelemetryPanel, MiningWorkersPanel } from './components/MiningPro
 import { WcSessionsPanel, WcProposalPanel } from './components/WalletConnectPanel.jsx';
 import { DAppBookmarksPanel, DAppApprovePanel } from './components/DAppBrowserPanels.jsx';
 import { ToastBanner } from './components/ui/ToastBanner.jsx';
+import { TxFlowModal } from './components/TxFlowModals.jsx';
 import { useWalletState, notifyFrameworkState, useLang, useActiveWallet } from './store/useWalletStore.js';
 
 export function mountSwapHistory(containerEl, opts = {}) {
@@ -232,9 +234,25 @@ export function mountToastBanner(containerEl, props = {}) {
   return true;
 }
 
+export function mountTxFlowModal(containerEl, props = {}) {
+  if (!containerEl) return false;
+  render(h(TxFlowModal, props), containerEl);
+  return true;
+}
+
+export { App };
+
+export function mountAppRoot(rootEl) {
+  if (!rootEl) return false;
+  render(h(App, null), rootEl);
+  return true;
+}
+
 const NearCAFramework = {
   h,
   render,
+  App,
+  mountAppRoot,
   useWalletState,
   notifyFrameworkState,
   useLang,
@@ -273,7 +291,8 @@ const NearCAFramework = {
   mountWcProposalPanel,
   mountDAppBookmarksPanel,
   mountDAppApprovePanel,
-  mountToastBanner
+  mountToastBanner,
+  mountTxFlowModal
 };
 
 if (typeof globalThis !== 'undefined') {
@@ -281,6 +300,13 @@ if (typeof globalThis !== 'undefined') {
 }
 if (typeof window !== 'undefined') {
   window.NearCAFramework = NearCAFramework;
+}
+
+if (typeof document !== 'undefined') {
+  const appRoot = document.getElementById('app-root');
+  if (appRoot) {
+    mountAppRoot(appRoot);
+  }
 }
 
 export default NearCAFramework;

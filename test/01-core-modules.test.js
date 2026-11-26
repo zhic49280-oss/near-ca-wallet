@@ -1135,13 +1135,14 @@ test('Module 6: pearl_user_wallets_v4 -> near_ca_wallets_v1 automatic wallet mig
   );
 });
 
-test('Modules 6 & 7: 100% of data-i18n keys in index.html exist in both i18nDict.zh and i18nDict.en', async () => {
-  const html = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+test('Modules 6 & 7: 100% of data-i18n keys in index.html & src/app/**/*.jsx exist in both i18nDict.zh and i18nDict.en', async () => {
+  const { readPreactAppSources } = require('./helpers.js');
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8') + '\n' + readPreactAppSources();
   const i18nKeys = [...html.matchAll(/data-i18n="([^"]+)"/g)].map((m) => m[1]);
   const placeholderKeys = [...html.matchAll(/data-i18n-placeholder="([^"]+)"/g)].map((m) => m[1]);
   const allKeys = Array.from(new Set([...i18nKeys, ...placeholderKeys]));
 
-  assert.ok(allKeys.length > 100, 'Expected substantial data-i18n key coverage in index.html');
+  assert.ok(allKeys.length > 100, 'Expected substantial data-i18n key coverage in index.html & src/app/**/*.jsx');
   const missingZh = allKeys.filter((k) => state.i18nDict.zh[k] === undefined);
   const missingEn = allKeys.filter((k) => state.i18nDict.en[k] === undefined);
 
@@ -1720,9 +1721,10 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
     }
   }
 
-  // Verify pure NEAR Master-Account L1-only Chain Abstraction UI
+  // Verify pure NEAR Master-Account L1-only Chain Abstraction UI (single-root Preact in TradingViews.jsx)
+  const tradingViewsSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/TradingViews.jsx'), 'utf8');
   assert.equal(indexHtml.includes('swap-signer-row'), false, 'Pure CA wallet must not show local-key vs MPC dual-track toggle');
   assert.equal(indexHtml.includes('swap-mode-intents-btn'), false, 'Unified Swap must not show Intents vs Contracts mode toggle');
   assert.equal(indexHtml.includes('swap-intents-options'), false, 'Unified Swap must not show intents.near balance options');
-  assert.ok(indexHtml.includes('swap-auto-route-badge'), 'Unified Swap must show automatic route badge');
+  assert.ok(tradingViewsSrc.includes('swap-auto-route-badge'), 'Unified Swap must show automatic route badge');
 });

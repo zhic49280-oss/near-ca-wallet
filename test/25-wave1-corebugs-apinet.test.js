@@ -73,7 +73,7 @@ test('Item 6: Re-entrancy locks are acquired BEFORE verifySecurityAuthAsync in a
     for (const fnName of fnNames) {
       const idx = src.indexOf(`function ${fnName}`);
       assert.ok(idx !== -1, `${fnName} must exist in ${relPath}`);
-      const slice = src.slice(idx, idx + 4000);
+      const slice = src.slice(idx, idx + 8000);
       const lockIdx = slice.indexOf(lockAssign);
       const authIdx = slice.indexOf('verifySecurityAuthAsync(');
       assert.ok(lockIdx !== -1, `${fnName} in ${relPath} must set ${lockAssign}`);

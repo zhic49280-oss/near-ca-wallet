@@ -164,12 +164,14 @@ test('v6.0 Regression Suite: Bitcoin BIP-86/Taproot, PBKDF2 PIN, Checksums, Mult
   }
 
   // 8. Zero inline onclick=/onerror=/onchange= & zero PQ remnants in src/ & index.html
+  const { readPreactAppSources } = require('./helpers.js');
   const uiSrc = fs.readFileSync(path.join(ROOT_DIR, 'src', 'ui-controller.js'), 'utf8');
   const regSrc = fs.readFileSync(path.join(ROOT_DIR, 'src', 'token-registry.js'), 'utf8');
   const htmlSrc = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const appUiSrc = readPreactAppSources();
   assert.equal(/(?<!\.)\bon(?:click|error|change)\s*=/i.test(uiSrc), false);
   assert.equal(/(?<!\.)\bon(?:click|error|change)\s*=/i.test(regSrc), false);
-  for (const src of [uiSrc, htmlSrc]) {
+  for (const src of [uiSrc, htmlSrc, appUiSrc]) {
     assert.equal(/ml-dsa|post_quantum|postQuantum|activateUniversalAccount/i.test(src), false);
   }
 });

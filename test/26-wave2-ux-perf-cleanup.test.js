@@ -42,11 +42,10 @@ test('Item 11-15: toUserFriendlyError mappings, jargon sanitization, and unified
     );
 
     // Item 15: unified confirm dialog & send receipt exist
-    const confirmHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/index-html/085-sheet-confirm.part.html'), 'utf8');
-    assert.ok(confirmHtml.includes('id="sheet-confirm-dialog"'));
-    const sendHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/index-html/060-sheets-core.part.html'), 'utf8');
-    assert.ok(sendHtml.includes('id="send-tx-receipt"'));
-    const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/index-html/030-view-perp.part.html'), 'utf8');
+    const coreSheets = fs.readFileSync(path.join(ROOT_DIR, 'src/app/sheets/CoreSheets.jsx'), 'utf8');
+    assert.ok(coreSheets.includes('id="sheet-confirm-dialog"'));
+    assert.ok(coreSheets.includes('id="send-tx-receipt"'));
+    const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/TradingViews.jsx'), 'utf8');
     assert.ok(perpHtml.includes('id="perp-ob-bid-sz-hdr" data-i18n="perp.obSizeHdr"'));
   } finally {
     state.setLanguage(prevLang || 'zh');

@@ -650,7 +650,8 @@ test('v6.15 Flagship Hub Redesign, Merged NEAR Account/Keys & Lossless .near Del
   });
 
   // 5. HTML & CSS DOM verification for v6.15 cleanup
-  const html = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const { readPreactAppSources } = require('./helpers.js');
+  const html = readPreactAppSources();
   const css = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
   assert.equal(html.includes('id="header-mpc-btn"'), false, '#header-mpc-btn must be removed');
   assert.equal(html.includes('id="hub-mpc-card"'), false, '#hub-mpc-card must be removed');

@@ -316,7 +316,7 @@ test('M2.6: Part-file source checks for real tokenBalance, refresh button, allow
   assert.doesNotMatch(corePart, /tokenBalance:\s*Number\(bridgeHuman\)/);
   assert.doesNotMatch(ordersPart, /tokenBalance:\s*Number\(bHuman\)/);
 
-  const htmlPart = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/index-html/020-view-swap-limit.part.html'), 'utf8');
+  const htmlPart = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/TradingViews.jsx'), 'utf8');
   assert.ok(htmlPart.includes('id="btn-refresh-limit-orders"'), 'Limit refresh button must have id="btn-refresh-limit-orders"');
 
   const limitUiPart = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/151-limit-orders-ui.part.js'), 'utf8');

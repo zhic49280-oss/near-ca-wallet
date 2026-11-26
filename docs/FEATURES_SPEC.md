@@ -16,8 +16,8 @@
    - **Pearl (`prl`)**：BIP-86 Taproot (`m/86'/808276'/0'/0/0`) 派生 `prl1p...` 地址，支持在【多链收款地址】弹窗单独绑定/更换独立挖矿助记词 (`prlMnemonic`) 或一键恢复默认派生；
    - **Bitcoin (`btc`)**：BIP-86 Taproot (`m/86'/0'/0'/0/0`) 派生 `bc1p...` 地址。
 
-### 1.2 Preact 渐进式框架层 (`src/app/` -> `src/framework-ui.js`)
-- **设计定位**：高频刷新的列表与卡片由 Preact Virtual DOM 接管，消除 `innerHTML` 整树重建带来的闪烁、滚动丢失与点击吞事件，同时在 Node 单测无 DOM 环境下平滑降级。
+### 1.2 100% 单根 Preact 应用架构 (`src/app/` -> `src/framework-ui.js`)
+- **设计定位**：全应用采用单根 Preact 架构，`index.html` 仅保留 `<div id="app-root"></div>` 挂载点；`src/app/App.jsx` 通过 `memo` 稳定组合全部主视图（`views/AppShellViews.jsx`、`views/TradingViews.jsx`）与底部弹窗（`sheets/CoreSheets.jsx`、`sheets/ToolsAndChainSheets.jsx`），`src/app/main.jsx` 在 `src/ui-controller.js` 启动前同步调用 `mountAppRoot(document.getElementById('app-root'))` 完成全量 DOM 挂载；高频刷新的列表与卡片由 Preact Virtual DOM 接管，消除 `innerHTML` 整树重建带来的闪烁、滚动丢失与点击吞事件，同时在 Node 单测无 DOM 环境下平滑降级。
 - **挂载点与组件职责（严禁在同一容器上混用 `Preact.render` 与 `innerHTML`）**：
   1. `mountAssetList` (`#home-unified-asset-list`)：渲染首页聚合资产卡片与小额资产 (`< $0.05`) 折叠抽屉；
   2. `mountTokenPicker` (`#token-picker-list`)：**统一**渲染闪兑选币与限价单选币列表；

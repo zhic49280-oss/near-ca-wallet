@@ -51,15 +51,14 @@ test('M4.2: Developer jargon sanitized across NEAR Keys, SOL Rent, NEAR Storage,
     'src/parts/ui-controller/210-near-storage.part.js',
     'src/parts/ui-controller/230-walletconnect.part.js',
     'src/parts/chain-contracts/090-near-keys.part.js',
-    'src/parts/index-html/070-sheets-tools.part.html',
-    'src/parts/index-html/080-sheets-chain-perp-auth.part.html'
+    'src/app/sheets/ToolsAndChainSheets.jsx'
   ];
 
   for (const rel of filesToCheck) {
     const content = readPart(rel);
-    // Check JS user-facing strings (t(...), showToast(...), throw new Error(...)) and HTML content
+    // Check JS user-facing strings (t(...), showToast(...), throw new Error(...)) and HTML/JSX content
     const noComments = content.replace(/\/\/.*$/gm, '');
-    if (rel.endsWith('.part.html')) {
+    if (rel.endsWith('.part.html') || rel.endsWith('.jsx')) {
       assert.equal(/AddKey|DeleteKey|DeleteAccount|NEP-141|WebView|系统内核|CORS/.test(noComments), false, `${rel} must not contain developer jargon`);
     } else {
       assert.equal(/t\([^)]*(AddKey|DeleteKey|DeleteAccount|NEP-141|WebView|系统内核|CORS)/.test(noComments), false, `${rel} t() must not contain developer jargon`);
@@ -73,8 +72,8 @@ test('M4.2: Developer jargon sanitized across NEAR Keys, SOL Rent, NEAR Storage,
   assert.equal(/HRP|witness/i.test(invalidRes.error || ''), false, 'validatePearlAddress error must not expose HRP or witness jargon');
 });
 
-test('M4.3: 080-sheets-chain-perp-auth fixes TP/SL colContractVol & placeholders and adds refresh button IDs', () => {
-  const html080 = readPart('src/parts/index-html/080-sheets-chain-perp-auth.part.html');
+test('M4.3: ToolsAndChainSheets fixes TP/SL colContractVol & placeholders and adds refresh button IDs', () => {
+  const html080 = readPart('src/app/sheets/ToolsAndChainSheets.jsx');
 
   // TP/SL modal fixes
   assert.equal(html080.includes('data-i18n="perp.colContractVol"'), false, 'TP/SL modal must not reuse perp.colContractVol');
@@ -95,8 +94,8 @@ test('M4.3: 080-sheets-chain-perp-auth fixes TP/SL colContractVol & placeholders
   assert.ok(readPart('src/parts/ui-controller/210-near-storage.part.js').includes("$('btn-refresh-near-storage')"));
 });
 
-test('M4.4: 190-mining & 070-sheets-tools fix #btn-mining-query binding and telemetry field names', () => {
-  const html070 = readPart('src/parts/index-html/070-sheets-tools.part.html');
+test('M4.4: 190-mining & ToolsAndChainSheets fix #btn-mining-query binding and telemetry field names', () => {
+  const html070 = readPart('src/app/sheets/ToolsAndChainSheets.jsx');
   const src190 = readPart('src/parts/ui-controller/190-mining.part.js');
 
   assert.ok(html070.includes('id="btn-mining-query"'), '070-sheets-tools must have id="btn-mining-query"');

@@ -33,10 +33,11 @@ test('v6.7 Stage A: Zero-flash App Lock, 1-minute auto-lock, Native Privacy Blur
   assert.match(agentsMd, /严禁.*git push|git push/i);
 
   const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const appShellViews = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/AppShellViews.jsx'), 'utf8');
   const styleCss = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
   assert.ok(indexHtml.includes("document.documentElement.classList.add('nexus-locked')"), 'index.html must apply nexus-locked synchronously before body paints');
-  assert.ok(indexHtml.includes('id="app-lock-overlay"'));
-  assert.ok(indexHtml.includes('id="app-privacy-shield"'));
+  assert.ok(appShellViews.includes('id="app-lock-overlay"'));
+  assert.ok(appShellViews.includes('id="app-privacy-shield"'));
   assert.ok(styleCss.includes('html.nexus-locked #app-lock-overlay'));
   assert.ok(styleCss.includes('html.nexus-privacy-blur #app-privacy-shield'));
 
@@ -544,7 +545,8 @@ test('v6.8 Stage B: Multi-Chain Limit Orders (NEAR DCL ticks/split/claim/cancel,
   });
 
   // 5. UI Peer Toggle (闪兑 | 限价) & DOM state
-  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const { readPreactAppSources } = require('./helpers.js');
+  const indexHtml = readPreactAppSources();
   assert.ok(indexHtml.includes('id="swap-mode-toggle"'));
   assert.ok(indexHtml.includes('id="swap-limit-panel"'));
   assert.ok(indexHtml.includes('id="limit-orders-card"'));
@@ -578,7 +580,8 @@ test('v6.8 Stage B: Multi-Chain Limit Orders (NEAR DCL ticks/split/claim/cancel,
 
 test('v6.9 Stage C: Bottom Nav Restructure & Hyperliquid Perpetual Futures + 1Click/Arbitrum Funding', async () => {
   const ethers = require('../ethers.umd.min.js');
-  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const { readPreactAppSources } = require('./helpers.js');
+  const indexHtml = readPreactAppSources();
 
   // 1. Bottom Nav Restructure: 4 tabs [wallet, swap, perp, hub], Home Earn trigger kept, Earn Back button added
   const navMatch = indexHtml.match(/<nav id="bottom-nav"[\s\S]*?<\/nav>/);
@@ -971,12 +974,13 @@ test('v6.10 UI/UX Overhaul: 1Click PRL Guard & Lowercase Recipient, 20-Level Ord
   assert.equal(wdOk.netReceive, 9);
 
   // 5. UI Classes, No Duplicate withdrawBtn i18n Key & Clean DOM Structure
-  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const { readPreactAppSources } = require('./helpers.js');
+  const indexHtml = readPreactAppSources();
   assert.equal(state.i18nDict.zh['perp.withdrawBtn'], '提现');
   assert.equal(state.i18nDict.en['perp.withdrawBtn'], 'Withdraw');
   assert.equal(state.i18nDict.zh['perp.withdrawConfirmBtn'], '安全验证并提现');
-  assert.ok(indexHtml.includes('id="perp-coin-btn" class="token-select-btn"'));
-  assert.ok(indexHtml.includes('class="nexus-switch"'));
+  assert.match(indexHtml, /id="perp-coin-btn"\s+className="token-select-btn"/);
+  assert.ok(indexHtml.includes('className="nexus-switch"'));
   assert.ok(indexHtml.includes('id="limit-split-preview"'));
   assert.ok(indexHtml.includes('id="perp-oc-empty-state"'));
   assert.ok(indexHtml.includes('id="perp-arb-error"'));

@@ -12,7 +12,7 @@ const {
 test('M5.1: 6-file cache version parity', () => {
   const swText = fs.readFileSync(path.join(ROOT_DIR, 'sw.js'), 'utf8');
   const headText = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/index-html/000-head-shell.part.html'), 'utf8');
-  const onboardText = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/index-html/010-view-onboarding-wallet.part.html'), 'utf8');
+  const onboardText = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/AppShellViews.jsx'), 'utf8');
   const footerText = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/index-html/090-scripts-footer.part.html'), 'utf8');
   const coreText = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/000-core.part.js'), 'utf8');
   const wcText = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/230-walletconnect.part.js'), 'utf8');
@@ -31,7 +31,7 @@ test('M5.1: 6-file cache version parity', () => {
 
   extractVersions(swText, 'sw.js');
   extractVersions(headText, '000-head-shell.part.html');
-  extractVersions(onboardText, '010-view-onboarding-wallet.part.html');
+  extractVersions(onboardText, 'AppShellViews.jsx');
   extractVersions(footerText, '090-scripts-footer.part.html');
   extractVersions(coreText, '000-core.part.js');
   extractVersions(wcText, '230-walletconnect.part.js');

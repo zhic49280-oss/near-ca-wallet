@@ -73,6 +73,6 @@ test('Phase 6.3: Unqueried ERC-20 stays null (--), tools preserve button disable
   assert.ok(swCode.includes('walletconnect.umd.min.js'));
   assert.ok(swCode.includes("type === 'SKIP_WAITING'"));
 
-  const hubHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/index-html/050-view-hub-nav.part.html'), 'utf8');
+  const hubHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/TradingViews.jsx'), 'utf8');
   assert.ok(hubHtml.includes('data-i18n="hub.langCurrent"'));
 });

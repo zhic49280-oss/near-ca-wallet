@@ -612,8 +612,9 @@ test('v2.8 Task 3: Human-readable minimum bridge amount error in quoteRawOneClic
 });
 
 test('v2.9: OKX-style Token Detail Sheet (openTokenDetailSheet, setTokenDetailChain, earn matching, recordWalletActivity & auto-sync)', async () => {
-  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
-  assert.ok(indexHtml.includes('id="sheet-token-detail"'), 'index.html must include #sheet-token-detail');
+  const { readPreactAppSources } = require('./helpers.js');
+  const appUi = readPreactAppSources();
+  assert.ok(appUi.includes('id="sheet-token-detail"'), 'Preact app UI must include #sheet-token-detail');
 
   for (const fnName of [
     'openTokenDetailSheet',
@@ -1284,7 +1285,8 @@ test('v3.2: Pool icons on all 21 pools, Burrow TVL USD consistency, silent home 
   }
 
   // 3. Pull-to-Refresh replaces hidden manual refresh button + build-ios-ipa.yml git add fix
-  const html = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const { readPreactAppSources } = require('./helpers.js');
+  const html = readPreactAppSources();
   assert.ok(html.includes('id="home-ptr-indicator"'), 'Home view must include Pull-to-Refresh indicator');
   assert.equal(html.includes('id="btn-refresh-balances"'), false, 'Hidden manual refresh button must be removed');
   assert.equal(html.includes('id="home-sync-status"'), false, 'Legacy hidden sync status must be removed');
