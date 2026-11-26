@@ -244,10 +244,11 @@
         st.limit.rateLimited = Boolean(res.rateLimited);
         if (chain === 'sol') st.limit.solUnavailable = Boolean(res.unavailable);
         if (res.unavailable && showFeedback) {
-          showToast(res.error || t('当前链限价单接口暂不可用', 'Limit order service unavailable on this chain'));
+          showToast(toUserFriendlyError(res.error, '当前链限价单服务暂不可用', 'Limit order service unavailable on this chain'));
         }
       }
       if (reqSeq === _limitOrdSeq && st.getActiveWallet()?.id === activeWalletId) st.limit.ordersLoading = false;
+      if (typeof st.emitStateTopic === 'function') st.emitStateTopic('limit');
       renderLimitOrdersList();
       if (showFeedback && !(res && res.unavailable)) {
         const rateLimitMsg = chain === 'bsc'
@@ -465,7 +466,7 @@
       await refreshLimitMarketContextAsync();
       renderLimitOrderView();
     } catch (err) {
-      st.limit.errorMsg = err && err.message ? err.message : t('封装失败', 'Wrap failed');
+      st.limit.errorMsg = toUserFriendlyError(err, '封装失败，请稍后重试', 'Wrap failed. Please try again.');
       showToast(st.limit.errorMsg);
     } finally {
       _limitOrderActionInFlight = false;
@@ -677,7 +678,7 @@
       await refreshLimitMarketContextAsync().catch(() => {});
       await refreshLimitOrdersAsync(false).catch(() => {});
     } catch (err) {
-      st.limit.errorMsg = toUserFriendlyError(err, t('限价单提交失败，请稍后重试', 'Limit order failed. Please try again.'));
+      st.limit.errorMsg = toUserFriendlyError(err, '限价单提交失败，请稍后重试', 'Limit order failed. Please try again.');
       showToast(st.limit.errorMsg);
     } finally {
       _limitOrderActionInFlight = false;
@@ -706,7 +707,7 @@
       await refreshAllBalancesAsync(true).catch(() => {});
       await refreshLimitOrdersAsync(false).catch(() => {});
     } catch (err) {
-      showToast(toUserFriendlyError(err, t('领取失败，请稍后重试', 'Claim failed. Please try again.')));
+      showToast(toUserFriendlyError(err, '领取失败，请稍后重试', 'Claim failed. Please try again.'));
     } finally {
       _limitOrderActionInFlight = false;
       st.limit.claimingOrderId = '';
@@ -742,7 +743,7 @@
       await refreshAllBalancesAsync(true).catch(() => {});
       await refreshLimitOrdersAsync(false).catch(() => {});
     } catch (err) {
-      showToast(toUserFriendlyError(err, t('撤单失败，请稍后重试', 'Cancel failed. Please try again.')));
+      showToast(toUserFriendlyError(err, '撤单失败，请稍后重试', 'Cancel failed. Please try again.'));
     } finally {
       _limitOrderActionInFlight = false;
       st.limit.cancellingOrderId = '';

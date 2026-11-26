@@ -316,30 +316,7 @@
         isEn: st.lang === 'en',
         shortenAddr
       });
-      return;
     }
-    if (st.wallets.length === 0) {
-      listEl.innerHTML = `<div class="text-muted" style="text-align:center;padding:12px;">${t('暂无钱包', 'No wallets')}</div>`;
-      return;
-    }
-    listEl.innerHTML = st.wallets.map((w) => {
-      const isActive = w.id === st.activeWalletId;
-      const nearId = w.nearNamedAccount || shortenAddr(w.nearAddress, 8, 6);
-      return `
-        <div class="ios-glass-card flex items-center justify-between gap-2" style="padding:12px;border-color:${isActive ? 'rgba(0,236,151,0.45)' : 'var(--border-glass)'};">
-          <div class="min-w-0 flex-1" style="cursor:pointer;" data-action="switch-wallet" data-wallet-id="${escapeHtml(w.id)}">
-            <div class="flex items-center gap-2">
-              <span style="font-weight:700;color:#fff;">${escapeHtml(w.name)}</span>
-              ${isActive ? `<span class="ca-badge">${t('当前', 'Active')}</span>` : ''}
-            </div>
-            <div class="mono text-emerald" style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(nearId)}</div>
-          </div>
-          ${st.wallets.length > 1
-            ? `<button type="button" class="btn-danger" data-action="delete-wallet" data-wallet-id="${escapeHtml(w.id)}">${t('删除', 'Delete')}</button>`
-            : ''}
-        </div>
-      `;
-    }).join('');
   }
 
   function resetPerWalletTransientState(nextWallet) {
@@ -436,7 +413,12 @@
       `确认永久移除钱包「${target?.name || walletId}」？请确保已备份助记词。`,
       `Permanently remove wallet "${target?.name || walletId}"? Ensure you backed up its recovery phrase.`
     );
-    if (typeof confirmWithUserIfSupported === 'function' && !confirmWithUserIfSupported(delMsg)) return;
+    const confirmed = await showConfirmDialogAsync(delMsg, {
+      danger: true,
+      title: t('移除钱包', 'Remove Wallet'),
+      confirmText: t('确认移除', 'Remove')
+    });
+    if (!confirmed) return;
     if (target && !(await verifySecurityAuthAsync(target, t('删除钱包账户', 'Delete wallet account')))) return;
     const deletedActive = st.activeWalletId === walletId;
     st.wallets = st.wallets.filter((w) => w.id !== walletId);
@@ -475,24 +457,7 @@
         isEn: getState().lang === 'en',
         onToggleReveal: toggleBackupKeysReveal
       });
-      return;
     }
-    const btn = $('btn-backup-reveal-toggle');
-    if (btn) {
-      btn.textContent = _backupRevealActive ? t('隐藏助记词与私钥', 'Hide Phrase & Keys') : t('显示助记词与私钥', 'Reveal Phrase & Keys');
-    }
-    document.querySelectorAll('#backup-keys-content .backup-secret-val').forEach((el) => {
-      const realVal = el.dataset.secret || '';
-      if (_backupRevealActive) {
-        el.textContent = realVal || '--';
-        el.style.filter = 'none';
-        el.style.userSelect = 'text';
-      } else {
-        el.textContent = realVal ? '•••• •••• •••• •••• •••• ••••' : '--';
-        el.style.filter = 'blur(4px)';
-        el.style.userSelect = 'none';
-      }
-    });
   }
 
   function toggleBackupKeysReveal() {

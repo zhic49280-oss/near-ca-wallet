@@ -80,7 +80,7 @@ function buildProdBuffer(rel, src) {
     const out = esbuild.transformSync(raw.toString('utf8'), { loader: 'css', minify: true });
     return { buf: Buffer.from(out.code, 'utf8'), rawLen: raw.length };
   }
-  if (rel.startsWith('src/') && rel.endsWith('.js') && rel !== 'src/framework-ui.js') {
+  if (rel.startsWith('src/') && rel.endsWith('.js') && rel !== 'src/framework-ui.js' && rel !== 'src/jsqr-lazy.js') {
     const out = esbuild.transformSync(raw.toString('utf8'), { loader: 'js', minify: true, legalComments: 'none' });
     return { buf: Buffer.from(out.code, 'utf8'), rawLen: raw.length };
   }

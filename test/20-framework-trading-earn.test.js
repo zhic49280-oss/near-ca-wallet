@@ -35,7 +35,7 @@ test('FW-2.2: EarnPoolsPanel.jsx exists, exports EarnPoolsPanel, enforces zero f
   const src = fs.readFileSync(filePath, 'utf8');
 
   assert.ok(src.includes('export function EarnPoolsPanel'), 'EarnPoolsPanel must be exported');
-  assert.ok(src.includes("useWalletState(['staking', 'lang'])"), 'EarnPoolsPanel must subscribe to staking & lang topics');
+  assert.ok(src.includes("useWalletState(['earn', 'lang'])"), 'EarnPoolsPanel must subscribe to earn & lang topics');
   assert.ok(src.includes('<TokenIconBadge'), 'EarnPoolsPanel must render TokenIconBadge');
   assert.equal(src.includes('dangerouslySetInnerHTML'), false, 'EarnPoolsPanel must not use dangerouslySetInnerHTML');
 

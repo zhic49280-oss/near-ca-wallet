@@ -33,29 +33,7 @@
         isEn: st.lang === 'en',
         shortenAddr
       });
-      return;
     }
-    if (!st.contacts || st.contacts.length === 0) {
-      listEl.innerHTML = `<div class="text-muted" style="text-align:center;padding:12px;">${t('暂无保存地址', 'No saved contacts')}</div>`;
-      return;
-    }
-    listEl.innerHTML = st.contacts.map((c) => `
-      <div class="meta-list">
-        <div class="meta-row">
-          <div class="flex items-center gap-2">
-            <span style="font-weight:700;color:#fff;">${escapeHtml(c.name)}</span>
-            ${c.network ? `<span class="ca-badge">${escapeHtml(String(c.network).toUpperCase())}</span>` : ''}
-          </div>
-          <div class="flex gap-1">
-            ${_contactsPickerTarget
-              ? `<button type="button" class="mini-action-btn primary" data-action="pick-contact" data-addr="${escapeHtml(c.address)}">${t('选用', 'Use')}</button>`
-              : `<button type="button" class="btn-ghost-sm" data-action="copy-text" data-val="${escapeHtml(c.address)}" data-label="${escapeHtml(c.name)}">${t('复制', 'Copy')}</button>`}
-            <button type="button" class="btn-danger" style="padding:4px 8px;font-size:10.5px;" data-action="delete-contact" data-id="${escapeHtml(c.id)}">${t('删除', 'Del')}</button>
-          </div>
-        </div>
-        <div class="mono text-secondary" style="font-size:11px;word-break:break-all;">${escapeHtml(c.address)}</div>
-      </div>
-    `).join('');
   }
 
   function addContactFromSheet() {
@@ -94,8 +72,12 @@
     showToast(t('联系人已保存', 'Contact saved'));
   }
 
-  function deleteContactById(id) {
-    if (!confirmWithUserIfSupported(t('确认删除该联系人？', 'Delete this contact?'))) return;
+  async function deleteContactById(id) {
+    const confirmed = await showConfirmDialogAsync(
+      t('确认删除该联系人？', 'Delete this contact?'),
+      { danger: true, title: t('删除联系人', 'Delete Contact'), confirmText: t('删除', 'Delete') }
+    );
+    if (!confirmed) return;
     const st = getState();
     st.contacts = st.contacts.filter((c) => c.id !== id);
     st.saveContacts();

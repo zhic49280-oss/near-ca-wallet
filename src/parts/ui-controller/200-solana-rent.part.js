@@ -39,12 +39,8 @@
       execBtn.textContent = t('扫描中...', 'Scanning...');
     }
     if (sumEl) sumEl.textContent = t('扫描中...', 'Scanning...');
-    if (listEl) {
-      if (fw && typeof fw.mountSolRentPanel === 'function') {
-        fw.mountSolRentPanel(listEl, { accounts: [], selectedAtas: [], loading: true, isEn: st.lang === 'en', formatBal });
-      } else {
-        listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:12px;text-align:center;">${t('正在扫描 Solana 代币账户...', 'Scanning Solana token accounts...')}</div>`;
-      }
+    if (listEl && fw && typeof fw.mountSolRentPanel === 'function') {
+      fw.mountSolRentPanel(listEl, { accounts: [], selectedAtas: [], loading: true, isEn: st.lang === 'en', formatBal });
     }
 
     const solTokens = getSwapTokenCatalog().filter((tk) => String(tk.blockchain || '').toLowerCase() === 'sol' && tk.contractAddress);
@@ -93,13 +89,9 @@
         execBtn.disabled = true;
         execBtn.textContent = t('暂不可回收', 'Unavailable');
       }
-      if (listEl) {
+      if (listEl && fw && typeof fw.mountSolRentPanel === 'function') {
         const errText = toUserFriendlyError(err, '扫描失败', 'Scan failed');
-        if (fw && typeof fw.mountSolRentPanel === 'function') {
-          fw.mountSolRentPanel(listEl, { accounts: [], selectedAtas: [], loading: false, errorMsg: errText, isEn: st.lang === 'en', formatBal });
-        } else {
-          listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:12px;text-align:center;">${escapeHtml(errText)}</div>`;
-        }
+        fw.mountSolRentPanel(listEl, { accounts: [], selectedAtas: [], loading: false, errorMsg: errText, isEn: st.lang === 'en', formatBal });
       }
     } finally {
       if (refreshBtn && scanSeq === _solRentScanSeq) {
@@ -140,40 +132,7 @@
         isEn: st.lang === 'en',
         formatBal
       });
-      return;
     }
-
-    if (_solRentScanAccounts.length === 0) {
-      listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:16px;text-align:center;">${t('当前钱包没有可回收的 Solana 代币账户', 'No reclaimable Solana token accounts found')}</div>`;
-      return;
-    }
-
-    listEl.innerHTML = _solRentScanAccounts.map((acc) => {
-      const checked = _solRentSelectedAtas.has(acc.ataAddress) ? 'checked' : '';
-      const badgeHtml = acc.isEmpty
-        ? `<span class="ca-badge" style="font-size:10px;">${t('空账户', 'Empty')}</span>`
-        : (acc.isDust
-            ? `<span class="ca-badge" style="font-size:10px;border-color:rgba(251,113,133,0.4);color:var(--rose-alert);">${t('粉尘粉碎', 'Burn Dust')}</span>`
-            : `<span class="ca-badge" style="font-size:10px;border-color:rgba(251,191,36,0.4);color:#fbbf24;">${t('有余额 (慎选)', 'Has Balance')}</span>`);
-      const balInfo = acc.isEmpty
-        ? t('余额: 0', 'Bal: 0')
-        : `${t('余额', 'Bal')}: ${formatBal(acc.uiAmount, 6)}${acc.usdValue !== null ? ` (~$${acc.usdValue.toFixed(4)})` : ''}`;
-      return `
-        <label class="ios-glass-card flex items-center justify-between gap-2" style="padding:10px 12px;cursor:pointer;">
-          <div class="flex items-center gap-2" style="min-width:0;">
-            <input type="checkbox" ${checked} data-action="toggle-sol-rent" data-ata="${escapeHtml(acc.ataAddress)}" />
-            <div class="flex flex-col" style="min-width:0;">
-              <div class="flex items-center gap-1">
-                <span style="font-weight:700;font-size:12.5px;">${escapeHtml(acc.symbol)}</span>
-                ${badgeHtml}
-              </div>
-              <span style="font-size:11px;color:var(--text-secondary);">${escapeHtml(balInfo)}</span>
-            </div>
-          </div>
-          <span class="mono" style="font-size:12px;font-weight:700;color:var(--mint-accent);white-space:nowrap;">+${acc.rentSol.toFixed(4)} SOL</span>
-        </label>
-      `;
-    }).join('');
   }
 
   function toggleSolRentItem(ataAddress, isChecked) {

@@ -43,10 +43,6 @@
     return Array.isArray(hit) ? hit : [hit];
   }
 
-  function resolveNearDclPoolId(inId, outId) {
-    return resolveNearDclPoolIds(inId, outId)[0] || null;
-  }
-
   async function viewNearContractCall(contractId, methodName, argsObj, signal = null) {
     const res = await nearRpcPostAsync(
       {
@@ -166,7 +162,7 @@
         poolIds: [poolIdsList[0]],
         amountOut: null,
         minAmountOut: '0',
-        error: toUserFriendlyError(err, t('获取报价失败，请稍后重试', 'Failed to fetch quote. Please try again.'))
+        error: toUserFriendlyError(err, '获取报价失败，请稍后重试', 'Failed to fetch quote. Please try again.')
       };
     }
   }
@@ -471,7 +467,7 @@
           amountOut: null,
           actions: [],
           routeData: null,
-          error: toUserFriendlyError(srData && srData.result_message, t('暂无可用流动性路径，请稍后重试', 'No liquidity route found. Please try again.'))
+          error: toUserFriendlyError(srData && srData.result_message, '暂无可用流动性路径，请稍后重试', 'No liquidity route found. Please try again.')
         };
       } finally {
         if (signal && onExtAbort) {

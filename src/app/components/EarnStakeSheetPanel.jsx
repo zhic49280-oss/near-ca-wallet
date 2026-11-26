@@ -27,7 +27,7 @@ export function EarnStakeSheetPanel({
   formatLockTierLabel,
   shortenAddr = defaultShortenAddr
 }) {
-  const st = useWalletState(['staking', 'lang']);
+  const st = useWalletState(['earn', 'lang']);
   const isEn = typeof isEnProp === 'boolean' ? isEnProp : Boolean(st && st.lang === 'en');
 
   if (mode === 'receipt') {
@@ -36,7 +36,7 @@ export function EarnStakeSheetPanel({
     return (
       <div class="flex flex-col gap-1.5">
         <div class="meta-row">
-          <span class="meta-key">TxHash</span>
+          <span class="meta-key">{isEn ? 'Transaction ID' : '交易哈希'}</span>
           <span class="mono text-emerald">{shortenAddr(receipt.txHash, 10, 8)}</span>
         </div>
         {showExplorer ? (
@@ -84,7 +84,7 @@ export function EarnValidatorsPanel({
   busyTarget = '',
   isEn: isEnProp
 }) {
-  const st = useWalletState(['staking', 'lang']);
+  const st = useWalletState(['earn', 'lang']);
   const isEn = typeof isEnProp === 'boolean' ? isEnProp : Boolean(st && st.lang === 'en');
   const list = Array.isArray(items) ? items : [];
   if (list.length === 0) return null;

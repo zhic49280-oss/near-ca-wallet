@@ -24,7 +24,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.74');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.75');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -93,17 +93,6 @@
           onApprove: approveWcProposal,
           onReject: rejectWcProposal
         });
-        pCard.classList.remove('hidden');
-      } else {
-        const meta = (p.params && p.params.proposer && p.params.proposer.metadata) || {};
-        if ($('wc-proposal-name')) $('wc-proposal-name').textContent = meta.name || 'DApp';
-        if ($('wc-proposal-url')) $('wc-proposal-url').textContent = meta.url || '--';
-        if ($('wc-proposal-chains')) {
-          const reqChains = (p.params && p.params.requiredNamespaces && p.params.requiredNamespaces.eip155 && p.params.requiredNamespaces.eip155.chains) || [];
-          const optChains = (p.params && p.params.optionalNamespaces && p.params.optionalNamespaces.eip155 && p.params.optionalNamespaces.eip155.chains) || [];
-          const merged = Array.from(new Set([...reqChains, ...optChains]));
-          $('wc-proposal-chains').textContent = merged.length ? merged.join(', ') : 'eip155:1, eip155:8453, eip155:56, eip155:42161';
-        }
         pCard.classList.remove('hidden');
       }
     }
@@ -655,7 +644,7 @@
     const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
     if (existing) return existing;
     if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
-      await loadScriptOnce('src/jsqr-lazy.js?v=6.74').catch(() => false);
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.75').catch(() => false);
       return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     }
     return null;

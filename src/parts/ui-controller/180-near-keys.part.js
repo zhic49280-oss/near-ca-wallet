@@ -279,20 +279,6 @@
     return null;
   }
 
-  function confirmWithUserIfSupported(message) {
-    const sig = String(message || '').slice(0, 80);
-    const now = Date.now();
-    if (_pendingConfirmSig === sig && (now - _pendingConfirmTs) < 8000) {
-      _pendingConfirmSig = '';
-      _pendingConfirmTs = 0;
-      return true;
-    }
-    _pendingConfirmSig = sig;
-    _pendingConfirmTs = now;
-    showToast(`${message} (${t('请再次点击确认操作', 'Tap again within 8s to confirm')})`);
-    return false;
-  }
-
   async function bindOrReplacePrlMnemonicUI() {
     const st = getState();
     const crypto = getCrypto();
@@ -320,7 +306,7 @@
           `当前 PRL 账户 (${shortenAddr(wallet.address)}) 仍有 ${formatBal(oldPrlBal, 4)} PRL 余额，更换前请确认已备份原助记词。是否继续更换？`,
           `Current PRL account (${shortenAddr(wallet.address)}) holds ${formatBal(oldPrlBal, 4)} PRL. Ensure you have backed up its recovery phrase before switching. Continue?`
         );
-        if (!confirmWithUserIfSupported(msg)) return;
+        if (!(await showConfirmDialogAsync(msg, { danger: true, title: t('更换 PRL 账户', 'Switch PRL Account') }))) return;
       }
       if (!(await verifySecurityAuthAsync(wallet, t('绑定 / 更换 PRL 挖矿账户', 'Bind / Switch PRL Mining Account')))) return;
 
@@ -345,7 +331,7 @@
       showToast(`✅ ${t('已绑定 PRL 账户', 'PRL account bound')}: ${shortenAddr(derivedPrl.address, 8, 6)}`);
       refreshAllBalancesAsync(true);
     } catch (e) {
-      showToast(e && e.message ? e.message : t('PRL 账户绑定失败', 'Failed to bind PRL account'));
+      showToast(toUserFriendlyError(e, 'PRL 账户绑定失败', 'Failed to bind PRL account'));
     }
   }
 
@@ -370,7 +356,7 @@
           `当前独立绑定的 PRL 账户 (${shortenAddr(wallet.address)}) 仍有 ${formatBal(oldPrlBal, 4)} PRL 余额，恢复默认前请确认已备份该 PRL 助记词。是否继续？`,
           `Current custom PRL account (${shortenAddr(wallet.address)}) holds ${formatBal(oldPrlBal, 4)} PRL. Ensure you have backed up its phrase before restoring default. Continue?`
         );
-        if (!confirmWithUserIfSupported(msg)) return;
+        if (!(await showConfirmDialogAsync(msg, { danger: true, title: t('更换 PRL 账户', 'Switch PRL Account') }))) return;
       }
       if (!(await verifySecurityAuthAsync(wallet, t('恢复默认派生 PRL 账户', 'Restore Default PRL Account')))) return;
       const derivedPrl = await crypto.derivePearlFromSeedAsync(mainMnemonic, "m/86'/808276'/0'/0/0", true);
@@ -393,7 +379,7 @@
       showToast(`✅ ${t('已恢复默认派生 PRL 账户', 'Restored default PRL account')}: ${shortenAddr(derivedPrl.address, 8, 6)}`);
       refreshAllBalancesAsync(true);
     } catch (e) {
-      showToast(e && e.message ? e.message : t('恢复默认 PRL 账户失败', 'Failed to restore default PRL account'));
+      showToast(toUserFriendlyError(e, '恢复默认 PRL 账户失败', 'Failed to restore default PRL account'));
     }
   }
 
@@ -442,7 +428,7 @@
           `检测到原助记词下的 ${assetNotes.join('、')} 账户仍有资产或记录。更换 NEAR 助记词后，系统将自动保留原助记词/私钥用于继续管理这些资产，请务必备份原助记词。是否继续更换？`,
           `Detected assets/history in ${assetNotes.join(', ')} under your current phrase. Your old phrase/keys will be preserved for those assets; please ensure it is backed up. Continue?`
         );
-        if (!confirmWithUserIfSupported(warnMsg)) return;
+        if (!(await showConfirmDialogAsync(warnMsg, { danger: true, title: t('更换 NEAR 助记词', 'Rotate NEAR Phrase') }))) return;
       }
 
       if (!(await verifySecurityAuthAsync(wallet, t('更换 NEAR 控制助记词', 'Rotate NEAR Control Mnemonic')))) return;
@@ -601,10 +587,6 @@
       hubWcBadge.classList.toggle('hidden', wcCount === 0);
     }
 
-    if ($('hub-near-current-id')) {
-      $('hub-near-current-id').textContent = wallet.nearNamedAccount || wallet.nearAddress || '--';
-    }
-
     const addrList = $('hub-addresses-list');
     if (addrList) {
       const items = [
@@ -677,7 +659,7 @@
       showToast(t('已取消验证', 'Verification cancelled'));
       return;
     }
-    showToast(res.error || t('当前环境不支持系统生物识别，建议开启系统锁屏保护', 'System biometrics unavailable; enable device screen lock in system settings'));
+    showToast(toUserFriendlyError(res && res.error, '当前环境不支持系统生物识别，建议开启系统锁屏保护', 'System biometrics unavailable; enable device screen lock in system settings'));
   }
 
   async function registerNearDomainFromHub() {

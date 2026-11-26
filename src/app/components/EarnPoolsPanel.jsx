@@ -46,7 +46,7 @@ export function EarnPoolsPanel({
   getPoolData,
   formatBal = defaultFormatBal
 }) {
-  const st = useWalletState(['staking', 'lang']);
+  const st = useWalletState(['earn', 'lang']);
   const isEn = typeof isEnProp === 'boolean' ? isEnProp : Boolean(st && st.lang === 'en');
   const list = Array.isArray(pools) ? pools : [];
 

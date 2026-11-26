@@ -289,13 +289,16 @@ test('Module 1: NEAR MPC Chain Signatures (EVM, Solana, Pearl, Bitcoin) match li
   assert.ok(btcRes.mpcBtcAddress.startsWith('bc1p'));
   assert.equal(cryptoEngine.validateChainAddress('btc', btcRes.mpcBtcAddress).valid, true);
 
-  // Unified deriveNearMpcAllAddresses bundle
+  // Unified deriveNearMpcAllAddresses bundle (hot path skips legacy Pearl/BTC unless includeLegacy: true)
   const mpcAll = cryptoEngine.deriveNearMpcAllAddresses('alice.near');
   assert.equal(mpcAll.nearAccountId, 'alice.near');
   assert.equal(mpcAll.evmAddress, res.mpcEvmAddress);
   assert.equal(mpcAll.solAddress, solRes.mpcSolAddress);
-  assert.equal(mpcAll.pearlAddress, prlRes.mpcPearlAddress);
-  assert.equal(mpcAll.btcAddress, btcRes.mpcBtcAddress);
+  assert.equal(mpcAll.pearlAddress, undefined);
+  assert.equal(mpcAll.btcAddress, undefined);
+  const mpcLegacy = cryptoEngine.deriveNearMpcAllAddresses('alice.near', { includeLegacy: true });
+  assert.equal(mpcLegacy.pearlAddress, prlRes.mpcPearlAddress);
+  assert.equal(mpcLegacy.btcAddress, btcRes.mpcBtcAddress);
 });
 
 test('Module 1: Address detection & validation across NEAR, EVM, Solana, Pearl, Bitcoin, TRON', () => {

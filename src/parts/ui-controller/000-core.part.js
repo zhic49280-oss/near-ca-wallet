@@ -58,7 +58,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.74');
+      await loadScriptOnce('ethers.umd.min.js?v=6.75');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -68,7 +68,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.74').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.75').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -78,7 +78,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.74').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.75').catch(() => false);
       return getMining();
     }
     return null;
@@ -249,13 +249,30 @@
   }
 
   let _toastTimer = null;
-  function showToast(msg) {
-    const el = $('toast');
-    if (!el) return;
-    el.textContent = String(msg || '');
-    el.classList.add('show');
+  function showToast(msg, tone = 'neutral') {
+    const text = String(msg || '');
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    let host = $('toast-host');
+    const legacyEl = $('toast');
+    if (fw && typeof fw.mountToastBanner === 'function' && typeof document !== 'undefined') {
+      if (!host && legacyEl && legacyEl.parentNode) {
+        host = document.createElement('div');
+        host.id = 'toast-host';
+        legacyEl.parentNode.replaceChild(host, legacyEl);
+      }
+      if (host) {
+        const dismiss = () => fw.mountToastBanner(host, { id: 'toast', message: text, visible: false, tone });
+        fw.mountToastBanner(host, { id: 'toast', message: text, visible: true, tone, onDismiss: dismiss });
+        if (_toastTimer) clearTimeout(_toastTimer);
+        _toastTimer = setTimeout(dismiss, 3200);
+        return;
+      }
+    }
+    if (!legacyEl) return;
+    legacyEl.textContent = text;
+    legacyEl.classList.add('show');
     if (_toastTimer) clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+    _toastTimer = setTimeout(() => legacyEl.classList.remove('show'), 3200);
   }
 
   async function copyText(text, label = '') {
@@ -313,5 +330,54 @@
         }
       }).catch(() => {});
     }
+  }
+
+  let _confirmDialogResolve = null;
+  function showConfirmDialogAsync(message, opts = {}) {
+    const sheet = $('sheet-confirm-dialog');
+    if (!sheet || typeof document === 'undefined') {
+      if (typeof confirm === 'function') return Promise.resolve(Boolean(confirm(String(message || ''))));
+      return Promise.resolve(true);
+    }
+    if (_confirmDialogResolve) {
+      try { _confirmDialogResolve(false); } catch (_) {}
+      _confirmDialogResolve = null;
+    }
+    const titleEl = $('confirm-dialog-title');
+    const msgEl = $('confirm-dialog-message');
+    const okBtn = $('btn-confirm-dialog-ok');
+    const cancelBtn = $('btn-confirm-dialog-cancel');
+    const closeBtn = $('btn-confirm-dialog-close');
+    if (titleEl) titleEl.textContent = opts.title || t('确认操作', 'Confirm Action');
+    if (msgEl) msgEl.textContent = String(message || '');
+    if (okBtn) {
+      okBtn.textContent = opts.confirmText || t('确认', 'Confirm');
+      okBtn.style.background = opts.danger ? 'linear-gradient(135deg, #ef4444, #dc2626)' : '';
+    }
+    if (cancelBtn) cancelBtn.textContent = opts.cancelText || t('取消', 'Cancel');
+    const backdrop = $('sheet-backdrop');
+    if (backdrop) backdrop.classList.add('open');
+    sheet.classList.add('open');
+    sheet.setAttribute('aria-hidden', 'false');
+    if (typeof syncSheetScrollLock === 'function') syncSheetScrollLock();
+
+    return new Promise((resolve) => {
+      _confirmDialogResolve = resolve;
+      const finish = (result) => {
+        if (_confirmDialogResolve === resolve) _confirmDialogResolve = null;
+        sheet.classList.remove('open');
+        sheet.setAttribute('aria-hidden', 'true');
+        if (okBtn) okBtn.onclick = null;
+        if (cancelBtn) cancelBtn.onclick = null;
+        if (closeBtn) closeBtn.onclick = null;
+        const anyOtherOpen = document.querySelector('.bottom-sheet.open');
+        if (!anyOtherOpen && backdrop) backdrop.classList.remove('open');
+        if (typeof syncSheetScrollLock === 'function') syncSheetScrollLock();
+        resolve(Boolean(result));
+      };
+      if (okBtn) okBtn.onclick = () => finish(true);
+      if (cancelBtn) cancelBtn.onclick = () => finish(false);
+      if (closeBtn) closeBtn.onclick = () => finish(false);
+    });
   }
 

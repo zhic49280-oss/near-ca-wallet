@@ -238,7 +238,7 @@ test('Lazy jsQR build script, sync config, gitignore, and scanner loader are wir
 
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
   assert.ok(pkg.scripts.build.includes('node scripts/build-jsqr.js'));
-  assert.ok(pkg.scripts.sync.includes('node scripts/build-jsqr.js'));
+  assert.ok(pkg.scripts.sync === 'npm run build' || pkg.scripts.sync.includes('node scripts/build-jsqr.js'));
 
   const syncAssetsSrc = fs.readFileSync(path.join(ROOT_DIR, 'scripts/sync-assets.js'), 'utf8');
   assert.ok(syncAssetsSrc.includes("'src/jsqr-lazy.js'"));

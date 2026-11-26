@@ -37,8 +37,8 @@
   16. `mountPerpMarketsSheetPanel` / `mountPerpFundingInfoPanel` / `mountPerpChartHudPanel`：渲染永续选币弹窗、资金费率说明与 K 线交互 HUD；
   17. `mountEarnStakeSheetPanel` / `mountEarnValidatorsPanel`：渲染质押锁仓档位/回执与验证节点列表；
   18. `mountMiningTelemetryPanel` / `mountMiningWorkersPanel` / `mountWcSessionsPanel` / `mountWcProposalPanel` / `mountDAppBookmarksPanel` / `mountDAppApprovePanel`：渲染 Pearl 矿机遥测与矿工、WalletConnect 会话与审批、DApp 浏览器书签与签名审批；
-  19. `TokenIconBadge` 与 `components/ui/`（`ActionButton`、`EmptyState`、`StatusBadge`、`ToastBanner`）：共享 UI 原语与图标徽章（共 35 个 Preact 挂载入口与共享组件，覆盖全部视图与弹窗）；
-  20. `useWalletStore.js`：微任务合并通知（`notifyFrameworkState`）与 `useLang` / `useActiveWallet` hooks；`jsQR` 通过 `src/jsqr-lazy.js` 按需懒加载。
+  19. `TokenIconBadge` 与 `components/ui/`（`ActionButton`、`EmptyState`、`StatusBadge`、`ToastBanner`）：共享 UI 原语与图标徽章（共 35 个 Preact 挂载入口与共享组件，覆盖全部视图与弹窗；`showToast` 通过 `mountToastBanner` 渲染 `#toast`）；
+  20. `useWalletStore.js`：微任务合并通知（`notifyFrameworkState`）与按 topic 订阅（`wallet`, `contacts`, `balances`, `earn`, `perp`, `swap`, `limit`, `receive`, `lang`，语言切换仅通过 `lang` topic 触发单次重绘），以及 `useLang` / `useActiveWallet` hooks；`jsQR` 通过 `src/jsqr-lazy.js` 按需懒加载。
 
 ---
 

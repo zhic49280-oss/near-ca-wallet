@@ -37,8 +37,6 @@
         case 'delete-wallet': deleteWalletById(ds.walletId || ''); break;
         case 'toggle-backup-reveal': toggleBackupKeysReveal(); break;
         case 'copy-text': copyTextValue(ds.val || '', ds.label || ''); break;
-        case 'quick-swap': quickActionSwapFromEntry(ds.assetId || '', ds.chain || '', ds.contract || ''); break;
-        case 'quick-send': quickActionSendFromEntry(ds.symbol || '', ds.chain || '', ds.assetId || '', ds.contract || ''); break;
         case 'open-token-detail': openTokenDetailSheet(ds.symbol || ''); break;
         case 'toggle-home-dust': toggleHomeDustAssets(); break;
         case 'set-token-detail-chain': setTokenDetailChain(ds.chain || 'all'); break;

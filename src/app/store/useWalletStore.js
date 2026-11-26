@@ -49,12 +49,10 @@ export function useWalletState(topics = ['*']) {
         bump();
       }
     };
-    const unsubLang = typeof st.onLanguageChange === 'function' ? st.onLanguageChange(bump) : null;
     if (typeof window !== 'undefined') {
       window.addEventListener('nexus:state-updated', onStateEvt);
     }
     return () => {
-      if (typeof unsubLang === 'function') unsubLang();
       if (typeof window !== 'undefined') {
         window.removeEventListener('nexus:state-updated', onStateEvt);
       }

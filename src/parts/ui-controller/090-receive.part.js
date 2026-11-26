@@ -140,6 +140,7 @@
   function selectReceiveNetwork(key) {
     const st = getState();
     st.receive.selectedNetwork = key;
+    if (typeof st.emitStateTopic === 'function') st.emitStateTopic('receive');
     const wallet = st.getActiveWallet();
     if (key === 'qtc' && wallet && isQtcDepositExpired(wallet)) {
       ensureQtcReceiveDepositAddressAsync(wallet);

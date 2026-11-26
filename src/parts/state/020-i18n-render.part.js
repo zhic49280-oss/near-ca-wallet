@@ -674,6 +674,7 @@
   state.setLanguage = setLanguage;
   state.applyLanguage = applyLanguage;
   state.onLanguageChange = onLanguageChange;
+  state.emitStateTopic = emitStateTopic;
   state.getActiveWallet = getActiveWallet;
   state.saveWallets = saveWallets;
   state.saveWalletsDebounced = saveWalletsDebounced;

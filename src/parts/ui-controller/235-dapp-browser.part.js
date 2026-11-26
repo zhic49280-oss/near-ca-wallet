@@ -111,24 +111,15 @@
       return;
     }
     sec.classList.remove('hidden');
-    const rows = connectedList.map(({ origin, host, badges }) => {
-      return `
-        <div class="dapp-connected-row">
-          <div style="min-width:0;flex:1;">
-            <div class="mono truncate" style="font-size:12px;font-weight:700;color:#fff;">${escapeHtml(host)}</div>
-            <div style="font-size:10px;color:var(--near-emerald);">${escapeHtml(badges)}</div>
-          </div>
-          <button type="button" class="btn-danger" style="padding:4px 8px;font-size:10.5px;" data-action="disconnect-dapp-origin" data-origin="${escapeHtml(origin)}">${escapeHtml(t('断开', 'Disconnect'))}</button>
+    sec.innerHTML = connectedList.map(({ origin, host, badges }) => `
+      <div class="dapp-connected-row">
+        <div style="min-width:0;flex:1;">
+          <div class="mono truncate" style="font-size:12px;font-weight:700;color:#fff;">${escapeHtml(host)}</div>
+          <div style="font-size:10px;color:var(--near-emerald);">${escapeHtml(badges)}</div>
         </div>
-      `;
-    }).join('');
-    sec.innerHTML = `
-      <div class="flex items-center justify-between gap-2">
-        <span style="font-size:12px;font-weight:700;color:#fff;">${escapeHtml(t('已连接应用', 'Connected DApps'))} (${byOrigin.size})</span>
-        <button type="button" class="btn-ghost-sm" data-action="disconnect-all-dapp-origins" style="font-size:10.5px;">${escapeHtml(t('全部断开', 'Disconnect All'))}</button>
+        <button type="button" class="btn-danger" style="padding:4px 8px;font-size:10.5px;" data-action="disconnect-dapp-origin" data-origin="${escapeHtml(origin)}">${escapeHtml(t('断开', 'Disconnect'))}</button>
       </div>
-      ${rows}
-    `;
+    `).join('');
   }
 
   function renderDAppCatalog() {
@@ -141,57 +132,23 @@
     const filter = _dappSession.chainFilter || 'ALL';
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const isEn = getState().lang === 'en';
-    const filters = [
-      { key: 'ALL', label: t('全部', 'All') },
-      { key: 'NEAR', label: 'NEAR' },
-      { key: 'EVM', label: 'EVM' },
-      { key: 'Solana', label: 'Solana' }
-    ];
 
-    if (filterEl) {
-      if (fw && typeof fw.mountDAppBookmarksPanel === 'function') {
-        fw.mountDAppBookmarksPanel(filterEl, {
-          mode: 'filters',
-          chainFilter: filter,
-          isEn
-        });
-      } else {
-        filterEl.innerHTML = filters.map((f) => `
-          <button type="button" class="filter-pill ${filter === f.key ? 'active' : ''}" data-action="set-dapp-filter" data-chain="${escapeHtml(f.key)}">${escapeHtml(f.label)}</button>
-        `).join('');
-      }
+    if (filterEl && fw && typeof fw.mountDAppBookmarksPanel === 'function') {
+      fw.mountDAppBookmarksPanel(filterEl, {
+        mode: 'filters',
+        chainFilter: filter,
+        isEn
+      });
     }
 
-    if (listEl) {
+    if (listEl && fw && typeof fw.mountDAppBookmarksPanel === 'function') {
       const catalog = Array.isArray(browserMod.DAPP_CATALOG) ? browserMod.DAPP_CATALOG : [];
-      if (fw && typeof fw.mountDAppBookmarksPanel === 'function') {
-        fw.mountDAppBookmarksPanel(listEl, {
-          mode: 'catalog',
-          catalog,
-          chainFilter: filter,
-          isEn
-        });
-      } else {
-        const rows = catalog.filter((d) => filter === 'ALL' || d.chain === filter);
-        listEl.innerHTML = rows.map((d) => {
-          const desc = t(d.descZh || '', d.descEn || '');
-          let host = d.url;
-          try { host = new URL(d.url).hostname; } catch (_) {}
-          return `
-            <button type="button" class="dapp-catalog-card" data-action="launch-dapp" data-url="${escapeHtml(d.url)}">
-              <div style="min-width:0;flex:1;">
-                <div class="flex items-center gap-2">
-                  <span style="font-size:13.5px;font-weight:700;color:#fff;">${escapeHtml(d.name)}</span>
-                  <span class="dapp-badge-pill">${escapeHtml(d.badge || d.chain)}</span>
-                </div>
-                <div style="font-size:11px;color:var(--text-secondary);margin-top:3px;">${escapeHtml(desc)}</div>
-                <div class="mono" style="font-size:10.5px;color:var(--text-muted);margin-top:2px;">${escapeHtml(host)}</div>
-              </div>
-              <span style="color:var(--text-muted);font-size:16px;">›</span>
-            </button>
-          `;
-        }).join('');
-      }
+      fw.mountDAppBookmarksPanel(listEl, {
+        mode: 'catalog',
+        catalog,
+        chainFilter: filter,
+        isEn
+      });
     }
   }
 

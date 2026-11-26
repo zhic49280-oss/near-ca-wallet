@@ -7,7 +7,7 @@
     "test": "node --test test/*.test.js",
     "start": "node server.js",
     "build": "node scripts/build-parts.js && node scripts/build-jsqr.js && npx vite build && node scripts/sync-assets.js",
-    "sync": "node scripts/build-parts.js && node scripts/build-jsqr.js && npx vite build && node scripts/sync-assets.js"
+    "sync": "npm run build"
   },
   "type": "commonjs",
   "license": "ISC",

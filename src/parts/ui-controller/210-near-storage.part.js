@@ -36,12 +36,8 @@
       refreshBtn.textContent = t('扫描中...', 'Scanning...');
     }
     if (sumEl) sumEl.textContent = t('扫描中...', 'Scanning...');
-    if (listEl) {
-      if (fw && typeof fw.mountNearStoragePanel === 'function') {
-        fw.mountNearStoragePanel(listEl, { accounts: [], selectedContracts: [], loading: true, isEn: st.lang === 'en', formatBal });
-      } else {
-        listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:12px;text-align:center;">${t('正在扫描 NEAR 代币合约存储押金...', 'Scanning NEAR token storage deposits...')}</div>`;
-      }
+    if (listEl && fw && typeof fw.mountNearStoragePanel === 'function') {
+      fw.mountNearStoragePanel(listEl, { accounts: [], selectedContracts: [], loading: true, isEn: st.lang === 'en', formatBal });
     }
 
     const scanSeq = ++_nearStorageScanSeq;
@@ -69,13 +65,9 @@
     } catch (err) {
       if (isStaleScan()) return;
       if (sumEl) sumEl.textContent = '--';
-      if (listEl) {
+      if (listEl && fw && typeof fw.mountNearStoragePanel === 'function') {
         const errText = toUserFriendlyError(err, '扫描失败', 'Scan failed');
-        if (fw && typeof fw.mountNearStoragePanel === 'function') {
-          fw.mountNearStoragePanel(listEl, { accounts: [], selectedContracts: [], loading: false, errorMsg: errText, isEn: st.lang === 'en', formatBal });
-        } else {
-          listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:12px;text-align:center;">${escapeHtml(errText)}</div>`;
-        }
+        fw.mountNearStoragePanel(listEl, { accounts: [], selectedContracts: [], loading: false, errorMsg: errText, isEn: st.lang === 'en', formatBal });
       }
     } finally {
       if (refreshBtn && scanSeq === _nearStorageScanSeq) {
@@ -116,39 +108,7 @@
         isEn: st.lang === 'en',
         formatBal
       });
-      return;
     }
-
-    if (_nearStorageScanAccounts.length === 0) {
-      listEl.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);padding:16px;text-align:center;">${t('当前 NEAR 账户暂无检测到存储押金记录', 'No NEAR token storage deposits found')}</div>`;
-      return;
-    }
-
-    listEl.innerHTML = _nearStorageScanAccounts.map((acc) => {
-      const checked = acc.isEmpty && _nearStorageSelectedContracts.has(acc.contractId) ? 'checked' : '';
-      const disabledAttr = acc.isEmpty ? '' : 'disabled';
-      const badgeHtml = acc.isEmpty
-        ? `<span class="ca-badge" style="font-size:10px;">${t('空账本可回收', 'Empty · Reclaimable')}</span>`
-        : `<span class="ca-badge" style="font-size:10px;border-color:rgba(251,191,36,0.4);color:#fbbf24;">${t('持仓中', 'In Use')}</span>`;
-      const balInfo = acc.isEmpty
-        ? `${t('余额: 0', 'Bal: 0')} · ${acc.contractId}`
-        : `${t('余额', 'Bal')}: ${formatBal(acc.uiAmount, 5)} · ${acc.contractId}`;
-      return `
-        <label class="ios-glass-card flex items-center justify-between gap-2" style="padding:10px 12px;cursor:${acc.isEmpty ? 'pointer' : 'default'};${acc.isEmpty ? '' : 'opacity:0.75;'}">
-          <div class="flex items-center gap-2" style="min-width:0;flex:1;">
-            <input type="checkbox" ${checked} ${disabledAttr} data-action="toggle-near-storage" data-contract="${escapeHtml(acc.contractId)}" />
-            <div class="flex flex-col" style="min-width:0;flex:1;">
-              <div class="flex items-center gap-1">
-                <span style="font-weight:700;font-size:12.5px;">${escapeHtml(acc.symbol)}</span>
-                ${badgeHtml}
-              </div>
-              <span class="mono" style="font-size:10.5px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(balInfo)}</span>
-            </div>
-          </div>
-          <span class="mono" style="font-size:12px;font-weight:700;color:${acc.isEmpty ? 'var(--mint-accent)' : 'var(--text-secondary)'};white-space:nowrap;">+${Number(acc.depositNear || 0).toFixed(5)} NEAR</span>
-        </label>
-      `;
-    }).join('');
   }
 
   function toggleNearStorageItem(contractId, isChecked) {

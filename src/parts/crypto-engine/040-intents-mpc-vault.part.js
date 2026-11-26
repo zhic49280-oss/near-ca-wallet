@@ -226,7 +226,8 @@
   const _mpcAllCache = new Map();
 
   /**
-   * Derives external chain addresses (EVM, Solana, plus legacy inspector fields) controlled by a NEAR Master Account via v1.signer.
+   * Derives external chain addresses (EVM, Solana) controlled by a NEAR Master Account via v1.signer.
+   * Legacy Pearl/BTC MPC derivation is skipped on the hot path unless options.includeLegacy is true.
    */
   function deriveNearMpcAllAddresses(nearAccountId, options = {}) {
     const normId = String(nearAccountId || '').trim().toLowerCase();
@@ -236,17 +237,20 @@
     }
     const evm = deriveNearMpcEvmAddress(normId, (options && options.evmPath) || 'ethereum-1', options);
     const sol = deriveNearMpcSolanaAddress(normId, (options && options.solPath) || 'solana-1', options);
-    const pearl = deriveNearMpcPearlAddress(normId, (options && options.pearlPath) || 'pearl-1', options);
-    const btc = deriveNearMpcBitcoinAddress(normId, (options && options.btcPath) || 'bitcoin-1', options);
-
     const out = {
       nearAccountId: evm.predecessorId,
       evmAddress: evm.mpcEvmAddress,
       solAddress: sol.mpcSolAddress,
-      pearlAddress: pearl.mpcPearlAddress,
-      btcAddress: btc.mpcBtcAddress,
-      details: { evm, sol, pearl, btc }
+      details: { evm, sol }
     };
+    if (options && options.includeLegacy === true) {
+      const pearl = deriveNearMpcPearlAddress(normId, options.pearlPath || 'pearl-1', options);
+      const btc = deriveNearMpcBitcoinAddress(normId, options.btcPath || 'bitcoin-1', options);
+      out.pearlAddress = pearl.mpcPearlAddress;
+      out.btcAddress = btc.mpcBtcAddress;
+      out.details.pearl = pearl;
+      out.details.btc = btc;
+    }
     if (_mpcAllCache.size >= 64) _mpcAllCache.clear();
     _mpcAllCache.set(cacheKey, out);
     return out;
