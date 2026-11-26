@@ -57,10 +57,22 @@ function isSafeProxyPath(pathParam, requiredPrefixes, upstreamHost) {
 
 function isRetryableSocketError(err) {
   if (!err) return false;
-  return err.code === 'ECONNRESET' || /socket hang up/i.test(String(err.message || ''));
+  const code = err.code || (err.cause && err.cause.code) || '';
+  if (
+    code === 'ECONNRESET' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNREFUSED' ||
+    code === 'EAI_AGAIN' ||
+    code === 'UND_ERR_SOCKET' ||
+    code === 'UND_ERR_CONNECT_TIMEOUT'
+  ) {
+    return true;
+  }
+  const msg = `${String(err.message || '')} ${String((err.cause && err.cause.message) || '')}`;
+  return /socket hang up|fetch failed|ECONNRESET|ETIMEDOUT/i.test(msg);
 }
 
-function forwardHttpsRequest(req, res, buildOpts, bodyBuf, retriesLeft = 1) {
+function forwardHttpsRequestLegacy(req, res, buildOpts, bodyBuf, retriesLeft = 1) {
   let clientAborted = false;
   let activeProxyReq = null;
   const onClose = () => {
@@ -95,6 +107,80 @@ function forwardHttpsRequest(req, res, buildOpts, bodyBuf, retriesLeft = 1) {
     });
     if (bodyBuf && bodyBuf.length > 0) proxyReq.write(bodyBuf);
     proxyReq.end();
+  };
+
+  attempt(retriesLeft);
+}
+
+function forwardHttpsRequest(req, res, buildOpts, bodyBuf, retriesLeft = 1) {
+  if (typeof fetch !== 'function') {
+    return forwardHttpsRequestLegacy(req, res, buildOpts, bodyBuf, retriesLeft);
+  }
+
+  let clientAborted = false;
+  let activeAbortCtrl = null;
+  const onClose = () => {
+    clientAborted = true;
+    if (activeAbortCtrl && !activeAbortCtrl.signal.aborted) {
+      activeAbortCtrl.abort(new Error('Client aborted'));
+    }
+  };
+  req.once('close', onClose);
+
+  const attempt = async (remaining) => {
+    if (clientAborted || res.writableEnded) {
+      req.removeListener('close', onClose);
+      return;
+    }
+    const opts = buildOpts() || {};
+    const method = String(opts.method || 'GET').toUpperCase();
+    const targetUrl = `https://${opts.hostname}${opts.path || '/'}`;
+    const safeHeaders = {};
+    if (opts.headers && typeof opts.headers === 'object') {
+      for (const [k, v] of Object.entries(opts.headers)) {
+        const lower = String(k).toLowerCase();
+        if (lower === 'origin' || lower === 'host' || lower === 'content-length') continue;
+        if (v !== undefined && v !== null) safeHeaders[k] = String(v);
+      }
+    }
+
+    const ac = new AbortController();
+    activeAbortCtrl = ac;
+    const timeoutId = setTimeout(() => {
+      if (!ac.signal.aborted) ac.abort(new Error('Upstream timeout'));
+    }, UPSTREAM_TIMEOUT_MS);
+
+    try {
+      const fetchInit = {
+        method,
+        headers: safeHeaders,
+        signal: ac.signal
+      };
+      if (bodyBuf && bodyBuf.length > 0 && method !== 'GET' && method !== 'HEAD') {
+        fetchInit.body = bodyBuf;
+      }
+      const upstreamRes = await fetch(targetUrl, fetchInit);
+      const respBuf = Buffer.from(await upstreamRes.arrayBuffer());
+      clearTimeout(timeoutId);
+      req.removeListener('close', onClose);
+      if (clientAborted || res.writableEnded) return;
+      if (!res.headersSent) {
+        res.writeHead(upstreamRes.status || 200, {
+          'Content-Type': upstreamRes.headers.get('content-type') || 'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*'
+        });
+      }
+      res.end(respBuf);
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (!clientAborted && !res.headersSent && remaining > 0 && isRetryableSocketError(err)) {
+        return attempt(remaining - 1);
+      }
+      req.removeListener('close', onClose);
+      if (!clientAborted) {
+        sendJsonError(res, 502, (err && err.message) || 'Upstream fetch error');
+      }
+    }
   };
 
   attempt(retriesLeft);

@@ -7,6 +7,35 @@
     const isReadOnly = method !== 'sendTransaction' && method !== 'simulateTransaction';
     const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
 
+    // 本地 /solana-rpc 代理优先：先单独尝试本地代理，成功即返回，避免 800ms 对冲触发公共节点 403 噪音
+    if (active[0] && active[0].endsWith('/solana-rpc')) {
+      const localProxyUrl = active[0];
+      try {
+        const res = await fetchJsonWithTimeout(
+          localProxyUrl,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body },
+          timeoutMs
+        );
+        if (res && !res.error && res.result !== undefined) {
+          return res.result;
+        }
+        if (res && res.error) {
+          if (isDeterministicJsonRpcError(res.error)) {
+            throw new Error(res.error.message || JSON.stringify(res.error));
+          }
+          _solRpcCooldownUntil[localProxyUrl] = Date.now() + 90_000;
+        }
+      } catch (err) {
+        if (err && !err.status && err.name !== 'AbortError' && /simulation|blockhash|insufficient/i.test(String(err.message || ''))) {
+          throw err;
+        }
+        if (shouldCooldownRpcError(err)) {
+          _solRpcCooldownUntil[localProxyUrl] = Date.now() + 90_000;
+        }
+      }
+      active = active.slice(1);
+    }
+
     if (isReadOnly && active.length > 1) {
       // 延迟 hedged 请求：主节点先发，约 800ms 未返回再并发备用节点，避免每次读操作双倍消耗配额
       const raceCtrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -984,27 +1013,39 @@
     if (!addr) throw new Error(t('当前钱包未绑定 Solana 地址', 'Solana address unavailable'));
     const priceResolver = typeof options.priceResolver === 'function' ? options.priceResolver : null;
 
-    const raceSolanaTokenRpc = (progId) =>
-      Promise.any(
-        SOLANA_RPC_ENDPOINTS.map(async (rpcUrl) => {
-          const res = await fetchJsonWithTimeout(
-            rpcUrl,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                jsonrpc: '2.0',
-                id: 1,
-                method: 'getTokenAccountsByOwner',
-                params: [addr, { programId: progId }, { encoding: 'jsonParsed' }]
-              })
-            },
-            6500
-          );
-          if (res && !res.error && res.result !== undefined) return res.result;
-          throw new Error((res && res.error && res.error.message) || 'Solana RPC error');
-        })
+    const querySolanaTokenRpc = async (rpcUrl, progId) => {
+      const res = await fetchJsonWithTimeout(
+        rpcUrl,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getTokenAccountsByOwner',
+            params: [addr, { programId: progId }, { encoding: 'jsonParsed' }]
+          })
+        },
+        6500
+      );
+      if (res && !res.error && res.result !== undefined) return res.result;
+      throw new Error((res && res.error && res.error.message) || 'Solana RPC error');
+    };
+
+    const raceSolanaTokenRpc = async (progId) => {
+      let fallbackEndpoints = SOLANA_RPC_ENDPOINTS;
+      if (SOLANA_RPC_ENDPOINTS[0] && SOLANA_RPC_ENDPOINTS[0].endsWith('/solana-rpc')) {
+        try {
+          return await querySolanaTokenRpc(SOLANA_RPC_ENDPOINTS[0], progId);
+        } catch (_) {
+          fallbackEndpoints = SOLANA_RPC_ENDPOINTS.slice(1);
+        }
+      }
+      if (fallbackEndpoints.length === 0) return null;
+      return Promise.any(
+        fallbackEndpoints.map((rpcUrl) => querySolanaTokenRpc(rpcUrl, progId))
       ).catch(() => null);
+    };
 
     const [splRes, t22Res] = await Promise.all([
       raceSolanaTokenRpc(SPL_TOKEN_PROGRAM_ID),
