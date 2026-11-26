@@ -174,3 +174,65 @@ test('Swarm audit: schedulePerpOneClickQuote(true) syncs fundingOriginAssetId an
     globalThis.window = prevWin;
   }
 });
+
+test('Wave-3: TxStepperModal handles doneTitle, inTransit & failure states and zero blockchain jargon remains', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const root = path.resolve(__dirname, '..');
+
+  const txModalSrc = fs.readFileSync(path.join(root, 'src/app/components/TxFlowModals.jsx'), 'utf8');
+  assert.ok(txModalSrc.includes('stepper.doneTitle'), 'TxStepperModal should support stepper.doneTitle');
+  assert.ok(txModalSrc.includes('inTransit'), 'TxStepperModal should support inTransit state');
+  assert.ok(txModalSrc.includes("t('交易未完成', 'Transaction Failed')"), 'TxStepperModal should render 交易未完成 on failure');
+
+  const scanDirs = [
+    path.join(root, 'src/parts/ui-controller'),
+    path.join(root, 'src/app')
+  ];
+  const walkFiles = (dir) => {
+    const out = [];
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) out.push(...walkFiles(full));
+      else if (/\.(jsx?|part\.js)$/.test(entry.name)) out.push(full);
+    }
+    return out;
+  };
+  for (const dir of scanDirs) {
+    for (const file of walkFiles(dir)) {
+      const content = fs.readFileSync(file, 'utf8');
+      assert.equal(
+        /广播|上链/.test(content),
+        false,
+        `Unexpected blockchain jargon (广播/上链) in ${path.relative(root, file)}`
+      );
+    }
+  }
+});
+
+test('Wave-3: useI18n reactive tr() and RemainingIslandsPanels mount helpers are exported on NearCAFramework', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const root = path.resolve(__dirname, '..');
+
+  const storeSrc = fs.readFileSync(path.join(root, 'src/app/store/useWalletStore.js'), 'utf8');
+  assert.match(storeSrc, /export function useI18n\(\)/, 'useWalletStore.js must export useI18n()');
+  assert.match(storeSrc, /const tr = \(key, fallback = ''\) =>/, 'useI18n() must define reactive tr()');
+  assert.match(storeSrc, /return \{ lang, isEn, t, tr \};/, 'useI18n() must return { lang, isEn, t, tr }');
+
+  const panelsSrc = fs.readFileSync(path.join(root, 'src/app/components/RemainingIslandsPanels.jsx'), 'utf8');
+  assert.equal(/const lang = useLang\(\)/.test(panelsSrc), false, 'RemainingIslandsPanels.jsx must destructure { isEn: storeIsEn } from useLang()');
+
+  const mainSrc = fs.readFileSync(path.join(root, 'src/app/main.jsx'), 'utf8');
+  const expectedHelpers = [
+    'mountOnboardSeedGrid',
+    'mountTokenDetailIcon',
+    'mountTokenDetailChains',
+    'mountTokenDetailEarnList',
+    'mountTokenPickerPills'
+  ];
+  for (const helper of expectedHelpers) {
+    assert.ok(mainSrc.includes(`export function ${helper}`), `main.jsx must export ${helper}`);
+    assert.ok(mainSrc.includes(helper), `NearCAFramework must expose ${helper}`);
+  }
+});
