@@ -1,6 +1,8 @@
   // ==================== WalletConnect v2 Sheet ====================
 
   const DEFAULT_WC_PROJECT_ID = 'a1e691683a26f67375ef31ee654a1f49';
+  let _wcInitPromise = null;
+  let _wcInitProjectId = '';
 
   function updateWcStatusPill(text, ok = false) {
     const pill = $('wc-status-pill');
@@ -21,57 +23,70 @@
       updateWcStatusPill(t('已就绪', 'Ready'), true);
       return st.wc.client;
     }
-    let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
-    if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
-      updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.77');
-      sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
+    if (_wcInitPromise && _wcInitProjectId === projectId) {
+      return _wcInitPromise;
     }
-    if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
-      throw new Error(t('WalletConnect SDK 未加载', 'WalletConnect SDK unavailable'));
-    }
-    updateWcStatusPill(t('连接中...', 'Connecting...'), false);
-    const core = new sdk.Core({ projectId });
-    const client = await sdk.Web3Wallet.init({
-      core,
-      metadata: {
-        name: 'NEAR Chain Abstraction Wallet',
-        description: 'NEAR Account-Centric Chain Abstraction Self-Custody Wallet',
-        url: (typeof location !== 'undefined' && location.origin) || 'https://near.org',
-        icons: []
+    const initTask = (async () => {
+      let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
+      if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
+        updateWcStatusPill(t('加载组件...', 'Loading...'), false);
+        await loadScriptOnce('walletconnect.umd.min.js?v=6.78');
+        sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       }
-    });
+      if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
+        throw new Error(t('WalletConnect SDK 未加载', 'WalletConnect SDK unavailable'));
+      }
+      updateWcStatusPill(t('连接中...', 'Connecting...'), false);
+      const core = new sdk.Core({ projectId });
+      const client = await sdk.Web3Wallet.init({
+        core,
+        metadata: {
+          name: 'NEAR Chain Abstraction Wallet',
+          description: 'NEAR Account-Centric Chain Abstraction Self-Custody Wallet',
+          url: (typeof location !== 'undefined' && location.origin) || 'https://near.org',
+          icons: []
+        }
+      });
 
-    const _wcRequestQueue = [];
-    client.on('session_proposal', (proposal) => {
-      st.wc.pendingProposal = proposal;
-      renderWcCards();
-      openSheet('sheet-walletconnect');
-    });
-    client.on('session_request', (event) => {
-      if (st.wc.pendingRequest) {
-        _wcRequestQueue.push(event);
-      } else {
-        st.wc.pendingRequest = event;
-      }
-      renderWcCards();
-      openSheet('sheet-walletconnect');
-    });
-    client._nexusShiftNextRequest = () => {
-      st.wc.pendingRequest = _wcRequestQueue.shift() || null;
-      renderWcCards();
-    };
-    client.on('session_delete', () => {
+      const _wcRequestQueue = [];
+      client.on('session_proposal', (proposal) => {
+        st.wc.pendingProposal = proposal;
+        renderWcCards();
+        openSheet('sheet-walletconnect');
+      });
+      client.on('session_request', (event) => {
+        if (st.wc.pendingRequest) {
+          _wcRequestQueue.push(event);
+        } else {
+          st.wc.pendingRequest = event;
+        }
+        renderWcCards();
+        openSheet('sheet-walletconnect');
+      });
+      client._nexusShiftNextRequest = () => {
+        st.wc.pendingRequest = _wcRequestQueue.shift() || null;
+        renderWcCards();
+      };
+      client.on('session_delete', () => {
+        renderWcSessions();
+        renderHeaderAndHero();
+      });
+
+      st.wc.client = client;
+      st.wc.initProjectId = projectId;
+      updateWcStatusPill(t('已就绪', 'Ready'), true);
       renderWcSessions();
       renderHeaderAndHero();
+      return client;
+    })();
+    _wcInitProjectId = projectId;
+    _wcInitPromise = initTask.finally(() => {
+      if (_wcInitPromise === initTask || _wcInitProjectId === projectId) {
+        _wcInitPromise = null;
+        _wcInitProjectId = '';
+      }
     });
-
-    st.wc.client = client;
-    st.wc.initProjectId = projectId;
-    updateWcStatusPill(t('已就绪', 'Ready'), true);
-    renderWcSessions();
-    renderHeaderAndHero();
-    return client;
+    return _wcInitPromise;
   }
 
   function renderWcCards() {
@@ -511,6 +526,18 @@
           });
           result = txRes.txHash;
         }
+        if (result && typeof recordWalletActivity === 'function') {
+          const sym = (cfg[1] && cfg[1].symbol) || 'ETH';
+          recordWalletActivity(wallet, {
+            type: 'send',
+            symbol: sym,
+            chain: cfg[0],
+            amount: valNative,
+            to: txReq.to || '',
+            txHash: result,
+            title: `WalletConnect · ${sym}`
+          });
+        }
       } else if (method === 'wallet_switchEthereumChain') {
         const targetHex = (reqParams[0] && reqParams[0].chainId) || '';
         const targetCid = Number(targetHex);
@@ -580,8 +607,13 @@
   let _qrMediaStream = null;
   let _qrScanTimer = null;
   let _qrScanHandling = false;
+  let _qrVisibilityListener = null;
 
   function stopQrScannerStream() {
+    if (_qrVisibilityListener && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', _qrVisibilityListener);
+      _qrVisibilityListener = null;
+    }
     if (_qrScanTimer) {
       clearInterval(_qrScanTimer);
       _qrScanTimer = null;
@@ -648,7 +680,7 @@
     const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
     if (existing) return existing;
     if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
-      await loadScriptOnce('src/jsqr-lazy.js?v=6.77').catch(() => false);
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.78').catch(() => false);
       return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     }
     return null;
@@ -685,6 +717,16 @@
       _qrMediaStream = stream;
       videoEl.srcObject = stream;
       await videoEl.play().catch(() => {});
+      if (typeof document !== 'undefined') {
+        _qrVisibilityListener = () => {
+          if (document.hidden) {
+            try { videoEl.pause(); } catch (_) {}
+          } else if (_qrMediaStream) {
+            videoEl.play().catch(() => {});
+          }
+        };
+        document.addEventListener('visibilitychange', _qrVisibilityListener);
+      }
 
       const DetectorCtor = (typeof window !== 'undefined' && window.BarcodeDetector) || (typeof globalThis !== 'undefined' && globalThis.BarcodeDetector);
       const getJsQrFn = () => (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
@@ -697,6 +739,7 @@
           statusEl.textContent = t('请将二维码对准取景框内', 'Align the QR code inside the frame');
         }
         _qrScanTimer = setInterval(async () => {
+          if (typeof document !== 'undefined' && document.hidden) return;
           if (!_qrMediaStream || _qrScanHandling || videoEl.readyState < 2) return;
           try {
             const codes = await detector.detect(videoEl);
@@ -713,6 +756,7 @@
         const canvas = document.createElement('canvas');
         const ctx2d = canvas.getContext ? canvas.getContext('2d', { willReadFrequently: true }) : null;
         _qrScanTimer = setInterval(async () => {
+          if (typeof document !== 'undefined' && document.hidden) return;
           if (!_qrMediaStream || _qrScanHandling || videoEl.readyState < 2 || !ctx2d) return;
           const w = videoEl.videoWidth || 320;
           const h = videoEl.videoHeight || 240;

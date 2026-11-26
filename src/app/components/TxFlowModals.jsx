@@ -212,7 +212,7 @@ export function TxStepperModal({
       <div class="tx-flow-progress-track">
         <div
           class={`tx-flow-progress-fill ${finished && !ok ? 'is-error' : ''}`}
-          style={{ width: `${progressPct}%` }}
+          style={{ transform: `scaleX(${Math.max(0, Math.min(1, progressPct / 100))})` }}
         />
       </div>
 

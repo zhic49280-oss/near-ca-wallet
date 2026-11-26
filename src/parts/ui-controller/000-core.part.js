@@ -58,7 +58,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.77');
+      await loadScriptOnce('ethers.umd.min.js?v=6.78');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -68,7 +68,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.77').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.78').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -78,7 +78,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.77').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.78').catch(() => false);
       return getMining();
     }
     return null;
@@ -264,10 +264,10 @@
       _toastRaf = 0;
     }
     if (fw && typeof fw.mountToastBanner === 'function' && typeof document !== 'undefined') {
-      if (!host && legacyEl && legacyEl.parentNode) {
+      if (!host && document.body) {
         host = document.createElement('div');
         host.id = 'toast-host';
-        legacyEl.parentNode.replaceChild(host, legacyEl);
+        document.body.appendChild(host);
       }
       if (host) {
         const dismiss = () => {
@@ -335,15 +335,24 @@
     }
   }
 
+  function unmountPreactContainer(el) {
+    if (!el) return;
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.render === 'function') {
+      try { fw.render(null, el); } catch (_) {}
+    }
+    el.innerHTML = '';
+  }
+
   function renderQrInto(containerId, text, size = 160) {
     const container = $(containerId);
     if (!container) return;
-    container.innerHTML = '';
+    unmountPreactContainer(container);
     const str = String(text || '').trim();
     if (!str) return;
     const draw = (QRLib) => {
       if (!QRLib || !$(containerId)) return false;
-      $(containerId).innerHTML = '';
+      unmountPreactContainer($(containerId));
       try {
         new QRLib($(containerId), {
           text: str,
@@ -416,8 +425,17 @@
   function showConfirmDialogAsync(message, opts = {}) {
     const sheet = $('sheet-confirm-dialog');
     if (!sheet || typeof document === 'undefined') {
-      if (typeof confirm === 'function') return Promise.resolve(Boolean(confirm(String(message || ''))));
-      return Promise.resolve(true);
+      const isNodeTest = typeof process !== 'undefined' && Boolean(process.versions && process.versions.node);
+      const nodeConfirmFn = isNodeTest
+        ? ((typeof window !== 'undefined' && typeof window.confirm === 'function')
+            ? window.confirm
+            : (typeof confirm === 'function' ? confirm : null))
+        : null;
+      if (nodeConfirmFn) {
+        return Promise.resolve(Boolean(nodeConfirmFn(String(message || ''))));
+      }
+      showToast(t('确认弹窗未就绪，请重试', 'Confirmation dialog unavailable, please retry'));
+      return Promise.resolve(false);
     }
     dismissConfirmDialog(false);
     _confirmDialogOpts = opts;

@@ -5,13 +5,13 @@ export function AppShellOverlays() {
     <Fragment>
       <div id="app-privacy-shield" className="app-privacy-shield" aria-hidden="true">
         <div className="app-lock-card">
-          <img src="assets/nexus-logo-192.png?v=6.77" alt="Nexus Wallet" className="app-lock-logo" />
+          <img src="assets/nexus-logo-192.png?v=6.78" alt="Nexus Wallet" className="app-lock-logo" />
           <div className="app-lock-brand">Nexus Wallet</div>
         </div>
       </div>
       <div id="app-lock-overlay" className="app-lock-overlay" role="dialog" aria-modal="true" aria-hidden="true">
         <div className="app-lock-card">
-          <img src="assets/nexus-logo-192.png?v=6.77" alt="Nexus Wallet" className="app-lock-logo" />
+          <img src="assets/nexus-logo-192.png?v=6.78" alt="Nexus Wallet" className="app-lock-logo" />
           <div className="app-lock-brand">Nexus Wallet</div>
           <div id="app-lock-title" className="app-lock-title" data-i18n="lock.title">安全锁定</div>
           <div id="app-lock-status" className="app-lock-status" data-i18n="lock.hint">请通过生物识别或锁屏密码解锁</div>
@@ -28,7 +28,7 @@ export function AppShellOverlays() {
         </div>
       </div>
       <div className="ambient-bg" aria-hidden="true"></div>
-      <div id="toast" className="toast" role="status" aria-live="polite"></div>
+      <div id="toast-host" className="toast-host" aria-live="polite" />
     </Fragment>
   );
 }
@@ -76,7 +76,7 @@ export function OnboardingAndWalletViews() {
       <section id="view-onboarding" className="view-section hidden">
         <div className="ios-glass-card hero-card" style={{ padding: '24px 18px', textAlign: 'center' }}>
           <img
-            src="assets/nexus-logo-512.png?v=6.77"
+            src="assets/nexus-logo-512.png?v=6.78"
             alt="Nexus Wallet"
             style={{
               width: '64px',

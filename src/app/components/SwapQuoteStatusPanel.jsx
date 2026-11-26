@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useWalletState } from '../store/useWalletStore.js';
 import { StatusBadge } from './ui/StatusBadge.jsx';
 
-const DEV_JARGON_RE = /\b(1Click|Bridge2|HTTP|RPC)\b/gi;
+const DEV_JARGON_RE = /\b(1Click|Bridge2|DCL|Ref\s*Finance|HTTP|RPC)\b/gi;
 
 export function sanitizeRouteLabel(raw, isEn = false) {
   const s = String(raw || '').trim();
@@ -14,6 +14,9 @@ export function sanitizeRouteLabel(raw, isEn = false) {
     .replace(/1Click\s+Cross-Chain/gi, isEn ? 'Cross-Chain Route' : '跨链聚合路由')
     .replace(/\b1Click\b/gi, isEn ? 'Cross-Chain' : '跨链桥')
     .replace(/\bBridge2\b/gi, isEn ? 'Bridge' : '跨链桥')
+    .replace(/\bRhea\s+DCL\b/gi, isEn ? 'On-Chain Pool' : '链上流动性池')
+    .replace(/\bDCL\b/gi, isEn ? 'On-Chain Pool' : '链上流动性池')
+    .replace(/\bRef\s*Finance\b/gi, isEn ? 'NEAR DEX' : 'NEAR 链上兑换')
     .replace(/\b(?:HTTP|RPC)\b/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim();

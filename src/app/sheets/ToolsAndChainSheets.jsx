@@ -152,15 +152,7 @@ export function ToolsAndChainSheets() {
           </div>
 
           {/* Pending Proposal */}
-          <div id="wc-proposal-card" class="hidden ios-glass-card flex flex-col gap-2" style={{ padding: '12px', borderColor: 'rgba(56,189,248,0.4)' }}>
-            <div id="wc-proposal-name" style={{ fontWeight: 700 }}>--</div>
-            <div id="wc-proposal-url" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>--</div>
-            <div id="wc-proposal-chains" class="mono" style={{ fontSize: '11px', color: 'var(--cyan-glow)' }}>--</div>
-            <div class="flex gap-2">
-              <button type="button" class="btn-secondary flex-1" onClick={() => callWin('rejectWcProposal')} data-i18n="sheet.wcRejectBtn">拒绝</button>
-              <button type="button" class="btn-primary flex-1" onClick={() => callWin('approveWcProposal')} data-i18n="sheet.wcApproveBtn">批准</button>
-            </div>
-          </div>
+          <div id="wc-proposal-card" class="hidden ios-glass-card flex flex-col gap-2" style={{ padding: '12px', borderColor: 'rgba(56,189,248,0.4)' }} />
 
           {/* Pending Request */}
           <div id="wc-request-card" class="hidden ios-glass-card flex flex-col gap-2" style={{ padding: '12px', borderColor: 'rgba(0,236,151,0.4)' }}>
@@ -607,31 +599,7 @@ export function ToolsAndChainSheets() {
           <h3 class="sheet-title" data-i18n="dapp.approveTitle">DApp 请求授权</h3>
           <button type="button" class="btn-ghost-sm" onClick={() => callWin('rejectDAppApproval')} data-i18n="common.close">关闭</button>
         </div>
-        <div class="sheet-body">
-          <div class="meta-list">
-            <div class="meta-row">
-              <span class="meta-key" data-i18n="dapp.approveOrigin">来源网站</span>
-              <span id="dapp-approve-origin" class="meta-val mono">--</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-key" data-i18n="dapp.approveChain">目标网络</span>
-              <span id="dapp-approve-chain" class="meta-val">--</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-key" data-i18n="dapp.approveMethod">请求操作</span>
-              <span id="dapp-approve-method" class="meta-val mono">--</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-key" data-i18n="dapp.approveAccount">签署账户</span>
-              <span id="dapp-approve-account" class="meta-val mono">--</span>
-            </div>
-          </div>
-          <div id="dapp-approve-detail" class="ios-glass-card mono" style={{ padding: '10px 12px', fontSize: '11.5px', maxHeight: '150px', overflowY: 'auto', wordBreak: 'break-all', color: 'var(--text-secondary)' }}>--</div>
-          <div class="flex gap-2">
-            <button type="button" id="btn-dapp-reject" class="btn-secondary flex-1" onClick={() => callWin('rejectDAppApproval')} data-i18n="dapp.rejectBtn">拒绝</button>
-            <button type="button" id="btn-dapp-confirm" class="btn-primary flex-1" onClick={() => callWin('confirmDAppApproval')} data-i18n="dapp.confirmBtn">授权并签名</button>
-          </div>
-        </div>
+        <div class="sheet-body" />
       </div>
 
       {/* ==================== Sheet: Perp Position TP / SL Editor ==================== */}

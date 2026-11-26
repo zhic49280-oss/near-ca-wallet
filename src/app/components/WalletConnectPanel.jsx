@@ -78,8 +78,8 @@ export function WcProposalPanel({
   return (
     <Fragment>
       <div id="wc-proposal-name" style={{ fontWeight: 700 }}>{info.name}</div>
-      <div id="wc-proposal-url" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{info.url}</div>
-      <div id="wc-proposal-chains" class="mono" style={{ fontSize: '11px', color: 'var(--cyan-glow)' }}>{info.chainsText}</div>
+      <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{info.url}</div>
+      <div class="mono" style={{ fontSize: '11px', color: 'var(--cyan-glow)' }}>{info.chainsText}</div>
       <div class="flex gap-2">
         <ActionButton
           className="btn-secondary flex-1"

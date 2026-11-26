@@ -16,8 +16,8 @@
    - **Pearl (`prl`)**：BIP-86 Taproot (`m/86'/808276'/0'/0/0`) 派生 `prl1p...` 地址，支持在【多链收款地址】弹窗单独绑定/更换独立挖矿助记词 (`prlMnemonic`) 或一键恢复默认派生；
    - **Bitcoin (`btc`)**：BIP-86 Taproot (`m/86'/0'/0'/0/0`) 派生 `bc1p...` 地址。
 
-### 1.2 100% 单根 Preact 应用架构 (`src/app/` -> `src/framework-ui.js`)
-- **设计定位**：全应用采用单根 Preact 架构，`index.html` 仅保留 `<div id="app-root"></div>` 挂载点；`src/app/App.jsx` 通过 `memo` 稳定组合全部主视图（`views/AppShellViews.jsx`、`views/TradingViews.jsx`）与底部弹窗（`sheets/CoreSheets.jsx`、`sheets/ToolsAndChainSheets.jsx`），`src/app/main.jsx` 在 `src/ui-controller.js` 启动前同步调用 `mountAppRoot(document.getElementById('app-root'))` 完成全量 DOM 挂载；高频刷新的列表与卡片由 Preact Virtual DOM 接管，消除 `innerHTML` 整树重建带来的闪烁、滚动丢失与点击吞事件，同时在 Node 单测无 DOM 环境下平滑降级。
+### 1.2 单根 Preact 应用架构 (`src/app/` -> `src/framework-ui.js`)
+- **设计定位**：全应用采用单根 Preact 外壳架构，`index.html` 仅保留 `<div id="app-root"></div>` 挂载点；`src/app/App.jsx` 通过 `memo` 稳定组合全部主视图（`views/AppShellViews.jsx`、`views/TradingViews.jsx`）与底部弹窗（`sheets/CoreSheets.jsx`、`sheets/ToolsAndChainSheets.jsx`），`src/app/main.jsx` 在 `src/ui-controller.js` 启动前同步调用 `mountAppRoot(document.getElementById('app-root'))` 完成外壳 DOM 挂载；高频刷新的列表与交互面板通过 `NearCAFramework.mount*` 入口由 Preact Virtual DOM 接管，同时在 Node 单测无 DOM 环境下平滑降级。
 - **挂载点与组件职责（严禁在同一容器上混用 `Preact.render` 与 `innerHTML`）**：
   1. `mountAssetList` (`#home-unified-asset-list`)：渲染首页聚合资产卡片与小额资产 (`< $0.05`) 折叠抽屉；
   2. `mountTokenPicker` (`#token-picker-list`)：**统一**渲染闪兑选币与限价单选币列表；
@@ -37,7 +37,7 @@
   16. `mountPerpMarketsSheetPanel` / `mountPerpFundingInfoPanel` / `mountPerpChartHudPanel`：渲染永续选币弹窗、资金费率说明与 K 线交互 HUD；
   17. `mountEarnStakeSheetPanel` / `mountEarnValidatorsPanel`：渲染质押锁仓档位/回执与验证节点列表；
   18. `mountMiningTelemetryPanel` / `mountMiningWorkersPanel` / `mountWcSessionsPanel` / `mountWcProposalPanel` / `mountDAppBookmarksPanel` / `mountDAppApprovePanel`：渲染 Pearl 矿机遥测与矿工、WalletConnect 会话与审批、DApp 浏览器书签与签名审批；
-  19. `TokenIconBadge` 与 `components/ui/`（`ActionButton`、`EmptyState`、`StatusBadge`、`ToastBanner`）：共享 UI 原语与图标徽章（共 35 个 Preact 挂载入口与共享组件，覆盖全部视图与弹窗；`showToast` 通过 `mountToastBanner` 渲染 `#toast`）；
+  19. `TokenIconBadge` 与 `components/ui/`（`ActionButton`、`EmptyState`、`StatusBadge`、`ToastBanner`）：共享 UI 原语与图标徽章（覆盖全部视图与弹窗；`showToast` 通过 `mountToastBanner` 挂载至 `#toast-host` 并渲染 `#toast`）；
   20. `useWalletStore.js`：微任务合并通知（`notifyFrameworkState`）与按 topic 订阅（`wallet`, `contacts`, `balances`, `earn`, `perp`, `swap`, `limit`, `receive`, `lang`，语言切换仅通过 `lang` topic 触发单次重绘），以及 `useLang` / `useActiveWallet` hooks；`jsQR` 通过 `src/jsqr-lazy.js` 按需懒加载。
 
 ---
