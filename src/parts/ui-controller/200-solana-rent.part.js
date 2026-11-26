@@ -157,6 +157,20 @@
       ? `${t('⚠️ 危险：将永久销毁有余额代币', '⚠️ WARNING: Permanently BURN')} [${burnSummary}] ${t('以回收', 'to reclaim')} +${totalSol.toFixed(4)} SOL`
       : `${t('回收', 'Reclaim')} ${selected.length} ${t('个空账户/WSOL 租金', 'empty/WSOL accounts')} (+${totalSol.toFixed(4)} SOL)`;
 
+    const solSteps = [{ title: t('关闭 Solana 空账户并回收租金', 'Close Solana accounts & reclaim rent'), chain: 'sol' }];
+    const solPreview = {
+      title: burnItems.length > 0 ? t('确认销毁代币并回收租金', 'Confirm Burn & Reclaim') : t('确认回收 Solana 租金', 'Confirm Solana Rent Reclaim'),
+      subtitle: `${selected.length} ${t('个账户', 'accounts')} · +${totalSol.toFixed(4)} SOL`,
+      networkPath: 'Solana',
+      detailRows: [
+        { label: t('选中账户数', 'Selected Accounts'), value: String(selected.length), mono: true },
+        { label: t('预计回收', 'Estimated Reclaim'), value: `+${totalSol.toFixed(4)} SOL`, mono: true, tone: 'emerald' },
+        ...(burnItems.length > 0 ? [{ label: t('销毁含余额代币', 'Tokens to Burn'), value: burnSummary, mono: true, tone: 'rose' }] : [])
+      ],
+      confirmLabel: t('确认回收', 'Reclaim Rent'),
+      steps: solSteps
+    };
+
     _solRentReclaimInFlight = true;
     const btn = $('btn-execute-sol-rent');
     const prevTxt = btn ? btn.textContent : '';
@@ -164,7 +178,9 @@
       btn.disabled = true;
       btn.textContent = t('回收中...', 'Reclaiming...');
     }
+    let stepper = null;
     try {
+      if (typeof openTxPreviewModalAsync === 'function' && !(await openTxPreviewModalAsync(solPreview))) return;
       if (burnItems.length > 0) {
         const confirmMsg = t(
           `所选账户包含仍有余额的代币 [${burnSummary}]，销毁后资产将永久丢失且无法找回！是否确认销毁并回收 +${totalSol.toFixed(4)} SOL 租金？`,
@@ -173,16 +189,36 @@
         if (!(await showConfirmDialogAsync(confirmMsg, {
           danger: true,
           title: t('确认销毁代币并回收租金', 'Confirm Burn & Reclaim')
-        }))) return;
+        }))) {
+          if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+          return;
+        }
       }
-      if (!(await verifySecurityAuthAsync(wallet, promptText))) return;
+      if (!(await verifySecurityAuthAsync(wallet, promptText))) {
+        if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+        return;
+      }
+      stepper = typeof createTxStepperController === 'function'
+        ? createTxStepperController(t('正在回收 Solana 租金', 'Reclaiming Solana Rent'), solSteps)
+        : null;
+      if (stepper) stepper.setStep(0, 'active');
       const res = await contracts.executeSolanaRentReclaim({ wallet, accounts: selected });
-      const firstHash = res.txHashes && res.txHashes[0] ? `: ${shortenAddr(res.txHashes[0])}` : '';
-      showToast(`✅ ${t('已回收', 'Reclaimed')} +${res.reclaimedSol.toFixed(4)} SOL (${res.closedCount} ${t('个账户', 'accounts')})${firstHash}`);
+      const firstHash = res.txHashes && res.txHashes[0] ? res.txHashes[0] : '';
+      const successMsg = `${t('已回收', 'Reclaimed')} +${res.reclaimedSol.toFixed(4)} SOL (${res.closedCount} ${t('个账户', 'accounts')})`;
+      if (stepper) {
+        stepper.setStep(0, 'done', { txHash: firstHash, chain: 'sol' });
+        stepper.finish(true, successMsg);
+      }
+      showToast(`✅ ${successMsg}${firstHash ? `: ${shortenAddr(firstHash)}` : ''}`);
       await scanSolRentReclaimUI();
       refreshAllBalancesAsync(false);
     } catch (err) {
-      showToast(toUserFriendlyError(err, '租金回收失败', 'Rent reclaim failed'));
+      const errMsg = toUserFriendlyError(err, '租金回收失败', 'Rent reclaim failed');
+      if (stepper) {
+        stepper.setStep(0, 'error', { error: errMsg });
+        stepper.finish(false, errMsg);
+      }
+      showToast(errMsg);
       await scanSolRentReclaimUI().catch(() => {});
     } finally {
       _solRentReclaimInFlight = false;

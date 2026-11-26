@@ -11,6 +11,26 @@
     pill.classList.toggle('active', Boolean(ok));
   }
 
+  async function teardownWcClient(client) {
+    if (!client) return;
+    try {
+      const listeners = client._nexusListeners;
+      if (listeners) {
+        const offFn = typeof client.off === 'function'
+          ? client.off.bind(client)
+          : (typeof client.removeListener === 'function' ? client.removeListener.bind(client) : null);
+        if (offFn) {
+          if (listeners.proposal) offFn('session_proposal', listeners.proposal);
+          if (listeners.request) offFn('session_request', listeners.request);
+          if (listeners.delete) offFn('session_delete', listeners.delete);
+        }
+      }
+      if (client.core && client.core.relayer && typeof client.core.relayer.transportClose === 'function') {
+        await client.core.relayer.transportClose().catch(() => {});
+      }
+    } catch (_) {}
+  }
+
   async function ensureWcReady() {
     const st = getState();
     const projectId = (st.wc.projectId || DEFAULT_WC_PROJECT_ID).trim();
@@ -23,6 +43,14 @@
       updateWcStatusPill(t('已就绪', 'Ready'), true);
       return st.wc.client;
     }
+    if (st.wc.client && st.wc.initProjectId !== projectId) {
+      const prevClient = st.wc.client;
+      st.wc.client = null;
+      st.wc.initProjectId = '';
+      st.wc.pendingProposal = null;
+      st.wc.pendingRequest = null;
+      await teardownWcClient(prevClient);
+    }
     if (_wcInitPromise && _wcInitProjectId === projectId) {
       return _wcInitPromise;
     }
@@ -30,7 +58,7 @@
       let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
         updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-        await loadScriptOnce('walletconnect.umd.min.js?v=6.78');
+        await loadScriptOnce('walletconnect.umd.min.js?v=6.79');
         sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       }
       if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -49,12 +77,12 @@
       });
 
       const _wcRequestQueue = [];
-      client.on('session_proposal', (proposal) => {
+      const onSessionProposal = (proposal) => {
         st.wc.pendingProposal = proposal;
         renderWcCards();
         openSheet('sheet-walletconnect');
-      });
-      client.on('session_request', (event) => {
+      };
+      const onSessionRequest = (event) => {
         if (st.wc.pendingRequest) {
           _wcRequestQueue.push(event);
         } else {
@@ -62,15 +90,37 @@
         }
         renderWcCards();
         openSheet('sheet-walletconnect');
-      });
+      };
+      const drainTopicRequests = (topic) => {
+        if (!topic) return;
+        for (let i = _wcRequestQueue.length - 1; i >= 0; i--) {
+          if (_wcRequestQueue[i] && _wcRequestQueue[i].topic === topic) {
+            _wcRequestQueue.splice(i, 1);
+          }
+        }
+        if (st.wc.pendingRequest && st.wc.pendingRequest.topic === topic) {
+          st.wc.pendingRequest = _wcRequestQueue.shift() || null;
+          renderWcCards();
+        }
+      };
+      const onSessionDelete = (ev) => {
+        if (ev && ev.topic) drainTopicRequests(ev.topic);
+        renderWcSessions();
+        renderHeaderAndHero();
+      };
+      client.on('session_proposal', onSessionProposal);
+      client.on('session_request', onSessionRequest);
       client._nexusShiftNextRequest = () => {
         st.wc.pendingRequest = _wcRequestQueue.shift() || null;
         renderWcCards();
       };
-      client.on('session_delete', () => {
-        renderWcSessions();
-        renderHeaderAndHero();
-      });
+      client._nexusDrainTopicRequests = drainTopicRequests;
+      client._nexusListeners = {
+        proposal: onSessionProposal,
+        request: onSessionRequest,
+        delete: onSessionDelete
+      };
+      client.on('session_delete', onSessionDelete);
 
       st.wc.client = client;
       st.wc.initProjectId = projectId;
@@ -437,7 +487,7 @@
         });
         const sigObj = mpcRes && mpcRes.mpcSignature;
         if (!sigObj || !sigObj.big_r || !sigObj.big_r.affine_point || !sigObj.s || !sigObj.s.scalar) {
-          throw new Error(t('NEAR MPC 未返回有效的 Secp256k1 签名', 'NEAR MPC did not return a valid Secp256k1 signature'));
+          throw new Error(t('签名服务未返回有效签名', 'Signing service did not return a valid signature'));
         }
         const rHex = `0x${sigObj.big_r.affine_point.slice(2, 66)}`;
         const sHex = `0x${sigObj.s.scalar.padStart(64, '0')}`;
@@ -594,8 +644,15 @@
 
   async function disconnectWcSession(topic) {
     const st = getState();
-    if (!st.wc.client) return;
-    try { await st.wc.client.disconnectSession({ topic, reason: { code: 6000, message: 'Disconnected' } }); } catch (_) {}
+    const client = st.wc.client;
+    if (!client) return;
+    try { await client.disconnectSession({ topic, reason: { code: 6000, message: 'Disconnected' } }); } catch (_) {}
+    if (typeof client._nexusDrainTopicRequests === 'function') {
+      client._nexusDrainTopicRequests(topic);
+    } else if (st.wc.pendingRequest && st.wc.pendingRequest.topic === topic) {
+      st.wc.pendingRequest = null;
+      renderWcCards();
+    }
     renderWcSessions();
     renderHeaderAndHero();
     showToast(t('已断开 DApp 连接', 'Disconnected'));
@@ -680,7 +737,7 @@
     const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
     if (existing) return existing;
     if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
-      await loadScriptOnce('src/jsqr-lazy.js?v=6.78').catch(() => false);
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.79').catch(() => false);
       return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     }
     return null;

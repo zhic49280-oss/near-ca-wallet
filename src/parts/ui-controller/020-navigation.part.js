@@ -363,6 +363,9 @@
     const st = getState();
     const next = st.lang === 'en' ? 'zh' : 'en';
     st.setLanguage(next);
+    if (typeof renderAll === 'function' && typeof _langRenderBound !== 'undefined' && !_langRenderBound) {
+      renderAll();
+    }
     showToast(next === 'en' ? 'Switched to English' : '已切换为中文');
   }
 

@@ -448,7 +448,7 @@
       return;
     }
     var parsedResult = result;
-    if (typeof result === 'string' && (result.charAt(0) === '{' || result.charAt(0) === '[')) {
+    if (typeof result === 'string') {
       try { parsedResult = JSON.parse(result); } catch (_) {}
     }
     entry.resolve(parsedResult);
@@ -932,6 +932,16 @@
     return true;
   }
 
+  function parseHexBigInt(val) {
+    const s = String(val ?? '').trim();
+    if (!s || s === '0x' || s === '0X') return 0n;
+    try {
+      return BigInt(s);
+    } catch (_) {
+      return 0n;
+    }
+  }
+
   async function handleEvmRequest(req, ctx) {
     const contracts = (ctx && ctx.contracts) || getContractsLib();
     const crypto = (ctx && ctx.crypto) || getCryptoLib();
@@ -990,7 +1000,8 @@
     if (method === 'eth_accounts') {
       const origin = normalizeOriginLabel(req, ctx);
       const isConn = Boolean(ctx && typeof ctx.isOriginConnected === 'function' && ctx.isOriginConnected(origin, 'evm'));
-      if (!isConn && !(ctx && ctx.autoConnectOrigin)) {
+      const isDisconnected = Boolean(ctx && typeof ctx.isOriginDisconnected === 'function' && ctx.isOriginDisconnected(origin, 'evm'));
+      if (!isConn && (!(ctx && ctx.autoConnectOrigin) || isDisconnected)) {
         return [];
       }
       if (!isConn && ctx && typeof ctx.markOriginConnected === 'function') {
@@ -1004,7 +1015,8 @@
       const addr = contracts.resolveWalletEvmSender ? contracts.resolveWalletEvmSender(wallet) : wallet.evmAddress;
       const origin = normalizeOriginLabel(req, ctx);
       const alreadyConnected = Boolean(ctx && typeof ctx.isOriginConnected === 'function' && ctx.isOriginConnected(origin, 'evm'));
-      if (!alreadyConnected && !(ctx && ctx.autoConnectOrigin)) {
+      const isDisconnected = Boolean(ctx && typeof ctx.isOriginDisconnected === 'function' && ctx.isOriginDisconnected(origin, 'evm'));
+      if (!alreadyConnected && (!(ctx && ctx.autoConnectOrigin) || isDisconnected)) {
         await ensureApproval(req, ctx, {
           kind: 'connect',
           chainLabel: activeChain.cfg.name || activeChain.key.toUpperCase(),
@@ -1131,7 +1143,7 @@
       const txChain = txReq.chainId
         ? (resolveEvmChainByIdOrKey(contracts, txReq.chainId, activeChain.key) || activeChain)
         : activeChain;
-      const valBig = txReq.value ? BigInt(txReq.value) : 0n;
+      const valBig = parseHexBigInt(txReq.value);
       const dataHex = (typeof txReq.data === 'string' && txReq.data.length > 0) ? txReq.data : '0x';
 
       await ensureApproval(req, ctx, {
@@ -1200,7 +1212,8 @@
     if (method === 'connect') {
       const origin = normalizeOriginLabel(req, ctx);
       const alreadyConnected = Boolean(ctx && typeof ctx.isOriginConnected === 'function' && ctx.isOriginConnected(origin, 'solana'));
-      if (!alreadyConnected && !(ctx && ctx.autoConnectOrigin)) {
+      const isDisconnected = Boolean(ctx && typeof ctx.isOriginDisconnected === 'function' && ctx.isOriginDisconnected(origin, 'solana'));
+      if (!alreadyConnected && (!(ctx && ctx.autoConnectOrigin) || isDisconnected)) {
         await ensureApproval(req, ctx, {
           kind: 'connect',
           chainLabel: 'Solana',
@@ -1387,7 +1400,8 @@
     if (method === 'requestSignIn') {
       const origin = normalizeOriginLabel(req, ctx);
       const alreadyConnected = Boolean(ctx && typeof ctx.isOriginConnected === 'function' && ctx.isOriginConnected(origin, 'near'));
-      if (!alreadyConnected && !(ctx && ctx.autoConnectOrigin)) {
+      const isDisconnected = Boolean(ctx && typeof ctx.isOriginDisconnected === 'function' && ctx.isOriginDisconnected(origin, 'near'));
+      if (!alreadyConnected && (!(ctx && ctx.autoConnectOrigin) || isDisconnected)) {
         await ensureApproval(req, ctx, {
           kind: 'connect',
           chainLabel: 'NEAR',

@@ -27,10 +27,12 @@
     chainFilter: 'ALL',
     activeEvmChainKey: 'eth',
     connectedOrigins: loadPersistedDAppConnections(),
+    disconnectedOrigins: new Set(),
     pendingApproval: null,
     listenersBound: false,
     nativeOpen: false
   };
+  let _dappBridgeQueue = Promise.resolve();
 
   function getNativeDAppPlugin() {
     if (typeof window === 'undefined' || !window.Capacitor) return null;
@@ -51,27 +53,43 @@
     return _dappSession.connectedOrigins.has(`${namespace}:${origin}`);
   }
 
+  function isDAppOriginDisconnected(origin, namespace) {
+    return _dappSession.disconnectedOrigins.has(`${namespace}:${origin}`);
+  }
+
   function markDAppOriginConnected(origin, namespace) {
     if (!origin) return;
-    _dappSession.connectedOrigins.add(`${namespace}:${origin}`);
+    const key = `${namespace}:${origin}`;
+    _dappSession.disconnectedOrigins.delete(key);
+    _dappSession.connectedOrigins.add(key);
     savePersistedDAppConnections(_dappSession.connectedOrigins);
   }
 
   function markDAppOriginDisconnected(origin, namespace) {
-    _dappSession.connectedOrigins.delete(`${namespace}:${origin}`);
+    if (!origin) return;
+    const key = `${namespace}:${origin}`;
+    _dappSession.connectedOrigins.delete(key);
+    _dappSession.disconnectedOrigins.add(key);
     savePersistedDAppConnections(_dappSession.connectedOrigins);
   }
 
   function disconnectDAppOrigin(origin) {
     const clean = String(origin || '').trim();
     if (!clean) return;
-    ['evm', 'solana', 'near'].forEach((ns) => _dappSession.connectedOrigins.delete(`${ns}:${clean}`));
+    ['evm', 'solana', 'near'].forEach((ns) => {
+      const key = `${ns}:${clean}`;
+      _dappSession.connectedOrigins.delete(key);
+      _dappSession.disconnectedOrigins.add(key);
+    });
     savePersistedDAppConnections(_dappSession.connectedOrigins);
     renderDAppCatalog();
     showToast(t('已断开 DApp 授权', 'DApp disconnected'));
   }
 
   function disconnectAllDAppOrigins() {
+    for (const key of _dappSession.connectedOrigins) {
+      _dappSession.disconnectedOrigins.add(key);
+    }
     _dappSession.connectedOrigins.clear();
     savePersistedDAppConnections(_dappSession.connectedOrigins);
     renderDAppCatalog();
@@ -269,13 +287,19 @@
     try {
       return await verifySecurityAuthAsync(wallet, reasonText);
     } finally {
-      if (_dappSession.nativeOpen) {
+      if (_dappSession.nativeOpen && !$('sheet-dapp-approve')?.classList?.contains('open')) {
         await setNativeBrowserOverlayVisible(true);
       }
     }
   }
 
-  async function handleIncomingNativeBridgePayload(rawEvent) {
+  function handleIncomingNativeBridgePayload(rawEvent) {
+    const run = () => _processNativeBridgePayload(rawEvent);
+    _dappBridgeQueue = _dappBridgeQueue.then(run, run);
+    return _dappBridgeQueue;
+  }
+
+  async function _processNativeBridgePayload(rawEvent) {
     const plugin = getNativeDAppPlugin();
     const browserMod = getDAppBrowser();
     const contracts = getContracts();
@@ -292,12 +316,6 @@
 
     try {
       const ethersLib = await ensureEthersLoaded().catch(() => null);
-      const originUrl = (() => {
-        try { return new URL(msg.origin || msg.url || '').origin; } catch (_) { return String(msg.origin || ''); }
-      })();
-      const isTrustedCatalogOrigin = Array.isArray(browserMod.DAPP_CATALOG) && browserMod.DAPP_CATALOG.some((d) => {
-        try { return new URL(d.url).origin === originUrl; } catch (_) { return false; }
-      });
       const result = await browserMod.handleDAppRpcRequest(msg, {
         wallet,
         contracts,
@@ -307,8 +325,9 @@
         url: msg.url || '',
         title: msg.title || '',
         activeEvmChainKey: _dappSession.activeEvmChainKey,
-        autoConnectOrigin: isTrustedCatalogOrigin,
+        autoConnectOrigin: false,
         isOriginConnected: isDAppOriginConnected,
+        isOriginDisconnected: isDAppOriginDisconnected,
         markOriginConnected: markDAppOriginConnected,
         markOriginDisconnected: markDAppOriginDisconnected,
         setEvmChain: (key) => { _dappSession.activeEvmChainKey = key || 'eth'; },
@@ -382,9 +401,11 @@
         try { return new URL(d.url).origin === originUrl; } catch (_) { return false; }
       });
       if (originUrl && isCatalogOrigin) {
-        markDAppOriginConnected(originUrl, 'evm');
-        markDAppOriginConnected(originUrl, 'solana');
-        markDAppOriginConnected(originUrl, 'near');
+        ['evm', 'solana', 'near'].forEach((ns) => {
+          if (!isDAppOriginDisconnected(originUrl, ns)) {
+            markDAppOriginConnected(originUrl, ns);
+          }
+        });
       }
     } catch (_) {}
 

@@ -312,29 +312,30 @@
     if (posWrap) {
       const positions = acct && Array.isArray(acct.positions) ? acct.positions : [];
       posWrap.classList.toggle('hidden', positions.length === 0);
-      if (positions.length > 0) {
-        posWrap.innerHTML = positions.map((p) => {
+      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+      if (fw && typeof fw.mountPerpOverviewPositionsPanel === 'function') {
+        const mappedPositions = positions.map((p) => {
           const upnl = Number(p.unrealizedPnl || 0);
-          const upnlCls = upnl >= 0 ? 'text-emerald' : 'text-rose';
-          return `
-            <button type="button" class="perp-overview-row" data-action="open-perp-trade" data-coin="${escapeHtml(p.coin)}">
-              <div class="flex items-center gap-2">
-                <strong>${escapeHtml(formatPerpDisplayPair(p.coin))}</strong>
-                <span class="ca-badge">${escapeHtml(p.isLong ? t('多', 'Long') : t('空', 'Short'))} ${escapeHtml(String(p.leverageValue || '--'))}x</span>
-              </div>
-              <div class="flex items-center gap-2 mono" style="font-size: 12px;">
-                <span class="${upnlCls}" style="font-weight: 700;">${upnl >= 0 ? '+' : ''}$${upnl.toFixed(2)}</span>
-                <span style="color:var(--text-muted);">›</span>
-              </div>
-            </button>
-          `;
-        }).join('');
-      } else {
-        const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
-        if (fw && typeof fw.render === 'function') {
-          try { fw.render(null, posWrap); } catch (_) {}
-        }
-        posWrap.innerHTML = '';
+          const szi = Math.abs(Number(p.szi || 0));
+          const entryPx = Number(p.entryPx || 0);
+          const liqPx = Number(p.liquidationPx || 0);
+          return {
+            coin: p.coin,
+            isLong: Boolean(p.isLong),
+            leverage: String(p.leverageValue || '--'),
+            sizeDisplay: `${szi} ${formatPerpBaseSymbol(p.coin)}`,
+            pnlDisplay: `${upnl >= 0 ? '+' : ''}$${upnl.toFixed(2)}`,
+            pnlColor: upnl >= 0 ? '#34d399' : '#fb7185',
+            entryDisplay: entryPx > 0 ? `$${formatPerpPx(entryPx)}` : '--',
+            liqDisplay: liqPx > 0 ? `$${formatPerpPx(liqPx)}` : '--'
+          };
+        });
+        fw.mountPerpOverviewPositionsPanel(posWrap, {
+          positions: mappedPositions,
+          onSelectCoin: (coin) => {
+            if (typeof openPerpTrade === 'function') openPerpTrade(coin);
+          }
+        });
       }
     }
 
@@ -645,5 +646,350 @@
     if ($('perp-ls-short-label')) $('perp-ls-short-label').textContent = `${ls.shortPct.toFixed(1)}% ${t('做空', 'Short')}`;
     if ($('perp-ls-long-bar')) $('perp-ls-long-bar').style.transform = `scaleX(${(longPct / 100).toFixed(3)})`;
     if ($('perp-ls-short-bar')) $('perp-ls-short-bar').style.transform = `scaleX(${(shortPct / 100).toFixed(3)})`;
+  }
+
+  let _perpRefreshInFlight = null;
+  let _lastHip3SyncAt = 0;
+
+  async function refreshPerpDataAsync(force = false) {
+    if (!force && _perpRefreshInFlight) {
+      return _perpRefreshInFlight;
+    }
+    const refreshBtns = force
+      ? ['btn-perp-overview-refresh', 'btn-perp-trade-refresh'].map((id) => $(id)).filter(Boolean)
+      : [];
+    const prevBtnTexts = refreshBtns.map((b) => b.textContent);
+    if (force) {
+      refreshBtns.forEach((b) => {
+        b.disabled = true;
+        b.textContent = t('刷新中...', 'Refreshing...');
+      });
+    }
+    const run = (async () => {
+      try {
+        const st = getState();
+        const hl = getHyperliquid();
+        const contracts = getContracts();
+        const wallet = st.getActiveWallet();
+        if (!hl || !contracts || !wallet) return;
+        await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+        const hlAddr = contracts.resolveWalletEvmSender(wallet);
+        const refreshWalletId = wallet.id;
+        const refreshStale = () => {
+          const cur = st.getActiveWallet();
+          return !cur || cur.id !== refreshWalletId;
+        };
+        if ((!st.perp.markets.length || !st.perp.account) && typeof st.loadCachedPerpSnapshot === 'function') {
+          st.loadCachedPerpSnapshot(hlAddr);
+          renderPerpView();
+        }
+        const now = Date.now();
+        const needMarkets = force || !st.perp.markets.length || (now - st.perp.lastMarketSyncTs > 30_000);
+        const [mkts, acct] = await Promise.all([
+          needMarkets ? hl.fetchHlMarkets().catch(() => null) : Promise.resolve(null),
+          hlAddr ? hl.fetchHlAccountState(hlAddr).catch(() => null) : Promise.resolve(null)
+        ]);
+        if (refreshStale()) return;
+        if (Array.isArray(mkts) && mkts.length > 0) {
+          st.perp.markets = mkts;
+          st.perp.lastMarketSyncTs = Date.now();
+        }
+        if (acct) {
+          st.perp.account = acct;
+          st.perp.lastAccountSyncTs = Date.now();
+          _lastHip3SyncAt = Date.now();
+        }
+        if (typeof st.saveCachedPerpSnapshot === 'function') {
+          st.saveCachedPerpSnapshot({
+            markets: Array.isArray(mkts) && mkts.length > 0 ? mkts : undefined,
+            account: acct || undefined,
+            accountAddr: hlAddr
+          });
+        }
+        await refreshPerpOrderbookAndCandlesAsync();
+        if (force) {
+          refreshPerpLongShortAsync(st.perp.selectedCoin || 'BTC', true).catch(() => {});
+          showToast(t('合约数据已刷新', 'Perps synced'));
+        }
+      } catch (err) {
+        if (force) {
+          showToast(formatPerpError(err, '刷新合约数据失败，请稍后重试', 'Failed to refresh Perps. Please try again.'));
+        }
+      } finally {
+        if (force) {
+          refreshBtns.forEach((b, idx) => {
+            b.disabled = false;
+            b.textContent = prevBtnTexts[idx] || t('刷新', 'Refresh');
+          });
+        }
+      }
+    })();
+
+    if (!force) {
+      _perpRefreshInFlight = run.finally(() => {
+        if (_perpRefreshInFlight === wrapped) _perpRefreshInFlight = null;
+      });
+      var wrapped = _perpRefreshInFlight;
+      return wrapped;
+    }
+    return run;
+  }
+
+  function setPerpSide(side) {
+    const st = getState();
+    st.perp.side = side === 'short' ? 'short' : 'long';
+    st.perp.errorMsg = '';
+    if (typeof resetFormFields === 'function') {
+      resetFormFields(['perp-tp-input', 'perp-sl-input'], st.perp, { tpInput: '', slInput: '' });
+    } else {
+      st.perp.tpInput = '';
+      st.perp.slInput = '';
+    }
+    renderPerpView();
+  }
+
+  function setPerpMarginMode(mode) {
+    const st = getState();
+    const market = getSelectedPerpMarket();
+    if (mode === 'cross' && market && market.onlyIsolated) {
+      showToast(t('该市场仅支持逐仓模式', 'This market supports Isolated margin only'));
+      return;
+    }
+    st.perp.marginMode = mode === 'cross' ? 'cross' : 'isolated';
+    renderPerpView();
+  }
+
+  function setPerpOrderType(orderType) {
+    const st = getState();
+    const oType = orderType === 'limit' ? 'limit' : (orderType === 'post_only' ? 'post_only' : 'market');
+    st.perp.orderType = oType;
+    st.perp.tif = oType === 'post_only' ? 'Alo' : (oType === 'limit' ? 'Gtc' : 'Ioc');
+    const market = getSelectedPerpMarket();
+    if (oType === 'market') {
+      st.perp.limitPriceInput = '';
+      if ($('perp-limit-price-input')) $('perp-limit-price-input').value = '';
+    } else if ((oType === 'limit' || oType === 'post_only') && !st.perp.limitPriceInput && market && market.markPx) {
+      st.perp.limitPriceInput = String(market.markPx);
+      const inp = $('perp-limit-price-input');
+      if (inp) inp.value = st.perp.limitPriceInput;
+    }
+    renderPerpView();
+  }
+
+  function resetPerpOrderForm({ clearPrice = true, clearMargin = true, clearTpSl = true } = {}) {
+    const st = getState();
+    const domIds = [];
+    const defaults = { errorMsg: '' };
+    if (clearPrice) {
+      domIds.push('perp-limit-price-input');
+      defaults.limitPriceInput = '';
+    }
+    if (clearMargin) {
+      domIds.push('perp-margin-input');
+      defaults.marginInput = '';
+    }
+    if (clearTpSl) {
+      domIds.push('perp-tp-input', 'perp-sl-input', 'perp-reduce-only-chk');
+      defaults.tpInput = '';
+      defaults.slInput = '';
+      defaults.reduceOnly = false;
+      const drawer = $('perp-tpsl-drawer');
+      if (drawer) drawer.classList.add('hidden');
+      const btn = $('btn-perp-tpsl-toggle');
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+    }
+    resetFormFields(domIds, st.perp, defaults);
+  }
+
+  function backToPerpOverview() {
+    const st = getState();
+    st.perp.subView = 'overview';
+    stopPerpLiveFeed();
+    renderPerpView();
+  }
+
+  function openPerpTradeScreen(coin) {
+    const st = getState();
+    const nextCoin = coin ? String(coin) : (st.perp.selectedCoin || 'BTC');
+    const changedCoin = nextCoin !== st.perp.selectedCoin;
+    st.perp.selectedCoin = nextCoin;
+    st.perp.subView = 'trade';
+    resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
+    const existingPos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === nextCoin);
+    const mkt = (st.perp.markets || []).find((m) => m.name === nextCoin);
+    if (existingPos) {
+      if (existingPos.leverageValue) st.perp.leverage = Number(existingPos.leverageValue);
+      st.perp.marginMode = existingPos.leverageType === 'cross' && !(mkt && mkt.onlyIsolated) ? 'cross' : 'isolated';
+    } else if (mkt && mkt.onlyIsolated) {
+      st.perp.marginMode = 'isolated';
+    }
+    st.perp.lsRatio = null;
+    st.perp.inspectedCandleIdx = null;
+    st.perp.chartOffsetFromEnd = 0;
+    st.perp.chartVisibleCount = 48;
+    st.perp.overviewSearch = '';
+    if ($('perp-overview-search')) $('perp-overview-search').value = '';
+    if ($('perp-overview-search-clear')) $('perp-overview-search-clear').classList.add('hidden');
+    if (changedCoin) st.perp.orderbook = null;
+    if (typeof st.getCachedPerpCandles === 'function') {
+      st.perp.candles = st.getCachedPerpCandles(nextCoin, st.perp.chartInterval || '15m') || [];
+    } else if (changedCoin) {
+      st.perp.candles = [];
+    }
+    if (typeof st.loadCachedPerpSnapshot === 'function') {
+      st.loadCachedPerpSnapshot();
+    }
+    renderPerpView();
+    refreshPerpOrderbookAndCandlesAsync().catch(() => {});
+    refreshPerpLongShortAsync(st.perp.selectedCoin, false).catch(() => {});
+    startPerpLiveFeed();
+  }
+
+  function handlePerpOverviewSearch(val) {
+    const st = getState();
+    st.perp.overviewSearch = String(val || '');
+    renderPerpOverviewPanel();
+  }
+
+  function clearPerpOverviewSearch() {
+    const st = getState();
+    st.perp.overviewSearch = '';
+    const inp = $('perp-overview-search');
+    if (inp) {
+      inp.value = '';
+      if (typeof inp.focus === 'function') inp.focus();
+    }
+    const clr = $('perp-overview-search-clear');
+    if (clr) clr.classList.add('hidden');
+    renderPerpOverviewPanel();
+  }
+
+  function clearPerpMarketSearch() {
+    const st = getState();
+    st.perp.marketSearch = '';
+    const inp = $('perp-market-search');
+    if (inp) {
+      inp.value = '';
+      if (typeof inp.focus === 'function') inp.focus();
+    }
+    const clr = $('perp-market-search-clear');
+    if (clr) clr.classList.add('hidden');
+    renderPerpMarketsSheet();
+  }
+
+  function setPerpOverviewCategory(cat) {
+    const st = getState();
+    st.perp.overviewCategory = ['favorites', 'crypto', 'stocks', 'all'].includes(cat) ? cat : 'crypto';
+    renderPerpOverviewPanel();
+  }
+
+  function togglePerpOverviewSort(key) {
+    const st = getState();
+    const k = ['vol', 'px', 'chg'].includes(key) ? key : 'vol';
+    if (st.perp.overviewSortKey === k) {
+      st.perp.overviewSortDir = st.perp.overviewSortDir === 'desc' ? 'asc' : 'desc';
+    } else {
+      st.perp.overviewSortKey = k;
+      st.perp.overviewSortDir = 'desc';
+    }
+    renderPerpOverviewPanel();
+  }
+
+  function fillPerpBboPrice() {
+    const st = getState();
+    const ob = st.perp && st.perp.orderbook;
+    const market = getSelectedPerpMarket();
+    const isLong = st.perp.side !== 'short';
+    let bboPx = null;
+    if (ob && isLong && Array.isArray(ob.bids) && ob.bids.length > 0) {
+      bboPx = ob.bids[0].px;
+    } else if (ob && !isLong && Array.isArray(ob.asks) && ob.asks.length > 0) {
+      bboPx = ob.asks[0].px;
+    } else if (market && market.markPx) {
+      bboPx = market.markPx;
+    }
+    if (!bboPx) return;
+    if (st.perp.orderType !== 'limit' && st.perp.orderType !== 'post_only') {
+      st.perp.orderType = 'limit';
+      st.perp.tif = 'Gtc';
+    }
+    st.perp.limitPriceInput = String(bboPx);
+    const inp = $('perp-limit-price-input');
+    if (inp) inp.value = st.perp.limitPriceInput;
+    renderPerpView();
+  }
+
+  function togglePerpReduceOnly(checked) {
+    getState().perp.reduceOnly = Boolean(checked);
+    evaluatePerpOrderUI();
+  }
+
+  function setPerpLeverage(val) {
+    const st = getState();
+    const market = getSelectedPerpMarket();
+    const maxLev = market ? (Number(market.maxLeverage) || 20) : 50;
+    const n = Math.max(1, Math.min(maxLev, Math.round(Number(val) || 1)));
+    st.perp.leverage = n;
+    const levEl = $('perp-lev-val');
+    if (levEl) levEl.textContent = `${n}x`;
+    evaluatePerpOrderUI();
+  }
+
+  function handlePerpMarginInput() {
+    getState().perp.errorMsg = '';
+    evaluatePerpOrderUI();
+  }
+
+  function handlePerpLimitPriceInput() {
+    getState().perp.errorMsg = '';
+    evaluatePerpOrderUI();
+  }
+
+  function setPerpMarginPercent(pct) {
+    const st = getState();
+    const avail = st.perp.account ? Number(st.perp.account.availableMargin || 0) : 0;
+    if (avail <= 0) {
+      showToast(t('可用保证金为 0，请先充值或从 Spot 划转', 'Available margin is 0; deposit or transfer first'));
+      return;
+    }
+    const lev = Math.max(1, Number(st.perp.leverage) || 5);
+    const feeRate = Number(st.perp.account?.takerFeeRate) || 0.00045;
+    const maxSafeRatio = Number(pct) >= 0.99 ? Math.max(0.5, 1 / (1 + lev * feeRate) - 0.005) : Number(pct);
+    const amt = Math.max(0, avail * maxSafeRatio).toFixed(2);
+    st.perp.marginInput = amt;
+    const inp = $('perp-margin-input');
+    if (inp) inp.value = amt;
+    st.perp.errorMsg = '';
+    evaluatePerpOrderUI();
+  }
+
+  function togglePerpChart() {
+    const st = getState();
+    st.perp.showChart = !st.perp.showChart;
+    renderPerpView();
+    if (st.perp.showChart) refreshPerpOrderbookAndCandlesAsync().catch(() => {});
+  }
+
+  function fillPerpLimitPrice(px) {
+    const st = getState();
+    if (st.perp.orderType !== 'post_only') {
+      st.perp.orderType = 'limit';
+      st.perp.tif = 'Gtc';
+    }
+    st.perp.limitPriceInput = String(px || '');
+    const inp = $('perp-limit-price-input');
+    if (inp) inp.value = st.perp.limitPriceInput;
+    renderPerpView();
+  }
+
+  function setPerpBottomTab(tab) {
+    getState().perp.bottomTab = ['positions', 'orders', 'fills'].includes(tab) ? tab : 'positions';
+    renderPerpBottomList();
+  }
+
+  function setPerpMarketFilter(filter) {
+    const st = getState();
+    st.perp.marketFilter = ['hot', 'all', 'stocks', 'gainers', 'vol'].includes(filter) ? filter : 'hot';
+    renderPerpMarketsSheet();
   }
 

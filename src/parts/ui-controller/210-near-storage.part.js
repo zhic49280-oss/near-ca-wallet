@@ -127,6 +127,19 @@
 
     const totalNear = selected.reduce((s, a) => s + Number(a.depositNear || 0), 0);
     const promptText = `${t('回收 NEAR 存储押金', 'Reclaim NEAR Storage')} (${selected.length} · +${totalNear.toFixed(5)} NEAR)`;
+    const nearSteps = [{ title: t('退还 NEAR 存储押金', 'Unregister & reclaim NEAR storage'), chain: 'near' }];
+    const nearPreview = {
+      title: t('确认回收 NEAR 存储押金', 'Confirm NEAR Storage Reclaim'),
+      subtitle: `${selected.length} ${t('个合约', 'contracts')} · +${totalNear.toFixed(5)} NEAR`,
+      networkPath: 'NEAR Protocol',
+      detailRows: [
+        { label: t('选中合约数', 'Selected Contracts'), value: String(selected.length), mono: true },
+        { label: t('预计回收', 'Estimated Reclaim'), value: `+${totalNear.toFixed(5)} NEAR`, mono: true, tone: 'emerald' }
+      ],
+      confirmLabel: t('确认回收', 'Reclaim Storage'),
+      steps: nearSteps
+    };
+
     _nearStorageReclaimInFlight = true;
     const btn = $('btn-execute-near-storage');
     const prevTxt = btn ? btn.textContent : '';
@@ -134,15 +147,34 @@
       btn.disabled = true;
       btn.textContent = t('回收中...', 'Reclaiming...');
     }
+    let stepper = null;
     try {
-      if (!(await verifySecurityAuthAsync(wallet, promptText))) return;
+      if (typeof openTxPreviewModalAsync === 'function' && !(await openTxPreviewModalAsync(nearPreview))) return;
+      if (!(await verifySecurityAuthAsync(wallet, promptText))) {
+        if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+        return;
+      }
+      stepper = typeof createTxStepperController === 'function'
+        ? createTxStepperController(t('正在回收 NEAR 存储押金', 'Reclaiming NEAR Storage'), nearSteps)
+        : null;
+      if (stepper) stepper.setStep(0, 'active');
       const res = await contracts.executeNearStorageReclaim({ wallet, contracts: selected });
-      const firstHash = res.txHashes && res.txHashes[0] ? `: ${shortenAddr(res.txHashes[0])}` : '';
-      showToast(`✅ ${t('已回收', 'Reclaimed')} +${totalNear.toFixed(5)} NEAR (${res.reclaimedCount} ${t('个合约', 'contracts')})${firstHash}`);
+      const firstHash = res.txHashes && res.txHashes[0] ? res.txHashes[0] : '';
+      const successMsg = `${t('已回收', 'Reclaimed')} +${totalNear.toFixed(5)} NEAR (${res.reclaimedCount} ${t('个合约', 'contracts')})`;
+      if (stepper) {
+        stepper.setStep(0, 'done', { txHash: firstHash, chain: 'near' });
+        stepper.finish(true, successMsg);
+      }
+      showToast(`✅ ${successMsg}${firstHash ? `: ${shortenAddr(firstHash)}` : ''}`);
       await scanNearStorageReclaimUI();
       refreshAllBalancesAsync(false);
     } catch (err) {
-      showToast(toUserFriendlyError(err, '存储押金回收失败', 'Storage reclaim failed'));
+      const errMsg = toUserFriendlyError(err, '存储押金回收失败', 'Storage reclaim failed');
+      if (stepper) {
+        stepper.setStep(0, 'error', { error: errMsg });
+        stepper.finish(false, errMsg);
+      }
+      showToast(errMsg);
       await scanNearStorageReclaimUI().catch(() => {});
     } finally {
       _nearStorageReclaimInFlight = false;

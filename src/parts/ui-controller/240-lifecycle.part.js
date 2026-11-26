@@ -2,6 +2,7 @@
 
   let _delegatedListenersBound = false;
   let _foregroundResumeBound = false;
+  let _langRenderBound = false;
 
   function initForegroundResumeSync() {
     if (_foregroundResumeBound) return;
@@ -190,7 +191,10 @@
     initHomePullToRefresh();
     initAppSecurityLifecycle();
     initForegroundResumeSync();
-    st.onLanguageChange(() => renderAll());
+    if (!_langRenderBound) {
+      _langRenderBound = true;
+      st.onLanguageChange(() => renderAll());
+    }
     renderAll();
     const activeW = st.getActiveWallet();
     if (activeW) {

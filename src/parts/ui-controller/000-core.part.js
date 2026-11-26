@@ -58,7 +58,7 @@
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.78');
+      await loadScriptOnce('ethers.umd.min.js?v=6.79');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -68,7 +68,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.78').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.79').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -78,7 +78,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.78').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.79').catch(() => false);
       return getMining();
     }
     return null;
@@ -254,7 +254,6 @@
     const text = String(msg || '');
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     let host = $('toast-host');
-    const legacyEl = $('toast');
     if (_toastTimer) {
       clearTimeout(_toastTimer);
       _toastTimer = null;
@@ -295,22 +294,13 @@
         return;
       }
     }
-    if (!legacyEl) return;
-    legacyEl.textContent = text;
-    legacyEl.classList.remove('show');
-    if (typeof requestAnimationFrame === 'function') {
-      void legacyEl.offsetWidth;
-      _toastRaf = requestAnimationFrame(() => {
-        _toastRaf = 0;
-        legacyEl.classList.add('show');
-      });
-    } else {
-      legacyEl.classList.add('show');
+    const toastEl = $('toast');
+    if (toastEl) {
+      toastEl.textContent = text;
+      toastEl.setAttribute('data-tone', tone);
+      toastEl.classList.add('show');
+      _toastTimer = setTimeout(() => toastEl.classList.remove('show'), 3200);
     }
-    _toastTimer = setTimeout(() => {
-      _toastTimer = null;
-      legacyEl.classList.remove('show');
-    }, 3200);
   }
 
   async function copyText(text, label = '') {

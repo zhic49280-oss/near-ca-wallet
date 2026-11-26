@@ -276,27 +276,21 @@
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (sel && entries.length > 0) {
       const prevVal = st.perp.fundingOriginAssetId || sel.value;
-      const optSig = entries.map((e) => `${e.key}:${formatBal(e.balance, 4)}`).join('|');
+      const chosen = entries.find((e) => e.key === prevVal) || entries[0] || null;
+      const selectedVal = chosen ? chosen.key : '';
+      const optSig = `${entries.map((e) => `${e.key}:${formatBal(e.balance, 4)}`).join('|')}::${selectedVal}`;
       if (!sel.dataset || sel.dataset.optSig !== optSig) {
         if (sel.dataset) sel.dataset.optSig = optSig;
         if (fw && typeof fw.mountPerpFundingInfoPanel === 'function') {
-          fw.mountPerpFundingInfoPanel(sel, { entries, formatBal });
-        } else {
-          sel.innerHTML = entries.map((e) =>
-            `<option value="${escapeHtml(e.key)}">${escapeHtml(`${e.symbol} · ${e.chainLabel} (${formatBal(e.balance, 4)})`)}</option>`
-          ).join('');
+          fw.mountPerpFundingInfoPanel(sel, { entries, formatBal, selectedValue: selectedVal });
         }
       }
-      if (entries.some((e) => e.key === prevVal)) sel.value = prevVal;
-      const chosen = entries.find((e) => e.key === sel.value) || entries[0] || null;
-      st.perp.fundingOriginAssetId = chosen ? chosen.key : '';
+      st.perp.fundingOriginAssetId = selectedVal;
       const availEl = $('perp-oc-origin-avail');
       if (availEl) availEl.textContent = chosen ? `${formatBal(chosen.balance, 4)} ${chosen.symbol}` : '--';
     } else if (sel) {
       if (fw && typeof fw.mountPerpFundingInfoPanel === 'function') {
-        fw.mountPerpFundingInfoPanel(sel, { entries: [], formatBal });
-      } else {
-        sel.innerHTML = '';
+        fw.mountPerpFundingInfoPanel(sel, { entries: [], formatBal, selectedValue: '' });
       }
     }
 
