@@ -599,6 +599,7 @@
     }
 
     _sendExecuting = true;
+    let sendStepper = null;
     const btn = $('btn-confirm-send');
     const prevBtnText = btn ? btn.textContent : '';
     if (btn) {
@@ -683,7 +684,7 @@
         if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
         return;
       }
-      const sendStepper = sendPlan && typeof createTxStepperController === 'function'
+      sendStepper = sendPlan && typeof createTxStepperController === 'function'
         ? createTxStepperController(t('正在发送转账', 'Sending Transfer'), sendPlan.steps)
         : null;
       if (sendStepper) sendStepper.setStep(0, 'active');
@@ -834,7 +835,10 @@
       refreshAllBalancesAsync(false);
     } catch (err) {
       const errMsg = toUserFriendlyError(err, '转账失败，请重试', 'Transfer failed. Please try again.');
-      if (typeof closeTxFlowModal === 'function' && $('sheet-tx-flow')?.classList.contains('open')) {
+      if (sendStepper) {
+        sendStepper.setStep(0, 'error', { error: errMsg });
+        sendStepper.finish(false, errMsg);
+      } else if (typeof closeTxFlowModal === 'function' && $('sheet-tx-flow')?.classList.contains('open')) {
         closeTxFlowModal();
       }
       showToast(errMsg);

@@ -690,7 +690,7 @@
       intentActions,
       deadlineIso,
       quoteHashes = [],
-      executionMode = 'relay',
+      executionMode = nearPrivateKey ? 'onchain' : 'relay',
       fallbackOnChain = false
     } = params;
 

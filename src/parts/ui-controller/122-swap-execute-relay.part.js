@@ -40,6 +40,7 @@
         if (postSolRes && typeof postSolRes.nativeSol === 'number') {
           wallet.nativeBalances = wallet.nativeBalances || {};
           wallet.nativeBalances.sol = postSolRes.nativeSol;
+          if (typeof st.syncWalletCompatBalances === 'function') st.syncWalletCompatBalances(wallet);
         }
         const solGasReserve = typeof contracts.getNativeGasReserve === 'function' ? contracts.getNativeGasReserve('sol') : 0.002;
         const reserveLamports = BigInt(contracts.toBaseUnits(String(solGasReserve), 9));
@@ -89,7 +90,7 @@
             autoBroadcasted: true,
             createdAt: Date.now(),
             followUpFailed: true,
-            followUpError: s2Err?.message || t('第一步已换出 SOL，第二步跨链失败，请点击继续重试', 'Stage 1 swapped to SOL; tap Resume for Stage 2'),
+            followUpError: toUserFriendlyError(s2Err, '第一步已换出 SOL，第二步跨链失败，请点击继续重试', 'Stage 1 swapped to SOL; tap Resume for Stage 2'),
             followUpBaseOneClick: null,
             followUpSolBridgeOut: {
               destinationAsset: toToken.assetId,
@@ -509,6 +510,7 @@
           if (postArcRes && typeof postArcRes.nativeFormatted === 'number') {
             wallet.nativeBalances = wallet.nativeBalances || {};
             wallet.nativeBalances.arc = postArcRes.nativeFormatted;
+            if (typeof st.syncWalletCompatBalances === 'function') st.syncWalletCompatBalances(wallet);
           }
           const reserveArcWei = BigInt(intents.toBaseUnits('0.02', 18));
           const maxSpendableWei = postArcWei > reserveArcWei ? (postArcWei - reserveArcWei) : 0n;
@@ -580,7 +582,7 @@
               autoBroadcasted: true,
               createdAt: Date.now(),
               followUpFailed: true,
-              followUpError: arcStage2Err?.message || t('Arc 第一步已换出 USDC，跨链至 Base 失败，请重发或调整金额', 'Arc Stage 1 swapped to USDC; Stage 2 bridge failed'),
+              followUpError: toUserFriendlyError(arcStage2Err, 'Arc 第一步已换出 USDC，跨链至 Base 失败，请重发或调整金额', 'Arc Stage 1 swapped to USDC; Stage 2 bridge failed'),
               followUpArcRelay: {
                 direction: 'arc_to_base',
                 originAsset: intents.ARC_USDC_CONTRACT,
@@ -679,6 +681,16 @@
         }).catch(() => {});
       }
 
+      const isRelaySolDexPre = isPearlToExternal && activeQuote?.compositeType === 'CROSS_CHAIN_TO_SOL_DEX';
+      const isRelayEvmDexPre = isPearlToExternal && activeQuote?.compositeType === 'CROSS_CHAIN_TO_EVM_DEX';
+      const preRelaySolSnapshot = (isRelaySolDexPre && wallet.solAddress)
+        ? await contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, []).catch(() => null)
+        : null;
+      const preRelayEvmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
+      const preRelayEvmSnapshot = (isRelayEvmDexPre && preRelayEvmAddr)
+        ? await contracts.fetchEvmNativeAndErc20Balance(toToken.blockchain, preRelayEvmAddr).catch(() => null)
+        : null;
+
       // Broadcast FIRST before displaying any order tracking card
       advanceStep(0, 'active');
       const txRes = await broadcastOriginDepositTx({
@@ -749,6 +761,7 @@
                 outputMint: toToken.contractAddress,
                 outputDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 6,
                 toSymbol: toToken.symbol,
+                preSolLamports: preRelaySolSnapshot?.nativeLamports != null ? String(preRelaySolSnapshot.nativeLamports) : undefined,
                 expectedSolRaw: String(activeQuote?.intermediaryRaw || '0'),
                 reserveSol: targetReserve,
                 slippageBps: st.swap.slippageBps
@@ -760,6 +773,7 @@
                 destToken: toToken.contractAddress,
                 destDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 18,
                 toSymbol: toToken.symbol,
+                preNativeWei: preRelayEvmSnapshot?.nativeRaw != null ? String(preRelayEvmSnapshot.nativeRaw) : undefined,
                 expectedInRaw: String(activeQuote?.intermediaryRaw || '0'),
                 reserveNative: targetReserve,
                 slippageBps: st.swap.slippageBps
@@ -818,6 +832,7 @@
         clearSwapAmountAndQuote();
       }
       st.swap._executing = false;
+      if (typeof setSwapControlsDisabled === 'function') setSwapControlsDisabled(false);
       updateSwapPrimaryButtonState();
     }
   }

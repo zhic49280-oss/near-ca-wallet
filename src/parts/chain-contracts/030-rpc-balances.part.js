@@ -64,9 +64,42 @@
     }
   }
 
+  const _fastNearFtCache = new Map();
+  const _fastNearFtInFlight = new Map();
+
+  async function fetchFastNearAccountFt(acct, timeoutMs = 4000) {
+    const cleanAcct = String(acct || '').trim().toLowerCase();
+    if (!cleanAcct) return null;
+    const curFetch = (typeof globalThis !== 'undefined' && globalThis.fetch) || null;
+    const hit = _fastNearFtCache.get(cleanAcct);
+    if (hit && hit.fetchRef === curFetch && Date.now() - hit.ts < 10000) {
+      return hit.val;
+    }
+    const inflight = _fastNearFtInFlight.get(cleanAcct);
+    if (inflight && inflight.fetchRef === curFetch) {
+      return inflight.promise;
+    }
+    const promise = fetchJsonWithTimeout(
+      `https://api.fastnear.com/v1/account/${encodeURIComponent(cleanAcct)}/ft`,
+      {},
+      timeoutMs
+    ).then((resp) => {
+      if (resp) {
+        _fastNearFtCache.set(cleanAcct, { ts: Date.now(), fetchRef: curFetch, val: resp });
+        if (_fastNearFtCache.size > 40) _fastNearFtCache.delete(_fastNearFtCache.keys().next().value);
+      }
+      return resp;
+    }).finally(() => {
+      const cur = _fastNearFtInFlight.get(cleanAcct);
+      if (cur && cur.promise === promise) _fastNearFtInFlight.delete(cleanAcct);
+    });
+    _fastNearFtInFlight.set(cleanAcct, { fetchRef: curFetch, promise });
+    return promise;
+  }
+
   /**
    * Auto-discovers any existing `.near` named account controlled by `nearPublicKey` on NEAR Mainnet
-   * via FastNear (`api.fastnear.com/v1/public_key/<pk>/all`) + KitWallet fallback.
+   * via FastNear (`api.fastnear.com/v1/public_key/<pk>/all`).
    */
   async function discoverNearAccountsByPublicKeyAsync(publicKeyStr) {
     const pk = String(publicKeyStr || '').trim();
@@ -77,16 +110,10 @@
             .map((a) => String(a || '').trim().toLowerCase())
             .filter((a) => a && !/^[0-9a-f]{64}$/.test(a) && (a.endsWith('.near') || a.endsWith('.tg') || a.includes('.')))
         : [];
-    const [fastRes, kitRes] = await Promise.allSettled([
-      fetchJsonWithTimeout(`https://api.fastnear.com/v1/public_key/${encodeURIComponent(pk)}/all`, {}, 4000),
-      fetchJsonWithTimeout(`https://api.kitwallet.app/publicKey/${encodeURIComponent(pk)}/accounts`, {}, 4000)
-    ]);
+    const fastResp = await fetchJsonWithTimeout(`https://api.fastnear.com/v1/public_key/${encodeURIComponent(pk)}/all`, {}, 4000).catch(() => null);
     const hits = new Set();
-    if (fastRes.status === 'fulfilled' && fastRes.value) {
-      filterNamed(fastRes.value.account_ids).forEach((a) => hits.add(a));
-    }
-    if (kitRes.status === 'fulfilled' && kitRes.value) {
-      filterNamed(kitRes.value).forEach((a) => hits.add(a));
+    if (fastResp) {
+      filterNamed(fastResp.account_ids).forEach((a) => hits.add(a));
     }
     return Array.from(hits);
   }

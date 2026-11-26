@@ -339,20 +339,26 @@
         gasBuffer
       });
     } else {
-      const cachedErc20 =
+      let effectiveErc20 =
         tokenBalance !== null && tokenBalance !== undefined
           ? tokenBalance
           : (wallet.erc20Balances && wallet.erc20Balances[key] && wallet.erc20Balances[key][String(srcToken).toLowerCase()] !== undefined
               ? wallet.erc20Balances[key][String(srcToken).toLowerCase()]
               : null);
-      if (cachedErc20 !== null) {
+      if (effectiveErc20 === null && wallet.evmAddress) {
+        const fetched = await fetchEvmNativeAndErc20Balance(key, wallet.evmAddress, srcToken, srcDecimals).catch(() => null);
+        if (fetched && fetched.tokenFormatted !== null && fetched.tokenFormatted !== undefined) {
+          effectiveErc20 = fetched.tokenFormatted;
+        }
+      }
+      if (effectiveErc20 !== null) {
         validateSufficientChainBalance({
           wallet,
           chain: key,
           tokenSymbol: 'TOKEN',
           amount: humanAmt,
           isNative: false,
-          tokenBalance: cachedErc20
+          tokenBalance: effectiveErc20
         });
       }
       validateSufficientChainBalance({

@@ -348,11 +348,7 @@
             let fnTokens = null;
             let fnStatus = 0;
             try {
-              const fnResp = await fetchJsonWithTimeout(
-                `https://api.fastnear.com/v1/account/${encodeURIComponent(sender)}/ft`,
-                {},
-                4000
-              );
+              const fnResp = await fetchFastNearAccountFt(sender, 4000);
               if (fnResp && Array.isArray(fnResp.tokens)) {
                 fnTokens = fnResp.tokens;
               } else if (fnResp && fnResp.data && Array.isArray(fnResp.data.tokens)) {

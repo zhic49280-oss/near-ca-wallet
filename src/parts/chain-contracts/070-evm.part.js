@@ -552,6 +552,26 @@
 
     const ZERO_RESET_APPROVE_TOKENS = new Set(['0xdac17f958d2ee523a2206206994597c13d831ec7']);
 
+    async function waitAndVerifyApproval(txResp, ownerAddr, checkAllowance) {
+      const receipt = await txResp.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, txResp.hash, 45000));
+      if (!receipt) {
+        throw new Error(t('授权交易确认超时，请稍后重试', 'Approval confirmation timed out; please retry'));
+      }
+      if (checkAllowance) {
+        const postAllow = await withEvmProviderFailover(chainKey, ethersLib, (provider) => {
+          const erc20 = new ethersLib.Contract(
+            approvalToken,
+            ['function allowance(address owner, address spender) view returns (uint256)'],
+            provider
+          );
+          return erc20.allowance(ownerAddr, spender);
+        });
+        if (BigInt(postAllow || 0) < BigInt(amountRaw)) {
+          throw new Error(t('授权额度尚未生效，请稍后重试', 'Approval allowance not yet confirmed; please retry'));
+        }
+      }
+    }
+
     if (approvalToken && approvalToken.toLowerCase() !== NATIVE_EVM_SENTINEL && spender && amountRaw) {
       const curAllow = await withEvmProviderFailover(chainKey, ethersLib, (provider) => {
         const erc20 = new ethersLib.Contract(
@@ -566,11 +586,11 @@
         if (curAllow > 0n && ZERO_RESET_APPROVE_TOKENS.has(approvalToken.toLowerCase())) {
           const resetData = approveIface.encodeFunctionData('approve', [spender, '0']);
           const resetResp = await signAndBroadcastOne(approvalToken, resetData, '0');
-          await resetResp.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, resetResp.hash, 45000));
+          await waitAndVerifyApproval(resetResp, fromAddr, false);
         }
         const approveData = approveIface.encodeFunctionData('approve', [spender, amountRaw]);
         const appResp = await signAndBroadcastOne(approvalToken, approveData, '0');
-        await appResp.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, appResp.hash, 45000));
+        await waitAndVerifyApproval(appResp, fromAddr, true);
       }
     }
 
@@ -669,14 +689,31 @@
             const erc20 = new ethersLib.Contract(approvalToken, ['function approve(address spender, uint256 amount) returns (bool)'], signer);
             return erc20.approve(spender, '0');
           });
-          await resetTx.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, resetTx.hash, 45000));
+          const resetReceipt = await resetTx.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, resetTx.hash, 45000));
+          if (!resetReceipt) {
+            throw new Error(t('授权交易确认超时，请稍后重试', 'Approval confirmation timed out; please retry'));
+          }
         }
         const approveTx = await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
           const signer = new ethersLib.Wallet(privateKey, provider);
           const erc20 = new ethersLib.Contract(approvalToken, ['function approve(address spender, uint256 amount) returns (bool)'], signer);
           return erc20.approve(spender, amountRaw);
         });
-        await approveTx.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, approveTx.hash, 45000));
+        const appReceipt = await approveTx.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, approveTx.hash, 45000));
+        if (!appReceipt) {
+          throw new Error(t('授权交易确认超时，请稍后重试', 'Approval confirmation timed out; please retry'));
+        }
+        const postAllow = await withEvmProviderFailover(chainKey, ethersLib, (provider) => {
+          const erc20 = new ethersLib.Contract(
+            approvalToken,
+            ['function allowance(address owner, address spender) view returns (uint256)'],
+            provider
+          );
+          return erc20.allowance(signerAddr, spender);
+        });
+        if (BigInt(postAllow || 0) < BigInt(amountRaw)) {
+          throw new Error(t('授权额度尚未生效，请稍后重试', 'Approval allowance not yet confirmed; please retry'));
+        }
       }
     }
 
@@ -792,20 +829,26 @@
       });
     }
 
-    const cachedErc20 =
+    let effectiveErc20 =
       tokenBalance !== null && tokenBalance !== undefined
         ? tokenBalance
         : (wallet.erc20Balances && wallet.erc20Balances[key] && wallet.erc20Balances[key][String(tokenContract).toLowerCase()] !== undefined
             ? wallet.erc20Balances[key][String(tokenContract).toLowerCase()]
             : null);
-    if (cachedErc20 !== null) {
+    if (effectiveErc20 === null && wallet.evmAddress) {
+      const fetched = await fetchEvmNativeAndErc20Balance(key, wallet.evmAddress, tokenContract, decimals).catch(() => null);
+      if (fetched && fetched.tokenFormatted !== null && fetched.tokenFormatted !== undefined) {
+        effectiveErc20 = fetched.tokenFormatted;
+      }
+    }
+    if (effectiveErc20 !== null) {
       validateSufficientChainBalance({
         wallet,
         chain: key,
         tokenSymbol: 'TOKEN',
         amount,
         isNative: false,
-        tokenBalance: cachedErc20
+        tokenBalance: effectiveErc20
       });
     }
     validateSufficientChainBalance({

@@ -237,7 +237,7 @@
         wallet, toAddress, amountPrl: exactAmt, feeDeductMode: 'extra',
         feePerKbPrl: gasMeta.feePerKbPrl ?? null, gasBuffer: gasBuf
       });
-      return { txHash: res.txHash, tag: 'PRL', fee: Number(res.feePrl) || 0, netSent: Number(res.sentPrl) || null };
+      return { txHash: res.txHash, tag: 'PRL', fee: Number(res.feePrl) || 0, netSent: Number(res.amountPrl || res.sentPrl) || null };
     }
     if (bc === 'btc') {
       const res = await contracts.executeBitcoinTransfer({

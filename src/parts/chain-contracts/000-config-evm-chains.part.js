@@ -2,12 +2,13 @@
 (function (root) {
   'use strict';
 
+  const NEXUS_ENDPOINTS = (root && root.NEXUS_ENDPOINTS) || (root ? (root.NEXUS_ENDPOINTS = {}) : {});
   const NEAR_RPC_URL = 'https://rpc.mainnet.near.org';
-  const NEAR_RPC_ENDPOINTS = [
+  const NEAR_RPC_ENDPOINTS = NEXUS_ENDPOINTS.NEAR_RPC_ENDPOINTS || (NEXUS_ENDPOINTS.NEAR_RPC_ENDPOINTS = [
     'https://free.rpc.fastnear.com',
     NEAR_RPC_URL,
     'https://near.drpc.org'
-  ];
+  ]);
   const _nearRpc429Until = root.__nearRpc429Until || (root.__nearRpc429Until = Object.create(null));
   const _solRpcCooldownUntil = {};
   const _aggCooldownUntil = {};
@@ -79,7 +80,7 @@
   const NEAR_EXPLORER_TX = 'https://nearblocks.io/txns/';
   const SOLANA_RPC_ENDPOINTS = ['https://api.mainnet-beta.solana.com', 'https://solana-rpc.publicnode.com'];
   const SOLSCAN_TX = 'https://solscan.io/tx/';
-  const JUPITER_BASE_URL = (root && root.NEXUS_JUPITER_BASE_URL) || 'https://lite-api.jup.ag';
+  const JUPITER_BASE_URL = (root && root.NEXUS_JUPITER_BASE_URL) || NEXUS_ENDPOINTS.JUPITER_BASE_URL || (NEXUS_ENDPOINTS.JUPITER_BASE_URL = 'https://lite-api.jup.ag');
   const JUPITER_API_URL = `${JUPITER_BASE_URL}/swap/v1`;
   const JUPITER_API_FALLBACK_URLS = Array.from(new Set([JUPITER_API_URL, 'https://lite-api.jup.ag/swap/v1']));
   const RAYDIUM_API_URL = 'https://transaction-v1.raydium.io';
@@ -105,7 +106,7 @@
       rpcs: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://rpc.flashbots.net'],
       supportsMulticall3: true,
       kyber: 'ethereum',
-      openOcean: 'eth',
+      openOcean: null,
       explorer: 'https://etherscan.io/tx/',
       gasReserve: 0.0015
     },
@@ -117,7 +118,7 @@
       rpcs: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base.drpc.org'],
       supportsMulticall3: true,
       kyber: 'base',
-      openOcean: 'base',
+      openOcean: null,
       explorer: 'https://basescan.org/tx/',
       gasReserve: 0.0002
     },
@@ -129,7 +130,7 @@
       rpcs: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum-one-rpc.publicnode.com', 'https://arbitrum.drpc.org'],
       supportsMulticall3: true,
       kyber: 'arbitrum',
-      openOcean: 'arbitrum',
+      openOcean: null,
       explorer: 'https://arbiscan.io/tx/',
       gasReserve: 0.0002
     },
@@ -141,7 +142,7 @@
       rpcs: ['https://bsc-rpc.publicnode.com', 'https://bsc-dataseed.bnbchain.org', 'https://bsc-dataseed1.defibit.io', 'https://bsc-dataseed1.ninicoin.io'],
       supportsMulticall3: true,
       kyber: 'bsc',
-      openOcean: 'bsc',
+      openOcean: null,
       explorer: 'https://bscscan.com/tx/',
       gasReserve: 0.0005
     },
@@ -153,7 +154,7 @@
       rpcs: ['https://mainnet.optimism.io', 'https://optimism-rpc.publicnode.com', 'https://optimism.drpc.org'],
       supportsMulticall3: true,
       kyber: 'optimism',
-      openOcean: 'optimism',
+      openOcean: null,
       explorer: 'https://optimistic.etherscan.io/tx/',
       gasReserve: 0.0002
     },
@@ -165,7 +166,7 @@
       rpcs: ['https://polygon-bor-rpc.publicnode.com', 'https://polygon.drpc.org'],
       supportsMulticall3: true,
       kyber: 'polygon',
-      openOcean: 'polygon',
+      openOcean: null,
       explorer: 'https://polygonscan.com/tx/',
       gasReserve: 0.05
     },
@@ -177,7 +178,7 @@
       rpcs: ['https://api.avax.network/ext/bc/C/rpc', 'https://avalanche-c-chain-rpc.publicnode.com'],
       supportsMulticall3: true,
       kyber: 'avalanche',
-      openOcean: 'avax',
+      openOcean: null,
       explorer: 'https://snowtrace.io/tx/',
       gasReserve: 0.005
     },

@@ -192,6 +192,9 @@
           wallet.discoveredNearAccounts = discovered;
           contracts.ensureWalletSigningKeysAsync(wallet).then(() => {
             if (!isStaleRefresh() && (String(wallet.solAddress || '') !== initialSolAddr || String(wallet.evmAddress || '') !== initialEvmAddr)) {
+              if ($('sheet-receive')?.classList?.contains('open') && typeof renderReceiveSheet === 'function') renderReceiveSheet();
+              if ($('sheet-send')?.classList?.contains('open') && typeof renderSendSheet === 'function') renderSendSheet();
+              if (st.activeTab === 'swap' && typeof renderSwapView === 'function') renderSwapView();
               if (_isRefreshing) {
                 _pendingPostRefresh = true;
               } else {
@@ -233,53 +236,39 @@
       const solMints = solTokens.map((x) => x.contractAddress).filter((m) => m && m !== 'So11111111111111111111111111111111111111112');
 
       const evmAllChainKeys = ['eth', 'base', 'arb', 'bsc', 'op', 'pol', 'avax', 'hype', 'hood', 'arc'];
-      const evmBatchQueriesByChain = {
+      const extraEvmVaultTokens = {
         eth: [
-          { contract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
-          { contract: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 },
           { contract: '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', decimals: 18 },
-          { contract: '0x4c9EDD5852cd905f086C759E8383e09bff1E68B3', decimals: 18 },
           { contract: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', decimals: 18 },
           { contract: '0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c', decimals: 6 },
           { contract: '0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', decimals: 18 }
         ],
-        base: [
-          { contract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6 },
-          { contract: '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', decimals: 6 }
-        ],
-        arb: [
-          { contract: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', decimals: 6 },
-          { contract: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', decimals: 6 },
-          { contract: '0x912CE59144191C1204E64559FE8253a0e49E6548', decimals: 18 },
-          { contract: '0x724dc807b04555b71ed48a6896b6F41593b8C637', decimals: 6 }
-        ],
-        bsc: [
-          { contract: '0x55d398326f99059fF775485246999027B3197955', decimals: 18 },
-          { contract: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', decimals: 18 }
-        ],
-        op: [
-          { contract: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85', decimals: 6 },
-          { contract: '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58', decimals: 6 }
-        ],
-        pol: [
-          { contract: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', decimals: 6 },
-          { contract: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F', decimals: 6 }
-        ],
-        avax: [
-          { contract: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E', decimals: 6 },
-          { contract: '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7', decimals: 6 }
-        ],
-        hype: [
-          { contract: '0xb88339CB7199b77E23DB6E890353E22632Ba630f', decimals: 6 },
-          { contract: '0xfD739d4e423301CE9385c1fb8850539D657C296D', decimals: 18 }
-        ],
-        hood: [
-          { contract: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168', decimals: 6 }
-        ],
-        arc: [
-          { contract: '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', decimals: 18 }
-        ]
+        base: [{ contract: '0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB', decimals: 6 }],
+        arb: [{ contract: '0x724dc807b04555b71ed48a6896b6F41593b8C637', decimals: 6 }],
+        hype: [{ contract: '0xfD739d4e423301CE9385c1fb8850539D657C296D', decimals: 18 }],
+        arc: [{ contract: '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', decimals: 18 }]
       };
+      const evmBatchQueriesByChain = {};
+      for (const ck of evmAllChainKeys) {
+        const seen = new Set();
+        const queries = [];
+        const addQ = (addr, decimals) => {
+          const clean = addr ? String(addr).trim() : '';
+          if (!clean || !/^0x[0-9a-fA-F]{40}$/.test(clean)) return;
+          const lower = clean.toLowerCase();
+          if (lower === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' || seen.has(lower)) return;
+          seen.add(lower);
+          queries.push({ contract: clean, decimals: typeof decimals === 'number' ? decimals : 18 });
+        };
+        const dexList = (tokens.DEX_CHAIN_TOKENS && tokens.DEX_CHAIN_TOKENS[ck]) || [];
+        for (const tk of dexList) {
+          if (tk) addQ(tk.contractAddress, tk.decimals);
+        }
+        for (const ex of (extraEvmVaultTokens[ck] || [])) {
+          addQ(ex.contract, ex.decimals);
+        }
+        evmBatchQueriesByChain[ck] = queries;
+      }
 
       let _progRenderTimer = null;
       const scheduleProgressiveWalletRender = () => {

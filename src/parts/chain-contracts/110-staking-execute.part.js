@@ -185,7 +185,7 @@
         if (nearGasAvail < minNearGas) {
           throw new Error(t(`NEAR 余额不足以支付合约 Gas (当前: ${nearGasAvail.toFixed(4)} NEAR)`, `Insufficient NEAR for contract gas (Available: ${nearGasAvail.toFixed(4)} NEAR)`));
         }
-        if (pool.isBurrowSupply) {
+        if (pool.isBurrowSupply || pool.id === 'rhea_xrhea') {
           await ensureNearStorageIfExplicitlyNull(accountId, pool.contract, '100000000000000000000000');
         }
         const rawAmt = toBaseUnits(amount, pool.decimals || 18);

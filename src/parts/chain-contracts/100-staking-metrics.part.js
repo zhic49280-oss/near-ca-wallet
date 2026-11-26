@@ -228,17 +228,7 @@
       () => fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c', {}, 6000),
       () => fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', {}, 6000),
       () => fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/arbitrum/tokens/0x724dc807b04555b71ed48a6896b6f41593b8c637/info', {}, 6000),
-      () => fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/hyperevm/tokens/0xfd739d4e423301ce9385c1fb8850539d657c296d/info', {}, 6000),
-      () => (
-        (globalThis.__arcExplorer403Until && Date.now() < globalThis.__arcExplorer403Until)
-          ? Promise.resolve(null)
-          : fetchJsonWithTimeout('https://explorer.arc.io/api/v2/tokens/0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', {}, 5000).catch((err) => {
-              if (err && (err.status === 403 || /403|forbidden|cloudflare/i.test(String(err.message || '')))) {
-                globalThis.__arcExplorer403Until = Date.now() + 10 * 60_000;
-              }
-              return null;
-            })
-      )
+      () => fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/hyperevm/tokens/0xfd739d4e423301ce9385c1fb8850539d657c296d/info', {}, 6000)
     ];
 
     const fastResults = await runTasksWithLimit(fastTaskFns, 6);
@@ -281,8 +271,7 @@
       aaveEthUsdcInfoRes,
       aaveEthWethInfoRes,
       aaveArbUsdcInfoRes,
-      khypeInfoRes,
-      arcSteakInfoRes
+      khypeInfoRes
     ] = fastResults;
 
     // If caller wants early render, notify once NEAR/Jito/Marinade/Blockscout RPCs are in while DeFiLlama finishes in parallel
@@ -659,15 +648,10 @@
     // 13. Arc Mainnet Steakhouse Prime USDC (ERC-4626)
     const arcSteakApy = findLlamaApy((p) => String(p.chain || '').toLowerCase() === 'arc' && String(p.symbol || '').toUpperCase() === 'STEAKUSDC');
     if (arcSteakApy !== null) setPool('arc_steak_usdc', { apy: arcSteakApy });
-    const arcExplorerOk = arcSteakInfoRes.status === 'fulfilled' && arcSteakInfoRes.value;
-    if (arcExplorerOk) {
-      const hCount = Number(arcSteakInfoRes.value?.holders_count || arcSteakInfoRes.value?.holders);
-      if (Number.isFinite(hCount) && hCount > 0) setPool('arc_steak_usdc', { stakersCount: hCount });
-    }
     let arcAssetsHex = arcSteakAssetsRes.status === 'fulfilled' ? arcSteakAssetsRes.value : null;
     let arcPreviewHex = arcSteakPreviewRes.status === 'fulfilled' ? arcSteakPreviewRes.value : null;
-    if (!arcExplorerOk && (!arcAssetsHex || !arcPreviewHex)) {
-      // Fallback when explorer.arc.io returns HTTP 403/unavailable: query Steakhouse vault directly on rpc.mainnet.arc.io
+    if (!arcAssetsHex || !arcPreviewHex) {
+      // Query Steakhouse vault directly on rpc.mainnet.arc.io if initial read missed
       const arcRpcCall = async (data) => {
         const viaChain = await ethReadCall('arc', '0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', data, 5000).catch(() => null);
         // ethReadCall 已走 rpc.mainnet.arc.io 主节点；此处不再对同一节点重复请求

@@ -75,6 +75,14 @@
     throw new Error(t(`暂不支持从 ${bc.toUpperCase()} 自动发送源链交易`, `Auto origin deposit from ${bc.toUpperCase()} is unavailable`));
   }
 
+  function setSwapControlsDisabled(disabled) {
+    const flag = Boolean(disabled);
+    ['swap-amount-in', 'swap-from-token-btn', 'swap-to-token-btn', 'swap-flip-btn', 'swap-recipient-input'].forEach((id) => {
+      const el = $(id);
+      if (el) el.disabled = flag;
+    });
+  }
+
   async function executeActiveSwap() {
     const st = getState();
     if (st.swap._executing) return;
@@ -170,6 +178,8 @@
     }
 
     st.swap._executing = true;
+    setSwapControlsDisabled(true);
+    updateSwapPrimaryButtonState();
     let _swapAbortedOrFailed = false;
     try {
       if (!st.swap.quoteData) {
@@ -517,6 +527,11 @@
               await contracts.waitForSolanaTxConfirmation(origTx.txHash, 45000);
             }
             const postSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
+            if (postSolRes && typeof postSolRes.nativeSol === 'number') {
+              wallet.nativeBalances = wallet.nativeBalances || {};
+              wallet.nativeBalances.sol = postSolRes.nativeSol;
+              if (typeof st.syncWalletCompatBalances === 'function') st.syncWalletCompatBalances(wallet);
+            }
             const expectedL = BigInt(s0Quote.outAmount || '0');
             let deltaL = (preLamports !== null && postSolRes?.nativeLamports != null)
               ? (BigInt(postSolRes.nativeLamports) > preLamports ? (BigInt(postSolRes.nativeLamports) - preLamports) : expectedL)
@@ -565,6 +580,11 @@
               await contracts.waitForEvmTxConfirmation(origStage.chain, origTx.txHash, 45000);
             }
             const postEvm = await contracts.fetchEvmNativeAndErc20Balance(origStage.chain, evmAddr).catch(() => null);
+            if (postEvm && typeof postEvm.nativeFormatted === 'number') {
+              wallet.nativeBalances = wallet.nativeBalances || {};
+              wallet.nativeBalances[origStage.chain] = postEvm.nativeFormatted;
+              if (typeof st.syncWalletCompatBalances === 'function') st.syncWalletCompatBalances(wallet);
+            }
             const expectedW = BigInt(s0Q.amountOut || '0');
             let deltaW = (preWei !== null && postEvm?.nativeRaw != null)
               ? (BigInt(postEvm.nativeRaw) > preWei ? (BigInt(postEvm.nativeRaw) - preWei) : expectedW)
@@ -632,18 +652,18 @@
                 decimals: fromToken.blockchain === 'sol' ? 9 : 18
               }
             : fromToken;
-          const bridgeAmtNum = isPostOriginDex
-            ? Math.max(0, Number(intents.fromBaseUnits(stageAmtRaw, bridgeToken.decimals)) - (typeof contracts.getNativeGasReserve === 'function' ? contracts.getNativeGasReserve(bridgeToken.blockchain) : 0.002))
-            : amt;
+          const reserveNum = typeof contracts.getNativeGasReserve === 'function' ? contracts.getNativeGasReserve(bridgeToken.blockchain) : 0.002;
+          const reserveRaw = BigInt(intents.toBaseUnits(String(reserveNum), bridgeToken.decimals));
+          const stageBig = BigInt(stageAmtRaw || '0');
+          const bridgeAmtRaw = stageBig > reserveRaw ? (stageBig - reserveRaw).toString() : '0';
+          const bridgeAmtStr = isPostOriginDex ? intents.fromBaseUnits(bridgeAmtRaw, bridgeToken.decimals) : amtStr;
           const bridgeAvail = isPostOriginDex
             ? Number(intents.fromBaseUnits(stageAmtRaw, bridgeToken.decimals))
             : avail;
-          if (bridgeAmtNum <= 0) {
+          if (isPostOriginDex ? (BigInt(bridgeAmtRaw) <= 0n) : (amt <= 0)) {
             throw new Error(t('源链兑换后余额不足以支付跨链手续费', 'Post-swap balance insufficient for bridge gas'));
           }
-          const quoteAmtRaw = isPostOriginDex
-            ? intents.toBaseUnits(String(bridgeAmtNum), bridgeToken.decimals)
-            : stageAmtRaw;
+          const quoteAmtRaw = isPostOriginDex ? bridgeAmtRaw : stageAmtRaw;
           const liveIn = await intents.quoteIntentSwapOrWithdraw({
             originAsset: first.originAsset || fromToken.assetId,
             destinationAsset: first.destinationAsset,
@@ -665,7 +685,7 @@
           const inTx = await broadcastOriginDepositTx({
             wallet,
             fromToken: bridgeToken,
-            amt: isPostOriginDex ? String(bridgeAmtNum) : amtStr,
+            amt: bridgeAmtStr,
             avail: bridgeAvail,
             depositAddress: liveIn.depositAddress,
             gasOverride: stages.length < activeQuote.stages.length ? null : originGasOverride
@@ -852,7 +872,7 @@
               autoBroadcasted: true,
               createdAt: Date.now(),
               followUpFailed: true,
-              followUpError: s2Err?.message || t('第一阶段已成交，第二步跨链失败，请点击继续重试', 'Stage 1 swapped; tap Resume for Stage 2 bridge'),
+              followUpError: toUserFriendlyError(s2Err, '第一阶段已成交，第二步跨链失败，请点击继续重试', 'Stage 1 swapped; tap Resume for Stage 2 bridge'),
               followUpBridgeOut: {
                 originAsset: outLeg.originAsset,
                 destinationAsset: outLeg.destinationAsset,

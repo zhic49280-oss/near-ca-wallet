@@ -261,6 +261,19 @@
     }
     try {
       const wallet = await buildWalletFromMnemonic(normalizedPhrase, name, '');
+      const contracts = getContracts();
+      if (!wallet.nearNamedAccount && wallet.nearPublicKey && contracts && typeof contracts.discoverNearAccountsByPublicKeyAsync === 'function') {
+        const discovered = await Promise.race([
+          contracts.discoverNearAccountsByPublicKeyAsync(wallet.nearPublicKey).catch(() => []),
+          new Promise((resolve) => setTimeout(() => resolve(null), 1500))
+        ]);
+        if (Array.isArray(discovered) && discovered.length > 0) {
+          wallet.nearNamedAccount = discovered[0];
+          wallet.discoveredNearAccounts = discovered;
+          if (!String(name || '').trim()) wallet.name = discovered[0];
+          await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+        }
+      }
       const existing = st.wallets.find((w) => w.nearAddress && w.nearAddress === wallet.nearAddress);
       let activeTarget = wallet;
       if (existing) {
@@ -471,33 +484,6 @@
     }
   }
 
-  function renderBackupSecretsFallback(container, rows, revealed) {
-    if (!container || !Array.isArray(rows)) return;
-    const warnBox = `
-        <div class="ios-glass-card flex flex-col gap-1" style="padding:10px 12px;border-color:rgba(251,113,133,0.45);background:rgba(251,113,133,0.08);">
-          <div style="font-size:12.5px;font-weight:700;color:var(--rose-alert);">⚠️ ${escapeHtml(t('最高安全等级提醒：切勿截图或泄露', 'High Security Warning: Never Screenshot or Share'))}</div>
-          <div style="font-size:11.5px;color:var(--text-secondary);line-height:1.5;">
-            ${escapeHtml(t('• 请使用纸笔或金属板离线抄写，切勿截图、录屏或存入微信/网盘/备忘录。', '• Write down offline on paper/metal. Never screenshot, record, or save in cloud/chat apps.'))}<br/>
-            ${escapeHtml(t('• 任何索要助记词或私钥的人都是骗子，一旦泄露资产将永久被盗且无法追回。', '• Anyone asking for your phrase or key is a scammer. Leaked assets cannot be recovered.'))}
-          </div>
-          <button type="button" id="btn-backup-reveal-toggle" class="btn-secondary" style="margin-top:6px;padding:7px 12px;font-size:12px;" data-action="toggle-backup-reveal">${escapeHtml(revealed ? t('隐藏助记词与私钥', 'Hide Phrase & Keys') : t('显示助记词与私钥', 'Reveal Phrase & Keys'))}</button>
-        </div>
-      `;
-    const hint = `<div style="font-size:11.5px;color:var(--text-secondary);padding:4px 2px;">${escapeHtml(t('EVM、Solana 由当前主账户安全派生管理；Pearl (PRL) 与 Bitcoin (BTC) 由助记词本地独立派生。', 'EVM & Solana are securely managed by this master account; Pearl (PRL) & Bitcoin (BTC) are locally derived from your phrase.'))}</div>`;
-    container.innerHTML = warnBox + hint + rows.map((r) => {
-      const showPlain = !r.secret || revealed;
-      return `
-        <div class="meta-list">
-          <div class="meta-row">
-            <span class="meta-key">${escapeHtml(r.label)}</span>
-            <button type="button" class="btn-ghost-sm" ${r.secret ? 'data-secret-copy="1"' : ''} data-action="copy-text" data-val="${showPlain ? escapeHtml(r.val || '') : ''}" data-label="${escapeHtml(r.label)}">${t('复制', 'Copy')}</button>
-          </div>
-          <div class="mono ${r.secret ? 'backup-secret-val' : ''}" ${showPlain && r.secret ? `data-secret="${escapeHtml(r.val || '')}"` : ''} style="font-size:11px;word-break:break-all;color:#fff;${!showPlain ? 'filter:blur(4px);user-select:none;' : ''}">${escapeHtml(showPlain ? (r.val || '--') : (r.val ? '•••• •••• •••• •••• •••• ••••' : '--'))}</div>
-        </div>
-      `;
-    }).join('');
-  }
-
   function setBackupRevealState(revealed) {
     _backupRevealActive = Boolean(revealed);
     clearBackupAutoHideTimer();
@@ -508,17 +494,13 @@
     }
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const container = $('backup-keys-content');
-    if (container && _lastBackupRows) {
-      if (fw && typeof fw.mountBackupSecretsPanel === 'function') {
-        fw.mountBackupSecretsPanel(container, {
-          rows: _lastBackupRows,
-          revealed: _backupRevealActive,
-          isEn: getState().lang === 'en',
-          onToggleReveal: toggleBackupKeysReveal
-        });
-      } else {
-        renderBackupSecretsFallback(container, _lastBackupRows, _backupRevealActive);
-      }
+    if (container && _lastBackupRows && fw && typeof fw.mountBackupSecretsPanel === 'function') {
+      fw.mountBackupSecretsPanel(container, {
+        rows: _lastBackupRows,
+        revealed: _backupRevealActive,
+        isEn: getState().lang === 'en',
+        onToggleReveal: toggleBackupKeysReveal
+      });
     }
   }
 
@@ -582,8 +564,6 @@
             isEn: st.lang === 'en',
             onToggleReveal: toggleBackupKeysReveal
           });
-        } else {
-          renderBackupSecretsFallback(container, rows, false);
         }
       }
     } finally {

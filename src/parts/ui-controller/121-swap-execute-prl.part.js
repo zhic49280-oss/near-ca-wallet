@@ -84,7 +84,7 @@
             autoBroadcasted: true,
             createdAt: Date.now(),
             followUpFailed: true,
-            followUpError: bridgeErr?.message || t('第一阶段已换出 PRL，第二步跨链失败，请点击继续重试', 'Stage 1 swapped to PRL; tap Resume for Stage 2'),
+            followUpError: toUserFriendlyError(bridgeErr, '第一阶段已换出 PRL，第二步跨链失败，请点击继续重试', 'Stage 1 swapped to PRL; tap Resume for Stage 2'),
             followUpBridgeOut: {
               originAsset: intents.PRL_NEAR_ASSET_ID,
               hubContract: intents.PRL_NEAR_CONTRACT,
@@ -411,7 +411,7 @@
             autoBroadcasted: true,
             createdAt: Date.now(),
             followUpFailed: true,
-            followUpError: s2Err?.message || t('第一阶段已换出 NEAR USDC，第二步跨链失败，请点击继续重试', 'Stage 1 swapped to NEAR USDC; tap Resume for Stage 2'),
+            followUpError: toUserFriendlyError(s2Err, '第一阶段已换出 NEAR USDC，第二步跨链失败，请点击继续重试', 'Stage 1 swapped to NEAR USDC; tap Resume for Stage 2'),
             followUpBridgeOut: {
               originAsset: intents.NEAR_USDC_ASSET_ID,
               hubContract: intents.NEAR_USDC_CONTRACT,
@@ -430,7 +430,8 @@
                 outputMint: toToken.contractAddress,
                 outputDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 6,
                 toSymbol: toToken.symbol,
-                expectedSolRaw: String(activeQuote?.intermediaryRaw || '0'),
+                preSolLamports: preSolSnapshot?.nativeLamports != null ? String(preSolSnapshot.nativeLamports) : undefined,
+                expectedSolRaw: String(step2Live?.amountOut || activeQuote?.intermediaryRaw || '0'),
                 reserveSol: s2Reserve,
                 slippageBps: st.swap.slippageBps
               };
@@ -440,7 +441,8 @@
                 destToken: toToken.contractAddress,
                 destDecimals: typeof toToken.decimals === 'number' ? toToken.decimals : 18,
                 toSymbol: toToken.symbol,
-                expectedInRaw: String(activeQuote?.intermediaryRaw || '0'),
+                preNativeWei: preEvmSnapshot?.nativeRaw != null ? String(preEvmSnapshot.nativeRaw) : undefined,
+                expectedInRaw: String(step2Live?.amountOut || activeQuote?.intermediaryRaw || '0'),
                 reserveNative: s2Reserve,
                 slippageBps: st.swap.slippageBps
               };

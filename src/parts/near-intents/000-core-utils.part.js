@@ -2,9 +2,10 @@
 (function (root) {
   'use strict';
 
+  const NEXUS_ENDPOINTS = (root && root.NEXUS_ENDPOINTS) || (root ? (root.NEXUS_ENDPOINTS = {}) : {});
   const NEAR_RPC_URL = 'https://rpc.mainnet.near.org';
   const FASTNEAR_RPC_URL = 'https://free.rpc.fastnear.com';
-  const NEAR_RPC_ENDPOINTS = [FASTNEAR_RPC_URL, NEAR_RPC_URL, 'https://near.drpc.org'];
+  const NEAR_RPC_ENDPOINTS = NEXUS_ENDPOINTS.NEAR_RPC_ENDPOINTS || (NEXUS_ENDPOINTS.NEAR_RPC_ENDPOINTS = [FASTNEAR_RPC_URL, NEAR_RPC_URL, 'https://near.drpc.org']);
   const FASTNEAR_API_URL = 'https://api.fastnear.com';
   const ONECLICK_API_URL = 'https://1click.chaindefuser.com/v0';
   const SOLVER_RELAY_URL = 'https://solver-relay-v2.chaindefuser.com/rpc';
@@ -17,7 +18,7 @@
     CONFIDENTIAL_MIN_FEE_USD: 0.01
   };
   const DEFAULT_TIMEOUT_MS = 8000;
-  const JUPITER_BASE_URL = (root && root.NEXUS_JUPITER_BASE_URL) || 'https://lite-api.jup.ag';
+  const JUPITER_BASE_URL = (root && root.NEXUS_JUPITER_BASE_URL) || NEXUS_ENDPOINTS.JUPITER_BASE_URL || (NEXUS_ENDPOINTS.JUPITER_BASE_URL = 'https://lite-api.jup.ag');
   const _rpc429Until = root.__nearRpc429Until || (root.__nearRpc429Until = Object.create(null));
   const _rpcInFlight = new Map();
   const _quoteCache = new Map();
