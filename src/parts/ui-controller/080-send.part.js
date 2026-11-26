@@ -764,7 +764,7 @@
       const quote = preQuotedCross;
       const crossSent = await dispatchOnChainSend({ contracts, wallet, asset, isEvmOrigin, isNativeGas, toAddress: quote.depositAddress, exactAmt, avail, gasBuf, gasMeta });
       const depositTxHash = (crossSent && crossSent.txHash) || '';
-      const depositFeeNum = (crossSent && crossSent.fee !== null) ? crossSent.fee : null;
+      const depositFeeNum = (crossSent && crossSent.fee !== null && crossSent.fee !== undefined && Number.isFinite(Number(crossSent.fee))) ? Number(crossSent.fee) : null;
       if (depositTxHash && (asset.blockchain === 'prl' || asset.blockchain === 'btc')) {
         applyOptimisticChainSpend(wallet, asset.blockchain, amountNum, depositFeeNum || 0, depositTxHash);
       }

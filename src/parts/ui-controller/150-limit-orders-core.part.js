@@ -65,7 +65,7 @@
         const st = getState();
         const lo = getLimitOrders();
         const gasReserve = Number(lo?.DCL_GAS_RESERVE_NEAR ?? 0.05);
-        const storageReserve = st.limit?.dclStorageRegistered === false ? Number(lo?.DCL_STORAGE_DEPOSIT_NEAR ?? 0.5) : 0;
+        const storageReserve = st.limit?.dclStorageRegistered !== true ? Number(lo?.DCL_STORAGE_DEPOSIT_NEAR ?? 0.5) : 0;
         const nativeNear = Number(getContracts()?.resolveWalletChainBalance(wallet, 'near') || 0);
         return ftBal + Math.max(0, nativeNear - gasReserve - storageReserve);
       }
@@ -174,6 +174,7 @@
     st.limit.poolInfo = null;
     st.limit.evmAllowanceRaw = null;
     st.limit.evmAllowanceFailed = false;
+    st.limit.dclStorageRegistered = null;
     st.limit.solUnavailable = false;
     st.limit.rateLimited = false;
     st.limit.errorMsg = '';
@@ -258,6 +259,7 @@
       ? null
       : getWalletTokenRawBaseUnits(wallet, st.limit.chain, sellToken.contractAddress);
     st.limit.amountIn = maxAmt > 0 ? formatMaxDecimalString(maxAmt, sellToken.decimals || 6, rawUnits) : '0';
+    st.limit.errorMsg = '';
     if ($('limit-amount-in')) $('limit-amount-in').value = st.limit.amountIn;
     renderLimitOrderCalculations();
   }
@@ -280,6 +282,7 @@
     st.limit.snappedPoint = null;
     st.limit.evmAllowanceRaw = null;
     st.limit.evmAllowanceFailed = false;
+    st.limit.dclStorageRegistered = null;
     st.limit.solUnavailable = false;
     st.limit.rateLimited = false;
     st.limit.errorMsg = '';
@@ -454,7 +457,7 @@
         return { disabled: true, action: 'submit', text: t(`${sellToken.symbol} 余额不足`, `Insufficient ${sellToken.symbol}`), error: '' };
       }
       const nearAvail = Number(contracts?.resolveWalletChainBalance(wallet, 'near') || 0);
-      const minNear = st.limit.dclStorageRegistered === false ? (lo.DCL_STORAGE_DEPOSIT_NEAR + lo.DCL_GAS_RESERVE_NEAR) : lo.DCL_GAS_RESERVE_NEAR;
+      const minNear = st.limit.dclStorageRegistered !== true ? (lo.DCL_STORAGE_DEPOSIT_NEAR + lo.DCL_GAS_RESERVE_NEAR) : lo.DCL_GAS_RESERVE_NEAR;
       const wnearEntry = wallet.nearNep141Balances && wallet.nearNep141Balances['wrap.near'];
       const wnearOnly = Number((wnearEntry && typeof wnearEntry === 'object') ? (wnearEntry.formatted ?? 0) : (wnearEntry || 0));
       const needsAutoWrap = sellToken.contractAddress === 'wrap.near' && amt > wnearOnly + 1e-8;

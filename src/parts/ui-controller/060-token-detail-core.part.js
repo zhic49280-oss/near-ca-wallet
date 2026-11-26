@@ -329,6 +329,9 @@
     if (nextSig === _lastDetailHistorySig && listEl.innerHTML) return;
     _lastDetailHistorySig = nextSig;
 
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (fw && typeof fw.isPanelSlotRegistered === 'function' && fw.isPanelSlotRegistered(listEl.id)) return;
+
     if (_tokenDetailState.historyLoading && items.length === 0) {
       listEl.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:8px 0;">${escapeHtml(t('正在加载链上交易记录...', 'Loading on-chain activity...'))}</div>`;
       return;
@@ -377,7 +380,8 @@
   }
 
   function navigateBackFromTxDetail() {
-    const target = getState().txModal?.detailBackSheetId || 'sheet-token-detail';
+    const raw = getState().txModal?.detailBackSheetId;
+    const target = raw === undefined ? 'sheet-token-detail' : raw;
     if (target) openSheet(target);
     else closeAllSheets();
   }
@@ -528,7 +532,7 @@
     const st = getState();
     if (!txItem) return;
     st.txModal.currentItem = txItem;
-    st.txModal.detailBackSheetId = backSheetId || 'sheet-token-detail';
+    st.txModal.detailBackSheetId = backSheetId !== undefined ? backSheetId : 'sheet-token-detail';
     st.txModal.detailData = null;
     st.txModal.detailLoading = false;
     renderTxDetailSheet();

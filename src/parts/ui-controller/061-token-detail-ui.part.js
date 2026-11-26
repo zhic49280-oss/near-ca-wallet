@@ -740,8 +740,8 @@
       _autoSyncTimer = null;
     }
     _autoSyncTimer = setInterval(() => {
+      if (typeof isAppInBackground === 'function' ? isAppInBackground() : (typeof document !== 'undefined' && document.hidden)) return;
       if (typeof document !== 'undefined') {
-        if (document.hidden) return;
         if (typeof document.querySelector === 'function' && document.querySelector('.bottom-sheet.open')) return;
       }
       if (typeof isAppLocked === 'function' && isAppLocked()) return;

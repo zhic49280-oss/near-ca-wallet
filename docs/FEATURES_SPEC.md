@@ -25,8 +25,8 @@
   4. `mountPerpOverview` (`#perp-overview-list` & `#perp-market-list`)：渲染永续合约行情列表与选币列表；
   5. `mountPerpOrderbookSide` (`#perp-ob-bids` / `#perp-ob-asks`)：300ms 节流渲染买卖盘 10 档深度；
   6. `mountPerpBottomList` (`#perp-bottom-list`)：渲染永续合约底部 6 宫格持仓、当前委托（含止盈止损触发单）与历史成交（含方向、盈亏与手续费）；
-  7. `mountLimitOrdersPanel` (`#limit-active-orders-list` / `#limit-history-orders-list`)：响应式订阅 `['limit', 'lang']`，渲染限价单活跃挂单与历史记录；
-  8. `mountEarnPoolsPanel` (`#earn-pool-cards`)：响应式订阅 `['earn', 'lang']`，渲染质押池卡片与实时 APY（未返回时显示 `--`）；
+  7. `mountLimitOrdersPanel` (`#limit-orders-list`)：响应式订阅 `['limit', 'lang']`，渲染限价单活跃挂单与历史记录；
+  8. `mountEarnPoolsPanel` (`#staking-pools-list`)：响应式订阅 `['earn', 'lang']`，渲染质押池卡片与实时 APY（未返回时显示 `--`）；
   9. `mountTokenHistoryPanel` (`#token-detail-history-list`)：渲染代币详情交易历史记录；
   10. `mountContactsPanel` (`#contacts-list`)：渲染地址簿联系人列表；
   11. `mountNearKeysPanel` / `mountSolRentPanel` / `mountNearStoragePanel`：渲染 NEAR 密钥管理、Solana 租金回收与 NEAR 存储退押金面板；

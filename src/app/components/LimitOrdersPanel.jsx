@@ -57,6 +57,7 @@ export function LimitOrdersPanel({
   const st = useWalletState(['limit', 'lang']);
   const isEn = typeof isEnProp === 'boolean' ? isEnProp : Boolean(st && st.lang === 'en');
   const list = Array.isArray(items) ? items.slice(0, 20) : [];
+  const anyActionInFlight = Boolean(claimingOrderId || cancellingOrderId);
 
   if (ordersLoading && list.length === 0) {
     return (
@@ -148,7 +149,7 @@ export function LimitOrdersPanel({
                     <button
                       type="button"
                       className="mini-action-btn primary"
-                      disabled={isClaiming}
+                      disabled={isClaiming || anyActionInFlight}
                       data-action="claim-limit-order"
                       data-order-id={orderId}
                       data-buy-token={o.buy_token || ''}
@@ -160,7 +161,7 @@ export function LimitOrdersPanel({
                     <button
                       type="button"
                       className="mini-action-btn"
-                      disabled={isCancelling}
+                      disabled={isCancelling || anyActionInFlight}
                       data-action="cancel-limit-order"
                       data-chain="near"
                       data-order-id={orderId}
@@ -212,7 +213,7 @@ export function LimitOrdersPanel({
                   <button
                     type="button"
                     className="mini-action-btn"
-                    disabled={isCancelling}
+                    disabled={isCancelling || anyActionInFlight}
                     data-action="cancel-limit-order"
                     data-chain="sol"
                     data-order-id={orderKey}
@@ -259,7 +260,7 @@ export function LimitOrdersPanel({
                 <button
                   type="button"
                   className="mini-action-btn"
-                  disabled={isCancelling}
+                  disabled={isCancelling || anyActionInFlight}
                   data-action="cancel-limit-order"
                   data-chain={chain}
                   data-order-id={orderUid}

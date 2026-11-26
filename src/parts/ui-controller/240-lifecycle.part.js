@@ -3,23 +3,50 @@
   let _delegatedListenersBound = false;
   let _foregroundResumeBound = false;
   let _langRenderBound = false;
+  let _capAppBackgrounded = false;
+
+  function isAppInBackground() {
+    return Boolean((typeof document !== 'undefined' && document.hidden) || _capAppBackgrounded);
+  }
 
   function initForegroundResumeSync() {
     if (_foregroundResumeBound) return;
     _foregroundResumeBound = true;
     const onResume = () => {
-      if (typeof document !== 'undefined' && document.hidden) return;
+      if (isAppInBackground()) return;
+      if (typeof resumePerpRealtime === 'function') resumePerpRealtime();
       const st = getState();
       if (!st || !st.getActiveWallet()) return;
       if (st.activeTab === 'swap' && st.swap && st.swap.panelMode === 'limit' && typeof refreshLimitOrdersAsync === 'function') {
         refreshLimitOrdersAsync(false).catch(() => {});
       }
     };
+    const onVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        if (typeof pausePerpRealtime === 'function') pausePerpRealtime();
+      } else {
+        onResume();
+      }
+    };
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
       window.addEventListener('focus', onResume);
+      const capApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+      if (capApp && typeof capApp.addListener === 'function') {
+        try {
+          capApp.addListener('appStateChange', (stateInfo) => {
+            const isActive = Boolean(stateInfo && stateInfo.isActive);
+            _capAppBackgrounded = !isActive;
+            if (!isActive) {
+              if (typeof pausePerpRealtime === 'function') pausePerpRealtime();
+            } else {
+              onResume();
+            }
+          });
+        } catch (_) {}
+      }
     }
     if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
-      document.addEventListener('visibilitychange', onResume);
+      document.addEventListener('visibilitychange', onVisibilityChange);
     }
   }
 
@@ -35,8 +62,6 @@
       const ds = target.dataset || {};
       switch (action) {
         case 'switch-wallet': switchActiveWallet(ds.walletId || ''); break;
-        case 'delete-wallet': deleteWalletById(ds.walletId || ''); break;
-        case 'toggle-backup-reveal': toggleBackupKeysReveal(); break;
         case 'copy-text': copyTextValue(ds.val || '', ds.label || ''); break;
         case 'open-token-detail': openTokenDetailSheet(ds.symbol || ''); break;
         case 'toggle-home-dust': toggleHomeDustAssets(); break;
@@ -520,6 +545,7 @@
     setTokenPickerChain,
     renderNearAccountSummary,
     renderMiningTelemetry,
+    isAppInBackground,
     openSheet,
     closeAllSheets,
     showConfirmDialogAsync,
@@ -768,6 +794,7 @@
     rejectDAppApproval,
     renderNearAccountSummary,
     renderMiningTelemetry,
+    isAppInBackground,
     openSheet,
     closeAllSheets,
     showConfirmDialogAsync,

@@ -803,10 +803,9 @@
     const lo = getLimitOrders();
     const wallet = st.getActiveWallet();
     if (!wallet || !lo || !orderId) return;
-    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     _limitOrderActionInFlight = true;
-    const prevTxt = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = t('领取中...', 'Claiming...'); }
+    st.limit.claimingOrderId = String(orderId);
+    renderLimitOrdersList();
     let stepper = null;
     try {
       const claimSteps = [{ title: t('链上领取已成交资产', 'Claim filled order on NEAR'), chain: 'near' }];
@@ -828,8 +827,6 @@
         ? createTxStepperController(t('正在领取资产', 'Claiming Order'), claimSteps)
         : null;
       if (stepper) stepper.setStep(0, 'active');
-      st.limit.claimingOrderId = String(orderId);
-      renderLimitOrdersList();
       const res = await lo.claimNearDclOrder({ wallet, orderId, buyToken });
       if (stepper) {
         stepper.setStep(0, 'done', { txHash: (res && res.txHash) || '', chain: 'near' });
@@ -848,7 +845,6 @@
     } finally {
       _limitOrderActionInFlight = false;
       st.limit.claimingOrderId = '';
-      if (btn) { btn.disabled = false; btn.textContent = prevTxt; }
       renderLimitOrdersList();
     }
   }
@@ -859,10 +855,9 @@
     const lo = getLimitOrders();
     const wallet = st.getActiveWallet();
     if (!wallet || !lo || !orderId) return;
-    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
     _limitOrderActionInFlight = true;
-    const prevTxt = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = t('撤单中...', 'Cancelling...'); }
+    st.limit.cancellingOrderId = String(orderId);
+    renderLimitOrdersList();
     let stepper = null;
     try {
       const chainName = typeof getTxFlowChainName === 'function' ? getTxFlowChainName(chain) : String(chain || '').toUpperCase();
@@ -885,8 +880,6 @@
         ? createTxStepperController(t('正在撤销限价单', 'Cancelling Limit Order'), cancelSteps)
         : null;
       if (stepper) stepper.setStep(0, 'active');
-      st.limit.cancellingOrderId = String(orderId);
-      renderLimitOrdersList();
       let res = null;
       if (chain === 'near') {
         res = await lo.cancelNearDclOrder({ wallet, orderId, remainAmount, sellToken, buyToken });
@@ -913,7 +906,6 @@
     } finally {
       _limitOrderActionInFlight = false;
       st.limit.cancellingOrderId = '';
-      if (btn) { btn.disabled = false; btn.textContent = prevTxt; }
       renderLimitOrdersList();
     }
   }

@@ -847,12 +847,21 @@
 
   async function executeSignedJupiterTriggerTx({ wallet, base64Tx, requestId }) {
     const contracts = getContracts();
-    const { signedBase64 } = await contracts.signSolanaBase64Tx(
+    const { txBytes, signedBase64 } = await contracts.signSolanaBase64Tx(
       base64Tx,
       wallet.solPrivateSeedHex || null,
       wallet,
       'solana-1'
     );
+    let candidateSig = '';
+    try {
+      const cryptoEngine = (typeof window !== 'undefined' && window.NearCACrypto) || (typeof globalThis !== 'undefined' && globalThis.NearCACrypto);
+      if (txBytes && txBytes.length > 65 && cryptoEngine && typeof cryptoEngine.base58Encode === 'function') {
+        const lenBytes = txBytes[0] < 0x80 ? 1 : 2;
+        candidateSig = cryptoEngine.base58Encode(txBytes.slice(lenBytes, lenBytes + 64));
+      }
+    } catch (_) {}
+
     const execRes = await fetchJsonWithTimeout(`${JUPITER_TRIGGER_URL}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -879,16 +888,43 @@
       throw new Error(msg);
     }
 
-    const txHash = await contracts.callSolanaRpc(
-      'sendTransaction',
-      [signedBase64, { encoding: 'base64', skipPreflight: false, maxRetries: 3 }],
-      15_000
-    );
-    return {
-      ok: true,
-      txHash,
-      explorerUrl: `https://solscan.io/tx/${txHash}`
-    };
+    if (candidateSig) {
+      const stRes = await contracts.callSolanaRpc('getSignatureStatuses', [[candidateSig], { searchTransactionHistory: true }], 5000).catch(() => null);
+      const stVal = stRes && stRes.value && stRes.value[0];
+      if (stVal && !stVal.err && (stVal.confirmationStatus === 'confirmed' || stVal.confirmationStatus === 'finalized' || stVal.confirmationStatus === 'processed')) {
+        return {
+          ok: true,
+          txHash: candidateSig,
+          explorerUrl: `https://solscan.io/tx/${candidateSig}`
+        };
+      }
+    }
+
+    try {
+      const txHash = await contracts.callSolanaRpc(
+        'sendTransaction',
+        [signedBase64, { encoding: 'base64', skipPreflight: false, maxRetries: 3 }],
+        15_000
+      );
+      return {
+        ok: true,
+        txHash,
+        explorerUrl: `https://solscan.io/tx/${txHash}`
+      };
+    } catch (rpcErr) {
+      if (candidateSig && /already\s*processed/i.test(String(rpcErr && rpcErr.message || ''))) {
+        const stRes = await contracts.callSolanaRpc('getSignatureStatuses', [[candidateSig], { searchTransactionHistory: true }], 5000).catch(() => null);
+        const stVal = stRes && stRes.value && stRes.value[0];
+        if (!stVal || !stVal.err) {
+          return {
+            ok: true,
+            txHash: candidateSig,
+            explorerUrl: `https://solscan.io/tx/${candidateSig}`
+          };
+        }
+      }
+      throw rpcErr;
+    }
   }
 
   async function placeSolanaLimitOrder({

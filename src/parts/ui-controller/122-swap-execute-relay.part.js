@@ -462,6 +462,7 @@
           ? (BigInt(amountRaw) / 1000000000000n).toString()
           : amountRaw;
         let arcStep = 0;
+        let s1Tx = null;
         if (isArcSwapStage1) {
           advanceStep(arcStep, 'active');
           const preArcRes = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
@@ -479,7 +480,7 @@
                 fromAddress: evmAddr
               });
           if (!s1Q.ok || !s1Q.routeData) throw new Error(s1Q.error || t('Arc 换出 USDC 失败', 'Arc swap to USDC failed'));
-          const s1Tx = await contracts.executeEvmDexSwap({
+          s1Tx = await contracts.executeEvmDexSwap({
             wallet,
             chainKey: 'arc',
             routeSource: s1Q.routeSource,
@@ -572,13 +573,14 @@
           }
         } catch (arcStage2Err) {
           if (srcContract.toLowerCase() !== intents.ARC_USDC_CONTRACT.toLowerCase()) {
+            const stage1Hash = (s1Tx && s1Tx.txHash) || '';
             st.swap.activeOrder = {
               walletId: wallet.id,
-              depositAddress: `arc_bridge_${Date.now()}`,
+              depositAddress: stage1Hash || `arc_bridge_${Date.now()}`,
               status: 'SUCCESS',
               fromSymbol: fromToken.symbol,
               toSymbol: toToken.symbol,
-              originTxHash: '',
+              originTxHash: stage1Hash,
               autoBroadcasted: true,
               createdAt: Date.now(),
               followUpFailed: true,

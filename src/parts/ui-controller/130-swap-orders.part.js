@@ -394,11 +394,11 @@
 
   function startOrderStatusPolling(immediate = true) {
     stopOrderStatusPolling();
-    if (typeof document !== 'undefined' && document.hidden) return;
+    if (typeof isAppInBackground === 'function' ? isAppInBackground() : (typeof document !== 'undefined' && document.hidden)) return;
     _orderPollCount = 0;
     if (immediate) refreshActiveSwapOrderStatus();
     _orderPollTimer = setInterval(() => {
-      if (typeof document !== 'undefined' && document.hidden) {
+      if (typeof isAppInBackground === 'function' ? isAppInBackground() : (typeof document !== 'undefined' && document.hidden)) {
         stopOrderStatusPolling();
         return;
       }
