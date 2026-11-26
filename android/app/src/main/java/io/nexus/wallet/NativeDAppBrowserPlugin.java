@@ -27,6 +27,10 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.Set;
+
 import org.json.JSONObject;
 
 @CapacitorPlugin(name = "NativeDAppBrowser")
@@ -39,6 +43,7 @@ public class NativeDAppBrowserPlugin extends Plugin {
     private Button backButton;
     private Button forwardButton;
     private String injectedScriptSource = "";
+    private boolean documentStartRegistered = false;
 
     private static boolean isAllowedDAppUrl(String rawUrl) {
         if (rawUrl == null || rawUrl.trim().isEmpty()) return false;
@@ -227,6 +232,7 @@ public class NativeDAppBrowserPlugin extends Plugin {
             backButton = backBtn;
             forwardButton = fwdBtn;
 
+            documentStartRegistered = tryRegisterDocumentStartScript(wv, this.injectedScriptSource);
             wv.loadUrl(targetUrl);
             JSObject out = new JSObject();
             out.put("opened", true);
@@ -234,7 +240,31 @@ public class NativeDAppBrowserPlugin extends Plugin {
         });
     }
 
+    private boolean tryRegisterDocumentStartScript(WebView view, String script) {
+        if (view == null || script == null || script.isEmpty()) return false;
+        try {
+            Class<?> featureCls = Class.forName("androidx.webkit.WebViewFeature");
+            String featureName = "DOCUMENT_START_SCRIPT";
+            try {
+                Object fieldVal = featureCls.getField("DOCUMENT_START_SCRIPT").get(null);
+                if (fieldVal instanceof String) featureName = (String) fieldVal;
+            } catch (Exception ignored) {
+            }
+            Method isSupported = featureCls.getMethod("isFeatureSupported", String.class);
+            Object supported = isSupported.invoke(null, featureName);
+            if (!Boolean.TRUE.equals(supported)) return false;
+
+            Class<?> compatCls = Class.forName("androidx.webkit.WebViewCompat");
+            Method addDocStart = compatCls.getMethod("addDocumentStartJavaScript", WebView.class, String.class, Set.class);
+            addDocStart.invoke(null, view, script, Collections.singleton("*"));
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private void injectProviderIfAllowed(WebView view, String url) {
+        if (documentStartRegistered) return;
         if (view == null || injectedScriptSource == null || injectedScriptSource.isEmpty()) return;
         if (!isAllowedDAppUrl(url)) return;
         view.evaluateJavascript(injectedScriptSource, null);
@@ -273,6 +303,7 @@ public class NativeDAppBrowserPlugin extends Plugin {
         urlView = null;
         backButton = null;
         forwardButton = null;
+        documentStartRegistered = false;
     }
 
     @PluginMethod

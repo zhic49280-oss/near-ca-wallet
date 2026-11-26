@@ -125,10 +125,12 @@
           const canDelete = !isCurrent && (!isFull || fullCount > 1);
           return { publicKey: pk, isFull, isCurrent, canDelete };
         });
+        _lastNearKeysNormalized = normalizedKeys;
         fw.mountNearKeysPanel(listEl, {
           keys: normalizedKeys,
           loading: false,
           unactivated: false,
+          busyKey: _deletingNearAccessKey,
           isEn: st.lang === 'en',
           shortenAddr
         });
@@ -173,8 +175,26 @@
   }
 
   let _nearKeyActionBusy = false;
+  let _deletingNearAccessKey = '';
+  let _lastNearKeysNormalized = [];
   let _pendingConfirmSig = '';
   let _pendingConfirmTs = 0;
+
+  function renderNearKeysBusyState(busyKey) {
+    const st = getState();
+    const listEl = $('near-keys-list');
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    if (listEl && fw && typeof fw.mountNearKeysPanel === 'function' && _lastNearKeysNormalized.length > 0) {
+      fw.mountNearKeysPanel(listEl, {
+        keys: _lastNearKeysNormalized,
+        loading: false,
+        unactivated: false,
+        busyKey: busyKey || '',
+        isEn: st.lang === 'en',
+        shortenAddr
+      });
+    }
+  }
 
   async function deleteNearAccessKeyFromSheet(targetPublicKeyStr) {
     if (_nearKeyActionBusy) return;
@@ -183,12 +203,8 @@
     const wallet = st.getActiveWallet();
     if (!wallet || !contracts) return;
     _nearKeyActionBusy = true;
-    const delBtn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
-    const prevDelText = delBtn ? delBtn.textContent : '';
-    if (delBtn) {
-      delBtn.disabled = true;
-      delBtn.textContent = t('删除中...', 'Deleting...');
-    }
+    _deletingNearAccessKey = String(targetPublicKeyStr || '');
+    renderNearKeysBusyState(_deletingNearAccessKey);
     try {
       const confirmed = await showConfirmDialogAsync(
         t(
@@ -211,10 +227,8 @@
       showToast(toUserFriendlyError(e, '删除密钥失败', 'Failed to delete key'));
     } finally {
       _nearKeyActionBusy = false;
-      if (delBtn) {
-        delBtn.disabled = false;
-        delBtn.textContent = prevDelText;
-      }
+      _deletingNearAccessKey = '';
+      renderNearKeysBusyState('');
     }
   }
 
@@ -462,6 +476,9 @@
         throw new Error(t('本地存储空间不足，无法安全保存新助记词，已取消更换', 'Local storage write failed; aborted key rotation for safety'));
       }
 
+      if (typeof contracts.ensureWalletSigningKeysAsync === 'function') {
+        await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+      }
       showToast(t('正在更换链上密钥...', 'Rotating key on-chain...'));
       const res = await contracts.rotateNearAccountKeyAsync({
         wallet,
@@ -470,8 +487,8 @@
         deleteOldKey: true
       });
       if (oldMnemonic && oldMnemonic !== newPhrase) {
-        if (!wallet.legacyEvmMnemonic && wallet.evmPrivateKey) wallet.legacyEvmMnemonic = oldMnemonic;
-        if (!wallet.legacySolMnemonic && wallet.solPrivateSeedHex) wallet.legacySolMnemonic = oldMnemonic;
+        if (!wallet.legacyEvmMnemonic && (wallet.evmPrivateKey || wallet.evmAddress)) wallet.legacyEvmMnemonic = oldMnemonic;
+        if (!wallet.legacySolMnemonic && (wallet.solPrivateSeedHex || wallet.solAddress)) wallet.legacySolMnemonic = oldMnemonic;
       }
       wallet.mnemonic = res.newDerived.mnemonic || newPhrase;
       wallet.accountType = 'standard';

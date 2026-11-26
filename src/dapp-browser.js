@@ -479,9 +479,11 @@
           ethProvider.selectedAddress = res[0];
         } else if (method === 'wallet_switchEthereumChain' && params && params[0] && params[0].chainId) {
           var nextHex = String(params[0].chainId);
-          ethProvider.chainId = nextHex;
-          ethProvider.networkVersion = String(parseInt(nextHex, 16) || 1);
-          evmEmitter.emit('chainChanged', nextHex);
+          if (String(ethProvider.chainId || '').toLowerCase() !== nextHex.toLowerCase()) {
+            ethProvider.chainId = nextHex;
+            ethProvider.networkVersion = String(parseInt(nextHex, 16) || 1);
+            evmEmitter.emit('chainChanged', nextHex);
+          }
         }
         return res;
       });
@@ -670,56 +672,40 @@
       chains: ['near:mainnet'],
       features: ['near:signIn', 'near:signOut', 'near:signMessage', 'near:signAndSendTransaction', 'near:signAndSendTransactions']
     }] : [];
-    var standardChains = [];
-    if (CFG.solanaPublicKey) standardChains.push('solana:mainnet');
-    if (CFG.nearAccountId) standardChains.push('near:mainnet');
-    if (!standardChains.length) standardChains = ['solana:mainnet', 'near:mainnet'];
 
-    var walletStandardObj = {
+    var solWalletStandardObj = {
       version: '1.0.0',
       name: CFG.walletName,
       icon: CFG.walletIcon,
-      chains: standardChains,
-      accounts: solAccounts.concat(nearAccounts),
+      chains: ['solana:mainnet'],
+      accounts: solAccounts,
       features: {
         'standard:connect': {
           version: '1.0.0',
           connect: function () {
-            var pSol = CFG.solanaPublicKey ? solProvider.connect() : Promise.resolve();
-            var pNear = CFG.nearAccountId ? nearProvider.requestSignIn({}) : Promise.resolve();
-            return Promise.all([pSol, pNear]).then(function () {
+            return solProvider.connect().then(function () {
               var pk = solProvider.publicKey ? solProvider.publicKey.toBase58() : '';
-              var sAccts = pk ? [{
+              solWalletStandardObj.accounts = pk ? [{
                 address: pk,
                 publicKey: decodeB58(pk),
                 chains: ['solana:mainnet'],
                 features: ['solana:signAndSendTransaction', 'solana:signTransaction', 'solana:signMessage']
               }] : [];
-              var nAccts = nearProvider.accountId ? [{
-                address: nearProvider.accountId,
-                publicKey: nearProvider.publicKey ? decodeB58(nearProvider.publicKey.replace(/^ed25519:/i, '')) : new Uint8Array(32),
-                chains: ['near:mainnet'],
-                features: ['near:signIn', 'near:signOut', 'near:signMessage', 'near:signAndSendTransaction', 'near:signAndSendTransactions']
-              }] : [];
-              walletStandardObj.accounts = sAccts.concat(nAccts);
-              return { accounts: walletStandardObj.accounts };
+              return { accounts: solWalletStandardObj.accounts };
             });
           }
         },
         'standard:disconnect': {
           version: '1.0.0',
           disconnect: function () {
-            return Promise.all([
-              CFG.solanaPublicKey ? solProvider.disconnect() : Promise.resolve(),
-              CFG.nearAccountId ? nearProvider.signOut() : Promise.resolve()
-            ]);
+            return solProvider.disconnect();
           }
         },
         'standard:events': {
           version: '1.0.0',
           on: function (ev, fn) {
             solProvider.on(ev, fn);
-            return nearProvider.on(ev, fn);
+            return function () { solProvider.removeListener(ev, fn); };
           }
         },
         'solana:signAndSendTransaction': {
@@ -756,6 +742,43 @@
               });
             }));
           }
+        }
+      }
+    };
+
+    var nearWalletStandardObj = {
+      version: '1.0.0',
+      name: CFG.walletName,
+      icon: CFG.walletIcon,
+      chains: ['near:mainnet'],
+      accounts: nearAccounts,
+      features: {
+        'standard:connect': {
+          version: '1.0.0',
+          connect: function () {
+            return nearProvider.requestSignIn({}).then(function () {
+              nearWalletStandardObj.accounts = nearProvider.accountId ? [{
+                address: nearProvider.accountId,
+                publicKey: nearProvider.publicKey ? decodeB58(nearProvider.publicKey.replace(/^ed25519:/i, '')) : new Uint8Array(32),
+                chains: ['near:mainnet'],
+                features: ['near:signIn', 'near:signOut', 'near:signMessage', 'near:signAndSendTransaction', 'near:signAndSendTransactions']
+              }] : [];
+              return { accounts: nearWalletStandardObj.accounts };
+            });
+          }
+        },
+        'standard:disconnect': {
+          version: '1.0.0',
+          disconnect: function () {
+            return nearProvider.signOut();
+          }
+        },
+        'standard:events': {
+          version: '1.0.0',
+          on: function (ev, fn) {
+            nearProvider.on(ev, fn);
+            return function () { nearProvider.removeListener(ev, fn); };
+          }
         },
         'near:signIn': {
           version: '1.0.0',
@@ -783,25 +806,29 @@
         }
       }
     };
+
+    var standardWallets = [solWalletStandardObj, nearWalletStandardObj];
+    function registerAllStandardWallets(api) {
+      if (!api || typeof api.register !== 'function') return;
+      for (var wi = 0; wi < standardWallets.length; wi++) {
+        try { api.register(standardWallets[wi]); } catch (_) {}
+      }
+    }
     if (typeof navigator !== 'undefined') {
       if (!Array.isArray(navigator.wallets)) {
         try { navigator.wallets = []; } catch (_) {}
       }
       if (Array.isArray(navigator.wallets)) {
-        navigator.wallets.push(function (api) {
-          if (api && typeof api.register === 'function') api.register(walletStandardObj);
-        });
+        navigator.wallets.push(registerAllStandardWallets);
       }
     }
     if (typeof CustomEvent === 'function' && typeof window.dispatchEvent === 'function') {
       window.dispatchEvent(new CustomEvent('wallet-standard:register-wallet', {
-        detail: function (api) { if (api && typeof api.register === 'function') api.register(walletStandardObj); }
+        detail: registerAllStandardWallets
       }));
       if (typeof window.addEventListener === 'function') {
         window.addEventListener('wallet-standard:app-ready', function (ev) {
-          if (ev && ev.detail && typeof ev.detail.register === 'function') {
-            ev.detail.register(walletStandardObj);
-          }
+          if (ev && ev.detail) registerAllStandardWallets(ev.detail);
         });
       }
     }
@@ -888,6 +915,7 @@
     }
     if (namespace === 'evm') {
       if (eventName === 'chainChanged' && typeof parsed === 'string') {
+        if (String(ethProvider.chainId || '').toLowerCase() === parsed.toLowerCase()) return;
         ethProvider.chainId = parsed;
         ethProvider.networkVersion = String(parseInt(parsed, 16) || 1);
       } else if (eventName === 'accountsChanged' && Array.isArray(parsed)) {
@@ -1145,15 +1173,35 @@
         : activeChain;
       const valBig = parseHexBigInt(txReq.value);
       const dataHex = (typeof txReq.data === 'string' && txReq.data.length > 0) ? txReq.data : '0x';
+      const nativeSym = (txChain.cfg && txChain.cfg.symbol) || 'ETH';
+      const formattedVal = typeof contracts.fromBaseUnits === 'function'
+        ? contracts.fromBaseUnits(valBig.toString(), 18)
+        : ((Number(valBig) / 1e18).toFixed(6).replace(/\.?0+$/, '') || '0');
+      const valNative = Number(formattedVal);
+      const gasRaw = txReq.gasLimit || txReq.gas;
+      const gasBig = gasRaw ? parseHexBigInt(gasRaw) : 0n;
+      const reqGasLimit = gasBig > 0n ? gasBig.toString() : undefined;
+
+      if (typeof contracts.validateSufficientChainBalance === 'function') {
+        contracts.validateSufficientChainBalance({
+          wallet,
+          chain: txChain.key,
+          tokenSymbol: nativeSym,
+          amount: Number.isFinite(valNative) ? valNative : 0,
+          isNative: true,
+          allowZeroAmount: true
+        });
+      }
 
       await ensureApproval(req, ctx, {
         kind: 'sendTransaction',
         chainLabel: `${txChain.cfg.name || txChain.key.toUpperCase()} (${txChain.cfg.chainId})`,
         account: addr || '',
-        summary: `To: ${txReq.to || '(Contract Creation)'}\nValue: ${valBig.toString()} wei\nData: ${dataHex.slice(0, 128)}${dataHex.length > 128 ? '...' : ''}`
+        summary: `To: ${txReq.to || '(Contract Creation)'}\nValue: ${formattedVal} ${nativeSym}\nData: ${dataHex.slice(0, 128)}${dataHex.length > 128 ? '...' : ''}`
       });
       await ensureBiometricAuth(req, ctx);
 
+      let txHash = '';
       if (txReq.to && typeof contracts.executeEvmRawSteps === 'function') {
         const res = await contracts.executeEvmRawSteps({
           wallet,
@@ -1162,33 +1210,55 @@
             chainId: txChain.cfg.chainId,
             to: txReq.to,
             data: dataHex,
-            value: valBig.toString()
+            value: valBig.toString(),
+            ...(reqGasLimit ? { gasLimit: reqGasLimit } : {})
           }]
         });
-        return res.txHash;
-      }
-      if (typeof contracts.sendEvmMpcSignedTransaction === 'function' && !wallet.evmPrivateKey) {
+        txHash = res.txHash || '';
+      } else if (typeof contracts.sendEvmMpcSignedTransaction === 'function' && !wallet.evmPrivateKey) {
         const res = await contracts.sendEvmMpcSignedTransaction({
           wallet,
           chainKey: txChain.key,
           to: txReq.to || null,
           data: dataHex,
           value: valBig.toString(),
+          ...(reqGasLimit ? { gasLimit: reqGasLimit } : {}),
           path: 'ethereum-1'
         });
-        return res.txHash || res.hash;
+        txHash = res.txHash || res.hash || '';
+      } else {
+        const ethersLib = getEthersLib(ctx);
+        if (ethersLib && wallet.evmPrivateKey) {
+          const provider = new ethersLib.JsonRpcProvider(txChain.cfg.rpc, txChain.cfg.chainId);
+          const sent = await new ethersLib.Wallet(wallet.evmPrivateKey).connect(provider).sendTransaction({
+            to: txReq.to || null,
+            data: dataHex,
+            value: valBig,
+            ...(gasBig > 0n ? { gasLimit: gasBig } : {})
+          });
+          txHash = sent.hash || '';
+        } else {
+          throw buildRpcError(-32603, 'EVM transaction executor unavailable');
+        }
       }
-      const ethersLib = getEthersLib(ctx);
-      if (ethersLib && wallet.evmPrivateKey) {
-        const provider = new ethersLib.JsonRpcProvider(txChain.cfg.rpc, txChain.cfg.chainId);
-        const sent = await new ethersLib.Wallet(wallet.evmPrivateKey).connect(provider).sendTransaction({
-          to: txReq.to || null,
-          data: dataHex,
-          value: valBig
+
+      const recordFn = (ctx && typeof ctx.recordActivity === 'function')
+        ? ctx.recordActivity
+        : (typeof globalThis !== 'undefined' && globalThis.NearCAUI && typeof globalThis.NearCAUI.recordWalletActivity === 'function'
+          ? globalThis.NearCAUI.recordWalletActivity
+          : null);
+      if (txHash && recordFn) {
+        recordFn(wallet, {
+          type: 'send',
+          symbol: nativeSym,
+          chain: txChain.key,
+          amount: Number.isFinite(valNative) ? valNative : 0,
+          to: txReq.to || '',
+          txHash,
+          title: `DApp · ${nativeSym}`
         });
-        return sent.hash;
       }
-      throw buildRpcError(-32603, 'EVM transaction executor unavailable');
+      return txHash;
     }
 
     throw buildRpcError(4200, `Unsupported EVM method: ${method}`);

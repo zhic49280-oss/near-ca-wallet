@@ -148,7 +148,6 @@
     st.mining.telemetry = null;
     renderMiningTelemetry();
     const queryBtn = $('btn-mining-query') || (typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null);
-    const prevTxt = queryBtn ? queryBtn.textContent : '';
     if (queryBtn) {
       queryBtn.disabled = true;
       queryBtn.textContent = t('查询中...', 'Querying...');
@@ -178,9 +177,9 @@
         st.mining.loading = false;
         renderMiningTelemetry();
       }
-      if (queryBtn) {
+      if (myGen === _miningQueryGen && queryBtn) {
         queryBtn.disabled = false;
-        queryBtn.textContent = prevTxt;
+        queryBtn.textContent = t('查询', 'Query');
       }
     }
   }

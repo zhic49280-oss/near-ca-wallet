@@ -58,7 +58,7 @@
       let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
         updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-        await loadScriptOnce('walletconnect.umd.min.js?v=6.81');
+        await loadScriptOnce('walletconnect.umd.min.js?v=6.82');
         sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       }
       if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -139,6 +139,85 @@
     return _wcInitPromise;
   }
 
+  function formatWcMethodLabel(method) {
+    const m = String(method || '').trim();
+    const map = {
+      eth_sendTransaction: t('发送交易', 'Send Transaction'),
+      personal_sign: t('消息签名', 'Sign Message'),
+      eth_sign: t('消息签名', 'Sign Message'),
+      eth_signTypedData: t('结构化数据签名', 'Sign Typed Data'),
+      eth_signTypedData_v3: t('结构化数据签名', 'Sign Typed Data'),
+      eth_signTypedData_v4: t('结构化数据签名', 'Sign Typed Data'),
+      wallet_switchEthereumChain: t('切换网络', 'Switch Network'),
+      wallet_addEthereumChain: t('添加网络', 'Add Network'),
+      solana_signTransaction: t('Solana 交易签名', 'Sign Solana Transaction'),
+      solana_signAllTransactions: t('Solana 批量签名', 'Sign Solana Transactions'),
+      solana_signAndSendTransaction: t('发送 Solana 交易', 'Send Solana Transaction'),
+      solana_signMessage: t('Solana 消息签名', 'Sign Solana Message'),
+      near_signAndSendTransaction: t('发送 NEAR 交易', 'Send NEAR Transaction'),
+      near_signAndSendTransactions: t('批量发送 NEAR 交易', 'Send NEAR Transactions'),
+      near_signMessage: t('NEAR 消息签名', 'Sign NEAR Message')
+    };
+    return map[m] || m || '--';
+  }
+
+  function summarizeWcStructuredPayload(method, reqParams) {
+    const m = String(method || '').trim();
+    const list = Array.isArray(reqParams) ? reqParams : (reqParams ? [reqParams] : []);
+    if (m.startsWith('eth_signTypedData')) {
+      const isEvmAddr = (v) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v.trim());
+      const typedArg = (list[1] !== undefined && !isEvmAddr(list[1])) ? list[1] : list[0];
+      const rawTyped = typeof typedArg === 'string' ? JSON.parse(typedArg) : (typedArg || {});
+      const domain = rawTyped.domain || {};
+      const msg = rawTyped.message || {};
+      const lines = [];
+      if (domain.name || domain.version) {
+        lines.push(`${t('应用', 'Domain')}: ${domain.name || '--'}${domain.version ? ` v${domain.version}` : ''}`);
+      }
+      if (rawTyped.primaryType) {
+        lines.push(`${t('类型', 'Type')}: ${rawTyped.primaryType}`);
+      }
+      if (domain.verifyingContract) {
+        lines.push(`${t('合约', 'Contract')}: ${shortenAddr(domain.verifyingContract, 10, 8)}`);
+      }
+      const msgEntries = Object.entries(msg).slice(0, 6);
+      for (const [k, v] of msgEntries) {
+        const valStr = (v && typeof v === 'object') ? JSON.stringify(v).slice(0, 80) : String(v);
+        lines.push(`${k}: ${valStr.slice(0, 80)}`);
+      }
+      return lines.join('\n') || formatWcMethodLabel(m);
+    }
+    if (m === 'wallet_switchEthereumChain' || m === 'wallet_addEthereumChain') {
+      const arg = list[0] || {};
+      return `${t('目标网络', 'Target Chain')}: ${arg.chainName ? `${arg.chainName} (${arg.chainId || '--'})` : (arg.chainId || '--')}`;
+    }
+    if (m.startsWith('solana_')) {
+      const arg = list[0] || {};
+      if (m === 'solana_signMessage') {
+        const rawMsg = arg.message || list[0] || '';
+        return `${t('网络', 'Chain')}: Solana\n${t('消息', 'Message')}: ${String(rawMsg).slice(0, 300)}`;
+      }
+      if (m === 'solana_signAllTransactions') {
+        const count = Array.isArray(arg.transactions) ? arg.transactions.length : list.length;
+        return `${t('网络', 'Chain')}: Solana\n${t('交易数量', 'Transactions')}: ${count}`;
+      }
+      return `${t('网络', 'Chain')}: Solana\n${t('操作', 'Action')}: ${formatWcMethodLabel(m)}`;
+    }
+    if (m.startsWith('near_')) {
+      const arg = list[0] || {};
+      if (m === 'near_signMessage') {
+        return `${t('接收方', 'Recipient')}: ${arg.recipient || '--'}\n${t('消息', 'Message')}: ${String(arg.message || '').slice(0, 300)}`;
+      }
+      if (m === 'near_signAndSendTransactions') {
+        const txs = Array.isArray(arg.transactions) ? arg.transactions : list;
+        return `${t('网络', 'Chain')}: NEAR\n${t('批量交易数', 'Transactions')}: ${txs.length}`;
+      }
+      const actions = Array.isArray(arg.actions) ? arg.actions : [];
+      return `${t('接收方', 'Receiver')}: ${arg.receiverId || '--'}\n${t('操作数', 'Actions')}: ${actions.length}`;
+    }
+    return `${t('请求类型', 'Method')}: ${formatWcMethodLabel(m)}`;
+  }
+
   function renderWcCards() {
     const st = getState();
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
@@ -173,8 +252,9 @@
           ? st.wc.client.session.get(ev.topic)
           : null;
         const peerMeta = sess && sess.peer && sess.peer.metadata ? sess.peer.metadata : null;
-        const dappLabel = peerMeta ? `${peerMeta.name || 'DApp'} (${ev.params.chainId || 'eip155:1'})` : (ev.params.chainId || 'eip155:1');
-        if ($('wc-request-method')) $('wc-request-method').textContent = req.method || '--';
+        const chainIdLabel = ev.params?.chainId || 'eip155:1';
+        const dappLabel = peerMeta ? `${peerMeta.name || 'DApp'} (${chainIdLabel})` : chainIdLabel;
+        if ($('wc-request-method')) $('wc-request-method').textContent = formatWcMethodLabel(req.method);
         if ($('wc-request-dapp')) $('wc-request-dapp').textContent = dappLabel;
         if ($('wc-request-payload')) {
           let preview = '';
@@ -193,19 +273,23 @@
             } else if (req.method === 'eth_sendTransaction' && Array.isArray(req.params) && req.params[0]) {
               const tx = req.params[0];
               const weiBig = parseHexBigInt(tx.value);
-              const ethStr = (Number(weiBig) / 1e18).toFixed(6).replace(/\.?0+$/, '') || '0';
-              const cidNum = Number(String(ev.params?.chainId || 'eip155:1').split(':')[1] || 1);
               const contractsMod = getContracts();
+              const ethStr = (contractsMod && typeof contractsMod.fromBaseUnits === 'function')
+                ? contractsMod.fromBaseUnits(weiBig.toString(), 18)
+                : ((typeof window !== 'undefined' && window.ethers && typeof window.ethers.formatEther === 'function')
+                  ? window.ethers.formatEther(weiBig)
+                  : ((Number(weiBig) / 1e18).toFixed(6).replace(/\.?0+$/, '') || '0'));
+              const cidNum = Number(String(chainIdLabel).split(':')[1] || 1);
               const chainEntry = contractsMod && contractsMod.EVM_CHAINS
                 ? Object.values(contractsMod.EVM_CHAINS).find((c) => c && c.chainId === cidNum)
                 : null;
               const nativeSym = (chainEntry && chainEntry.symbol) || 'ETH';
               preview = `${t('收款地址', 'To')}: ${tx.to || '--'}\n${t('金额', 'Value')}: ${ethStr} ${nativeSym}\n${t('数据', 'Data')}: ${tx.data && tx.data !== '0x' ? `${String(tx.data).slice(0, 42)}...` : t('无', 'None')}`;
             } else {
-              preview = JSON.stringify(req.params || {}, null, 2);
+              preview = summarizeWcStructuredPayload(req.method, req.params);
             }
           } catch (_) {
-            preview = JSON.stringify(req.params || {}, null, 2);
+            preview = formatWcMethodLabel(req.method);
           }
           $('wc-request-payload').textContent = preview;
         }
@@ -737,7 +821,7 @@
     const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
     if (existing) return existing;
     if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
-      await loadScriptOnce('src/jsqr-lazy.js?v=6.81').catch(() => false);
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.82').catch(() => false);
       return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     }
     return null;
