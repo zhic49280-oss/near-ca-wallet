@@ -168,6 +168,16 @@
         renderWcSessions();
       }
       if (isOpen('sheet-earn-stake') && st.activeTab !== 'earn') renderEarnView();
+      if (isOpen('sheet-send')) {
+        if (typeof handleSendRecipientInput === 'function' && $('send-recipient-input')?.value) {
+          handleSendRecipientInput();
+        } else if (typeof updateSendRoutePreview === 'function') {
+          updateSendRoutePreview(false);
+        }
+      }
+      if (isOpen('sheet-backup') && typeof setBackupRevealState === 'function' && typeof _backupRevealActive !== 'undefined') {
+        setBackupRevealState(_backupRevealActive);
+      }
       if (isOpen('sheet-dapp-approve') && typeof renderDAppApproveSheet === 'function') renderDAppApproveSheet();
       if (isOpen('sheet-confirm-dialog') && typeof renderConfirmDialogSheet === 'function') renderConfirmDialogSheet();
     }

@@ -2,6 +2,7 @@
 
       // Sub-route A: NEAR Token -> PRL (Pearl L1) via Ref Finance -> 1Click bridge
       if (!isDirect1ClickPrl && !originIsPrl && destIsPrl && toToken.blockchain === 'prl' && fromToken.blockchain === 'near') {
+        advanceStep(0, 'active');
         const refRes = await contracts.executeNearRefFinanceSwap({
           wallet,
           tokenIn: fromToken.contractAddress || 'wrap.near',
@@ -12,6 +13,8 @@
           inputDecimals: fromToken.decimals,
           tokenSymbol: fromToken.symbol
         });
+        advanceStep(0, 'done', { txHash: refRes.txHash, chain: 'near' });
+        advanceStep(1, 'active');
         const prlOutRaw = refRes.amountOut || (st.swap.quoteData && st.swap.quoteData.refQuote && st.swap.quoteData.refQuote.amountOut);
         if (!prlOutRaw) throw new Error(t('兑换后未获得预期 PRL 数量', 'Missing PRL amount after swap'));
         const bridgeQuote = await intents.quoteIntentSwapOrWithdraw({
@@ -124,6 +127,8 @@
         });
         renderSwapOrderCard();
         startOrderStatusPolling();
+        advanceStep(1, 'done', { txHash: sendBridge.txHash, chain: 'near' });
+        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
         showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
         return;
       }
@@ -133,6 +138,7 @@
           && st.swap.quoteData?.compositeType === 'PRL_TO_NEAR_REF' && st.swap.quoteData.refQuote) {
         const refQ = st.swap.quoteData.refQuote;
         if (fromToken.blockchain === 'near') {
+          advanceStep(0, 'active');
           const res = await contracts.executeNearRefFinanceSwap({
             wallet,
             routeData: refQ.routeData,
@@ -147,6 +153,8 @@
             inputDecimals: 8,
             tokenSymbol: 'PRL'
           });
+          advanceStep(0, 'done', { txHash: res.txHash, chain: 'near' });
+          stepper.finish(true, t('兑换已提交', 'Swap submitted'));
           recordWalletActivity(wallet, {
             type: 'swap',
             symbol: fromToken.symbol,
@@ -174,10 +182,14 @@
         if (!bridgeLive.ok || !bridgeLive.depositAddress) {
           throw new Error(bridgeLive.error || t('创建 PRL 跨链订单失败', 'Failed to create PRL bridge order'));
         }
+        advanceStep(0, 'active');
         const bridgeTx = await broadcastOriginDepositTx({ wallet, fromToken, amt: amtStr, avail, depositAddress: bridgeLive.depositAddress, gasOverride: originGasOverride });
         if (!bridgeTx || !bridgeTx.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
+        advanceStep(0, 'done', { txHash: bridgeTx.txHash, chain: fromToken.blockchain });
+        if (flowPlan.steps.length > 1) advanceStep(1, 'active');
+        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
         st.swap.activeOrder = {
           walletId: wallet.id,
           depositAddress: bridgeLive.depositAddress,
@@ -232,6 +244,7 @@
         if (!step1Q.ok || !step1Q.amountOut) {
           throw new Error(step1Q.error || t('暂无可用兑换路径', 'No swap route available'));
         }
+        advanceStep(0, 'active');
         const refPrlRes = await contracts.executeNearRefFinanceSwap({
           wallet,
           routeData: step1Q.routeData,
@@ -244,6 +257,8 @@
           inputDecimals: 8,
           tokenSymbol: 'PRL'
         });
+        advanceStep(0, 'done', { txHash: refPrlRes.txHash, chain: 'near' });
+        if (flowPlan.steps.length > 1) advanceStep(1, 'active');
 
         recordWalletActivity(wallet, {
           type: 'swap',
@@ -292,6 +307,8 @@
                 inputDecimals: 6,
                 tokenSymbol: 'USDC'
               });
+              advanceStep(1, 'done', { txHash: dclRes.txHash, chain: 'near' });
+              stepper.finish(true, t('兑换已提交', 'Swap submitted'));
               recordWalletActivity(wallet, {
                 type: 'swap',
                 symbol: fromToken.symbol,
@@ -481,6 +498,8 @@
         });
         renderSwapOrderCard();
         startOrderStatusPolling();
+        advanceStep(1, 'done', { txHash: sendTx.txHash, chain: 'near' });
+        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
         showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
         return;
       }
@@ -503,6 +522,7 @@
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建跨链第一步订单失败', 'Failed to create step 1 cross-chain order'));
         }
+        advanceStep(0, 'active');
         const txRes = await broadcastOriginDepositTx({
           wallet,
           fromToken,
@@ -514,6 +534,9 @@
         if (!txRes || !txRes.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
+        advanceStep(0, 'done', { txHash: txRes.txHash, chain: fromToken.blockchain });
+        if (flowPlan.steps.length > 1) advanceStep(1, 'active');
+        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
         st.swap.activeOrder = {
           walletId: wallet.id,
           depositAddress: liveQuote.depositAddress,

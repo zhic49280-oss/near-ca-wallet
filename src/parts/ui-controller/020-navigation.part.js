@@ -185,6 +185,10 @@
     if (typeof document !== 'undefined') {
       document.querySelectorAll('.bottom-sheet.open').forEach((s) => {
         if (s.id !== sheetId) {
+          if (s.id === 'sheet-confirm-dialog' && typeof dismissConfirmDialog === 'function') {
+            dismissConfirmDialog(false);
+            return;
+          }
           s.classList.remove('open');
           s.setAttribute('aria-hidden', 'true');
         }
@@ -207,6 +211,9 @@
 
   function closeAllSheets() {
     if (typeof dismissConfirmDialog === 'function') dismissConfirmDialog(false);
+    if (typeof closeTxFlowModal === 'function' && (typeof isTxFlowBusy !== 'function' || !isTxFlowBusy())) {
+      closeTxFlowModal();
+    }
     if (typeof stopQrScannerStream === 'function') stopQrScannerStream();
     const st = getState();
     if (st && st.limit) st.limit.pickerSide = null;
@@ -221,8 +228,15 @@
       return;
     }
     _backupRevealActive = false;
+    if (typeof clearBackupAutoHideTimer === 'function') clearBackupAutoHideTimer();
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const backupContent = $('backup-keys-content');
-    if (backupContent) backupContent.innerHTML = '';
+    if (backupContent) {
+      if (fw && typeof fw.render === 'function') {
+        try { fw.render(null, backupContent); } catch (_) {}
+      }
+      backupContent.innerHTML = '';
+    }
     if (st && st.staking) st.staking.amountIn = '';
     if (st && st.send && typeof st.send === 'object') {
       st.send.recipient = '';

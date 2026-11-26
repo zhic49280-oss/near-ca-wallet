@@ -437,12 +437,16 @@
   let _backupAutoHideTimer = null;
   let _lastBackupRows = null;
 
-  function setBackupRevealState(revealed) {
-    _backupRevealActive = Boolean(revealed);
+  function clearBackupAutoHideTimer() {
     if (_backupAutoHideTimer) {
       clearTimeout(_backupAutoHideTimer);
       _backupAutoHideTimer = null;
     }
+  }
+
+  function setBackupRevealState(revealed) {
+    _backupRevealActive = Boolean(revealed);
+    clearBackupAutoHideTimer();
     if (_backupRevealActive && typeof setTimeout === 'function') {
       _backupAutoHideTimer = setTimeout(() => {
         setBackupRevealState(false);
@@ -501,10 +505,12 @@
       { label: t('Pearl (PRL) 私钥', 'Pearl (PRL) Private Key'), val: wallet.privateKeyHex, secret: true }
     ];
 
+    clearBackupAutoHideTimer();
+    _backupRevealActive = false;
+    _lastBackupRows = rows;
+    openSheet('sheet-backup');
     const container = $('backup-keys-content');
     if (container) {
-      _backupRevealActive = false;
-      _lastBackupRows = rows;
       const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
       if (fw && typeof fw.mountBackupSecretsPanel === 'function') {
         fw.mountBackupSecretsPanel(container, {
@@ -536,7 +542,6 @@
       `).join('');
       }
     }
-    openSheet('sheet-backup');
   }
 
   function copyTextValue(val, label, evOrEl = null) {

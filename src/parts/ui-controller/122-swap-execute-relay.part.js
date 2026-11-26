@@ -13,6 +13,7 @@
               amountRaw,
               slippageBps: st.swap.slippageBps
             });
+        advanceStep(0, 'active');
         const s1Tx = await contracts.executeSolanaJupiterSwap({
           wallet,
           quoteResponse: s1Quote,
@@ -20,6 +21,7 @@
           tokenBalance: avail,
           inputDecimals: fromToken.decimals
         });
+        advanceStep(0, 'done', { txHash: s1Tx?.txHash, chain: 'sol' });
         recordWalletActivity(wallet, {
           type: 'swap',
           symbol: fromToken.symbol,
@@ -48,6 +50,7 @@
 
         let stage2Live;
         let sendSolTx;
+        advanceStep(1, 'active');
         try {
           stage2Live = await intents.quoteIntentSwapOrWithdraw({
             originAsset: 'nep141:sol.omft.near',
@@ -124,6 +127,9 @@
         });
         renderSwapOrderCard();
         startOrderStatusPolling();
+        advanceStep(1, 'done', { txHash: sendSolTx.txHash, chain: 'sol' });
+        if (flowPlan.steps.length > 2) advanceStep(2, 'active');
+        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
         showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
         return;
       }
@@ -148,10 +154,14 @@
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建第一阶段跨链订单失败', 'Failed to create Stage 1 SOL order'));
         }
+        advanceStep(0, 'active');
         const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt: amtStr, avail, depositAddress: liveQuote.depositAddress, gasOverride: originGasOverride });
         if (!txRes || !txRes.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
+        advanceStep(0, 'done', { txHash: txRes.txHash, chain: fromToken.blockchain });
+        if (flowPlan.steps.length > 1) advanceStep(1, 'active');
+        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
         const solReserve = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', activeQuote).selectedReserve;
         st.swap.activeOrder = {
           walletId: wallet.id,
@@ -215,10 +225,14 @@
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建 EVM 第一阶段跨链订单失败', 'Failed to create Stage 1 EVM order'));
         }
+        advanceStep(0, 'active');
         const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt: amtStr, avail, depositAddress: liveQuote.depositAddress, gasOverride: originGasOverride });
         if (!txRes || !txRes.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
+        advanceStep(0, 'done', { txHash: txRes.txHash, chain: fromToken.blockchain });
+        if (flowPlan.steps.length > 1) advanceStep(1, 'active');
+        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
         const evmReserve = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', activeQuote).selectedReserve;
         st.swap.activeOrder = {
           walletId: wallet.id,
@@ -279,6 +293,7 @@
           throw new Error(t('无法读取 Arc 网络初始余额，请稍后重试', 'Failed to read pre-bridge Arc balance; please retry'));
         }
         let bridgeResTx = null;
+        advanceStep(0, 'active');
         if (bQuote && bQuote.provider === 'LI.FI' && bQuote.transactionRequest) {
           const lRes = await contracts.executeEvmDexSwap({
             wallet,
@@ -308,6 +323,9 @@
           if (!liveRelay.ok || !liveRelay.steps?.length) throw new Error(liveRelay.error || t('跨链服务暂时不可用，请稍后重试', 'Cross-chain service temporarily unavailable'));
           bridgeResTx = await contracts.executeEvmRawSteps({ wallet, chainKey: origChain, steps: liveRelay.steps });
         }
+        advanceStep(0, 'done', { txHash: bridgeResTx.txHash, chain: origChain });
+        if (flowPlan.steps.length > 1) advanceStep(1, 'active');
+        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
         recordWalletActivity(wallet, {
           type: 'swap',
           symbol: fromToken.symbol,
@@ -367,10 +385,14 @@
         if (!liveQuote.ok || !liveQuote.depositAddress) {
           throw new Error(liveQuote.error || t('创建 Base USDC 中转订单失败', 'Failed to create Base USDC stage 1 order'));
         }
+        advanceStep(0, 'active');
         const txRes = await broadcastOriginDepositTx({ wallet, fromToken, amt: amtStr, avail, depositAddress: liveQuote.depositAddress, gasOverride: originGasOverride });
         if (!txRes || !txRes.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
+        advanceStep(0, 'done', { txHash: txRes.txHash, chain: fromToken.blockchain });
+        if (flowPlan.steps.length > 1) advanceStep(1, 'active');
+        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
         const arcDestLower = String(toToken.contractAddress || intents.ARC_USDC_CONTRACT).toLowerCase();
         const needsArcDexSwap = Boolean(
           toToken.contractAddress &&
@@ -431,8 +453,10 @@
           ? intents.ARC_USDC_CONTRACT
           : fromToken.contractAddress;
         let arcUsdcRaw = amountRaw;
+        let arcStep = 0;
         const isArcSwapStage1 = srcContract.toLowerCase() !== intents.ARC_USDC_CONTRACT.toLowerCase();
         if (isArcSwapStage1) {
+          advanceStep(arcStep, 'active');
           const preArcRes = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
           const preArcWei = BigInt(preArcRes?.nativeRaw || '0');
           const s1Q = activeQuote.stage1DexQuote?.routeData
@@ -492,6 +516,8 @@
             throw new Error(t('Arc 主网兑换后 USDC 余额不足以发起跨链', 'Insufficient Arc USDC after swap to bridge'));
           }
           arcUsdcRaw = bridgeArc6.toString();
+          advanceStep(arcStep, 'done', { txHash: s1Tx?.txHash, chain: 'arc' });
+          arcStep += 1;
         }
         const hasStage3 = Boolean(activeQuote.stage3Quote);
         const validRecipEvm = recipient && /^0x[0-9a-fA-F]{40}$/.test(recipient) ? recipient : evmAddr;
@@ -505,6 +531,7 @@
         let rTx = null;
         let bridgeOutRaw = String(activeQuote.baseOutRaw || arcUsdcRaw);
         const arcBQuote = activeQuote.bridgeQuote;
+        advanceStep(arcStep, 'active');
         try {
           if (arcBQuote && arcBQuote.provider === 'LI.FI' && arcBQuote.transactionRequest && bridgeRecip.toLowerCase() === evmAddr.toLowerCase()) {
             rTx = await contracts.executeEvmDexSwap({
@@ -561,6 +588,9 @@
           }
           throw arcStage2Err;
         }
+        advanceStep(arcStep, 'done', { txHash: rTx.txHash, chain: 'arc' });
+        if (hasStage3 && arcStep + 1 < flowPlan.steps.length) advanceStep(arcStep + 1, 'active');
+        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
         recordWalletActivity(wallet, {
           type: 'swap',
           symbol: fromToken.symbol,
@@ -642,6 +672,7 @@
       }
 
       // Broadcast FIRST before displaying any order tracking card
+      advanceStep(0, 'active');
       const txRes = await broadcastOriginDepositTx({
         wallet,
         fromToken,
@@ -653,6 +684,9 @@
       if (!txRes || !txRes.txHash) {
         throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
       }
+      advanceStep(0, 'done', { txHash: txRes.txHash, chain: fromToken.blockchain });
+      if (flowPlan.steps.length > 1) advanceStep(1, 'active');
+      stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
 
       let followUpRefSwap = null;
       if (isPearlToNearRef) {
@@ -762,6 +796,13 @@
       _swapAbortedOrFailed = true;
       st.swap._executing = false;
       const friendly = toUserFriendlyError(err, '兑换失败，请稍后重试', 'Swap failed. Please try again.');
+      if (typeof stepper !== 'undefined' && stepper) {
+        stepper.setStep(typeof _activeStepIdx === 'number' ? _activeStepIdx : 0, 'error', { error: friendly });
+        stepper.finish(false, {
+          text: friendly,
+          resumable: Boolean(st.swap.activeOrder && st.swap.activeOrder.followUpFailed)
+        });
+      }
       setSwapError(friendly);
       showToast(friendly);
     } finally {

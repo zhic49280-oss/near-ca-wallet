@@ -261,6 +261,10 @@
                   positions: mergedPositions,
                   openOrders: nextAcct.openOrders || mergedOrders
                 };
+                if (hip3Positions.length > 0 && (Date.now() - _lastHip3SyncAt > 15_000)) {
+                  _lastHip3SyncAt = Date.now();
+                  refreshPerpDataAsync(false).catch(() => {});
+                }
               } else if (incomingOrders !== null) {
                 const positions = Array.isArray(prevAcct.positions) ? prevAcct.positions.map((p) => ({ ...p })) : [];
                 if (hl && typeof hl.attachTpslOrdersToPositions === 'function') {
@@ -319,6 +323,7 @@
   }
 
   let _perpRefreshInFlight = null;
+  let _lastHip3SyncAt = 0;
 
   async function refreshPerpDataAsync(force = false) {
     if (!force && _perpRefreshInFlight) {
@@ -366,6 +371,7 @@
         if (acct) {
           st.perp.account = acct;
           st.perp.lastAccountSyncTs = Date.now();
+          _lastHip3SyncAt = Date.now();
         }
         if (typeof st.saveCachedPerpSnapshot === 'function') {
           st.saveCachedPerpSnapshot({
@@ -844,11 +850,41 @@
     }
     const sideLabel = isBuy ? t('做多', 'Long') : t('做空', 'Short');
     const confirmLabel = `${t('确认合约下单', 'Confirm Perp Order')}: ${sideLabel} ${formatPerpDisplayPair(market.name)} ${st.perp.leverage}x · ${evalRes.sizeNum}`;
+    const orderTypeLabel = isLimitOrder
+      ? (oTypeVal === 'post_only' ? t('只做 Maker', 'Post Only') : t('限价', 'Limit'))
+      : t('市价', 'Market');
+    const orderSteps = [{ title: t('签名并提交合约委托', 'Sign & submit perp order'), chain: 'hype' }];
+    const orderPreview = {
+      title: t('确认合约下单', 'Confirm Perp Order'),
+      subtitle: `${formatPerpDisplayPair(market.name)} · ${sideLabel} ${st.perp.leverage}x`,
+      networkPath: 'Hyperliquid',
+      detailRows: [
+        { label: t('方向', 'Side'), value: sideLabel, tone: isBuy ? 'emerald' : 'rose' },
+        { label: t('委托类型', 'Order Type'), value: orderTypeLabel },
+        { label: t('委托数量', 'Size'), value: `${evalRes.sizeNum} ${formatPerpBaseSymbol(market.name)}`, mono: true },
+        { label: t('参考价格', 'Price'), value: refPx > 0 ? `$${formatPerpPx(refPx)}` : t('市价', 'Market'), mono: true },
+        { label: t('杠杆与模式', 'Leverage'), value: `${st.perp.leverage}x (${st.perp.marginMode === 'isolated' ? t('逐仓', 'Isolated') : t('全仓', 'Cross')})` },
+        ...(evalRes.marginNeeded > 0 ? [{ label: t('预计保证金', 'Est. Margin'), value: `$${Number(evalRes.marginNeeded).toFixed(2)} USDC`, mono: true }] : []),
+        ...(tpNum ? [{ label: t('止盈价', 'Take Profit'), value: `$${formatPerpPx(tpNum)}`, mono: true, tone: 'emerald' }] : []),
+        ...(slNum ? [{ label: t('止损价', 'Stop Loss'), value: `$${formatPerpPx(slNum)}`, mono: true, tone: 'rose' }] : [])
+      ],
+      confirmLabel: t('确认下单', 'Confirm Order'),
+      steps: orderSteps
+    };
     st.perp.submitting = true;
     st.perp.errorMsg = '';
     renderPerpView();
+    let stepper = null;
     try {
-      if (!(await verifySecurityAuthAsync(wallet, confirmLabel))) return;
+      if (typeof openTxPreviewModalAsync === 'function' && !(await openTxPreviewModalAsync(orderPreview))) return;
+      if (!(await verifySecurityAuthAsync(wallet, confirmLabel))) {
+        if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+        return;
+      }
+      stepper = typeof createTxStepperController === 'function'
+        ? createTxStepperController(t('正在提交合约委托', 'Submitting Perp Order'), orderSteps)
+        : null;
+      if (stepper) stepper.setStep(0, 'active');
       await ensureEthersLoaded();
       const oType = st.perp.orderType || 'market';
       const tif = st.perp.tif || (oType === 'post_only' ? 'Alo' : (oType === 'limit' ? 'Gtc' : 'Ioc'));
@@ -856,7 +892,7 @@
       const avail = st.perp.account ? Number(st.perp.account.availableMargin || 0) : null;
       const openPos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === market.name);
       const levUnchanged = openPos && Number(openPos.leverageValue) === Number(st.perp.leverage) && openPos.leverageType === st.perp.marginMode;
-      await hl.placeHlPerpOrder({
+      const orderRes = await hl.placeHlPerpOrder({
         wallet,
         market,
         isBuy,
@@ -872,6 +908,10 @@
         slPrice: slNum,
         availableMargin: avail
       });
+      if (stepper) {
+        stepper.setStep(0, 'done', { txHash: (orderRes && orderRes.txHash) || '', chain: 'hype' });
+        stepper.finish(true, t('合约委托已提交', 'Perp order submitted'));
+      }
       resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
       showToast(`✅ ${t('合约委托已提交', 'Perp order submitted')}`);
       await refreshPerpDataAsync(false).catch(() => {});
@@ -880,6 +920,10 @@
       st.perp.errorMsg = /does not exist/i.test(rawMsg)
         ? t('合约账户尚未激活，请先充值 USDC', 'Perp account not activated; please deposit USDC first')
         : formatPerpError(err, '下单失败，请稍后重试', 'Order failed. Please try again.');
+      if (stepper) {
+        stepper.setStep(0, 'error', { error: st.perp.errorMsg });
+        stepper.finish(false, st.perp.errorMsg);
+      }
       showToast(st.perp.errorMsg);
     } finally {
       st.perp.submitting = false;
@@ -896,11 +940,34 @@
     const pos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === coin);
     let market = (st.perp.markets || []).find((m) => m.name === coin);
     if (!pos) return;
+    const closeSteps = [{ title: t('市价平仓委托', 'Submit market close order'), chain: 'hype' }];
+    const pnlVal = Number(pos.unrealizedPnl);
+    const closePreview = {
+      title: t('确认市价平仓', 'Confirm Market Close'),
+      subtitle: `${formatPerpDisplayPair(coin)} · ${pos.isLong ? t('平多', 'Close Long') : t('平空', 'Close Short')}`,
+      networkPath: 'Hyperliquid',
+      detailRows: [
+        { label: t('仓位数量', 'Position Size'), value: `${Math.abs(Number(pos.szi || 0))} ${formatPerpBaseSymbol(coin)}`, mono: true },
+        { label: t('开仓均价', 'Entry Price'), value: pos.entryPx ? `$${formatPerpPx(pos.entryPx)}` : '--', mono: true },
+        { label: t('未实现盈亏', 'Unrealized PnL'), value: Number.isFinite(pnlVal) ? `${pnlVal >= 0 ? '+' : ''}$${pnlVal.toFixed(2)}` : '--', mono: true, tone: pnlVal >= 0 ? 'emerald' : 'rose' }
+      ],
+      confirmLabel: t('确认平仓', 'Close Position'),
+      steps: closeSteps
+    };
     _perpTradeActionBusy = true;
     st.perp.actionBusyKey = `close:${coin}`;
     renderPerpBottomList();
+    let stepper = null;
     try {
-      if (!(await verifySecurityAuthAsync(wallet, `${t('确认市价平仓', 'Confirm Market Close')}: ${formatPerpDisplayPair(coin)}`))) return;
+      if (typeof openTxPreviewModalAsync === 'function' && !(await openTxPreviewModalAsync(closePreview))) return;
+      if (!(await verifySecurityAuthAsync(wallet, `${t('确认市价平仓', 'Confirm Market Close')}: ${formatPerpDisplayPair(coin)}`))) {
+        if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+        return;
+      }
+      stepper = typeof createTxStepperController === 'function'
+        ? createTxStepperController(t('正在市价平仓', 'Closing Position'), closeSteps)
+        : null;
+      if (stepper) stepper.setStep(0, 'active');
       await ensureEthersLoaded();
       if (!market) {
         const mkts = await hl.fetchHlMarkets();
@@ -908,11 +975,20 @@
         market = mkts.find((m) => m.name === coin);
       }
       if (!market) throw new Error(t('未找到对应合约市场', 'Market metadata unavailable'));
-      await hl.closeHlPositionMarket({ wallet, market, position: pos });
+      const closeRes = await hl.closeHlPositionMarket({ wallet, market, position: pos });
+      if (stepper) {
+        stepper.setStep(0, 'done', { txHash: (closeRes && closeRes.txHash) || '', chain: 'hype' });
+        stepper.finish(true, `${formatPerpDisplayPair(coin)} ${t('已市价平仓', 'position closed')}`);
+      }
       showToast(`✅ ${formatPerpDisplayPair(coin)} ${t('已市价平仓', 'position closed')}`);
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
-      showToast(formatPerpError(err, '平仓失败，请稍后重试', 'Close failed. Please try again.'));
+      const msg = formatPerpError(err, '平仓失败，请稍后重试', 'Close failed. Please try again.');
+      if (stepper) {
+        stepper.setStep(0, 'error', { error: msg });
+        stepper.finish(false, msg);
+      }
+      showToast(msg);
     } finally {
       _perpTradeActionBusy = false;
       st.perp.actionBusyKey = '';
@@ -1003,11 +1079,32 @@
     if (!hl || !wallet || !coin) return;
     const pos = st.perp.account && (st.perp.account.positions || []).find((p) => p.coin === coin);
     if (!pos) return;
+    const reverseSteps = [{ title: t('市价平仓并反向开仓', 'Close current & open reverse position'), chain: 'hype' }];
+    const reversePreview = {
+      title: t('确认反手开仓', 'Confirm Reverse Position'),
+      subtitle: `${formatPerpDisplayPair(coin)} · ${pos.isLong ? t('多转空', 'Long → Short') : t('空转多', 'Short → Long')}`,
+      networkPath: 'Hyperliquid',
+      detailRows: [
+        { label: t('反手数量', 'Reverse Size'), value: `${Math.abs(Number(pos.szi || 0))} ${formatPerpBaseSymbol(coin)}`, mono: true },
+        { label: t('杠杆倍数', 'Leverage'), value: `${pos.leverageValue || '--'}x` }
+      ],
+      confirmLabel: t('确认反手', 'Reverse Position'),
+      steps: reverseSteps
+    };
     _perpTradeActionBusy = true;
     st.perp.actionBusyKey = `reverse:${coin}`;
     renderPerpBottomList();
+    let stepper = null;
     try {
-      if (!(await verifySecurityAuthAsync(wallet, `${t('确认反手开仓', 'Confirm Reverse Position')}: ${formatPerpDisplayPair(coin)}`))) return;
+      if (typeof openTxPreviewModalAsync === 'function' && !(await openTxPreviewModalAsync(reversePreview))) return;
+      if (!(await verifySecurityAuthAsync(wallet, `${t('确认反手开仓', 'Confirm Reverse Position')}: ${formatPerpDisplayPair(coin)}`))) {
+        if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+        return;
+      }
+      stepper = typeof createTxStepperController === 'function'
+        ? createTxStepperController(t('正在反手开仓', 'Reversing Position'), reverseSteps)
+        : null;
+      if (stepper) stepper.setStep(0, 'active');
       await ensureEthersLoaded();
       let market = (st.perp.markets || []).find((m) => m.name === coin);
       if (!market) {
@@ -1017,11 +1114,20 @@
       }
       if (!market) throw new Error(t('未找到对应合约市场', 'Market metadata unavailable'));
       const avail = st.perp.account ? Number(st.perp.account.availableMargin || 0) : null;
-      await hl.reverseHlPositionMarket({ wallet, market, position: pos, availableMargin: avail });
+      const revRes = await hl.reverseHlPositionMarket({ wallet, market, position: pos, availableMargin: avail });
+      if (stepper) {
+        stepper.setStep(0, 'done', { txHash: (revRes && revRes.txHash) || '', chain: 'hype' });
+        stepper.finish(true, `${formatPerpDisplayPair(coin)} ${t('已反手开仓', 'position reversed')}`);
+      }
       showToast(`✅ ${formatPerpDisplayPair(coin)} ${t('已反手开仓', 'position reversed')}`);
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
-      showToast(formatPerpError(err, '反手开仓失败，请稍后重试', 'Reverse failed. Please try again.'));
+      const msg = formatPerpError(err, '反手开仓失败，请稍后重试', 'Reverse failed. Please try again.');
+      if (stepper) {
+        stepper.setStep(0, 'error', { error: msg });
+        stepper.finish(false, msg);
+      }
+      showToast(msg);
     } finally {
       _perpTradeActionBusy = false;
       st.perp.actionBusyKey = '';

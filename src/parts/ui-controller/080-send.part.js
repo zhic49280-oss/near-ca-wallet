@@ -921,7 +921,19 @@
         authReason = `${t('确认跨链发送', 'Confirm cross-chain send')} ${exactAmt} ${asset.symbol} → ~${formatBal(Number(outHuman), 6)} ${preDestAsset.symbol || asset.symbol}`;
       }
 
-      if (!(await verifySecurityAuthAsync(wallet, authReason))) return;
+      const sendPlan = typeof buildSendTxFlowPlan === 'function'
+        ? buildSendTxFlowPlan({ asset, exactAmt, amountNum, recipient, isSameChain, detectedNet, targetEvmChain, preDestAsset, preQuotedCross, gasPlan })
+        : null;
+      if (sendPlan && typeof openTxPreviewModalAsync === 'function' && !(await openTxPreviewModalAsync(sendPlan.previewConfig))) return;
+
+      if (!(await verifySecurityAuthAsync(wallet, authReason))) {
+        if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+        return;
+      }
+      const sendStepper = sendPlan && typeof createTxStepperController === 'function'
+        ? createTxStepperController(t('正在发送转账', 'Sending Transfer'), sendPlan.steps)
+        : null;
+      if (sendStepper) sendStepper.setStep(0, 'active');
       if (isEvmOrigin) await ensureEthersLoaded();
       await contracts.ensureWalletSigningKeysAsync(wallet);
 
@@ -969,6 +981,10 @@
         };
         recordWalletActivity(wallet, activityItem);
         const sentMsg = t('转账已发出', 'Transfer sent');
+        if (sendStepper) {
+          sendStepper.setStep(0, 'done', { txHash: sent.txHash, chain: asset.blockchain });
+          sendStepper.finish(true, sentMsg);
+        }
         if (typeof renderSendTxReceipt === 'function') {
           renderSendTxReceipt({ chain: asset.blockchain, symbol: asset.symbol, amount: netSent, recipient, txHash: sent.txHash, statusText: sentMsg, activityItem });
         } else {
@@ -993,6 +1009,10 @@
         throw new Error(t(`暂不支持从 ${String(asset.blockchain || '').toUpperCase()} 发起跨链发送`, `Cross-chain send from ${String(asset.blockchain || '').toUpperCase()} is unavailable`));
       }
 
+      if (sendStepper) {
+        sendStepper.setStep(0, 'done', { txHash: depositTxHash, chain: asset.blockchain });
+        sendStepper.setStep(1, 'active');
+      }
       const nearSenderAccount = wallet.nearNamedAccount || wallet.nearAddress;
       await intents.submitExternalDepositTxHash({
         depositAddress: quote.depositAddress,
@@ -1028,6 +1048,10 @@
       };
       recordWalletActivity(wallet, crossActivityItem);
       const crossMsg = t('跨链处理中，预计几分钟到账', 'Cross-chain transfer processing, arriving in a few minutes');
+      if (sendStepper) {
+        sendStepper.setStep(1, 'done');
+        sendStepper.finish(true, crossMsg);
+      }
       if (typeof renderSendTxReceipt === 'function') {
         renderSendTxReceipt({ chain: asset.blockchain, symbol: asset.symbol, amount: amountNum, recipient, txHash: depositTxHash, statusText: crossMsg, activityItem: crossActivityItem });
       } else {
@@ -1036,7 +1060,11 @@
       showToast(`✅ ${crossMsg}: ${shortenAddr(depositTxHash)}`);
       refreshAllBalancesAsync(false);
     } catch (err) {
-      showToast(toUserFriendlyError(err, '转账失败，请重试', 'Transfer failed. Please try again.'));
+      const errMsg = toUserFriendlyError(err, '转账失败，请重试', 'Transfer failed. Please try again.');
+      if (typeof closeTxFlowModal === 'function' && $('sheet-tx-flow')?.classList.contains('open')) {
+        closeTxFlowModal();
+      }
+      showToast(errMsg);
     } finally {
       _sendExecuting = false;
       if (btn) {

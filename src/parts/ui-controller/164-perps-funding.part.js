@@ -488,6 +488,27 @@
       return;
     }
     const avail = Number(entry.balance || 0);
+    const originChainName = typeof getTxFlowChainName === 'function' ? getTxFlowChainName(entry.blockchain) : String(entry.blockchain || '').toUpperCase();
+    const fq = st.perp.fundingQuote;
+    const estOutStr = fq && fq.amountOutFormatted
+      ? `${typeof formatTxFlowNum === 'function' ? formatTxFlowNum(fq.amountOutFormatted, 4) : fq.amountOutFormatted} USDC`
+      : '-- USDC';
+    const ocSteps = [
+      { title: t(`从 ${originChainName} 发送 ${entry.symbol}`, `Send ${entry.symbol} from ${originChainName}`), chain: entry.blockchain },
+      { title: t('跨链结算至 Hyperliquid 账户', 'Settle to Hyperliquid account'), chain: 'hype' }
+    ];
+    const ocPreview = {
+      title: t('确认合约跨链充值', 'Confirm Perp Cross-Chain Deposit'),
+      subtitle: `${entry.symbol} → Hyperliquid USDC`,
+      payLabel: t('充值支付', 'Deposit Pay'),
+      payAmountText: `${rawAmtStr || amt} ${entry.symbol}`,
+      receiveLabel: t('预计到账', 'Est. Arrival'),
+      receiveAmountText: estOutStr,
+      networkPath: `${originChainName} → Hyperliquid`,
+      feeText: t('由网络自动扣除', 'Network auto-calculated'),
+      confirmLabel: t('确认充值', 'Confirm Deposit'),
+      steps: ocSteps
+    };
     _perpFundingBusy = true;
     const btn = $('btn-perp-oc-deposit');
     const prevBtnTxt = btn ? btn.textContent : '';
@@ -495,9 +516,19 @@
       btn.disabled = true;
       btn.textContent = t('充值提交中...', 'Depositing...');
     }
+    let stepper = null;
+    let activeStepIdx = 0;
     try {
+      if (typeof openTxPreviewModalAsync === 'function' && !(await openTxPreviewModalAsync(ocPreview))) return;
       const authed = await verifySecurityAuthAsync(wallet, `${t('跨链充值至 Hyperliquid', 'Cross-chain deposit to Hyperliquid')} (${rawAmtStr || amt} ${entry.symbol})`);
-      if (!authed) return;
+      if (!authed) {
+        if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+        return;
+      }
+      stepper = typeof createTxStepperController === 'function'
+        ? createTxStepperController(t('正在跨链充值至合约', 'Depositing to Perp'), ocSteps)
+        : null;
+      if (stepper) stepper.setStep(0, 'active');
       await ensureEthersLoaded();
       const q = await hl.quoteOneClickDepositToHlSpot({ wallet, originToken: entry, amount: amtExact, dry: false });
       if (!q || !q.ok || !q.depositAddress) throw new Error((q && q.error) || t('获取跨链充值路由失败', 'Failed to get deposit route'));
@@ -541,6 +572,12 @@
         })).txHash;
       }
 
+      if (stepper) {
+        stepper.setStep(0, 'done', { txHash, chain: entry.blockchain });
+        activeStepIdx = 1;
+        stepper.setStep(1, 'active');
+      }
+
       if (txHash) {
         recordWalletActivity(wallet, {
           type: 'send',
@@ -553,6 +590,10 @@
         });
         await intents.submitExternalDepositTxHash({ depositAddress: q.depositAddress, txHash, nearSenderAccount: wallet.nearNamedAccount || wallet.nearAddress }).catch(() => {});
       }
+      if (stepper) {
+        stepper.setStep(1, 'done');
+        stepper.finish(true, t('跨链充值已发送，正在后台追踪到账状态', 'Deposit sent; tracking arrival in background'));
+      }
       startPerpOneClickDepositPolling(q.depositAddress);
       resetFormFields(['perp-oc-amount', 'perp-arb-amount', 'perp-withdraw-amount']);
       st.perp.fundingQuote = null;
@@ -562,6 +603,10 @@
       refreshAllBalancesAsync(false);
     } catch (err) {
       st.perp.fundingQuoteError = formatPerpError(err, '跨链充值失败，请稍后重试', 'Deposit failed. Please try again.');
+      if (stepper) {
+        stepper.setStep(activeStepIdx, 'error', { error: st.perp.fundingQuoteError });
+        stepper.finish(false, st.perp.fundingQuoteError);
+      }
       evaluatePerpOneClickUI();
       showToast(st.perp.fundingQuoteError);
     } finally {
@@ -588,6 +633,19 @@
     const rawAmtStr = String($('perp-arb-amount')?.value || '').trim();
     const amt = Number(rawAmtStr || 0);
     const amtExact = /^\d+(\.\d+)?$/.test(rawAmtStr) ? rawAmtStr : amt;
+    const arbSteps = [{ title: t('向 Hyperliquid 桥接合约转入 USDC', 'Deposit USDC to Hyperliquid bridge'), chain: 'arb' }];
+    const arbPreview = {
+      title: t('确认 Arbitrum 充值', 'Confirm Arbitrum Deposit'),
+      subtitle: `${rawAmtStr || amt} USDC → Hyperliquid`,
+      payLabel: t('充值数量', 'Deposit Amount'),
+      payAmountText: `${rawAmtStr || amt} USDC`,
+      receiveLabel: t('预计到账', 'Est. Arrival'),
+      receiveAmountText: `${rawAmtStr || amt} USDC`,
+      networkPath: 'Arbitrum → Hyperliquid',
+      feeText: t('由 Arbitrum 网络扣除 ETH Gas', 'Arbitrum ETH gas'),
+      confirmLabel: t('确认充值', 'Confirm Deposit'),
+      steps: arbSteps
+    };
     _perpFundingBusy = true;
     const btn = $('btn-perp-arb-deposit');
     const prevBtnTxt = btn ? btn.textContent : '';
@@ -595,11 +653,24 @@
       btn.disabled = true;
       btn.textContent = t('提交充值中...', 'Depositing...');
     }
+    let stepper = null;
     try {
+      if (typeof openTxPreviewModalAsync === 'function' && !(await openTxPreviewModalAsync(arbPreview))) return;
       const authed = await verifySecurityAuthAsync(wallet, `${t('Arbitrum 充值 USDC 至 Hyperliquid', 'Deposit Arbitrum USDC to Hyperliquid')} (${rawAmtStr || amt} USDC)`);
-      if (!authed) return;
+      if (!authed) {
+        if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+        return;
+      }
+      stepper = typeof createTxStepperController === 'function'
+        ? createTxStepperController(t('正在提交 Arbitrum 充值', 'Depositing via Arbitrum'), arbSteps)
+        : null;
+      if (stepper) stepper.setStep(0, 'active');
       await ensureEthersLoaded();
       const res = await hl.depositArbUsdcToHlBridge({ wallet, amount: amtExact });
+      if (stepper) {
+        stepper.setStep(0, 'done', { txHash: (res && res.txHash) || '', chain: 'arb' });
+        stepper.finish(true, t('Arbitrum 充值已提交 (约 1~2 分钟到账)', 'Arbitrum deposit sent (~1-2 min arrival)'));
+      }
       if (res && res.txHash) {
         recordWalletActivity(wallet, {
           type: 'send',
@@ -618,7 +689,12 @@
       setTimeout(() => refreshPerpDataAsync(false).catch(() => {}), 20000).unref?.();
       setTimeout(() => refreshPerpDataAsync(false).catch(() => {}), 60000).unref?.();
     } catch (err) {
-      showToast(formatPerpError(err, 'Arbitrum 充值失败，请稍后重试', 'Arbitrum deposit failed. Please try again.'));
+      const msg = formatPerpError(err, 'Arbitrum 充值失败，请稍后重试', 'Arbitrum deposit failed. Please try again.');
+      if (stepper) {
+        stepper.setStep(0, 'error', { error: msg });
+        stepper.finish(false, msg);
+      }
+      showToast(msg);
     } finally {
       _perpFundingBusy = false;
       if (btn) {
@@ -642,6 +718,17 @@
     }
     const amt = Number($('perp-withdraw-amount')?.value || 0);
     const withdrawable = st.perp.account ? Number(st.perp.account.withdrawable || 0) : 0;
+    const wdSteps = [{ title: t('签名提交 Hyperliquid 提现至 Arbitrum', 'Sign & submit withdrawal to Arbitrum'), chain: 'hype' }];
+    const wdPreview = {
+      title: t('确认合约提现', 'Confirm Perp Withdrawal'),
+      subtitle: `${amt} USDC → Arbitrum`,
+      payLabel: t('提现金额', 'Withdraw Amount'),
+      payAmountText: `${amt} USDC`,
+      networkPath: 'Hyperliquid → Arbitrum',
+      feeText: t('由 Hyperliquid 扣除标准跨链费', 'Hyperliquid standard bridge fee'),
+      confirmLabel: t('确认提现', 'Confirm Withdraw'),
+      steps: wdSteps
+    };
     _perpFundingBusy = true;
     const btn = $('btn-perp-withdraw');
     const prevBtnTxt = btn ? btn.textContent : '';
@@ -649,17 +736,35 @@
       btn.disabled = true;
       btn.textContent = t('提现提交中...', 'Withdrawing...');
     }
+    let stepper = null;
     try {
+      if (typeof openTxPreviewModalAsync === 'function' && !(await openTxPreviewModalAsync(wdPreview))) return;
       const authed = await verifySecurityAuthAsync(wallet, t('提现 USDC 至 Arbitrum 钱包', 'Withdraw USDC to Arbitrum wallet'));
-      if (!authed) return;
+      if (!authed) {
+        if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+        return;
+      }
+      stepper = typeof createTxStepperController === 'function'
+        ? createTxStepperController(t('正在提交合约提现', 'Submitting Withdrawal'), wdSteps)
+        : null;
+      if (stepper) stepper.setStep(0, 'active');
       await ensureEthersLoaded();
-      await hl.withdrawHlToArbitrum({ wallet, amount: amt, withdrawable });
+      const wdRes = await hl.withdrawHlToArbitrum({ wallet, amount: amt, withdrawable });
+      if (stepper) {
+        stepper.setStep(0, 'done', { txHash: (wdRes && wdRes.txHash) || '', chain: 'hype' });
+        stepper.finish(true, t('提现请求已提交至 Arbitrum (约几分钟到账)', 'Withdrawal submitted to Arbitrum'));
+      }
       showToast(`✅ ${t('提现请求已提交至 Arbitrum (约几分钟到账)', 'Withdrawal submitted to Arbitrum')}`);
       resetFormFields(['perp-oc-amount', 'perp-arb-amount', 'perp-withdraw-amount']);
       closeAllSheets();
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
-      showToast(formatPerpError(err, '提现失败，请稍后重试', 'Withdrawal failed. Please try again.'));
+      const msg = formatPerpError(err, '提现失败，请稍后重试', 'Withdrawal failed. Please try again.');
+      if (stepper) {
+        stepper.setStep(0, 'error', { error: msg });
+        stepper.finish(false, msg);
+      }
+      showToast(msg);
     } finally {
       _perpFundingBusy = false;
       if (btn) {

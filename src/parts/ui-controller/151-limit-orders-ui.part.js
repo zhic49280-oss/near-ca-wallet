@@ -540,17 +540,92 @@
     const actionTitle = btnState.action === 'approve'
       ? t(`授权 ${sellToken.symbol}`, `Approve ${sellToken.symbol}`)
       : `${t(`提交 ${sellToken.symbol} → ${buyToken.symbol} 限价单`, `Place ${sellToken.symbol} → ${buyToken.symbol} Limit Order`)}${worsePromptSuffix}`;
+    const sellAmtNum = Number(st.limit.amountIn);
+    const rateNum = Number(st.limit.targetRate);
+    const sellPrice = (typeof sellToken.price === 'number' && sellToken.price > 0) ? sellToken.price : getSymbolPrice(sellToken.symbol === 'wNEAR' ? 'NEAR' : sellToken.symbol);
+    const sellUsd = sellPrice ? sellAmtNum * sellPrice : null;
+    const buyPrice = (typeof buyToken.price === 'number' && buyToken.price > 0) ? buyToken.price : getSymbolPrice(buyToken.symbol === 'wNEAR' ? 'NEAR' : buyToken.symbol);
+    const buyAmtNum = sellAmtNum > 0 && rateNum > 0 ? sellAmtNum * rateNum : 0;
+    const buyUsd = buyPrice && buyAmtNum > 0 ? buyAmtNum * buyPrice : null;
+    const chainName = typeof getTxFlowChainName === 'function' ? getTxFlowChainName(chain) : String(chain || '').toUpperCase();
+    const limitFeeText = chain === 'near'
+      ? '< 0.02 NEAR'
+      : (chain === 'sol' ? '≈ 0.0005 SOL' : t('由网络自动扣除', 'Network auto-calculated'));
+    const expiryLabel = chain === 'near'
+      ? t('长期有效（成交或撤单前）', 'Good til cancelled')
+      : `${Number(st.limit.expiryDays) || 7} ${t('天', 'days')}`;
+    const flowSteps = btnState.action === 'approve'
+      ? [
+          { title: t(`授权 ${sellToken.symbol} 交易额度`, `Approve ${sellToken.symbol} allowance`), chain },
+          { title: t('确认链上授权生效', 'Confirm allowance on-chain'), chain }
+        ]
+      : [
+          { title: t(`提交 ${sellToken.symbol} → ${buyToken.symbol} 限价单`, `Submit ${sellToken.symbol} → ${buyToken.symbol} limit order`), chain }
+        ];
+    const previewConfig = btnState.action === 'approve'
+      ? {
+          title: t('确认授权代币', 'Confirm Token Approval'),
+          subtitle: `${sellToken.symbol} · ${chainName}`,
+          networkPath: chainName,
+          feeText: limitFeeText,
+          detailRows: [
+            { label: t('授权代币', 'Token'), value: sellToken.symbol },
+            { label: t('所属网络', 'Network'), value: chainName }
+          ],
+          confirmLabel: t('确认授权', 'Confirm Approve'),
+          steps: flowSteps
+        }
+      : {
+          title: t('确认限价单', 'Confirm Limit Order'),
+          subtitle: `${sellToken.symbol} → ${buyToken.symbol}`,
+          rateLabel: t('目标限价', 'Limit Price'),
+          rateText: `1 ${sellToken.symbol} = ${typeof formatTxFlowNum === 'function' ? formatTxFlowNum(rateNum, 6) : rateNum} ${buyToken.symbol}`,
+          payLabel: t('卖出数量', 'Sell Amount'),
+          payAmountText: `${st.limit.amountIn} ${sellToken.symbol}`,
+          payUsdText: typeof formatTxFlowUsd === 'function' ? formatTxFlowUsd(sellUsd) : '',
+          receiveLabel: t('目标获得', 'Target Receive'),
+          receiveAmountText: `${typeof formatTxFlowNum === 'function' ? formatTxFlowNum(buyAmtNum, 6) : buyAmtNum} ${buyToken.symbol}`,
+          receiveUsdText: typeof formatTxFlowUsd === 'function' ? formatTxFlowUsd(buyUsd) : '',
+          networkPath: chainName,
+          feeText: limitFeeText,
+          detailRows: [
+            { label: t('有效期', 'Expiry'), value: expiryLabel },
+            ...(worsePromptSuffix ? [{ label: t('价格提示', 'Price Notice'), value: worsePromptSuffix.replace(/^\s*\(|\)\s*$/g, ''), tone: 'amber' }] : [])
+          ],
+          confirmLabel: t('确认下单', 'Place Order'),
+          steps: flowSteps
+        };
+
     _limitOrderActionInFlight = true;
     st.limit.submitting = true;
     st.limit.errorMsg = '';
     renderLimitOrderCalculations();
+    let stepper = null;
+    let activeStepIdx = 0;
     try {
+      if (typeof openTxPreviewModalAsync === 'function' && !(await openTxPreviewModalAsync(previewConfig))) return;
       const authed = await verifySecurityAuthAsync(wallet, actionTitle);
-      if (!authed) return;
+      if (!authed) {
+        if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+        return;
+      }
+
+      stepper = typeof createTxStepperController === 'function'
+        ? createTxStepperController(
+            btnState.action === 'approve' ? t('正在授权代币', 'Approving Token') : t('正在提交限价单', 'Placing Limit Order'),
+            flowSteps
+          )
+        : null;
+      if (stepper) stepper.setStep(0, 'active');
 
       if (lo.isEvmChainLimitSupported(chain)) await ensureEthersLoaded();
       if (btnState.action === 'approve') {
-        await lo.approveEvmCowToken({ wallet, chainKey: chain, tokenAddress: sellToken.contractAddress });
+        const appRes = await lo.approveEvmCowToken({ wallet, chainKey: chain, tokenAddress: sellToken.contractAddress });
+        if (stepper) {
+          stepper.setStep(0, 'done', { txHash: (appRes && appRes.txHash) || '', chain });
+          activeStepIdx = 1;
+          stepper.setStep(1, 'active');
+        }
         showToast(t(`${sellToken.symbol} 授权已提交，正在确认额度...`, `${sellToken.symbol} approval submitted, confirming...`));
         const owner = (contracts.resolveWalletEvmSender && contracts.resolveWalletEvmSender(wallet)) || wallet.mpcEvmAddress || wallet.evmAddress;
         const sellBaseNeeded = (() => {
@@ -580,12 +655,14 @@
             }
           }
         }
+        if (stepper) {
+          stepper.setStep(1, 'done');
+          stepper.finish(true, t(`${sellToken.symbol} 授权已确认`, `${sellToken.symbol} allowance confirmed`));
+        }
         await refreshLimitMarketContextAsync();
         return;
       }
 
-      const sellAmtNum = Number(st.limit.amountIn);
-      const rateNum = Number(st.limit.targetRate);
       const sellRaw = contracts.toBaseUnits(String(st.limit.amountIn), sellToken.decimals);
       const computeExactBuyRaw = (amtStr, rateStr, outDecimals) => {
         const cleanA = String(amtStr || '0').trim();
@@ -602,10 +679,9 @@
         return (prod / (10n ** (scale - outDec))).toString();
       };
       const buyRaw = computeExactBuyRaw(st.limit.amountIn, st.limit.targetRate, buyToken.decimals);
-      const sellPrice = (typeof sellToken.price === 'number' && sellToken.price > 0) ? sellToken.price : getSymbolPrice(sellToken.symbol === 'wNEAR' ? 'NEAR' : sellToken.symbol);
-      const sellUsd = sellPrice ? sellAmtNum * sellPrice : null;
       const sellBal = getLimitTokenBalance(wallet, sellToken);
 
+      let orderRes = null;
       if (chain === 'near') {
         const poolId = (st.limit.poolInfo && st.limit.poolInfo.poolId) || lo.resolveNearLimitPoolId(sellToken.contractAddress, buyToken.contractAddress);
         const point = (st.limit.snappedPoint !== null && st.limit.snappedPoint !== undefined)
@@ -619,7 +695,7 @@
               sellDecimals: sellToken.decimals,
               buyDecimals: buyToken.decimals
             });
-        await lo.placeNearDclLimitOrder({
+        orderRes = await lo.placeNearDclLimitOrder({
           wallet,
           poolId,
           sellToken: sellToken.contractAddress,
@@ -636,7 +712,7 @@
         });
       } else if (chain === 'sol') {
         const expSec = Math.floor(Date.now() / 1000) + (Number(st.limit.expiryDays) || 7) * 86400;
-        await lo.placeSolanaLimitOrder({
+        orderRes = await lo.placeSolanaLimitOrder({
           wallet,
           inputMint: sellToken.contractAddress,
           outputMint: buyToken.contractAddress,
@@ -650,7 +726,7 @@
         });
       } else {
         const validTo = Math.floor(Date.now() / 1000) + (Number(st.limit.expiryDays) || 7) * 86400;
-        await lo.placeEvmCowLimitOrder({
+        orderRes = await lo.placeEvmCowLimitOrder({
           wallet,
           chainKey: chain,
           sellToken: sellToken.contractAddress,
@@ -663,6 +739,11 @@
           sellDecimals: sellToken.decimals,
           sellSymbol: sellToken.symbol
         });
+      }
+
+      if (stepper) {
+        stepper.setStep(0, 'done', { txHash: (orderRes && orderRes.txHash) || '', chain });
+        stepper.finish(true, t('限价单已提交', 'Limit order placed'));
       }
 
       if (typeof resetFormFields === 'function') {
@@ -679,6 +760,10 @@
       await refreshLimitOrdersAsync(false).catch(() => {});
     } catch (err) {
       st.limit.errorMsg = toUserFriendlyError(err, '限价单提交失败，请稍后重试', 'Limit order failed. Please try again.');
+      if (stepper) {
+        stepper.setStep(activeStepIdx, 'error', { error: st.limit.errorMsg });
+        stepper.finish(false, st.limit.errorMsg);
+      }
       showToast(st.limit.errorMsg);
     } finally {
       _limitOrderActionInFlight = false;
@@ -697,17 +782,44 @@
     _limitOrderActionInFlight = true;
     const prevTxt = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = t('领取中...', 'Claiming...'); }
+    let stepper = null;
     try {
+      const claimSteps = [{ title: t('链上领取已成交资产', 'Claim filled order on NEAR'), chain: 'near' }];
+      if (typeof openTxPreviewModalAsync === 'function' && !(await openTxPreviewModalAsync({
+        title: t('确认领取资产', 'Confirm Claim'),
+        subtitle: buyToken || '',
+        networkPath: 'NEAR',
+        feeText: '< 0.01 NEAR',
+        detailRows: [{ label: t('订单编号', 'Order ID'), value: shortenAddr(orderId, 8, 6), mono: true }],
+        confirmLabel: t('确认领取', 'Claim'),
+        steps: claimSteps
+      }))) return;
       const authed = await verifySecurityAuthAsync(wallet, t('领取已成交限价单资产', 'Claim filled limit order'));
-      if (!authed) return;
+      if (!authed) {
+        if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+        return;
+      }
+      stepper = typeof createTxStepperController === 'function'
+        ? createTxStepperController(t('正在领取资产', 'Claiming Order'), claimSteps)
+        : null;
+      if (stepper) stepper.setStep(0, 'active');
       st.limit.claimingOrderId = String(orderId);
       renderLimitOrdersList();
-      await lo.claimNearDclOrder({ wallet, orderId, buyToken });
+      const res = await lo.claimNearDclOrder({ wallet, orderId, buyToken });
+      if (stepper) {
+        stepper.setStep(0, 'done', { txHash: (res && res.txHash) || '', chain: 'near' });
+        stepper.finish(true, t('已领取至钱包', 'Claimed to wallet'));
+      }
       showToast(t('已领取至钱包', 'Claimed to wallet'));
       await refreshAllBalancesAsync(true).catch(() => {});
       await refreshLimitOrdersAsync(false).catch(() => {});
     } catch (err) {
-      showToast(toUserFriendlyError(err, '领取失败，请稍后重试', 'Claim failed. Please try again.'));
+      const msg = toUserFriendlyError(err, '领取失败，请稍后重试', 'Claim failed. Please try again.');
+      if (stepper) {
+        stepper.setStep(0, 'error', { error: msg });
+        stepper.finish(false, msg);
+      }
+      showToast(msg);
     } finally {
       _limitOrderActionInFlight = false;
       st.limit.claimingOrderId = '';
@@ -726,24 +838,53 @@
     _limitOrderActionInFlight = true;
     const prevTxt = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = t('撤单中...', 'Cancelling...'); }
+    let stepper = null;
     try {
+      const chainName = typeof getTxFlowChainName === 'function' ? getTxFlowChainName(chain) : String(chain || '').toUpperCase();
+      const cancelSteps = [{ title: t('提交撤单请求', 'Submit order cancellation'), chain }];
+      if (typeof openTxPreviewModalAsync === 'function' && !(await openTxPreviewModalAsync({
+        title: t('确认撤销限价单', 'Confirm Cancel Order'),
+        subtitle: sellToken && buyToken ? `${sellToken} → ${buyToken}` : '',
+        networkPath: chainName,
+        feeText: chain === 'near' ? '< 0.01 NEAR' : t('由网络自动扣除', 'Network auto-calculated'),
+        detailRows: [{ label: t('订单编号', 'Order ID'), value: shortenAddr(orderId, 8, 6), mono: true }],
+        confirmLabel: t('确认撤单', 'Cancel Order'),
+        steps: cancelSteps
+      }))) return;
       const authed = await verifySecurityAuthAsync(wallet, t('撤销限价单', 'Cancel limit order'));
-      if (!authed) return;
+      if (!authed) {
+        if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+        return;
+      }
+      stepper = typeof createTxStepperController === 'function'
+        ? createTxStepperController(t('正在撤销限价单', 'Cancelling Limit Order'), cancelSteps)
+        : null;
+      if (stepper) stepper.setStep(0, 'active');
       st.limit.cancellingOrderId = String(orderId);
       renderLimitOrdersList();
+      let res = null;
       if (chain === 'near') {
-        await lo.cancelNearDclOrder({ wallet, orderId, remainAmount, sellToken, buyToken });
+        res = await lo.cancelNearDclOrder({ wallet, orderId, remainAmount, sellToken, buyToken });
       } else if (chain === 'sol') {
-        await lo.cancelSolanaLimitOrder({ wallet, orderPubkey: orderId });
+        res = await lo.cancelSolanaLimitOrder({ wallet, orderPubkey: orderId });
       } else {
         await ensureEthersLoaded();
-        await lo.cancelEvmCowOrder({ wallet, chainKey: chain, orderUid: orderId });
+        res = await lo.cancelEvmCowOrder({ wallet, chainKey: chain, orderUid: orderId });
+      }
+      if (stepper) {
+        stepper.setStep(0, 'done', { txHash: (res && res.txHash) || '', chain });
+        stepper.finish(true, t('限价单已撤销', 'Order cancelled'));
       }
       showToast(t('已撤单', 'Order cancelled'));
       await refreshAllBalancesAsync(true).catch(() => {});
       await refreshLimitOrdersAsync(false).catch(() => {});
     } catch (err) {
-      showToast(toUserFriendlyError(err, '撤单失败，请稍后重试', 'Cancel failed. Please try again.'));
+      const msg = toUserFriendlyError(err, '撤单失败，请稍后重试', 'Cancel failed. Please try again.');
+      if (stepper) {
+        stepper.setStep(0, 'error', { error: msg });
+        stepper.finish(false, msg);
+      }
+      showToast(msg);
     } finally {
       _limitOrderActionInFlight = false;
       st.limit.cancellingOrderId = '';

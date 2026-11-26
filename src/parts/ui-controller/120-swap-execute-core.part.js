@@ -186,11 +186,29 @@
         : '';
       const isThirdParty = isCustomThirdPartySwapRecipient(wallet, toToken);
       const thirdPartySuffix = isThirdParty ? ` → ${shortenAddr(st.swap.recipientAddress)}` : '';
+      const flowPlan = buildSwapTxFlowPlan({
+        wallet,
+        fromToken,
+        toToken,
+        amtStr,
+        quoteData: st.swap.quoteData || null,
+        usdInVal: st.swap._usdInVal,
+        usdOutVal: st.swap._usdOutVal,
+        isThirdParty,
+        recipient: st.swap.recipientAddress || getWalletDefaultRecipientForChain(wallet, toToken.blockchain),
+        slippageBps: st.swap.slippageBps
+      });
+      if (!(await openTxPreviewModalAsync(flowPlan.previewConfig))) {
+        _swapAbortedOrFailed = true;
+        return;
+      }
       if (!(await verifySecurityAuthAsync(wallet, `${t('确认兑换', 'Confirm swap')} ${amtStr} ${fromToken.symbol} → ${toToken.symbol}${impactPromptSuffix}${thirdPartySuffix}`))) {
+        closeTxFlowModal();
         _swapAbortedOrFailed = true;
         return;
       }
       if (st.swap.quoteData && st.swap.quoteData.quotedAt && (Date.now() - Number(st.swap.quoteData.quotedAt)) > 30000) {
+        closeTxFlowModal();
         if (typeof fetchLiveSwapQuoteAsync === 'function') {
           await fetchLiveSwapQuoteAsync();
         }
@@ -200,6 +218,12 @@
       }
 
       setSwapError('');
+      let _activeStepIdx = 0;
+      const stepper = createTxStepperController(t('正在执行兑换', 'Executing Swap'), flowPlan.steps);
+      const advanceStep = (idx, status, opts) => {
+        _activeStepIdx = idx;
+        stepper.setStep(idx, status, opts);
+      };
       await contracts.ensureWalletSigningKeysAsync(wallet);
       const amountRaw = intents.toBaseUnits(amtStr, fromToken.decimals);
       const sameChainDex = isSameChainContractSwap(fromToken, toToken);
@@ -223,6 +247,7 @@
                 });
             // Only take single-step Ref/DCL swap if pool liquidity exists on NEAR
             if (refQ && refQ.ok && (refQ.actions?.length || (refQ.isDcl && refQ.poolIds?.length))) {
+              advanceStep(0, 'active');
               const res = await contracts.executeNearRefFinanceSwap({
                 wallet,
                 routeData: refQ.routeData,
@@ -237,6 +262,8 @@
                 inputDecimals: fromToken.decimals,
                 tokenSymbol: fromToken.symbol
               });
+              advanceStep(0, 'done', { txHash: res.txHash, chain: 'near' });
+              stepper.finish(true, t('链上兑换已提交', 'On-chain swap submitted'));
               recordWalletActivity(wallet, {
                 type: 'swap',
                 symbol: fromToken.symbol,
@@ -263,6 +290,7 @@
                 amountRaw,
                 slippageBps: st.swap.slippageBps
               });
+          advanceStep(0, 'active');
           const res = await contracts.executeSolanaJupiterSwap({
             wallet,
             quoteResponse: quoteResp,
@@ -271,6 +299,8 @@
             inputDecimals: fromToken.decimals,
             gasBuffer: isNative ? gasBuf : null
           });
+          advanceStep(0, 'done', { txHash: res.txHash, chain: 'sol' });
+          stepper.finish(true, t('链上兑换已提交', 'On-chain swap submitted'));
           recordWalletActivity(wallet, {
             type: 'swap',
             symbol: fromToken.symbol,
@@ -303,6 +333,7 @@
               });
           if (!q.ok || !q.routeData) throw new Error(q.error || t('获取 EVM 路由失败', 'EVM route unavailable'));
 
+          advanceStep(0, 'active');
           const res = await contracts.executeEvmDexSwap({
             wallet,
             chainKey: fromToken.blockchain,
@@ -316,6 +347,8 @@
             tokenBalance: avail,
             gasBuffer: isNative ? gasBuf : null
           });
+          advanceStep(0, 'done', { txHash: res.txHash, chain: fromToken.blockchain });
+          stepper.finish(true, t('链上兑换已提交', 'On-chain swap submitted'));
           recordWalletActivity(wallet, {
             type: 'swap',
             symbol: fromToken.symbol,
@@ -371,6 +404,7 @@
       const destIsPrl = isPrlSwapToken(toToken);
 
       if (activeQuote?.compositeType === 'NEARCOM_CONFIDENTIAL_SWAP' && typeof intents.requestNearcomConfidentialDeposit === 'function') {
+        advanceStep(0, 'active');
         const depRes = await intents.requestNearcomConfidentialDeposit({
           wallet,
           fromToken,
@@ -392,6 +426,9 @@
         if (!inTx || !inTx.txHash) {
           throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
         }
+        advanceStep(0, 'done', { txHash: inTx.txHash, chain: fromToken.blockchain });
+        if (flowPlan.steps.length > 1) advanceStep(1, 'active');
+        stepper.finish(true, t('源链交易已广播，跨链结算处理中（可在下方订单卡片查看进度）', 'Origin tx broadcast; cross-chain settlement in progress (track in order card below)'));
         st.swap.activeOrder = {
           walletId: wallet.id,
           depositAddress: depRes.depositAddress,
@@ -434,8 +471,10 @@
       if (activeQuote?.compositeType === 'SMART_HUB_ROUTE' && Array.isArray(activeQuote.stages) && activeQuote.stages.length > 0) {
         let stages = activeQuote.stages.slice();
         let stageAmtRaw = amountRaw;
+        let smartStep = 0;
         if (stages[0] && stages[0].type === 'ORIGIN_DEX') {
           const origStage = stages.shift();
+          advanceStep(smartStep, 'active');
           if (origStage.chain === 'sol') {
             const solAddr = wallet.solAddress;
             const preSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
@@ -469,6 +508,8 @@
             const postLamports = BigInt(postSolRes?.nativeLamports || '0');
             const deltaL = postLamports > preLamports ? (postLamports - preLamports) : BigInt(s0Quote.outAmount || '0');
             stageAmtRaw = (deltaL > 0n ? deltaL : BigInt(s0Quote.outAmount || '0')).toString();
+            advanceStep(smartStep, 'done', { txHash: origTx?.txHash, chain: 'sol' });
+            smartStep += 1;
           } else {
             await ensureEthersLoaded();
             const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
@@ -512,6 +553,8 @@
             const postWei = BigInt(postEvm?.nativeRaw || '0');
             const deltaW = postWei > preWei ? (postWei - preWei) : BigInt(s0Q.amountOut || '0');
             stageAmtRaw = (deltaW > 0n ? deltaW : BigInt(s0Q.amountOut || '0')).toString();
+            advanceStep(smartStep, 'done', { txHash: origTx?.txHash, chain: origStage.chain });
+            smartStep += 1;
           }
         }
         const first = stages[0];
@@ -600,6 +643,7 @@
           }
           const destFollow = outLeg ? await buildDestDexFollowUp(outLeg.expectedOut) : {};
           const bridgeOutRecip = outLeg ? resolveBridgeOutRecipient(outLeg) : recipient;
+          advanceStep(smartStep, 'active');
           const inTx = await broadcastOriginDepositTx({
             wallet,
             fromToken: bridgeToken,
@@ -611,6 +655,9 @@
           if (!inTx || !inTx.txHash) {
             throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
           }
+          advanceStep(smartStep, 'done', { txHash: inTx.txHash, chain: fromToken.blockchain });
+          if (smartStep + 1 < flowPlan.steps.length) advanceStep(smartStep + 1, 'active');
+          stepper.finish(true, t('跨链处理中，预计几分钟到账（可在下方订单卡片查看进度）', 'Cross-chain swap processing (track in order card below)'));
           const bridgeOrder = {
             walletId: wallet.id,
             depositAddress: liveIn.depositAddress,
@@ -673,6 +720,8 @@
           }).catch(() => {});
           renderSwapOrderCard();
           startOrderStatusPolling();
+          if (smartStep + 1 < flowPlan.steps.length) advanceStep(smartStep + 1, 'done', { txHash: sendBridge.txHash, chain: 'near' });
+          stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
           showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
           return;
         }
@@ -683,6 +732,7 @@
             ? await intents.fetchNearNep141Balances(nearId, { [first.tokenOut]: first.outDecimals || 8 }).catch(() => null)
             : null;
           const preOutRaw = BigInt(preOutBal?.[first.tokenOut]?.raw || '0');
+          advanceStep(smartStep, 'active');
           const swapRes = await contracts.executeNearRefFinanceSwap({
             wallet,
             tokenIn: first.tokenIn,
@@ -693,7 +743,9 @@
             inputDecimals: first.inDecimals || fromToken.decimals || 18,
             tokenSymbol: first.inSymbol || fromToken.symbol
           });
+          advanceStep(smartStep, 'done', { txHash: swapRes.txHash, chain: 'near' });
           if (!outLeg) {
+            stepper.finish(true, t('链上兑换已提交', 'On-chain swap submitted'));
             recordWalletActivity(wallet, {
               type: 'swap',
               symbol: fromToken.symbol,
@@ -723,6 +775,7 @@
           const destFollow = await buildDestDexFollowUp(outLeg.expectedOut);
           let liveOut;
           let sendBridge = null;
+          if (smartStep + 1 < flowPlan.steps.length) advanceStep(smartStep + 1, 'active');
           try {
             liveOut = await intents.quoteIntentSwapOrWithdraw({
               originAsset: outLeg.originAsset,
@@ -827,6 +880,8 @@
           });
           renderSwapOrderCard();
           startOrderStatusPolling();
+          if (smartStep + 1 < flowPlan.steps.length) advanceStep(smartStep + 1, 'done', { txHash: sendBridge.txHash, chain: 'near' });
+          stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
           showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
           return;
         }
