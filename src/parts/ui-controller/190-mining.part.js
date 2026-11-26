@@ -42,23 +42,12 @@
     if (!el) return;
     const net = st.mining.networkStats && st.mining.networkStats.network;
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
-    if (fw && typeof fw.mountMiningTelemetryPanel === 'function') {
-      fw.mountMiningTelemetryPanel(el, {
-        mode: 'network',
-        network: net || null,
-        isEn: st.lang === 'en'
-      });
-      return;
-    }
-    if (!net) {
-      el.innerHTML = `<div class="meta-row"><span class="meta-key">Pearl Mainnet</span><span class="meta-val">--</span></div>`;
-      return;
-    }
-    el.innerHTML = `
-      <div class="meta-row"><span class="meta-key">${t('区块高度', 'Height')}</span><span class="meta-val mono">${net.height !== null ? net.height.toLocaleString() : '--'}</span></div>
-      <div class="meta-row"><span class="meta-key">${t('全网算力', 'Net Hashrate')}</span><span class="meta-val mono">${escapeHtml(net.networkHashrateFormatted || '--')}</span></div>
-      <div class="meta-row"><span class="meta-key">${t('全网难度 / 块奖励', 'Diff / Reward')}</span><span class="meta-val mono">${net.difficultyM !== null ? net.difficultyM + 'M' : '--'} · ${net.blockRewardPrl !== null ? net.blockRewardPrl + ' PRL' : '--'}</span></div>
-    `;
+    if (!fw || typeof fw.mountMiningTelemetryPanel !== 'function') return;
+    fw.mountMiningTelemetryPanel(el, {
+      mode: 'network',
+      network: net || null,
+      isEn: st.lang === 'en'
+    });
   }
 
   function renderMiningPoolSelector() {
@@ -82,28 +71,13 @@
     if (!wrap || !mining) return;
     const list = mining.getSavedMinerAddresses();
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
-    if (fw && typeof fw.mountMiningTelemetryPanel === 'function') {
-      fw.mountMiningTelemetryPanel(wrap, {
-        mode: 'watchlist',
-        watchlist: list,
-        isEn: getState().lang === 'en',
-        shortenAddr
-      });
-      return;
-    }
-    if (list.length === 0) {
-      if (fw && typeof fw.render === 'function') {
-        try { fw.render(null, wrap); } catch (_) {}
-      }
-      wrap.innerHTML = '';
-      return;
-    }
-    wrap.innerHTML = list.map((item) => `
-      <span class="filter-pill" style="display:inline-flex;align-items:center;gap:6px;">
-        <span style="cursor:pointer;" data-action="select-miner" data-addr="${escapeHtml(item.address)}">${escapeHtml(item.label || shortenAddr(item.address, 6, 5))}</span>
-        <span style="cursor:pointer;opacity:0.65;" data-action="remove-miner" data-addr="${escapeHtml(item.address)}">×</span>
-      </span>
-    `).join('');
+    if (!fw || typeof fw.mountMiningTelemetryPanel !== 'function') return;
+    fw.mountMiningTelemetryPanel(wrap, {
+      mode: 'watchlist',
+      watchlist: list,
+      isEn: getState().lang === 'en',
+      shortenAddr
+    });
   }
 
   function selectSavedMiner(addr) {
@@ -210,27 +184,13 @@
 
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const tbody = $('mining-workers-tbody');
-    if (tbody) {
+    if (tbody && fw && typeof fw.mountMiningWorkersPanel === 'function') {
       const workers = tel && Array.isArray(tel.workers) ? tel.workers : [];
-      if (fw && typeof fw.mountMiningWorkersPanel === 'function') {
-        fw.mountMiningWorkersPanel(tbody, {
-          workers,
-          loading: Boolean(st && st.mining && st.mining.loading),
-          isEn: st.lang === 'en'
-        });
-      } else if (workers.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);">${t('暂无矿机记录', 'No active rigs')}</td></tr>`;
-      } else {
-        tbody.innerHTML = workers.map((w) => `
-          <tr>
-            <td style="font-weight:700;color:#fff;">${escapeHtml(w.name)}</td>
-            <td><span class="status-pill ${w.status === 'online' ? 'online' : 'offline'}">${w.status === 'online' ? t('在线', 'Online') : t('离线', 'Offline')}</span></td>
-            <td class="mono">${escapeHtml(w.hashrate30mFormatted || '--')}</td>
-            <td class="mono">${escapeHtml(w.hashrate24hFormatted || '--')}</td>
-            <td class="mono">${w.validShares !== null ? w.validShares : '--'} / ${w.rejectedShares !== null ? w.rejectedShares : '--'}</td>
-          </tr>
-        `).join('');
-      }
+      fw.mountMiningWorkersPanel(tbody, {
+        workers,
+        loading: Boolean(st && st.mining && st.mining.loading),
+        isEn: st.lang === 'en'
+      });
     }
 
     const payoutsTitleEl = $('mining-payouts-title');

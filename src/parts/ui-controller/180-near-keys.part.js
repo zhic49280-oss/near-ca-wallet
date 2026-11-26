@@ -72,12 +72,8 @@
     const guideEl = $('near-acct-unactivated-guide');
     const listEl = $('near-keys-list');
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
-    if (listEl) {
-      if (fw && typeof fw.mountNearKeysPanel === 'function') {
-        fw.mountNearKeysPanel(listEl, { keys: [], loading: true, isEn: st.lang === 'en', shortenAddr });
-      } else {
-        listEl.innerHTML = `<div class="text-muted" style="font-size:12px;padding:8px;">${t('正在查询链上密钥...', 'Loading on-chain keys...')}</div>`;
-      }
+    if (listEl && fw && typeof fw.mountNearKeysPanel === 'function') {
+      fw.mountNearKeysPanel(listEl, { keys: [], loading: true, isEn: st.lang === 'en', shortenAddr });
     }
 
     const refreshBtn = $('btn-refresh-near-keys');
@@ -96,12 +92,8 @@
           statusBadge.textContent = t('未激活', 'Unactivated');
           statusBadge.className = 'badge badge-cyan';
         }
-        if (listEl) {
-          if (fw && typeof fw.mountNearKeysPanel === 'function') {
-            fw.mountNearKeysPanel(listEl, { keys: [], loading: false, unactivated: true, isEn: st.lang === 'en', shortenAddr });
-          } else {
-            listEl.innerHTML = `<div class="text-muted" style="font-size:12px;padding:8px;">${t('账户尚未在链上激活（首次收款或激活后可见密钥）', 'Account not yet active on-chain')}</div>`;
-          }
+        if (listEl && fw && typeof fw.mountNearKeysPanel === 'function') {
+          fw.mountNearKeysPanel(listEl, { keys: [], loading: false, unactivated: true, isEn: st.lang === 'en', shortenAddr });
         }
         return;
       }
@@ -158,13 +150,9 @@
       }
     } catch (e) {
       if (rotateCard) rotateCard.classList.add('hidden');
-      if (listEl) {
+      if (listEl && fw && typeof fw.mountNearKeysPanel === 'function') {
         const errText = toUserFriendlyError(e, '查询失败', 'Query failed');
-        if (fw && typeof fw.mountNearKeysPanel === 'function') {
-          fw.mountNearKeysPanel(listEl, { keys: [], loading: false, errorMsg: errText, isEn: st.lang === 'en', shortenAddr });
-        } else {
-          listEl.innerHTML = `<div style="font-size:12px;color:var(--rose-alert);padding:8px;">${escapeHtml(errText)}</div>`;
-        }
+        fw.mountNearKeysPanel(listEl, { keys: [], loading: false, errorMsg: errText, isEn: st.lang === 'en', shortenAddr });
       }
     } finally {
       if (refreshBtn) {
@@ -606,23 +594,31 @@
     }
 
     const nearDisplay = wallet.nearNamedAccount || shortenAddr(wallet.nearAddress, 10, 8) || '--';
-    if ($('hub-identity-name')) $('hub-identity-name').textContent = wallet.name || 'Nexus Wallet';
-    if ($('hub-identity-near-id')) $('hub-identity-near-id').textContent = nearDisplay;
+    const hubIdentityName = $('hub-identity-name');
+    const nextIdentityName = wallet.name || 'Nexus Wallet';
+    if (hubIdentityName && hubIdentityName.textContent !== nextIdentityName) hubIdentityName.textContent = nextIdentityName;
+    const hubIdentityNearId = $('hub-identity-near-id');
+    if (hubIdentityNearId && hubIdentityNearId.textContent !== nearDisplay) hubIdentityNearId.textContent = nearDisplay;
     const nearStatusBadge = $('hub-near-status-badge');
     if (nearStatusBadge) {
-      nearStatusBadge.textContent = wallet.nearNamedAccount ? t('已命名 .near', 'Named .near') : t('基础账户', 'Standard');
-      nearStatusBadge.className = wallet.nearNamedAccount ? 'badge badge-emerald' : 'badge badge-cyan';
+      const nextBadgeText = wallet.nearNamedAccount ? t('已命名 .near', 'Named .near') : t('基础账户', 'Standard');
+      if (nearStatusBadge.textContent !== nextBadgeText) nearStatusBadge.textContent = nextBadgeText;
+      const nextBadgeClass = wallet.nearNamedAccount ? 'badge badge-emerald' : 'badge badge-cyan';
+      if (nearStatusBadge.className !== nextBadgeClass) nearStatusBadge.className = nextBadgeClass;
     }
-    if ($('hub-near-menu-sub')) {
-      $('hub-near-menu-sub').textContent = wallet.nearNamedAccount
+    const hubNearMenuSub = $('hub-near-menu-sub');
+    if (hubNearMenuSub) {
+      const nextMenuSub = wallet.nearNamedAccount
         ? wallet.nearNamedAccount
         : t('注册 .near / 链上密钥管理', 'Register .near / Manage Keys');
+      if (hubNearMenuSub.textContent !== nextMenuSub) hubNearMenuSub.textContent = nextMenuSub;
     }
 
     const wcCount = st.wc.client ? Object.keys(st.wc.client.getActiveSessions() || {}).length : 0;
     const hubWcBadge = $('hub-wc-count-badge');
     if (hubWcBadge) {
-      hubWcBadge.textContent = String(wcCount);
+      const nextWcCount = String(wcCount);
+      if (hubWcBadge.textContent !== nextWcCount) hubWcBadge.textContent = nextWcCount;
       hubWcBadge.classList.toggle('hidden', wcCount === 0);
     }
 

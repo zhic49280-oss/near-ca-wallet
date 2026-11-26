@@ -58,7 +58,7 @@
       let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
         updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-        await loadScriptOnce('walletconnect.umd.min.js?v=6.82');
+        await loadScriptOnce('walletconnect.umd.min.js?v=6.83');
         sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       }
       if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -304,26 +304,8 @@
     if (!listEl) return;
     const sessions = st.wc.client ? Object.values(st.wc.client.getActiveSessions() || {}) : [];
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
-    if (fw && typeof fw.mountWcSessionsPanel === 'function') {
-      fw.mountWcSessionsPanel(listEl, { sessions, isEn: st.lang === 'en' });
-      return;
-    }
-    if (sessions.length === 0) {
-      listEl.innerHTML = `<div class="text-muted" style="text-align:center;padding:10px;font-size:12px;">${t('暂无已连接 DApp', 'No active sessions')}</div>`;
-      return;
-    }
-    listEl.innerHTML = sessions.map((s) => {
-      const meta = (s.peer && s.peer.metadata) || {};
-      return `
-        <div class="meta-list">
-          <div class="meta-row">
-            <span style="font-weight:700;color:#fff;">${escapeHtml(meta.name || 'DApp')}</span>
-            <button type="button" class="btn-danger" style="padding:4px 8px;font-size:10.5px;" data-action="disconnect-wc" data-topic="${escapeHtml(s.topic)}">${t('断开', 'Disconnect')}</button>
-          </div>
-          <span class="text-muted" style="font-size:11px;">${escapeHtml(meta.url || s.topic)}</span>
-        </div>
-      `;
-    }).join('');
+    if (!fw || typeof fw.mountWcSessionsPanel !== 'function') return;
+    fw.mountWcSessionsPanel(listEl, { sessions, isEn: st.lang === 'en' });
   }
 
   function toggleWcAdvancedSettings() {
@@ -821,7 +803,7 @@
     const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
     if (existing) return existing;
     if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
-      await loadScriptOnce('src/jsqr-lazy.js?v=6.82').catch(() => false);
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.83').catch(() => false);
       return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     }
     return null;

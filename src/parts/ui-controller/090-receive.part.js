@@ -122,8 +122,6 @@
           valEl.textContent = t('正在获取 QTC 收款地址...', 'Fetching QTC deposit address...');
         } else if (fw && typeof fw.mountReceiveAddressListPanel === 'function') {
           fw.mountReceiveAddressListPanel(valEl, { mode: 'qtc-error', isEn: st.lang === 'en' });
-        } else {
-          valEl.innerHTML = `<span>${escapeHtml(t('获取 QTC 收款地址失败', 'Failed to fetch QTC deposit address'))}</span> <button type="button" class="mini-action-btn primary" style="margin-left:6px;" data-action="select-receive-network" data-net="qtc">${escapeHtml(t('重试', 'Retry'))}</button>`;
         }
       }
       renderQrInto('receive-qr-container', '', 172);

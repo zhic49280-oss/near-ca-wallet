@@ -119,141 +119,31 @@
     }
 
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
-    if (fw && typeof fw.mountPerpBottomList === 'function') {
-      if (!acct) {
-        fw.mountPerpBottomList(listEl, { items: [], tab, emptyText: '--', isEn: st.lang === 'en', formatPerpPx, busyKey });
-        return;
-      }
-      if (tab === 'positions') {
-        const mktByName = new Map((st.perp.markets || []).map((m) => [m.name, m]));
-        const items = (acct.positions || []).map((p) => {
-          const mkt = mktByName.get(p.coin);
-          return {
-            ...p,
-            pair: formatPerpDisplayPair(p.coin || ''),
-            markPx: (mkt && mkt.markPx) ? mkt.markPx : p.markPx
-          };
-        });
-        fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无持仓', 'No open positions'), isEn: st.lang === 'en', formatPerpPx, busyKey });
-        return;
-      }
-      if (tab === 'orders') {
-        const items = (acct.openOrders || []).slice(0, 25).map((o) => ({ ...o, pair: formatPerpDisplayPair(o.coin || '') }));
-        fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无委托', 'No open orders'), isEn: st.lang === 'en', formatPerpPx, busyKey });
-        return;
-      }
-      const items = (acct.fills || []).slice(0, 20).map((f) => ({ ...f, pair: formatPerpDisplayPair(f.coin || '') }));
-      fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无成交记录', 'No recent fills'), isEn: st.lang === 'en', formatPerpPx, busyKey });
-      return;
-    }
-
+    if (!fw || typeof fw.mountPerpBottomList !== 'function') return;
     if (!acct) {
-      listEl.innerHTML = `<div style="font-size: 12px; color: var(--text-muted); text-align:center; padding: 14px 0;">--</div>`;
+      fw.mountPerpBottomList(listEl, { items: [], tab, emptyText: '--', isEn: st.lang === 'en', formatPerpPx, busyKey });
       return;
     }
-
-    const mktByName = new Map((st.perp.markets || []).map((m) => [m.name, m]));
-
     if (tab === 'positions') {
-      if (!acct.positions || acct.positions.length === 0) {
-        listEl.innerHTML = `<div style="font-size: 12px; color: var(--text-muted); text-align:center; padding: 14px 0;">${escapeHtml(t('暂无持仓', 'No open positions'))}</div>`;
-        return;
-      }
-      listEl.innerHTML = acct.positions.map((p) => {
-        const upnl = Number(p.unrealizedPnl || 0);
-        const upnlCls = upnl >= 0 ? 'text-emerald' : 'text-rose';
-        const dirText = p.isLong ? t('做多', 'Long') : t('做空', 'Short');
-        const modeText = p.leverageType === 'cross' ? t('全仓', 'Cross') : t('逐仓', 'Isolated');
-        const roeStr = p.returnOnEquity !== null ? `${p.returnOnEquity >= 0 ? '+' : ''}${(p.returnOnEquity * 100).toFixed(2)}%` : '--';
+      const mktByName = new Map((st.perp.markets || []).map((m) => [m.name, m]));
+      const items = (acct.positions || []).map((p) => {
         const mkt = mktByName.get(p.coin);
-        const markPx = mkt && mkt.markPx ? formatPerpPx(mkt.markPx) : '--';
-        const marginText = p.marginUsed !== null ? `$${Number(p.marginUsed).toFixed(2)}` : '--';
-        const tpslSummary = (p.tpTriggerPx || p.slTriggerPx)
-          ? `${t('止盈', 'TP')}: ${p.tpTriggerPx ? '$' + formatPerpPx(p.tpTriggerPx) : '--'} / ${t('止损', 'SL')}: ${p.slTriggerPx ? '$' + formatPerpPx(p.slTriggerPx) : '--'}`
-          : t('止盈/止损: 未设置', 'TP/SL: Not set');
-        return `
-          <div class="perp-pos-card">
-            <div class="flex items-center justify-between gap-2">
-              <div class="flex items-center gap-1" style="flex-wrap: wrap;">
-                <strong style="font-size: 13.5px;">${escapeHtml(formatPerpDisplayPair(p.coin))}</strong>
-                <span class="ca-badge">${escapeHtml(dirText)} ${escapeHtml(String(p.leverageValue || '--'))}x</span>
-                <span class="perp-dex-pill">${escapeHtml(modeText)}</span>
-              </div>
-              <span class="mono ${upnlCls}" style="font-size: 13px; font-weight: 800;">${upnl >= 0 ? '+' : ''}$${escapeHtml(upnl.toFixed(2))} (${escapeHtml(roeStr)})</span>
-            </div>
-            <div class="perp-pos-metrics-grid" style="font-size: 11px; color: var(--text-secondary);">
-              <div><div class="meta-key">${escapeHtml(t('持仓数量', 'Size'))}</div><strong class="mono">${escapeHtml(String(p.absSize))}</strong></div>
-              <div><div class="meta-key">${escapeHtml(t('保证金 (USDC)', 'Margin'))}</div><strong class="mono">${escapeHtml(marginText)}</strong></div>
-              <div><div class="meta-key">${escapeHtml(t('预估强平价', 'Est. Liq. Price'))}</div><strong class="mono text-rose">${p.liquidationPx ? '$' + escapeHtml(formatPerpPx(p.liquidationPx)) : '--'}</strong></div>
-              <div><div class="meta-key">${escapeHtml(t('开仓均价', 'Entry'))}</div><span class="mono">${p.entryPx ? '$' + escapeHtml(formatPerpPx(p.entryPx)) : '--'}</span></div>
-              <div><div class="meta-key">${escapeHtml(t('标记价格', 'Mark'))}</div><span class="mono">${markPx !== '--' ? '$' + escapeHtml(markPx) : '--'}</span></div>
-              <div><div class="meta-key">${escapeHtml(t('止盈/止损', 'TP / SL'))}</div><span class="mono" style="font-size:10px;">${escapeHtml(tpslSummary)}</span></div>
-            </div>
-            <div class="flex items-center gap-2" style="margin-top: 2px;">
-              <button type="button" class="mini-action-btn flex-1" data-action="reverse-perp-pos" data-coin="${escapeHtml(p.coin)}" ${(busyKey === `reverse:${p.coin}` || busyKey === `close:${p.coin}` || busyKey === 'batch') ? 'disabled' : ''}>${escapeHtml(busyKey === `reverse:${p.coin}` ? t('反手中...', 'Reversing...') : t('反手', 'Reverse'))}</button>
-              <button type="button" class="mini-action-btn flex-1" data-action="open-perp-pos-tpsl" data-coin="${escapeHtml(p.coin)}" ${(busyKey === `reverse:${p.coin}` || busyKey === `close:${p.coin}` || busyKey === 'batch') ? 'disabled' : ''}>${escapeHtml(t('止盈/止损', 'TP / SL'))}</button>
-              <button type="button" class="mini-action-btn primary flex-1" data-action="close-perp-pos" data-coin="${escapeHtml(p.coin)}" ${(busyKey === `reverse:${p.coin}` || busyKey === `close:${p.coin}` || busyKey === 'batch') ? 'disabled' : ''}>${escapeHtml((busyKey === `close:${p.coin}` || busyKey === 'batch') ? t('平仓中...', 'Closing...') : t('市价平仓', 'Close'))}</button>
-            </div>
-          </div>
-        `;
-      }).join('');
+        return {
+          ...p,
+          pair: formatPerpDisplayPair(p.coin || ''),
+          markPx: (mkt && mkt.markPx) ? mkt.markPx : p.markPx
+        };
+      });
+      fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无持仓', 'No open positions'), isEn: st.lang === 'en', formatPerpPx, busyKey });
       return;
     }
-
     if (tab === 'orders') {
-      const orders = acct.openOrders || [];
-      if (orders.length === 0) {
-        listEl.innerHTML = `<div style="font-size: 12px; color: var(--text-muted); text-align:center; padding: 14px 0;">${escapeHtml(t('暂无活动委托', 'No open orders'))}</div>`;
-        return;
-      }
-      listEl.innerHTML = orders.map((o) => {
-        const isBuy = String(o.side || '').toUpperCase() === 'B';
-        const isTrigger = Boolean(o.isTrigger || /Take Profit|Stop/i.test(String(o.orderType || '')));
-        const tagText = isTrigger ? (o.orderType || t('条件止盈损', 'TP/SL Trigger')) : t('限价委托', 'Limit');
-        const pxLabel = isTrigger ? t('触发价', 'Trigger') : t('委托价', 'Price');
-        const pxShow = isTrigger ? (o.triggerPx || o.limitPx || '--') : (o.limitPx || '--');
-        return `
-          <div class="perp-pos-card">
-            <div class="flex items-center justify-between gap-2">
-              <div class="flex items-center gap-1" style="flex-wrap:wrap;">
-                <strong>${escapeHtml(formatPerpDisplayPair(o.coin || ''))}</strong>
-                <span class="ca-badge">${escapeHtml(isBuy ? t('买入', 'Buy') : t('卖出', 'Sell'))}</span>
-                <span class="perp-dex-pill">${escapeHtml(tagText)}</span>
-              </div>
-              <div class="flex items-center gap-1">
-                ${isTrigger ? `<button type="button" class="mini-action-btn" data-action="open-perp-pos-tpsl" data-coin="${escapeHtml(String(o.coin || ''))}">${escapeHtml(t('修改', 'Modify'))}</button>` : ''}
-                <button type="button" class="mini-action-btn" data-action="cancel-perp-order" data-coin="${escapeHtml(String(o.coin || ''))}" data-oid="${escapeHtml(String(o.oid || ''))}" ${(busyKey === `cancel:${o.coin}:${o.oid}` || busyKey === 'batch') ? 'disabled' : ''}>${escapeHtml((busyKey === `cancel:${o.coin}:${o.oid}` || busyKey === 'batch') ? t('撤单中...', 'Cancelling...') : t('撤单', 'Cancel'))}</button>
-              </div>
-            </div>
-            <div class="flex items-center justify-between" style="font-size: 11.5px; color: var(--text-secondary);">
-              <span>${escapeHtml(pxLabel)}: <span class="mono">$${escapeHtml(String(pxShow))}</span></span>
-              <span>${escapeHtml(t('数量', 'Size'))}: <span class="mono">${escapeHtml(String(o.sz || '--'))}</span></span>
-            </div>
-          </div>
-        `;
-      }).join('');
+      const items = (acct.openOrders || []).slice(0, 25).map((o) => ({ ...o, pair: formatPerpDisplayPair(o.coin || '') }));
+      fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无委托', 'No open orders'), isEn: st.lang === 'en', formatPerpPx, busyKey });
       return;
     }
-
-    const fills = acct.fills || [];
-    if (fills.length === 0) {
-      listEl.innerHTML = `<div style="font-size: 12px; color: var(--text-muted); text-align:center; padding: 14px 0;">${escapeHtml(t('暂无成交记录', 'No recent fills'))}</div>`;
-      return;
-    }
-    listEl.innerHTML = fills.slice(0, 20).map((f) => {
-      const isBuy = String(f.side || '').toUpperCase() === 'B';
-      const pnl = Number(f.closedPnl || 0);
-      const feeNum = f.fee !== undefined ? Number(f.fee) : null;
-      return `
-        <div class="perp-pos-card" style="padding: 8px 10px;">
-          <div class="flex items-center justify-between" style="font-size: 12px;">
-            <span><strong>${escapeHtml(formatPerpDisplayPair(f.coin || ''))}</strong> · ${escapeHtml(isBuy ? t('买入', 'Buy') : t('卖出', 'Sell'))} ${escapeHtml(String(f.sz || ''))} @ $${escapeHtml(String(f.px || '--'))}</span>
-            <span class="mono ${pnl >= 0 ? 'text-emerald' : 'text-rose'}">${pnl !== 0 ? `${pnl > 0 ? '+' : ''}$${pnl.toFixed(2)}` : '--'}</span>
-          </div>
-          ${Number.isFinite(feeNum) ? `<div style="font-size:10.5px;color:var(--text-muted);margin-top:2px;">${escapeHtml(t('手续费', 'Fee'))}: <span class="mono">$${feeNum.toFixed(4)} USDC</span></div>` : ''}
-        </div>
-      `;
-    }).join('');
+    const items = (acct.fills || []).slice(0, 20).map((f) => ({ ...f, pair: formatPerpDisplayPair(f.coin || '') }));
+    fw.mountPerpBottomList(listEl, { items, tab, emptyText: t('暂无成交记录', 'No recent fills'), isEn: st.lang === 'en', formatPerpPx, busyKey });
   }
 
   function evaluatePerpOrderUI(syncFromDom = true) {
@@ -368,8 +258,6 @@
       const loadingTxt = t('正在加载 Hyperliquid 实时合约...', 'Loading Hyperliquid markets...');
       if (fw && typeof fw.mountPerpOverview === 'function') {
         fw.mountPerpOverview(listEl, { rows: [], emptyText: loadingTxt, formatPerpPx });
-      } else {
-        listEl.innerHTML = `<div style="font-size:12px;color:var(--text-muted);text-align:center;padding:20px 0;">${escapeHtml(loadingTxt)}</div>`;
       }
       return;
     }
@@ -407,76 +295,33 @@
       const emptyTxt = t('暂无匹配合约', 'No matching contracts');
       if (fw && typeof fw.mountPerpOverview === 'function') {
         fw.mountPerpOverview(listEl, { rows: [], emptyText: emptyTxt, formatPerpPx });
-      } else {
-        listEl.innerHTML = `<div style="font-size:12px;color:var(--text-muted);text-align:center;padding:20px 0;">${escapeHtml(emptyTxt)}</div>`;
       }
       return;
     }
 
+    if (!fw || typeof fw.mountPerpOverview !== 'function') return;
     const visibleRows = filtered.slice(0, 120);
-    const renderMarketRowHtml = (m) => {
-      const pair = m.pairLabel || formatPerpDisplayPair(m.name);
-      const dexTag = m.dex || extractPerpDexBadge(m.name);
-      const chg = typeof m.change24hPct === 'number' ? m.change24hPct : null;
-      const chgStr = chg !== null ? `${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%` : '--';
-      const deltaNum = typeof m.priceChange24h === 'number' ? m.priceChange24h : null;
-      const deltaStr = deltaNum !== null ? `${deltaNum >= 0 ? '+$' : '-$'}${formatPerpPx(Math.abs(deltaNum))}` : '--';
-      const chgPillCls = chg !== null && chg < 0 ? 'down' : 'up';
-      const volText = typeof m.dayNtlVlm === 'number' && m.dayNtlVlm > 0 ? `${t('量', 'Vol')} ${formatCompactUsd(m.dayNtlVlm)}` : '--';
-      const isFav = favSet.has(m.name);
-      const iconHtml = tokens && typeof tokens.renderTokenIconWithBadge === 'function'
-        ? tokens.renderTokenIconWithBadge({ symbol: m.name, blockchain: 'hype' }, 30, false)
-        : '';
-
-      return `
-        <div class="perp-overview-row" role="button" tabindex="0" data-action="open-perp-trade" data-coin="${escapeHtml(m.name)}">
-          <div class="flex items-center gap-2 min-w-0 flex-1">
-            <button type="button" class="btn-ghost-sm" data-action="toggle-perp-fav" data-stop="1" data-coin="${escapeHtml(m.name)}" style="padding: 2px 4px; font-size: 13px; color: ${isFav ? '#fbbf24' : 'var(--text-muted)'};">${isFav ? '★' : '☆'}</button>
-            ${iconHtml}
-            <div class="flex flex-col min-w-0" style="gap: 1px;">
-              <div class="flex items-center gap-1" style="flex-wrap: wrap;">
-                <strong style="font-size: 13px;">${escapeHtml(pair)}</strong>
-                <span class="ca-badge">${escapeHtml(String(m.maxLeverage || 20))}x</span>
-                ${dexTag ? `<span class="perp-dex-pill">${escapeHtml(dexTag)}</span>` : ''}
-              </div>
-              <span style="font-size: 10.5px; color: var(--text-muted);">${escapeHtml(volText)}</span>
-            </div>
-          </div>
-          <div class="flex items-center gap-2" style="flex-shrink: 0;">
-            <div class="flex flex-col mono" style="text-align: right; gap: 1px;">
-              <strong style="font-size: 12.5px; color: #fff;">${m.markPx ? `$${escapeHtml(formatPerpPx(m.markPx))}` : '--'}</strong>
-              <span style="font-size: 10px; color: var(--text-muted);">${escapeHtml(deltaStr)}</span>
-            </div>
-            <span class="perp-chg-pill ${chgPillCls} mono">${escapeHtml(chgStr)}</span>
-          </div>
-        </div>
-      `;
-    };
-    if (fw && typeof fw.mountPerpOverview === 'function') {
-      const favList = getPerpFavoriteCoins();
-      const favsExact = new Set(favList);
-      const favsUpper = new Set(favList.map((x) => String(x || '').toUpperCase()));
-      const vmRows = visibleRows.map((m) => {
-        const vol = Number(m.dayNtlVlm || 0);
-        const volText = vol >= 1e9 ? `$${(vol / 1e9).toFixed(2)}B` : (vol >= 1e6 ? `$${(vol / 1e6).toFixed(2)}M` : (vol >= 1e3 ? `$${(vol / 1e3).toFixed(1)}K` : `$${vol.toFixed(0)}`));
-        const dexTag = m.dex ? String(m.dex).toUpperCase() : (typeof extractPerpDexBadge === 'function' ? extractPerpDexBadge(m.name) : '');
-        const coinKey = String(m.name || '');
-        return {
-          ...m,
-          pair: formatPerpDisplayPair(m.name),
-          dexTag,
-          volText: `${t('24h量', '24h Vol')} ${volText}`,
-          isFav: favsExact.has(coinKey) || favsUpper.has(coinKey.toUpperCase())
-        };
-      });
-      fw.mountPerpOverview(listEl, {
-        rows: vmRows,
-        emptyText: t('暂无匹配合约', 'No matching contracts'),
-        formatPerpPx
-      });
-      return;
-    }
-    listEl.innerHTML = visibleRows.map(renderMarketRowHtml).join('');
+    const favList = getPerpFavoriteCoins();
+    const favsExact = new Set(favList);
+    const favsUpper = new Set(favList.map((x) => String(x || '').toUpperCase()));
+    const vmRows = visibleRows.map((m) => {
+      const vol = Number(m.dayNtlVlm || 0);
+      const volText = vol >= 1e9 ? `$${(vol / 1e9).toFixed(2)}B` : (vol >= 1e6 ? `$${(vol / 1e6).toFixed(2)}M` : (vol >= 1e3 ? `$${(vol / 1e3).toFixed(1)}K` : `$${vol.toFixed(0)}`));
+      const dexTag = m.dex ? String(m.dex).toUpperCase() : (typeof extractPerpDexBadge === 'function' ? extractPerpDexBadge(m.name) : '');
+      const coinKey = String(m.name || '');
+      return {
+        ...m,
+        pair: formatPerpDisplayPair(m.name),
+        dexTag,
+        volText: `${t('24h量', '24h Vol')} ${volText}`,
+        isFav: favsExact.has(coinKey) || favsUpper.has(coinKey.toUpperCase())
+      };
+    });
+    fw.mountPerpOverview(listEl, {
+      rows: vmRows,
+      emptyText: t('暂无匹配合约', 'No matching contracts'),
+      formatPerpPx
+    });
   }
 
   function renderPerpView() {
