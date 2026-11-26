@@ -76,16 +76,20 @@ function forwardHttpsRequestLegacy(req, res, buildOpts, bodyBuf, retriesLeft = 1
   let clientAborted = false;
   let activeProxyReq = null;
   const onClose = () => {
+    if (res.writableEnded) return;
     clientAborted = true;
     if (activeProxyReq && !activeProxyReq.destroyed) activeProxyReq.destroy();
   };
-  req.once('close', onClose);
+  res.once('close', onClose);
 
   const attempt = (remaining) => {
-    if (clientAborted || res.writableEnded) return;
+    if (clientAborted || res.writableEnded) {
+      res.removeListener('close', onClose);
+      return;
+    }
     const opts = Object.assign({ agent: false, timeout: UPSTREAM_TIMEOUT_MS }, buildOpts());
     const proxyReq = https.request(opts, (proxyRes) => {
-      req.removeListener('close', onClose);
+      res.removeListener('close', onClose);
       if (!res.headersSent) {
         res.writeHead(proxyRes.statusCode || 200, {
           'Content-Type': proxyRes.headers['content-type'] || 'application/json; charset=utf-8',
@@ -102,7 +106,7 @@ function forwardHttpsRequestLegacy(req, res, buildOpts, bodyBuf, retriesLeft = 1
         attempt(remaining - 1);
         return;
       }
-      req.removeListener('close', onClose);
+      res.removeListener('close', onClose);
       sendJsonError(res, 502, err.message);
     });
     if (bodyBuf && bodyBuf.length > 0) proxyReq.write(bodyBuf);
@@ -120,16 +124,17 @@ function forwardHttpsRequest(req, res, buildOpts, bodyBuf, retriesLeft = 1) {
   let clientAborted = false;
   let activeAbortCtrl = null;
   const onClose = () => {
+    if (res.writableEnded) return;
     clientAborted = true;
     if (activeAbortCtrl && !activeAbortCtrl.signal.aborted) {
       activeAbortCtrl.abort(new Error('Client aborted'));
     }
   };
-  req.once('close', onClose);
+  res.once('close', onClose);
 
   const attempt = async (remaining) => {
     if (clientAborted || res.writableEnded) {
-      req.removeListener('close', onClose);
+      res.removeListener('close', onClose);
       return;
     }
     const opts = buildOpts() || {};
@@ -162,7 +167,7 @@ function forwardHttpsRequest(req, res, buildOpts, bodyBuf, retriesLeft = 1) {
       const upstreamRes = await fetch(targetUrl, fetchInit);
       const respBuf = Buffer.from(await upstreamRes.arrayBuffer());
       clearTimeout(timeoutId);
-      req.removeListener('close', onClose);
+      res.removeListener('close', onClose);
       if (clientAborted || res.writableEnded) return;
       if (!res.headersSent) {
         res.writeHead(upstreamRes.status || 200, {
@@ -176,7 +181,7 @@ function forwardHttpsRequest(req, res, buildOpts, bodyBuf, retriesLeft = 1) {
       if (!clientAborted && !res.headersSent && remaining > 0 && isRetryableSocketError(err)) {
         return attempt(remaining - 1);
       }
-      req.removeListener('close', onClose);
+      res.removeListener('close', onClose);
       if (!clientAborted) {
         sendJsonError(res, 502, (err && err.message) || 'Upstream fetch error');
       }
@@ -322,8 +327,8 @@ const server = http.createServer((req, res) => {
     let totalLen = 0;
     let bodyTooLarge = false;
     let activeProxyReq = null;
-    req.on('close', () => {
-      if (activeProxyReq && !activeProxyReq.destroyed) activeProxyReq.destroy();
+    res.once('close', () => {
+      if (!res.writableEnded && activeProxyReq && !activeProxyReq.destroyed) activeProxyReq.destroy();
     });
     req.on('data', (c) => {
       if (bodyTooLarge) return;
