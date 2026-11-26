@@ -426,12 +426,14 @@ test('v2.8 Task 2: Multi-chain staking positions discovery (NEAR oRHEA + Solana 
         }))];
         return jsonResponse({ jsonrpc: '2.0', result: { result: resBytes } });
       }
-      if (acc === 'orhea-conv.rhealab.near' && m === 'get_account_conversions') {
-        const resBytes = [...Buffer.from(JSON.stringify([
-          { source_amount: (25n * 10n ** 18n).toString(), is_withdrawn: false },
-          { source_amount: (10n * 10n ** 18n).toString(), is_withdrawn: true },
-          { source_amount: (5n * 10n ** 18n).toString(), status: 'Locked' }
-        ]))];
+      if (acc === 'orhea-conv.rhealab.near' && m === 'get_account') {
+        const resBytes = [...Buffer.from(JSON.stringify({
+          conversions: {
+            '1': { conversion_detail: { source_amount: (25n * 10n ** 18n).toString(), claimed_amount: '0' }, is_withdrawn: false },
+            '2': { conversion_detail: { source_amount: (10n * 10n ** 18n).toString(), claimed_amount: '0' }, is_withdrawn: true },
+            '3': { conversion_detail: { source_amount: (5n * 10n ** 18n).toString(), claimed_amount: '0' }, status: 'Locked' }
+          }
+        }))];
         return jsonResponse({ jsonrpc: '2.0', result: { result: resBytes } });
       }
     }

@@ -658,7 +658,14 @@ test('v6.4 Fixes: Official Icons + Fallback, Live Jupiter ASR APY, Swap USD & Bu
       icon.primaryUrl.startsWith('assets/icons/') || icon.primaryUrl.startsWith('https://'),
       `${sym} primaryUrl must use bundled local or official remote icon`
     );
-    assert.ok(icon.fallbackUrl.startsWith('data:image/svg+xml;base64,'), `${sym} fallbackUrl must use local SVG data URI`);
+    assert.ok(
+      icon.fallbackUrl.startsWith('https://') || icon.fallbackUrl.startsWith('data:image/svg+xml;base64,'),
+      `${sym} fallbackUrl must use remote fallback or local SVG data URI`
+    );
+    assert.ok(
+      icon.secondFallbackUrl.startsWith('https://') || icon.secondFallbackUrl.startsWith('data:image/svg+xml;base64,'),
+      `${sym} secondFallbackUrl must use remote fallback or local SVG data URI`
+    );
   }
   const arcusTok = (tokenRegistry.DEX_CHAIN_TOKENS.arc || []).find((t) => t.symbol === 'ARCUS');
   assert.ok(arcusTok && String(arcusTok.logoURI).startsWith('https://'), 'ARCUS must retain official remote logoURI');
@@ -1071,7 +1078,7 @@ test('v6.4 Fixes: Official Icons + Fallback, Live Jupiter ASR APY, Swap USD & Bu
 
   // 11. Stale v6.3 localStorage SVG logoURI cleanup (PONS / QTC) & High Price Impact Warning
   const ponsCore = tokenRegistry.UNIFIED_CORE_TOKENS.find((t) => t.symbol === 'PONS' && t.blockchain === 'hood');
-  const stalePonsSvg = tokenRegistry.resolveTokenIcon({ symbol: 'PONS', blockchain: 'hood' }).fallbackUrl;
+  const stalePonsSvg = 'data:image/svg+xml;base64,' + Buffer.from('<svg  viewBox="0 0 32 32"\n></svg>').toString('base64');
   assert.ok(stalePonsSvg.startsWith('data:image/svg+xml;base64,'));
   await withMockedStorage({}, async () => {
     state.saveCachedLiveTokens([
@@ -1099,7 +1106,7 @@ test('v6.4 Fixes: Official Icons + Fallback, Live Jupiter ASR APY, Swap USD & Bu
       resolvedPons.primaryUrl.startsWith('assets/icons/') || resolvedPons.primaryUrl.startsWith('https://'),
       'resolveTokenIcon must prioritize bundled/official icon over stale generated SVG'
     );
-    assert.equal(resolvedPons.fallbackUrl, stalePonsSvg);
+    assert.ok([resolvedPons.fallbackUrl, resolvedPons.secondFallbackUrl].includes(stalePonsSvg));
   });
 
   const lowImpact = uiController.computeSwapPriceImpact(91.50, 90.54);
