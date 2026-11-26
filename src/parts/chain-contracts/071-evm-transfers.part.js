@@ -547,11 +547,13 @@
       const itemData = execQueue[i];
       const stepChain = Number(itemData.chainId || cfg.chainId);
       const targetKey = Object.keys(EVM_CHAINS).find((k) => EVM_CHAINS[k].chainId === stepChain) || key;
+      const resolvedGasLimit = itemData.gasLimit || itemData.gas || null;
       const stepParams = {
         chainKey: targetKey,
         to: itemData.to,
         data: itemData.data,
-        value: itemData.value !== undefined ? String(itemData.value) : '0'
+        value: itemData.value !== undefined ? String(itemData.value) : '0',
+        ...(resolvedGasLimit ? { gasLimit: resolvedGasLimit } : {})
       };
       if (wallet.evmPrivateKey) {
         lastRes = await sendEvmSignedTransaction({ privateKey: wallet.evmPrivateKey, ...stepParams });

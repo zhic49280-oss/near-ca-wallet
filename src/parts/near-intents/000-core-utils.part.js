@@ -5,7 +5,7 @@
   const NEXUS_ENDPOINTS = (root && root.NEXUS_ENDPOINTS) || (root ? (root.NEXUS_ENDPOINTS = {}) : {});
   const NEAR_RPC_URL = 'https://rpc.mainnet.near.org';
   const FASTNEAR_RPC_URL = 'https://free.rpc.fastnear.com';
-  const NEAR_RPC_ENDPOINTS = NEXUS_ENDPOINTS.NEAR_RPC_ENDPOINTS || (NEXUS_ENDPOINTS.NEAR_RPC_ENDPOINTS = [FASTNEAR_RPC_URL, NEAR_RPC_URL, 'https://near.drpc.org']);
+  const NEAR_RPC_ENDPOINTS = NEXUS_ENDPOINTS.NEAR_RPC_ENDPOINTS || (NEXUS_ENDPOINTS.NEAR_RPC_ENDPOINTS = [FASTNEAR_RPC_URL, 'https://near.drpc.org', NEAR_RPC_URL]);
   const FASTNEAR_API_URL = 'https://api.fastnear.com';
   const ONECLICK_API_URL = 'https://1click.chaindefuser.com/v0';
   const SOLVER_RELAY_URL = 'https://solver-relay-v2.chaindefuser.com/rpc';

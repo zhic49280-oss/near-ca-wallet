@@ -516,14 +516,8 @@
     }
 
     const primaryUrl = unique[0] || '';
-    let fallbackUrl = unique[1] || '';
-    let secondFallbackUrl = unique[2] || '';
-    if (primaryUrl && !primaryUrl.startsWith('data:image/') && localFallback && (!fallbackUrl || !fallbackUrl.startsWith('data:image/'))) {
-      if (!secondFallbackUrl && fallbackUrl && fallbackUrl !== localFallback) {
-        secondFallbackUrl = fallbackUrl;
-      }
-      fallbackUrl = localFallback;
-    }
+    const fallbackUrl = unique[1] || '';
+    const secondFallbackUrl = unique[2] || '';
 
     return {
       primaryUrl,

@@ -6,8 +6,8 @@
   const NEAR_RPC_URL = 'https://rpc.mainnet.near.org';
   const NEAR_RPC_ENDPOINTS = NEXUS_ENDPOINTS.NEAR_RPC_ENDPOINTS || (NEXUS_ENDPOINTS.NEAR_RPC_ENDPOINTS = [
     'https://free.rpc.fastnear.com',
-    NEAR_RPC_URL,
-    'https://near.drpc.org'
+    'https://near.drpc.org',
+    NEAR_RPC_URL
   ]);
   const _nearRpc429Until = root.__nearRpc429Until || (root.__nearRpc429Until = Object.create(null));
   const _solRpcCooldownUntil = {};

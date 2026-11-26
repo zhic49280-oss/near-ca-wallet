@@ -127,9 +127,9 @@
     if (!acct) return [];
     const positions = [];
     try {
-      const [full, orheaConvs, burrowAcc] = await Promise.all([
+      const [full, orheaAcc, burrowAcc] = await Promise.all([
         fetchJsonWithTimeout(`https://api.fastnear.com/v1/account/${encodeURIComponent(acct)}/full`, {}, 5000).catch(() => null),
-        viewNearContractCall('orhea-conv.rhealab.near', 'get_account_conversions', { account_id: acct }).catch(() => null),
+        viewNearContractCall('orhea-conv.rhealab.near', 'get_account', { account_id: acct }).catch(() => null),
         viewNearContractCall('contract.main.burrow.near', 'get_account', { account_id: acct }).catch(() => null)
       ]);
       const pools = full && Array.isArray(full.pools) ? full.pools : [];
@@ -158,30 +158,52 @@
       );
       validatorResults.filter(Boolean).forEach((pos) => positions.push(pos));
 
-      if (Array.isArray(orheaConvs) && orheaConvs.length > 0) {
+      const orheaEntries = Array.isArray(orheaAcc)
+        ? orheaAcc.map((c, idx) => [c?.conversion_id ?? c?.id ?? idx, c])
+        : (orheaAcc && typeof orheaAcc === 'object'
+          ? (Array.isArray(orheaAcc.conversions)
+            ? orheaAcc.conversions.map((c, idx) => [c?.conversion_id ?? c?.id ?? idx, c])
+            : (orheaAcc.conversions && typeof orheaAcc.conversions === 'object' ? Object.entries(orheaAcc.conversions) : []))
+          : []);
+      if (orheaEntries.length > 0) {
         let totalRaw = 0n;
         let activeCount = 0;
         const claimableIds = [];
         const activeIds = [];
-        const nowNs = BigInt(Date.now()) * 1000000n;
-        for (const conv of orheaConvs) {
+        const nowMs = Date.now();
+        const nowNs = BigInt(nowMs) * 1000000n;
+        for (const [entryId, conv] of orheaEntries) {
           if (!conv || typeof conv !== 'object') continue;
           const statusLower = String(conv.status || '').toLowerCase();
           if (conv.is_withdrawn === true || conv.withdrawn === true || statusLower === 'withdrawn' || statusLower === 'claimed') {
             continue;
           }
-          const convId = conv.conversion_id ?? conv.id ?? null;
-          const rawVal = conv.source_amount ?? conv.amount ?? conv.locked_amount ?? conv.source_token_amount ?? '0';
+          const detail = (conv.conversion_detail && typeof conv.conversion_detail === 'object') ? conv.conversion_detail : conv;
+          const convId = conv.conversion_id ?? conv.id ?? entryId ?? null;
+          const sourceVal = detail.source_amount ?? detail.amount ?? detail.locked_amount ?? detail.source_token_amount ?? '0';
+          const claimedVal = detail.claimed_amount ?? '0';
           try {
-            const rawBig = BigInt(String(rawVal));
-            if (rawBig > 0n) {
-              totalRaw += rawBig;
+            const sourceBig = BigInt(String(sourceVal));
+            const claimedBig = BigInt(String(claimedVal));
+            const remainingBig = sourceBig - claimedBig;
+            if (remainingBig > 0n) {
+              totalRaw += remainingBig;
               activeCount += 1;
               if (convId !== null && convId !== undefined) {
                 activeIds.push(String(convId));
-                const releaseTime = conv.release_timestamp ?? conv.unlock_time ?? conv.end_timestamp ?? 0;
-                const relBig = BigInt(String(releaseTime || '0'));
-                if (relBig > 0n && relBig <= nowNs) claimableIds.push(String(convId));
+                const lockDays = Number(conv.conversion_strategy?.Oneshot?.lock_period_days ?? detail.lock_period_days ?? 0);
+                const startMs = Number(detail.start_time_ms ?? conv.start_time_ms ?? 0);
+                let isClaimable = false;
+                if (Number.isFinite(startMs) && startMs > 0 && Number.isFinite(lockDays) && lockDays > 0) {
+                  isClaimable = (startMs + lockDays * 86400_000) <= nowMs;
+                } else {
+                  const releaseTime = detail.release_timestamp ?? detail.unlock_time ?? detail.end_timestamp ?? conv.release_timestamp ?? conv.unlock_time ?? conv.end_timestamp ?? 0;
+                  const relBig = BigInt(String(releaseTime || '0'));
+                  if (relBig > 0n) {
+                    isClaimable = relBig < 1000000000000000n ? (Number(relBig) <= nowMs) : (relBig <= nowNs);
+                  }
+                }
+                if (isClaimable) claimableIds.push(String(convId));
               }
             }
           } catch (_) {}

@@ -691,7 +691,7 @@
       deadlineIso,
       quoteHashes = [],
       executionMode = nearPrivateKey ? 'onchain' : 'relay',
-      fallbackOnChain = false
+      fallbackOnChain = Boolean(nearPrivateKey)
     } = params;
 
     if (!nearAccountId || !nearPrivateSeedHex || !nearPublicKey) {

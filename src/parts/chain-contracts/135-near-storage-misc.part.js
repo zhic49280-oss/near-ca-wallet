@@ -632,17 +632,42 @@
 
     let ids = Array.isArray(conversionIds) ? conversionIds.filter(Boolean).map((x) => String(x)) : [];
     if (ids.length === 0) {
-      const convs = await viewNearContractCall('orhea-conv.rhealab.near', 'get_account_conversions', { account_id: accountId }).catch(() => null);
-      const nowNs = BigInt(Date.now()) * 1000000n;
-      if (Array.isArray(convs)) {
-        for (const c of convs) {
-          if (!c) continue;
-          const cid = c.conversion_id ?? c.id;
-          const relTime = BigInt(String(c.release_timestamp ?? c.unlock_time ?? c.end_timestamp ?? '0'));
-          if (cid !== undefined && cid !== null && relTime > 0n && relTime <= nowNs) {
-            ids.push(String(cid));
-          }
+      const orheaAcc = await viewNearContractCall('orhea-conv.rhealab.near', 'get_account', { account_id: accountId }).catch(() => null);
+      const entries = Array.isArray(orheaAcc)
+        ? orheaAcc.map((c, idx) => [c?.conversion_id ?? c?.id ?? idx, c])
+        : (orheaAcc && typeof orheaAcc === 'object'
+          ? (Array.isArray(orheaAcc.conversions)
+            ? orheaAcc.conversions.map((c, idx) => [c?.conversion_id ?? c?.id ?? idx, c])
+            : (orheaAcc.conversions && typeof orheaAcc.conversions === 'object' ? Object.entries(orheaAcc.conversions) : []))
+          : []);
+      const nowMs = Date.now();
+      const nowNs = BigInt(nowMs) * 1000000n;
+      for (const [entryId, c] of entries) {
+        if (!c || typeof c !== 'object') continue;
+        const statusLower = String(c.status || '').toLowerCase();
+        if (c.is_withdrawn === true || c.withdrawn === true || statusLower === 'withdrawn' || statusLower === 'claimed') {
+          continue;
         }
+        const detail = (c.conversion_detail && typeof c.conversion_detail === 'object') ? c.conversion_detail : c;
+        const cid = c.conversion_id ?? c.id ?? entryId;
+        if (cid === undefined || cid === null) continue;
+        try {
+          const sourceBig = BigInt(String(detail.source_amount ?? detail.amount ?? detail.locked_amount ?? detail.source_token_amount ?? '0'));
+          const claimedBig = BigInt(String(detail.claimed_amount ?? '0'));
+          if (sourceBig - claimedBig <= 0n) continue;
+          const lockDays = Number(c.conversion_strategy?.Oneshot?.lock_period_days ?? detail.lock_period_days ?? 0);
+          const startMs = Number(detail.start_time_ms ?? c.start_time_ms ?? 0);
+          let isClaimable = false;
+          if (Number.isFinite(startMs) && startMs > 0 && Number.isFinite(lockDays) && lockDays > 0) {
+            isClaimable = (startMs + lockDays * 86400_000) <= nowMs;
+          } else {
+            const relTime = BigInt(String(detail.release_timestamp ?? detail.unlock_time ?? detail.end_timestamp ?? c.release_timestamp ?? c.unlock_time ?? c.end_timestamp ?? '0'));
+            if (relTime > 0n) {
+              isClaimable = relTime < 1000000000000000n ? (Number(relTime) <= nowMs) : (relTime <= nowNs);
+            }
+          }
+          if (isClaimable) ids.push(String(cid));
+        } catch (_) {}
       }
     }
     if (ids.length === 0) {
