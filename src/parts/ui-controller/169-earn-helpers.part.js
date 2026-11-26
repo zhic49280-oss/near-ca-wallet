@@ -229,7 +229,7 @@
     const stakeFeeText = pool.chain === 'near'
       ? '< 0.02 NEAR'
       : (pool.chain === 'sol' ? '≈ 0.0005 SOL' : t('由网络自动扣除', 'Network auto-calculated'));
-    const stakeSteps = [{ title: t(`签名并广播 ${pool.name} 质押交易`, `Sign & broadcast ${pool.name} stake`), chain: pool.chain }];
+    const stakeSteps = [{ title: t(`确认 ${pool.name} 质押`, `Confirm ${pool.name} stake`), chain: pool.chain }];
     const stakePreview = {
       title: t('确认链上质押', 'Confirm On-Chain Stake'),
       subtitle: `${pool.name} (${pool.inSymbol} → ${pool.outSymbol})`,
@@ -277,7 +277,10 @@
       });
       if (stepper) {
         stepper.setStep(0, 'done', { txHash: (res && res.txHash) || '', explorerUrl: (res && res.explorerUrl) || '', chain: pool.chain });
-        stepper.finish(true, `${pool.name} ${t('质押成功', 'Staked')}`);
+        stepper.finish(true, {
+          text: `${pool.name} ${t('质押成功', 'Staked')}`,
+          doneTitle: t('质押成功', 'Stake Completed')
+        });
       }
       st.staking.amountIn = '';
       if ($('earn-amount-in')) $('earn-amount-in').value = '';

@@ -716,7 +716,7 @@
       if (isSameChain) {
         const sent = await dispatchOnChainSend({ contracts, wallet, asset, isEvmOrigin, isNativeGas, toAddress: recipient, exactAmt, avail, gasBuf, gasMeta });
         if (!sent || !sent.txHash) {
-          throw new Error(t('该同链代币转账暂未接通签名广播', 'Direct transfer unsupported for this token'));
+          throw new Error(t('暂不支持该代币的同链转账', 'Direct transfer is not supported for this token yet'));
         }
         const isUtxo = asset.blockchain === 'prl' || asset.blockchain === 'btc';
         const feeVal = isUtxo ? (sent.fee || 0) : null;
@@ -737,7 +737,7 @@
         const sentMsg = t('转账已发出', 'Transfer sent');
         if (sendStepper) {
           sendStepper.setStep(0, 'done', { txHash: sent.txHash, chain: asset.blockchain });
-          sendStepper.finish(true, sentMsg);
+          sendStepper.finish(true, { text: sentMsg, doneTitle: t('转账已发出', 'Transfer Sent') });
         }
         if (typeof renderSendTxReceipt === 'function') {
           renderSendTxReceipt({ chain: asset.blockchain, symbol: asset.symbol, amount: netSent, recipient, txHash: sent.txHash, statusText: sentMsg, activityItem });
@@ -811,10 +811,10 @@
         title: `${t('跨链转账至', 'Cross-chain to')} ${shortenAddr(recipient)}`
       };
       recordWalletActivity(wallet, crossActivityItem);
-      const crossMsg = t('跨链处理中，预计几分钟到账', 'Cross-chain transfer processing, arriving in a few minutes');
+      const crossMsg = t('已从源链转出，目标链预计 1–3 分钟到账', 'Sent from origin chain. Arriving in ~1–3 min');
       if (sendStepper) {
-        sendStepper.setStep(1, 'done');
-        sendStepper.finish(true, crossMsg);
+        sendStepper.setStep(1, 'active');
+        sendStepper.finish(true, { text: crossMsg, inTransit: true, doneTitle: t('已转出，等待到账', 'Sent · Waiting for Arrival') });
       }
       if (typeof renderSendTxReceipt === 'function') {
         renderSendTxReceipt({ chain: asset.blockchain, symbol: asset.symbol, amount: amountNum, recipient, txHash: depositTxHash, statusText: crossMsg, activityItem: crossActivityItem });

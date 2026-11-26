@@ -43,7 +43,7 @@
       const chainMeta = it.chain && tokens ? tokens.getChainMeta(it.chain) : null;
       const netTag = chainMeta ? chainMeta.shortName : (it.chain ? String(it.chain).toUpperCase() : '');
       const relTime = typeof formatRelativeActivityTime === 'function' ? formatRelativeActivityTime(it.timestamp) : '';
-      let statusText = t('已广播', 'Broadcast');
+      let statusText = t('已发出', 'Sent');
       if (activeOrder && it.txHash && activeOrder.originTxHash === it.txHash && activeOrder.status) {
         statusText = getSwapOrderStatusLabel(activeOrder.status);
       }
@@ -156,7 +156,7 @@
     const contracts = getContracts();
     const nearId = wallet.nearNamedAccount || wallet.nearAddress;
     if (BigInt(bridgeInRaw) <= 0n) {
-      throw new Error(t('Ref 兑换后余额不足以发起后续跨链', 'Insufficient balance after swap for follow-up bridge'));
+      throw new Error(t('兑换后余额不足以发起后续跨链', 'Insufficient balance after swap for follow-up bridge'));
     }
     const liveOut = await intents.quoteIntentSwapOrWithdraw({
       originAsset: outFollow.originAsset,

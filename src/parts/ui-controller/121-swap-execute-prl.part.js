@@ -128,8 +128,8 @@
         renderSwapOrderCard();
         startOrderStatusPolling();
         advanceStep(1, 'done', { txHash: sendBridge.txHash, chain: 'near' });
-        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
-        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
+        stepper.finish(true, { text: t('已从源链转出，目标链预计 1–3 分钟到账，可在下方查看进度', 'Sent from origin chain. Arriving in ~1–3 min — track progress below.'), inTransit: true, doneTitle: t('已转出，等待到账', 'Sent · Waiting for Arrival') });
+        showToast(`✅ ${t('已从源链转出，目标链预计 1–3 分钟到账', 'Sent from origin chain. Arriving in ~1–3 min')}`);
         return;
       }
 
@@ -154,7 +154,7 @@
             tokenSymbol: 'PRL'
           });
           advanceStep(0, 'done', { txHash: res.txHash, chain: 'near' });
-          stepper.finish(true, t('兑换已提交', 'Swap submitted'));
+          stepper.finish(true, { text: t('兑换成功', 'Swap completed'), doneTitle: t('兑换成功', 'Swap Completed') });
           recordWalletActivity(wallet, {
             type: 'swap',
             symbol: fromToken.symbol,
@@ -164,7 +164,7 @@
             txHash: res.txHash,
             title: `${fromToken.symbol} ➔ ${toToken.symbol}`
           });
-          showToast(`✅ ${t('兑换已提交', 'Swap submitted')}: ${shortenAddr(res.txHash)}`);
+          showToast(`✅ ${t('兑换成功', 'Swap completed')}: ${shortenAddr(res.txHash)}`);
           refreshAllBalancesAsync(false);
           return;
         }
@@ -185,11 +185,11 @@
         advanceStep(0, 'active');
         const bridgeTx = await broadcastOriginDepositTx({ wallet, fromToken, amt: amtStr, avail, depositAddress: bridgeLive.depositAddress, gasOverride: originGasOverride });
         if (!bridgeTx || !bridgeTx.txHash) {
-          throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
+          throw new Error(t('转出失败，请检查余额与网络后重试', 'Transfer failed. Please check balance and network.'));
         }
         advanceStep(0, 'done', { txHash: bridgeTx.txHash, chain: fromToken.blockchain });
         if (flowPlan.steps.length > 1) advanceStep(1, 'active');
-        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
+        stepper.finish(true, { text: t('已从源链转出，目标链预计 1–3 分钟到账，可在下方查看进度', 'Sent from origin chain. Arriving in ~1–3 min — track progress below.'), inTransit: true, doneTitle: t('已转出，等待到账', 'Sent · Waiting for Arrival') });
         st.swap.activeOrder = {
           walletId: wallet.id,
           depositAddress: bridgeLive.depositAddress,
@@ -226,7 +226,7 @@
         }).catch(() => {});
         renderSwapOrderCard();
         startOrderStatusPolling();
-        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
+        showToast(`✅ ${t('已从源链转出，目标链预计 1–3 分钟到账', 'Sent from origin chain. Arriving in ~1–3 min')}`);
         return;
       }
       // Sub-route B: PRL (NEAR) -> External chain (e.g. SOL / ETH / BNB)
@@ -312,7 +312,7 @@
                 tokenSymbol: 'USDC'
               });
               advanceStep(1, 'done', { txHash: dclRes.txHash, chain: 'near' });
-              stepper.finish(true, t('兑换已提交', 'Swap submitted'));
+              stepper.finish(true, { text: t('兑换成功', 'Swap completed'), doneTitle: t('兑换成功', 'Swap Completed') });
               recordWalletActivity(wallet, {
                 type: 'swap',
                 symbol: fromToken.symbol,
@@ -322,7 +322,7 @@
                 txHash: dclRes.txHash,
                 title: `${fromToken.symbol} ➔ ${toToken.symbol}`
               });
-              showToast(`✅ ${t('兑换已提交', 'Swap submitted')}: ${shortenAddr(dclRes.txHash)}`);
+              showToast(`✅ ${t('兑换成功', 'Swap completed')}: ${shortenAddr(dclRes.txHash)}`);
               refreshAllBalancesAsync(false);
               return;
             } catch (dclErr) {
@@ -505,8 +505,8 @@
         renderSwapOrderCard();
         startOrderStatusPolling();
         advanceStep(1, 'done', { txHash: sendTx.txHash, chain: 'near' });
-        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
-        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
+        stepper.finish(true, { text: t('已从源链转出，目标链预计 1–3 分钟到账，可在下方查看进度', 'Sent from origin chain. Arriving in ~1–3 min — track progress below.'), inTransit: true, doneTitle: t('已转出，等待到账', 'Sent · Waiting for Arrival') });
+        showToast(`✅ ${t('已从源链转出，目标链预计 1–3 分钟到账', 'Sent from origin chain. Arriving in ~1–3 min')}`);
         return;
       }
 
@@ -538,11 +538,11 @@
           gasOverride: originGasOverride
         });
         if (!txRes || !txRes.txHash) {
-          throw new Error(t('源链交易广播失败，请检查余额与网络后重试', 'Origin transaction broadcast failed'));
+          throw new Error(t('转出失败，请检查余额与网络后重试', 'Transfer failed. Please check balance and network.'));
         }
         advanceStep(0, 'done', { txHash: txRes.txHash, chain: fromToken.blockchain });
         if (flowPlan.steps.length > 1) advanceStep(1, 'active');
-        stepper.finish(true, t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes'));
+        stepper.finish(true, { text: t('已从源链转出，目标链预计 1–3 分钟到账，可在下方查看进度', 'Sent from origin chain. Arriving in ~1–3 min — track progress below.'), inTransit: true, doneTitle: t('已转出，等待到账', 'Sent · Waiting for Arrival') });
         st.swap.activeOrder = {
           walletId: wallet.id,
           depositAddress: liveQuote.depositAddress,
@@ -587,7 +587,7 @@
         }).catch(() => {});
         renderSwapOrderCard();
         startOrderStatusPolling();
-        showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}`);
+        showToast(`✅ ${t('已从源链转出，目标链预计 1–3 分钟到账', 'Sent from origin chain. Arriving in ~1–3 min')}`);
         return;
       }
 

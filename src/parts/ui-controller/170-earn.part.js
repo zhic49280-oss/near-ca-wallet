@@ -285,7 +285,10 @@
       const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
       if (posItems.length > 0) {
         myPosCard.classList.remove('hidden');
-        if (myPosCount) myPosCount.textContent = String(posItems.length);
+        if (myPosCount) {
+          const nextCount = String(posItems.length);
+          if (myPosCount.textContent !== nextCount) myPosCount.textContent = nextCount;
+        }
         if (fw && typeof fw.mountEarnValidatorsPanel === 'function') {
           fw.mountEarnValidatorsPanel(myPosList, { items: posItems, isEn: st.lang === 'en' });
         } else {
@@ -686,7 +689,7 @@
         ? createTxStepperController(t('正在执行赎回操作', 'Executing Redemption'), actionSteps)
         : null;
       if (stepper) stepper.setStep(0, 'active');
-      showToast(t('正在签名并提交赎回交易...', 'Signing & submitting redemption...'));
+      showToast(t('正在提交赎回请求...', 'Submitting redemption...'));
       let res = null;
       if (actionType === 'sol_validator_deactivate') {
         const [stakeAcct, amtStr] = String(actionTarget || '').split('|');
@@ -749,7 +752,7 @@
           txHash: res.txHash,
           title: `${t('Aave V3 提取', 'Aave V3 Withdraw')} · ${actionTarget}`
         });
-        showToast(`✅ ${t('Aave 本息提取已广播', 'Aave V3 withdraw broadcast')}: ${shortenAddr(res.txHash)}`);
+        showToast(`✅ ${t('Aave 本息提取已提交', 'Aave V3 withdraw submitted')}: ${shortenAddr(res.txHash)}`);
       } else if (actionType === 'burrow_withdraw') {
         const [tokContract, decStr] = String(actionTarget || '').split('|');
         res = await contracts.withdrawFromBurrow({ wallet, tokenContract: tokContract, amount: parsedCustom ? String(parsedCustom) : 'max', decimals: Number(decStr) || 24 });
@@ -764,7 +767,7 @@
           txHash: res.txHash,
           title: `${t('Burrow 提取', 'Burrow Withdraw')} · ${sym}`
         });
-        showToast(`✅ ${t('Burrow 存款提取已广播', 'Burrow withdraw broadcast')}: ${shortenAddr(res.txHash)}`);
+        showToast(`✅ ${t('Burrow 存款提取已提交', 'Burrow withdraw submitted')}: ${shortenAddr(res.txHash)}`);
       } else if (actionType === 'orhea_claim') {
         const ids = String(actionTarget || '').split(',').map((s) => s.trim()).filter(Boolean);
         res = await contracts.claimRheaOrheaConversion({ wallet, conversionIds: ids });
@@ -776,7 +779,7 @@
           txHash: res.txHash,
           title: t('领取 oRHEA 到期兑换', 'Claim Matured RHEA')
         });
-        showToast(`✅ ${t('RHEA 领取交易已广播', 'RHEA claim broadcast')}: ${shortenAddr(res.txHash)}`);
+        showToast(`✅ ${t('RHEA 领取已提交', 'RHEA claim submitted')}: ${shortenAddr(res.txHash)}`);
       } else if (actionType === 'xrhea_unstake') {
         const [cid, amtStr] = String(actionTarget || '').split('|');
         const unstakeAmt = parsedCustom || Number(amtStr);
@@ -810,7 +813,7 @@
           txHash: res.txHash,
           title: t('领取已解锁 RHEA', 'Claim xRHEA Unstake')
         });
-        showToast(`✅ ${t('RHEA 领取交易已广播', 'RHEA claim broadcast')}: ${shortenAddr(res.txHash)}`);
+        showToast(`✅ ${t('RHEA 领取已提交', 'RHEA claim submitted')}: ${shortenAddr(res.txHash)}`);
       } else if (actionType === 'near_lst_unstake') {
         const [cid, amtStr] = String(actionTarget || '').split('|');
         const unstakeAmt = parsedCustom || Number(amtStr);
@@ -843,7 +846,7 @@
           txHash: res.txHash,
           title: `${t('提取已解质押 NEAR', 'Withdraw NEAR LST')} · ${actionTarget}`
         });
-        showToast(`✅ ${t('NEAR 提取交易已广播', 'NEAR withdraw broadcast')}: ${shortenAddr(res.txHash)}`);
+        showToast(`✅ ${t('NEAR 提取已提交', 'NEAR withdraw submitted')}: ${shortenAddr(res.txHash)}`);
       } else if (actionType === 'jup_dao_toggle' || actionType === 'jup_dao_withdraw') {
         const jupPos = (wallet.solStakingPositions || []).find((x) => x && x.type === 'jupiter_dao');
         res = await contracts.unstakeJupiterDao({
@@ -861,7 +864,7 @@
         showToast(
           actionType === 'jup_dao_toggle'
             ? `✅ ${t('已关闭永久锁仓，30天解锁倒计时开始', 'JUP 30d unlock started')}: ${shortenAddr(res.txHash)}`
-            : `✅ ${t('JUP 提取交易已广播', 'JUP withdraw broadcast')}: ${shortenAddr(res.txHash)}`
+            : `✅ ${t('JUP 提取已提交', 'JUP withdraw submitted')}: ${shortenAddr(res.txHash)}`
         );
       } else if (actionType === 'lst_exit') {
         const [poolId, amtStr] = String(actionTarget || '').split('|');
@@ -880,7 +883,7 @@
           txHash: res.txHash,
           title: `${t('流动性质押换回', 'Exit LST')} · ${poolCfg?.name || poolId}`
         });
-        showToast(`✅ ${t('LST 换回交易已广播', 'LST exit swap broadcast')}: ${shortenAddr(res.txHash)}`);
+        showToast(`✅ ${t('LST 换回已提交', 'LST exit swap submitted')}: ${shortenAddr(res.txHash)}`);
       } else if (actionType === 'erc4626_redeem' || actionType === 'erc4626_cooldown' || actionType === 'erc4626_unstake') {
         await ensureEthersLoaded();
         const poolCfg = contracts.findStakingPool ? contracts.findStakingPool(actionTarget) : null;
@@ -897,12 +900,12 @@
         showToast(
           actionType === 'erc4626_cooldown'
             ? `✅ ${t('已发起 sUSDe 冷却解锁期', 'sUSDe cooldown initiated')}: ${shortenAddr(res.txHash)}`
-            : `✅ ${t('金库赎回交易已广播', 'Vault redeem broadcast')}: ${shortenAddr(res.txHash)}`
+            : `✅ ${t('金库赎回已提交', 'Vault redeem submitted')}: ${shortenAddr(res.txHash)}`
         );
       }
       if (stepper) {
         stepper.setStep(0, 'done', { txHash: (res && res.txHash) || '', chain: actionChain });
-        stepper.finish(true, t('交易已广播', 'Transaction broadcast'));
+        stepper.finish(true, { text: t('交易已提交', 'Transaction submitted'), doneTitle: t('操作已完成', 'Completed') });
       }
       refreshAllBalancesAsync(false);
       setTimeout(() => refreshAllBalancesAsync(false).catch(() => {}), 5000).unref?.();

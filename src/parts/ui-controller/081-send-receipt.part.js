@@ -62,7 +62,7 @@
       : t('由网络自动扣除', 'Network auto-calculated');
 
     const steps = isSameChain
-      ? [{ title: t(`在 ${fromName} 广播转账交易`, `Broadcast transfer on ${fromName}`), chain: fromChain }]
+      ? [{ title: t(`从 ${fromName} 转出`, `Send on ${fromName}`), chain: fromChain }]
       : [
           { title: t(`从 ${fromName} 发送 ${asset.symbol}`, `Send ${asset.symbol} from ${fromName}`), chain: fromChain },
           { title: t(`跨链结算至 ${toName}`, `Cross-chain settle to ${toName}`), chain: toChain }

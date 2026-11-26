@@ -12,7 +12,7 @@ function shortenHash(hash) {
 function getStepTone(status) {
   if (status === 'done') return 'emerald';
   if (status === 'error') return 'rose';
-  if (status === 'active' || status === 'auth') return 'amber';
+  if (status === 'active' || status === 'auth' || status === 'arriving') return 'amber';
   return 'slate';
 }
 
@@ -20,7 +20,8 @@ function getStepStatusLabel(status, isEn) {
   if (status === 'done') return isEn ? 'Completed ✓' : '已完成 ✓';
   if (status === 'error') return isEn ? 'Failed ✗' : '失败 ✗';
   if (status === 'auth') return isEn ? 'Verify Identity' : '请验证身份';
-  if (status === 'active') return isEn ? 'Broadcasting...' : '广播上链中...';
+  if (status === 'arriving') return isEn ? 'Arriving' : '等待到账';
+  if (status === 'active') return isEn ? 'Processing...' : '处理中...';
   return isEn ? 'Waiting' : '等待中';
 }
 
@@ -185,17 +186,37 @@ export function TxStepperModal({
   const finished = Boolean(stepper.finished);
   const ok = Boolean(stepper.ok);
   const resumable = Boolean(stepper.resumable);
+  const inTransit = Boolean(stepper.inTransit || (finished && ok && steps.length > 1 && completedCount < steps.length));
+  const effectiveProgressPct = (finished && ok && !inTransit) ? 100 : progressPct;
+
+  let headerTitle = stepper.title || t('正在执行交易', 'Executing Transaction');
+  if (finished) {
+    if (!ok) {
+      headerTitle = t('交易未完成', 'Transaction Failed');
+    } else if (inTransit) {
+      headerTitle = stepper.doneTitle || t('已转出，等待到账', 'Sent · Waiting for Arrival');
+    } else {
+      headerTitle = stepper.doneTitle || t('交易已完成', 'Transaction Completed');
+    }
+  }
+
+  let subtitleText = isEn
+    ? `Completed ${completedCount} / ${steps.length} steps`
+    : `已完成 ${completedCount} / ${steps.length} 步`;
+  if (finished && ok && inTransit) {
+    subtitleText = t('源链已发出，目标链预计 1–3 分钟到账', 'Sent from origin chain · Arriving in ~1–3 min');
+  } else if (finished && ok) {
+    subtitleText = isEn
+      ? `Completed ${steps.length} / ${steps.length} steps`
+      : `已完成 ${steps.length} / ${steps.length} 步`;
+  }
 
   return (
     <div class="tx-flow-container" data-testid="tx-stepper-modal">
       <div class="tx-flow-header">
         <div>
-          <h3 class="sheet-title">{stepper.title || t('正在执行交易', 'Executing Transaction')}</h3>
-          <div class="tx-flow-subtitle">
-            {isEn
-              ? `Completed ${completedCount} / ${steps.length} steps`
-              : `已完成 ${completedCount} / ${steps.length} 步`}
-          </div>
+          <h3 class="sheet-title">{headerTitle}</h3>
+          <div class="tx-flow-subtitle">{subtitleText}</div>
         </div>
         {finished ? (
           <button
@@ -212,7 +233,7 @@ export function TxStepperModal({
       <div class="tx-flow-progress-track">
         <div
           class={`tx-flow-progress-fill ${finished && !ok ? 'is-error' : ''}`}
-          style={{ transform: `scaleX(${Math.max(0, Math.min(1, progressPct / 100))})` }}
+          style={{ transform: `scaleX(${Math.max(0, Math.min(1, effectiveProgressPct / 100))})` }}
         />
       </div>
 
@@ -220,8 +241,11 @@ export function TxStepperModal({
         <div class="tx-flow-stepper-list">
           {steps.map((step, idx) => {
             const stStatus = step.status || 'pending';
-            const tone = getStepTone(stStatus);
-            const statusText = getStepStatusLabel(stStatus, isEn);
+            const badgeStatus = (finished && ok && inTransit && (stStatus === 'active' || stStatus === 'pending'))
+              ? 'arriving'
+              : stStatus;
+            const tone = getStepTone(badgeStatus);
+            const statusText = getStepStatusLabel(badgeStatus, isEn);
             return (
               <div
                 key={`exec-step-${idx}`}
@@ -280,7 +304,7 @@ export function TxStepperModal({
           </div>
         ) : (
           <button type="button" class="btn-primary flex-1" onClick={onClose}>
-            {ok ? t('完成', 'Done') : t('关闭', 'Close')}
+            {!ok ? t('关闭', 'Close') : (inTransit ? t('知道了', 'Got It') : t('完成', 'Done'))}
           </button>
         )}
       </div>

@@ -141,7 +141,7 @@
         steps.push({ title: t(`${fromToken.symbol} 兑换为 USDC`, `Swap ${fromToken.symbol} to USDC`), chain: fromChain });
         steps.push({ title: t(`USDC 兑换为 ${toToken.symbol}`, `Swap USDC to ${toToken.symbol}`), chain: toChain });
       } else {
-        steps.push({ title: t(`链上兑换 ${fromToken.symbol} → ${toToken.symbol}`, `On-chain swap ${fromToken.symbol} → ${toToken.symbol}`), chain: fromChain });
+        steps.push({ title: t(`兑换 ${fromToken.symbol} → ${toToken.symbol}`, `Swap ${fromToken.symbol} → ${toToken.symbol}`), chain: fromChain });
       }
     } else if (compType === 'SOL_DEX_TO_CROSS_CHAIN') {
       steps.push({ title: t(`在 Solana 将 ${fromToken.symbol} 兑换为 SOL`, `Swap ${fromToken.symbol} to SOL on Solana`), chain: 'sol' });
@@ -290,7 +290,9 @@
       finished: false,
       ok: false,
       summary: '',
-      resumable: false
+      resumable: false,
+      inTransit: false,
+      doneTitle: ''
     };
 
     const renderStepper = () => {
@@ -305,7 +307,9 @@
           finished: state.finished,
           ok: state.ok,
           summary: state.summary,
-          resumable: state.resumable
+          resumable: state.resumable,
+          inTransit: state.inTransit,
+          doneTitle: state.doneTitle
         },
         onClose: () => closeTxFlowModal()
       });
@@ -336,15 +340,19 @@
         }
         renderStepper();
       },
-      finish(ok, summary = '') {
+      finish(ok, summaryOrOpts = '') {
         state.finished = true;
         state.ok = Boolean(ok);
-        if (summary && typeof summary === 'object') {
-          state.summary = String(summary.text || '');
-          state.resumable = Boolean(summary.resumable);
+        if (summaryOrOpts && typeof summaryOrOpts === 'object') {
+          state.summary = String(summaryOrOpts.text || '');
+          state.resumable = Boolean(summaryOrOpts.resumable);
+          state.inTransit = Boolean(summaryOrOpts.inTransit);
+          state.doneTitle = summaryOrOpts.doneTitle ? String(summaryOrOpts.doneTitle) : '';
         } else {
-          state.summary = String(summary || '');
+          state.summary = String(summaryOrOpts || '');
           state.resumable = false;
+          state.inTransit = false;
+          state.doneTitle = '';
         }
         renderStepper();
       },
