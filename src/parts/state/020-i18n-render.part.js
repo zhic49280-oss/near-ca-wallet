@@ -420,14 +420,20 @@
         if (el.getAttribute('data-i18n-dynamic') === '1') return;
         const key = el.getAttribute('data-i18n');
         if (key && dict[key] !== undefined) {
-          el.textContent = dict[key];
+          const translated = dict[key];
+          if (el.textContent !== translated) {
+            el.textContent = translated;
+          }
         }
       });
       const phNodes = document.querySelectorAll('[data-i18n-placeholder]');
       phNodes.forEach((el) => {
         const key = el.getAttribute('data-i18n-placeholder');
         if (key && dict[key] !== undefined) {
-          el.setAttribute('placeholder', dict[key]);
+          const translated = dict[key];
+          if (el.getAttribute('placeholder') !== translated) {
+            el.setAttribute('placeholder', translated);
+          }
         }
       });
     }

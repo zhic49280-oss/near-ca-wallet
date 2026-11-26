@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useLang } from '../store/useWalletStore.js';
+import { useLang, useI18n } from '../store/useWalletStore.js';
 import { PanelSlot } from '../components/PanelSlot.jsx';
 import { PerpOverviewPanel } from '../components/PerpOverviewPanel.jsx';
 import { PerpOrderbookSidePanel, PerpBottomListPanel, PerpOverviewPositionsPanel } from '../components/PerpOrderbookAndPositions.jsx';
@@ -7,6 +7,7 @@ import { PerpChartHudPanel } from '../components/PerpDetailPanels.jsx';
 
 export function PerpView() {
   useLang();
+  const { tr } = useI18n();
   return (
     <section id="view-perp" className="view-section hidden">
       {/* 1. Contract Wallet Summary (Always visible in Overview) */}
@@ -14,15 +15,15 @@ export function PerpView() {
         <div className="ios-glass-card flex flex-col gap-2">
           <div className="perp-summary-grid">
             <div className="perp-stat-box">
-              <span className="kpi-label" data-i18n="perp.equityLabel">合约净值</span>
+              <span className="kpi-label" data-i18n="perp.equityLabel">{tr('perp.equityLabel', '合约净值')}</span>
               <span id="perp-equity-val" className="kpi-value">--</span>
             </div>
             <div className="perp-stat-box">
-              <span className="kpi-label" data-i18n="perp.availMarginLabel">可用保证金</span>
+              <span className="kpi-label" data-i18n="perp.availMarginLabel">{tr('perp.availMarginLabel', '可用保证金')}</span>
               <span id="perp-avail-val" className="kpi-value text-emerald">--</span>
             </div>
             <div className="perp-stat-box">
-              <span className="kpi-label" data-i18n="perp.upnlLabel">未实现盈亏</span>
+              <span className="kpi-label" data-i18n="perp.upnlLabel">{tr('perp.upnlLabel', '未实现盈亏')}</span>
               <span id="perp-upnl-val" className="kpi-value">--</span>
             </div>
           </div>
@@ -34,7 +35,7 @@ export function PerpView() {
               onClick={() => window.openPerpFundingSheet && window.openPerpFundingSheet('deposit')}
               data-i18n="perp.depositBtn"
             >
-              充值
+              {tr('perp.depositBtn', '充值')}
             </button>
             <button
               type="button"
@@ -42,7 +43,7 @@ export function PerpView() {
               onClick={() => window.openPerpFundingSheet && window.openPerpFundingSheet('withdraw')}
               data-i18n="perp.withdrawBtn"
             >
-              提现
+              {tr('perp.withdrawBtn', '提现')}
             </button>
             <button
               type="button"
@@ -51,13 +52,13 @@ export function PerpView() {
               onClick={() => window.refreshPerpDataAsync && window.refreshPerpDataAsync(true)}
               data-i18n="common.refresh"
             >
-              刷新
+              {tr('common.refresh', '刷新')}
             </button>
           </div>
 
           <div id="perp-spot-banner" className="perp-spot-banner hidden">
             <span style={{ fontSize: '11.5px', color: 'var(--text-primary)' }}>
-              <span data-i18n="perp.spotPendingPrefix">跨链资金已到账</span>{' '}
+              <span data-i18n="perp.spotPendingPrefix">{tr('perp.spotPendingPrefix', '跨链资金已到账')}</span>{' '}
               <strong id="perp-spot-pending-amt" className="mono text-emerald">--</strong>
             </span>
             <button
@@ -66,7 +67,7 @@ export function PerpView() {
               onClick={() => window.quickTransferSpotToPerpUI && window.quickTransferSpotToPerpUI()}
               data-i18n="perp.transferToPerpBtn"
             >
-              一键转入合约 (免费)
+              {tr('perp.transferToPerpBtn', '一键转入合约 (免费)')}
             </button>
           </div>
 
@@ -87,7 +88,7 @@ export function PerpView() {
               type="text"
               className="input-field"
               data-i18n-placeholder="perp.overviewSearchPlaceholder"
-              placeholder="搜索合约 (如 BTC, PEPE, CRCL, NVDA...)"
+              placeholder={tr('perp.overviewSearchPlaceholder', '搜索合约 (如 BTC, PEPE, CRCL, NVDA...)')}
               onInput={(e) => window.handlePerpOverviewSearch && window.handlePerpOverviewSearch(e.currentTarget.value)}
             />
             <button
@@ -102,19 +103,19 @@ export function PerpView() {
           </div>
 
           <div id="perp-overview-cats" className="pill-scroll">
-            <button type="button" className="filter-pill" data-action="set-perp-overview-cat" data-cat="favorites" data-i18n="perp.catFavorites">⭐ 自选</button>
-            <button type="button" className="filter-pill active" data-action="set-perp-overview-cat" data-cat="crypto" data-i18n="perp.catCrypto">🪙 加密货币</button>
-            <button type="button" className="filter-pill" data-action="set-perp-overview-cat" data-cat="stocks" data-i18n="perp.catStocks">📈 股票</button>
-            <button type="button" className="filter-pill" data-action="set-perp-overview-cat" data-cat="all" data-i18n="perp.catAll">全部</button>
+            <button type="button" className="filter-pill" data-action="set-perp-overview-cat" data-cat="favorites" data-i18n="perp.catFavorites">{tr('perp.catFavorites', '⭐ 自选')}</button>
+            <button type="button" className="filter-pill active" data-action="set-perp-overview-cat" data-cat="crypto" data-i18n="perp.catCrypto">{tr('perp.catCrypto', '🪙 加密货币')}</button>
+            <button type="button" className="filter-pill" data-action="set-perp-overview-cat" data-cat="stocks" data-i18n="perp.catStocks">{tr('perp.catStocks', '📈 股票')}</button>
+            <button type="button" className="filter-pill" data-action="set-perp-overview-cat" data-cat="all" data-i18n="perp.catAll">{tr('perp.catAll', '全部')}</button>
           </div>
 
           <div className="perp-mkt-col-hdr">
             <button type="button" className="perp-sort-hdr-btn" data-action="sort-perp-overview" data-sort="vol">
-              <span data-i18n="perp.colContractVol">合约 / 成交额</span> <span id="perp-sort-ind-vol">↓</span>
+              <span data-i18n="perp.colContractVol">{tr('perp.colContractVol', '合约 / 成交额')}</span> <span id="perp-sort-ind-vol">↓</span>
             </button>
             <div className="flex items-center gap-2">
               <button type="button" className="perp-sort-hdr-btn" data-action="sort-perp-overview" data-sort="px">
-                <span data-i18n="perp.colLastPx">最新价</span> <span id="perp-sort-ind-px">⇅</span>
+                <span data-i18n="perp.colLastPx">{tr('perp.colLastPx', '最新价')}</span> <span id="perp-sort-ind-px">⇅</span>
               </button>
               <button
                 type="button"
@@ -123,7 +124,7 @@ export function PerpView() {
                 data-sort="chg"
                 style={{ minWidth: '64px', justifyContent: 'flex-end' }}
               >
-                <span data-i18n="perp.colChg24h">24h 涨跌</span> <span id="perp-sort-ind-chg">⇅</span>
+                <span data-i18n="perp.colChg24h">{tr('perp.colChg24h', '24h 涨跌')}</span> <span id="perp-sort-ind-chg">⇅</span>
               </button>
             </div>
           </div>
@@ -146,7 +147,7 @@ export function PerpView() {
                 onClick={() => window.backToPerpOverview && window.backToPerpOverview()}
                 data-i18n="perp.backToMarkets"
               >
-                ← 行情
+                {tr('perp.backToMarkets', '← 行情')}
               </button>
               <button
                 type="button"
@@ -179,7 +180,7 @@ export function PerpView() {
                 onClick={() => window.refreshPerpDataAsync && window.refreshPerpDataAsync(true)}
                 data-i18n="common.refresh"
               >
-                刷新
+                {tr('common.refresh', '刷新')}
               </button>
               <button
                 type="button"
@@ -188,22 +189,22 @@ export function PerpView() {
                 onClick={() => window.togglePerpChart && window.togglePerpChart()}
                 data-i18n="perp.chartBtn"
               >
-                K线
+                {tr('perp.chartBtn', 'K线')}
               </button>
             </div>
           </div>
 
           <div id="perp-market-stats" className="perp-market-stats">
             <div className="perp-mstat">
-              <span className="meta-key" data-i18n="perp.vol24hLabel">24h 成交额</span>
+              <span className="meta-key" data-i18n="perp.vol24hLabel">{tr('perp.vol24hLabel', '24h 成交额')}</span>
               <span id="perp-vol-24h" className="mono" style={{ fontSize: '11px', fontWeight: 700 }}>--</span>
             </div>
             <div className="perp-mstat">
-              <span className="meta-key" data-i18n="perp.oiLabel">全网持仓 (OI)</span>
+              <span className="meta-key" data-i18n="perp.oiLabel">{tr('perp.oiLabel', '全网持仓 (OI)')}</span>
               <span id="perp-oi-val" className="mono" style={{ fontSize: '11px', fontWeight: 700 }}>--</span>
             </div>
             <div className="perp-mstat" style={{ textAlign: 'right' }}>
-              <span className="meta-key" data-i18n="perp.fundingRateLabel">资金费率(1h)</span>
+              <span className="meta-key" data-i18n="perp.fundingRateLabel">{tr('perp.fundingRateLabel', '资金费率(1h)')}</span>
               <span id="perp-funding-rate" className="mono" style={{ fontSize: '11px', fontWeight: 700 }}>--</span>
             </div>
           </div>
@@ -238,7 +239,7 @@ export function PerpView() {
                 onClick={() => window.setPerpSide && window.setPerpSide('long')}
                 data-i18n="perp.longBtn"
               >
-                做多
+                {tr('perp.longBtn', '做多')}
               </button>
               <button
                 type="button"
@@ -247,7 +248,7 @@ export function PerpView() {
                 onClick={() => window.setPerpSide && window.setPerpSide('short')}
                 data-i18n="perp.shortBtn"
               >
-                做空
+                {tr('perp.shortBtn', '做空')}
               </button>
             </div>
 
@@ -260,7 +261,7 @@ export function PerpView() {
                   onClick={() => window.setPerpMarginMode && window.setPerpMarginMode('isolated')}
                   data-i18n="perp.isolatedBtn"
                 >
-                  逐仓
+                  {tr('perp.isolatedBtn', '逐仓')}
                 </button>
                 <button
                   type="button"
@@ -269,7 +270,7 @@ export function PerpView() {
                   onClick={() => window.setPerpMarginMode && window.setPerpMarginMode('cross')}
                   data-i18n="perp.crossBtn"
                 >
-                  全仓
+                  {tr('perp.crossBtn', '全仓')}
                 </button>
               </div>
               <span id="perp-lev-val" className="mono text-emerald" style={{ fontSize: '12px', fontWeight: 800 }}>5x</span>
@@ -294,7 +295,7 @@ export function PerpView() {
                 onClick={() => window.setPerpOrderType && window.setPerpOrderType('market')}
                 data-i18n="perp.marketBtn"
               >
-                市价
+                {tr('perp.marketBtn', '市价')}
               </button>
               <button
                 type="button"
@@ -303,7 +304,7 @@ export function PerpView() {
                 onClick={() => window.setPerpOrderType && window.setPerpOrderType('limit')}
                 data-i18n="perp.limitBtn"
               >
-                限价
+                {tr('perp.limitBtn', '限价')}
               </button>
               <button
                 type="button"
@@ -312,13 +313,13 @@ export function PerpView() {
                 onClick={() => window.setPerpOrderType && window.setPerpOrderType('post_only')}
                 data-i18n="perp.postOnlyBtn"
               >
-                只做Maker
+                {tr('perp.postOnlyBtn', '只做Maker')}
               </button>
             </div>
 
             <div id="perp-limit-price-row" className="swap-box hidden" style={{ padding: '8px' }}>
               <div className="swap-box-top">
-                <span data-i18n="perp.limitPriceLabel" style={{ fontSize: '11px' }}>委托价格</span>
+                <span data-i18n="perp.limitPriceLabel" style={{ fontSize: '11px' }}>{tr('perp.limitPriceLabel', '委托价格')}</span>
                 <button
                   type="button"
                   className="mini-action-btn primary"
@@ -326,7 +327,7 @@ export function PerpView() {
                   data-i18n="perp.bboBtn"
                   style={{ padding: '2px 6px', fontSize: '10.5px' }}
                 >
-                  最优价
+                  {tr('perp.bboBtn', '最优价')}
                 </button>
               </div>
               <input
@@ -343,9 +344,9 @@ export function PerpView() {
 
             <div className="swap-box" style={{ padding: '8px' }}>
               <div className="swap-box-top">
-                <span data-i18n="perp.marginInputLabel" style={{ fontSize: '11px' }}>保证金 (USDC)</span>
+                <span data-i18n="perp.marginInputLabel" style={{ fontSize: '11px' }}>{tr('perp.marginInputLabel', '保证金 (USDC)')}</span>
                 <span style={{ fontSize: '10.5px' }}>
-                  <span data-i18n="swap.balanceLabel">可用</span>: <span id="perp-ticket-avail" className="mono">--</span>
+                  <span data-i18n="swap.balanceLabel">{tr('swap.balanceLabel', '可用')}</span>: <span id="perp-ticket-avail" className="mono">--</span>
                 </span>
               </div>
               <div className="swap-box-main">
@@ -375,7 +376,7 @@ export function PerpView() {
                   type="checkbox"
                   onChange={(e) => window.togglePerpReduceOnly && window.togglePerpReduceOnly(e.currentTarget.checked)}
                 />
-                <span data-i18n="perp.reduceOnlyLabel">只减仓</span>
+                <span data-i18n="perp.reduceOnlyLabel">{tr('perp.reduceOnlyLabel', '只减仓')}</span>
               </label>
               <button
                 type="button"
@@ -385,7 +386,7 @@ export function PerpView() {
                 data-action="toggle-perp-tpsl"
                 aria-expanded="false"
               >
-                <span data-i18n="perp.tpslLabel">止盈/止损</span> ▾
+                <span data-i18n="perp.tpslLabel">{tr('perp.tpslLabel', '止盈/止损')}</span> ▾
               </button>
             </div>
             <div id="perp-tpsl-drawer" className="flex gap-1 hidden">
@@ -397,7 +398,7 @@ export function PerpView() {
                 className="input-field mono flex-1"
                 style={{ fontSize: '11.5px', padding: '6px 8px' }}
                 data-i18n-placeholder="perp.tpPlaceholder"
-                placeholder="止盈触发价"
+                placeholder={tr('perp.tpPlaceholder', '止盈触发价')}
                 onInput={() => window.evaluatePerpOrderUI && window.evaluatePerpOrderUI()}
               />
               <input
@@ -408,26 +409,26 @@ export function PerpView() {
                 className="input-field mono flex-1"
                 style={{ fontSize: '11.5px', padding: '6px 8px' }}
                 data-i18n-placeholder="perp.slPlaceholder"
-                placeholder="止损触发价"
+                placeholder={tr('perp.slPlaceholder', '止损触发价')}
                 onInput={() => window.evaluatePerpOrderUI && window.evaluatePerpOrderUI()}
               />
             </div>
 
             <div className="meta-list perp-meta-grid">
               <div className="meta-row perp-meta-cell">
-                <span className="meta-key" data-i18n="perp.notionalLabel">名义价值</span>
+                <span className="meta-key" data-i18n="perp.notionalLabel">{tr('perp.notionalLabel', '名义价值')}</span>
                 <span id="perp-meta-notional" className="meta-val">--</span>
               </div>
               <div className="meta-row perp-meta-cell">
-                <span className="meta-key" data-i18n="perp.sizeLabel">委托数量</span>
+                <span className="meta-key" data-i18n="perp.sizeLabel">{tr('perp.sizeLabel', '委托数量')}</span>
                 <span id="perp-meta-size" className="meta-val">--</span>
               </div>
               <div className="meta-row perp-meta-cell">
-                <span className="meta-key" data-i18n="perp.liqEstLabel">预估强平价</span>
+                <span className="meta-key" data-i18n="perp.liqEstLabel">{tr('perp.liqEstLabel', '预估强平价')}</span>
                 <span id="perp-meta-liq" className="meta-val">--</span>
               </div>
               <div className="meta-row perp-meta-cell">
-                <span className="meta-key" data-i18n="perp.estFeeLabel">预估手续费</span>
+                <span className="meta-key" data-i18n="perp.estFeeLabel">{tr('perp.estFeeLabel', '预估手续费')}</span>
                 <span id="perp-meta-fee" className="meta-val">--</span>
               </div>
             </div>
@@ -440,7 +441,7 @@ export function PerpView() {
               onClick={() => window.executePerpOrderUI && window.executePerpOrderUI()}
               data-i18n="perp.submitLongBtn"
             >
-              开多
+              {tr('perp.submitLongBtn', '开多')}
             </button>
           </div>
 
@@ -470,9 +471,9 @@ export function PerpView() {
 
             <div id="perp-ob-header" className="perp-ob-header" style={{ gridTemplateColumns: '1fr' }}>
               <div className="perp-ob-hcol">
-                <span id="perp-ob-bid-sz-hdr" data-i18n="perp.obSizeHdr">数量</span>
-                <span id="perp-ob-ask-sz-hdr" data-i18n="perp.obSizeHdr" style={{ display: 'none' }}>数量</span>
-                <span data-i18n="perp.obPriceShort">价格</span>
+                <span id="perp-ob-bid-sz-hdr" data-i18n="perp.obSizeHdr">{tr('perp.obSizeHdr', '数量')}</span>
+                <span id="perp-ob-ask-sz-hdr" data-i18n="perp.obSizeHdr" style={{ display: 'none' }}>{tr('perp.obSizeHdr', '数量')}</span>
+                <span data-i18n="perp.obPriceShort">{tr('perp.obPriceShort', '价格')}</span>
               </div>
             </div>
 
@@ -499,7 +500,7 @@ export function PerpView() {
                 onClick={() => window.setPerpBottomTab && window.setPerpBottomTab('positions')}
                 data-i18n="perp.tabPositions"
               >
-                当前持仓
+                {tr('perp.tabPositions', '当前持仓')}
               </button>
               <button
                 type="button"
@@ -508,7 +509,7 @@ export function PerpView() {
                 onClick={() => window.setPerpBottomTab && window.setPerpBottomTab('orders')}
                 data-i18n="perp.tabOrders"
               >
-                当前委托
+                {tr('perp.tabOrders', '当前委托')}
               </button>
               <button
                 type="button"
@@ -517,7 +518,7 @@ export function PerpView() {
                 onClick={() => window.setPerpBottomTab && window.setPerpBottomTab('fills')}
                 data-i18n="perp.tabFills"
               >
-                历史成交
+                {tr('perp.tabFills', '历史成交')}
               </button>
             </div>
             <button

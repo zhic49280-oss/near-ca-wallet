@@ -85,6 +85,20 @@ export function useLang() {
 }
 
 /**
+ * Reactive i18n dictionary helper hook subscribing to 'lang' updates.
+ */
+export function useI18n() {
+  const { lang, isEn, t } = useLang();
+  const tr = (key, fallback = '') => {
+    const st = (typeof window !== 'undefined' && window.NearCAState) || globalThis.NearCAState || null;
+    return (st && st.i18nDict && st.i18nDict[lang] && st.i18nDict[lang][key])
+      || (st && st.i18nDict && st.i18nDict.zh && st.i18nDict.zh[key])
+      || fallback;
+  };
+  return { lang, isEn, t, tr };
+}
+
+/**
  * Reactive active wallet hook subscribing to 'wallet' and 'balances' updates.
  */
 export function useActiveWallet() {

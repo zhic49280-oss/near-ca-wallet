@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useLang } from '../store/useWalletStore.js';
+import { useLang, useI18n } from '../store/useWalletStore.js';
 import { PanelSlot } from '../components/PanelSlot.jsx';
 import { SwapRouteInfoPanel, SwapActiveOrderPanel } from '../components/SwapQuoteStatusPanel.jsx';
 import { SwapHistoryPanel } from '../components/SwapHistoryPanel.jsx';
@@ -7,6 +7,7 @@ import { LimitOrdersPanel } from '../components/LimitOrdersPanel.jsx';
 
 export function SwapLimitView() {
   useLang();
+  const { tr } = useI18n();
   return (
     <section id="view-swap" className="view-section hidden">
       <div className="section-header" style={{ marginBottom: '4px' }}>
@@ -18,7 +19,7 @@ export function SwapLimitView() {
             onClick={() => window.setSwapPanelMode && window.setSwapPanelMode('market')}
             data-i18n="swap.modeMarket"
           >
-            闪兑
+            {tr('swap.modeMarket', '闪兑')}
           </button>
           <button
             type="button"
@@ -27,10 +28,10 @@ export function SwapLimitView() {
             onClick={() => window.setSwapPanelMode && window.setSwapPanelMode('limit')}
             data-i18n="swap.modeLimit"
           >
-            限价
+            {tr('swap.modeLimit', '限价')}
           </button>
         </div>
-        <span className="ca-badge" data-i18n="header.caBadge">NEAR CA</span>
+        <span className="ca-badge" data-i18n="header.caBadge">{tr('header.caBadge', 'NEAR CA')}</span>
       </div>
 
       <div id="swap-market-panel" className="flex flex-col gap-3">
@@ -39,10 +40,10 @@ export function SwapLimitView() {
           {/* From Box */}
           <div className="swap-box">
             <div className="swap-box-top">
-              <span data-i18n="swap.fromLabel">支付</span>
+              <span data-i18n="swap.fromLabel">{tr('swap.fromLabel', '支付')}</span>
               <div className="flex items-center gap-2">
                 <span>
-                  <span data-i18n="swap.balanceLabel">可用</span>: <span id="swap-from-balance" className="mono">--</span>
+                  <span data-i18n="swap.balanceLabel">{tr('swap.balanceLabel', '可用')}</span>: <span id="swap-from-balance" className="mono">--</span>
                 </span>
                 <button
                   type="button"
@@ -50,7 +51,7 @@ export function SwapLimitView() {
                   onClick={() => window.setSwapMaxAmount && window.setSwapMaxAmount()}
                   data-i18n="swap.maxBtn"
                 >
-                  全部
+                  {tr('swap.maxBtn', '全部')}
                 </button>
               </div>
             </div>
@@ -94,9 +95,9 @@ export function SwapLimitView() {
           {/* To Box */}
           <div className="swap-box">
             <div className="swap-box-top">
-              <span data-i18n="swap.toLabel">获得</span>
+              <span data-i18n="swap.toLabel">{tr('swap.toLabel', '获得')}</span>
               <span>
-                <span data-i18n="swap.balanceLabel">可用</span>: <span id="swap-to-balance" className="mono">--</span>
+                <span data-i18n="swap.balanceLabel">{tr('swap.balanceLabel', '可用')}</span>: <span id="swap-to-balance" className="mono">--</span>
               </span>
             </div>
             <div className="swap-box-main">
@@ -116,12 +117,12 @@ export function SwapLimitView() {
 
           {/* Auto Route & Recipient */}
           <div className="meta-row" style={{ fontSize: '12px' }}>
-            <span className="meta-key" data-i18n="swap.autoRouteLabel">智能路由</span>
+            <span className="meta-key" data-i18n="swap.autoRouteLabel">{tr('swap.autoRouteLabel', '智能路由')}</span>
             <span id="swap-auto-route-badge" className="ca-badge">--</span>
           </div>
           <div className="flex flex-col gap-1">
             <div className="flex items-center justify-between">
-              <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }} data-i18n="swap.recipientLabel">目标链收款地址</span>
+              <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }} data-i18n="swap.recipientLabel">{tr('swap.recipientLabel', '目标链收款地址')}</span>
               <button
                 type="button"
                 id="swap-recipient-contacts-btn"
@@ -129,7 +130,7 @@ export function SwapLimitView() {
                 onClick={() => window.openContactsPicker && window.openContactsPicker('swap')}
                 data-i18n="common.contacts"
               >
-                地址簿
+                {tr('common.contacts', '地址簿')}
               </button>
             </div>
             <input
@@ -137,7 +138,7 @@ export function SwapLimitView() {
               type="text"
               className="input-field mono"
               data-i18n-placeholder="swap.recipientPlaceholder"
-              placeholder="自动匹配当前主账户对应链地址"
+              placeholder={tr('swap.recipientPlaceholder', '自动匹配当前主账户对应链地址')}
               onInput={() => window.handleSwapRecipientInput && window.handleSwapRecipientInput()}
             />
           </div>
@@ -145,7 +146,7 @@ export function SwapLimitView() {
           {/* Quote Meta */}
           <div id="swap-quote-meta" className="meta-list">
             <div className="meta-row">
-              <span className="meta-key" data-i18n="swap.rateLabel">参考汇率</span>
+              <span className="meta-key" data-i18n="swap.rateLabel">{tr('swap.rateLabel', '参考汇率')}</span>
               <span
                 id="swap-quote-rate"
                 className="meta-val"
@@ -164,25 +165,25 @@ export function SwapLimitView() {
               onClick={() => window.toggleSwapDetails && window.toggleSwapDetails()}
               aria-expanded="false"
             >
-              <span className="meta-key" data-i18n="swap.detailsLabel">更多设置</span>
+              <span className="meta-key" data-i18n="swap.detailsLabel">{tr('swap.detailsLabel', '更多设置')}</span>
               <span className="flex items-center gap-1">
-                <span id="swap-details-summary" className="meta-summary" data-i18n="swap.detailsDefaultSummary">滑点 1%</span>
+                <span id="swap-details-summary" className="meta-summary" data-i18n="swap.detailsDefaultSummary">{tr('swap.detailsDefaultSummary', '滑点 1%')}</span>
                 <span className="meta-chevron">▾</span>
               </span>
             </button>
             <div id="swap-details-body" className="meta-details-body hidden">
               <div className="meta-row">
-                <span className="meta-key" data-i18n="swap.routeLabel">执行路由</span>
+                <span className="meta-key" data-i18n="swap.routeLabel">{tr('swap.routeLabel', '执行路由')}</span>
                 <span id="swap-quote-route" className="meta-val">
                   <PanelSlot slotId="swap-quote-route" component={SwapRouteInfoPanel} renderEmpty="--" />
                 </span>
               </div>
               <div className="meta-row">
-                <span className="meta-key" data-i18n="swap.feeLabel">服务费</span>
+                <span className="meta-key" data-i18n="swap.feeLabel">{tr('swap.feeLabel', '服务费')}</span>
                 <span id="swap-quote-fee" className="meta-val">--</span>
               </div>
               <div className="meta-row">
-                <span className="meta-key" data-i18n="swap.slippageLabel">滑点容差</span>
+                <span className="meta-key" data-i18n="swap.slippageLabel">{tr('swap.slippageLabel', '滑点容差')}</span>
                 <div className="flex gap-1">
                   <button type="button" className="filter-pill" data-bps="50" onClick={() => window.setSwapSlippage && window.setSwapSlippage(50)}>0.5%</button>
                   <button type="button" className="filter-pill active" data-bps="100" onClick={() => window.setSwapSlippage && window.setSwapSlippage(100)}>1%</button>
@@ -190,7 +191,7 @@ export function SwapLimitView() {
                 </div>
               </div>
               <div id="swap-gas-reserve-row" className="meta-row hidden">
-                <span id="swap-gas-reserve-label" className="meta-key" data-i18n="swap.gasReserveLabel">目标链 Gas 预留</span>
+                <span id="swap-gas-reserve-label" className="meta-key" data-i18n="swap.gasReserveLabel">{tr('swap.gasReserveLabel', '目标链 Gas 预留')}</span>
                 <div className="flex gap-1 items-center">
                   <button
                     type="button"
@@ -199,7 +200,7 @@ export function SwapLimitView() {
                     onClick={() => window.setSwapGasReserveMode && window.setSwapGasReserveMode('auto')}
                     data-i18n="swap.gasModeAuto"
                   >
-                    默认
+                    {tr('swap.gasModeAuto', '默认')}
                   </button>
                   <button
                     type="button"
@@ -208,7 +209,7 @@ export function SwapLimitView() {
                     onClick={() => window.setSwapGasReserveMode && window.setSwapGasReserveMode('extra')}
                     data-i18n="swap.gasModeExtra"
                   >
-                    多留
+                    {tr('swap.gasModeExtra', '多留')}
                   </button>
                 </div>
               </div>
@@ -226,7 +227,7 @@ export function SwapLimitView() {
               onClick={() => window.applySwapMaxSpendableFix && window.applySwapMaxSpendableFix()}
               data-i18n="swap.useMaxBtn"
             >
-              设为最大可用
+              {tr('swap.useMaxBtn', '设为最大可用')}
             </button>
           </div>
 
@@ -239,32 +240,32 @@ export function SwapLimitView() {
             onClick={() => window.executeActiveSwap && window.executeActiveSwap()}
             data-i18n="swap.executeBtn"
           >
-            确认闪兑
+            {tr('swap.executeBtn', '确认闪兑')}
           </button>
         </div>
 
         {/* Active 1Click Order Status Card */}
         <div id="swap-order-card" className="ios-glass-card hidden flex flex-col gap-3">
           <div className="flex items-center justify-between">
-            <span style={{ fontWeight: 700, fontSize: '14px' }} data-i18n="swap.orderTitle">跨链订单跟踪</span>
+            <span style={{ fontWeight: 700, fontSize: '14px' }} data-i18n="swap.orderTitle">{tr('swap.orderTitle', '跨链订单跟踪')}</span>
             <button
               type="button"
               className="btn-ghost-sm"
               onClick={() => window.clearActiveSwapOrder && window.clearActiveSwapOrder()}
               data-i18n="swap.orderDoneBtn"
             >
-              完成
+              {tr('swap.orderDoneBtn', '完成')}
             </button>
           </div>
           <div className="meta-list">
             <div className="meta-row">
-              <span className="meta-key" data-i18n="swap.orderStatus">订单状态</span>
+              <span className="meta-key" data-i18n="swap.orderStatus">{tr('swap.orderStatus', '订单状态')}</span>
               <span id="swap-order-status" className="meta-val">
                 <PanelSlot slotId="swap-order-status" component={SwapActiveOrderPanel} renderEmpty="--" />
               </span>
             </div>
             <div id="swap-order-tx-row" className="meta-row hidden">
-              <span className="meta-key" data-i18n="swap.orderTxHash">交易哈希</span>
+              <span className="meta-key" data-i18n="swap.orderTxHash">{tr('swap.orderTxHash', '交易哈希')}</span>
               <span id="swap-order-origin-tx" className="meta-val mono" style={{ fontSize: '11px' }}>--</span>
             </div>
           </div>
@@ -272,14 +273,14 @@ export function SwapLimitView() {
             <div id="swap-order-qr" className="qr-frame hidden"></div>
             <div className="meta-list">
               <div className="meta-row">
-                <span className="meta-key" data-i18n="swap.orderDepositAddr">充值地址</span>
+                <span className="meta-key" data-i18n="swap.orderDepositAddr">{tr('swap.orderDepositAddr', '充值地址')}</span>
                 <button
                   type="button"
                   className="btn-ghost-sm"
                   onClick={() => window.copySwapOrderDeposit && window.copySwapOrderDeposit()}
                   data-i18n="common.copy"
                 >
-                  复制
+                  {tr('common.copy', '复制')}
                 </button>
               </div>
               <div id="swap-order-deposit-addr" className="mono" style={{ fontSize: '11px', wordBreak: 'break-all', color: 'var(--near-emerald)' }}>--</div>
@@ -290,7 +291,7 @@ export function SwapLimitView() {
                 type="text"
                 className="input-field mono flex-1"
                 data-i18n-placeholder="swap.orderSubmitHashPlaceholder"
-                placeholder="粘贴外部转账交易哈希加速确认"
+                placeholder={tr('swap.orderSubmitHashPlaceholder', '粘贴外部转账交易哈希加速确认')}
               />
               <button
                 type="button"
@@ -299,7 +300,7 @@ export function SwapLimitView() {
                 onClick={() => window.submitSwapOrderTxHash && window.submitSwapOrderTxHash()}
                 data-i18n="swap.orderSubmitHashBtn"
               >
-                提交凭证
+                {tr('swap.orderSubmitHashBtn', '提交凭证')}
               </button>
             </div>
           </div>
@@ -310,7 +311,7 @@ export function SwapLimitView() {
             onClick={() => window.resumeActiveSwapFollowUp && window.resumeActiveSwapFollowUp()}
             data-i18n="swap.orderResumeBtn"
           >
-            继续执行下一步
+            {tr('swap.orderResumeBtn', '继续执行下一步')}
           </button>
           <button
             type="button"
@@ -319,14 +320,14 @@ export function SwapLimitView() {
             onClick={() => window.refreshActiveSwapOrderStatus && window.refreshActiveSwapOrderStatus(true)}
             data-i18n="swap.orderRefresh"
           >
-            刷新状态
+            {tr('swap.orderRefresh', '刷新状态')}
           </button>
         </div>
 
         {/* Swap History Card */}
         <div className="ios-glass-card flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <span style={{ fontWeight: 700, fontSize: '14px' }} data-i18n="swap.historyTitle">闪兑记录</span>
+            <span style={{ fontWeight: 700, fontSize: '14px' }} data-i18n="swap.historyTitle">{tr('swap.historyTitle', '闪兑记录')}</span>
           </div>
           <div id="swap-history-list" className="flex flex-col gap-2">
             <PanelSlot slotId="swap-history-list" component={SwapHistoryPanel} />
@@ -351,10 +352,10 @@ export function SwapLimitView() {
           {/* Limit Sell Box */}
           <div className="swap-box">
             <div className="swap-box-top">
-              <span data-i18n="limit.sellLabel">卖出</span>
+              <span data-i18n="limit.sellLabel">{tr('limit.sellLabel', '卖出')}</span>
               <div className="flex items-center gap-2">
                 <span>
-                  <span data-i18n="swap.balanceLabel">可用</span>: <span id="limit-sell-balance" className="mono">--</span>
+                  <span data-i18n="swap.balanceLabel">{tr('swap.balanceLabel', '可用')}</span>: <span id="limit-sell-balance" className="mono">--</span>
                 </span>
                 <button
                   type="button"
@@ -363,7 +364,7 @@ export function SwapLimitView() {
                   onClick={() => window.wrapNativeForLimitUI && window.wrapNativeForLimitUI()}
                   data-i18n="limit.wrapBtn"
                 >
-                  封装
+                  {tr('limit.wrapBtn', '封装')}
                 </button>
                 <button
                   type="button"
@@ -371,7 +372,7 @@ export function SwapLimitView() {
                   onClick={() => window.setLimitMaxAmount && window.setLimitMaxAmount()}
                   data-i18n="swap.maxBtn"
                 >
-                  全部
+                  {tr('swap.maxBtn', '全部')}
                 </button>
               </div>
             </div>
@@ -415,9 +416,9 @@ export function SwapLimitView() {
           {/* Limit Buy Box */}
           <div className="swap-box">
             <div className="swap-box-top">
-              <span data-i18n="limit.buyLabel">买入</span>
+              <span data-i18n="limit.buyLabel">{tr('limit.buyLabel', '买入')}</span>
               <span>
-                <span data-i18n="swap.balanceLabel">可用</span>: <span id="limit-buy-balance" className="mono">--</span>
+                <span data-i18n="swap.balanceLabel">{tr('swap.balanceLabel', '可用')}</span>: <span id="limit-buy-balance" className="mono">--</span>
               </span>
             </div>
             <div className="swap-box-main">
@@ -438,10 +439,10 @@ export function SwapLimitView() {
           {/* Target Price Box */}
           <div className="swap-box">
             <div className="swap-box-top">
-              <span data-i18n="limit.priceLabel">目标价格</span>
+              <span data-i18n="limit.priceLabel">{tr('limit.priceLabel', '目标价格')}</span>
               <span className="flex items-center gap-1">
                 <span>
-                  <span data-i18n="limit.marketRefLabel">当前参考</span>: <span id="limit-market-rate" className="mono">--</span>
+                  <span data-i18n="limit.marketRefLabel">{tr('limit.marketRefLabel', '当前参考')}</span>: <span id="limit-market-rate" className="mono">--</span>
                 </span>
                 <button
                   type="button"
@@ -470,19 +471,19 @@ export function SwapLimitView() {
             </div>
             <div id="limit-target-usd-hint" className="mono" style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'right', minHeight: '14px' }}></div>
             <div id="limit-offset-pills" className="flex gap-1">
-              <button type="button" className="filter-pill" data-offset-idx="0" onClick={() => window.applyLimitRateOffsetByIndex && window.applyLimitRateOffsetByIndex(0)} data-i18n="limit.rateOffsetNow">现价</button>
+              <button type="button" className="filter-pill" data-offset-idx="0" onClick={() => window.applyLimitRateOffsetByIndex && window.applyLimitRateOffsetByIndex(0)} data-i18n="limit.rateOffsetNow">{tr('limit.rateOffsetNow', '现价')}</button>
               <button type="button" className="filter-pill" data-offset-idx="1" onClick={() => window.applyLimitRateOffsetByIndex && window.applyLimitRateOffsetByIndex(1)}>+2%</button>
               <button type="button" className="filter-pill" data-offset-idx="2" onClick={() => window.applyLimitRateOffsetByIndex && window.applyLimitRateOffsetByIndex(2)}>+5%</button>
               <button type="button" className="filter-pill" data-offset-idx="3" onClick={() => window.applyLimitRateOffsetByIndex && window.applyLimitRateOffsetByIndex(3)}>+10%</button>
             </div>
             <div id="limit-near-tick-controls" className="limit-dcl-tick-bar hidden">
               <div className="flex items-center justify-between gap-2">
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }} data-i18n="limit.activeTickLabel">链上生效档位</span>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }} data-i18n="limit.activeTickLabel">{tr('limit.activeTickLabel', '链上生效档位')}</span>
                 <span id="limit-snapped-tick-label" className="mono text-emerald" style={{ fontSize: '12px', fontWeight: 700 }}>--</span>
               </div>
               <div className="flex gap-2">
-                <button type="button" className="mini-action-btn flex-1" onClick={() => window.stepLimitDclPoint && window.stepLimitDclPoint(-1)} data-i18n="limit.stepDown">− 低一档</button>
-                <button type="button" className="mini-action-btn flex-1" onClick={() => window.stepLimitDclPoint && window.stepLimitDclPoint(1)} data-i18n="limit.stepUp">高一档 +</button>
+                <button type="button" className="mini-action-btn flex-1" onClick={() => window.stepLimitDclPoint && window.stepLimitDclPoint(-1)} data-i18n="limit.stepDown">{tr('limit.stepDown', '− 低一档')}</button>
+                <button type="button" className="mini-action-btn flex-1" onClick={() => window.stepLimitDclPoint && window.stepLimitDclPoint(1)} data-i18n="limit.stepUp">{tr('limit.stepUp', '高一档 +')}</button>
               </div>
             </div>
           </div>
@@ -492,7 +493,7 @@ export function SwapLimitView() {
           {/* NEAR Split-2-Ticks Option */}
           <div id="limit-split-row" className="flex flex-col gap-2 hidden">
             <div className="meta-row" style={{ padding: '2px 2px' }}>
-              <span className="meta-key" data-i18n="limit.splitTicksLabel">拆成相邻两档 (更易吃单)</span>
+              <span className="meta-key" data-i18n="limit.splitTicksLabel">{tr('limit.splitTicksLabel', '拆成相邻两档 (更易吃单)')}</span>
               <label className="nexus-switch">
                 <input
                   id="limit-split-toggle"
@@ -507,34 +508,34 @@ export function SwapLimitView() {
 
           {/* Solana / EVM Expiry Row */}
           <div id="limit-expiry-row" className="meta-row hidden">
-            <span className="meta-key" data-i18n="limit.expiryLabel">有效期</span>
+            <span className="meta-key" data-i18n="limit.expiryLabel">{tr('limit.expiryLabel', '有效期')}</span>
             <div id="limit-expiry-pills" className="flex gap-1">
-              <button type="button" className="filter-pill" data-exp-days="1" onClick={() => window.setLimitExpiryDays && window.setLimitExpiryDays(1)} data-i18n="limit.exp1d">1天</button>
-              <button type="button" className="filter-pill active" data-exp-days="7" onClick={() => window.setLimitExpiryDays && window.setLimitExpiryDays(7)} data-i18n="limit.exp7d">7天</button>
-              <button type="button" className="filter-pill" data-exp-days="30" onClick={() => window.setLimitExpiryDays && window.setLimitExpiryDays(30)} data-i18n="limit.exp30d">30天</button>
+              <button type="button" className="filter-pill" data-exp-days="1" onClick={() => window.setLimitExpiryDays && window.setLimitExpiryDays(1)} data-i18n="limit.exp1d">{tr('limit.exp1d', '1天')}</button>
+              <button type="button" className="filter-pill active" data-exp-days="7" onClick={() => window.setLimitExpiryDays && window.setLimitExpiryDays(7)} data-i18n="limit.exp7d">{tr('limit.exp7d', '7天')}</button>
+              <button type="button" className="filter-pill" data-exp-days="30" onClick={() => window.setLimitExpiryDays && window.setLimitExpiryDays(30)} data-i18n="limit.exp30d">{tr('limit.exp30d', '30天')}</button>
             </div>
           </div>
 
           {/* Limit Meta Summary */}
           <div className="meta-list">
             <div className="meta-row">
-              <span className="meta-key" data-i18n="limit.estReceive">预计获得</span>
+              <span className="meta-key" data-i18n="limit.estReceive">{tr('limit.estReceive', '预计获得')}</span>
               <span id="limit-meta-est-out" className="meta-val">--</span>
             </div>
             <div id="limit-meta-fee-row" className="meta-row hidden">
-              <span className="meta-key" data-i18n="limit.poolFeeLabel">池子费率</span>
+              <span className="meta-key" data-i18n="limit.poolFeeLabel">{tr('limit.poolFeeLabel', '池子费率')}</span>
               <span id="limit-meta-pool-fee" className="meta-val">--</span>
             </div>
             <div className="meta-row">
-              <span className="meta-key" data-i18n="limit.gasLabel">网络费 (Gas)</span>
+              <span className="meta-key" data-i18n="limit.gasLabel">{tr('limit.gasLabel', '网络费 (Gas)')}</span>
               <span id="limit-meta-gas" className="meta-val">--</span>
             </div>
             <div className="meta-row">
-              <span className="meta-key" data-i18n="limit.depositLabel">押金 (可退)</span>
+              <span className="meta-key" data-i18n="limit.depositLabel">{tr('limit.depositLabel', '押金 (可退)')}</span>
               <span id="limit-meta-deposit" className="meta-val">--</span>
             </div>
             <div className="meta-row">
-              <span className="meta-key" data-i18n="limit.minOrderLabel">最低限额</span>
+              <span className="meta-key" data-i18n="limit.minOrderLabel">{tr('limit.minOrderLabel', '最低限额')}</span>
               <span id="limit-meta-min" className="meta-val">--</span>
             </div>
           </div>
@@ -547,14 +548,14 @@ export function SwapLimitView() {
             onClick={() => window.executeLimitOrderAction && window.executeLimitOrderAction()}
             data-i18n="limit.submitBtn"
           >
-            提交限价单
+            {tr('limit.submitBtn', '提交限价单')}
           </button>
         </div>
 
         {/* Active / History Limit Orders */}
         <div id="limit-orders-card" className="ios-glass-card flex flex-col gap-3">
           <div className="flex items-center justify-between gap-2">
-            <span style={{ fontWeight: 700, fontSize: '14px' }} data-i18n="limit.ordersTitle">限价挂单</span>
+            <span style={{ fontWeight: 700, fontSize: '14px' }} data-i18n="limit.ordersTitle">{tr('limit.ordersTitle', '限价挂单')}</span>
             <div className="flex items-center gap-2">
               <div className="flex gap-1">
                 <button
@@ -564,7 +565,7 @@ export function SwapLimitView() {
                   onClick={() => window.setLimitOrdersTab && window.setLimitOrdersTab('active')}
                   data-i18n="limit.tabActive"
                 >
-                  当前挂单
+                  {tr('limit.tabActive', '当前挂单')}
                 </button>
                 <button
                   type="button"
@@ -573,7 +574,7 @@ export function SwapLimitView() {
                   onClick={() => window.setLimitOrdersTab && window.setLimitOrdersTab('history')}
                   data-i18n="limit.tabHistory"
                 >
-                  历史挂单
+                  {tr('limit.tabHistory', '历史挂单')}
                 </button>
               </div>
               <button
@@ -583,7 +584,7 @@ export function SwapLimitView() {
                 onClick={() => window.refreshLimitOrdersAsync && window.refreshLimitOrdersAsync(true)}
                 data-i18n="common.refresh"
               >
-                刷新
+                {tr('common.refresh', '刷新')}
               </button>
             </div>
           </div>

@@ -1,6 +1,6 @@
 import { h, Fragment } from 'preact';
 import { PanelSlot } from '../components/PanelSlot.jsx';
-import { useLang } from '../store/useWalletStore.js';
+import { useLang, useI18n } from '../store/useWalletStore.js';
 import { SendFeeSummaryPanel, ReceiveAddressListPanel } from '../components/SendReceivePanels.jsx';
 import { TokenBreakdownPanel } from '../components/TokenDetailPanels.jsx';
 import { TokenHistoryPanel } from '../components/TokenHistoryPanel.jsx';
@@ -15,6 +15,7 @@ const callWin = (fn, ...args) => {
 
 export function CoreSheets() {
   useLang();
+  const { tr } = useI18n();
   return (
     <Fragment>
       {/* ==================== Sheet Backdrop ==================== */}
@@ -24,27 +25,27 @@ export function CoreSheets() {
       <div id="sheet-send" class="bottom-sheet" aria-hidden="true">
         <div class="sheet-handle" />
         <div class="sheet-header">
-          <h3 class="sheet-title" data-i18n="sheet.sendTitle">统一跨链转账</h3>
-          <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">关闭</button>
+          <h3 class="sheet-title" data-i18n="sheet.sendTitle">{tr('sheet.sendTitle', '统一跨链转账')}</h3>
+          <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">{tr('common.close', '关闭')}</button>
         </div>
         <div class="sheet-body">
           <div class="flex flex-col gap-1">
-            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }} data-i18n="sheet.sendAssetLabel">选择资产</span>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }} data-i18n="sheet.sendAssetLabel">{tr('sheet.sendAssetLabel', '选择资产')}</span>
             <select id="send-asset-select" class="input-field" onChange={() => callWin('handleSendAssetChange')} />
           </div>
 
           <div class="flex flex-col gap-1">
-            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }} data-i18n="sheet.sendSourceLabel">扣除来源</span>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }} data-i18n="sheet.sendSourceLabel">{tr('sheet.sendSourceLabel', '扣除来源')}</span>
             <select id="send-source-select" class="input-field" onChange={() => callWin('updateSendAvailabilityUI')} />
           </div>
 
           <div class="flex flex-col gap-1">
             <div class="flex items-center justify-between">
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }} data-i18n="sheet.sendToLabel">收款地址（自动识别链类型）</span>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }} data-i18n="sheet.sendToLabel">{tr('sheet.sendToLabel', '收款地址（自动识别链类型）')}</span>
               <div class="flex gap-1">
-                <button type="button" class="btn-ghost-sm" onClick={() => callWin('openQrScannerSheet', 'send')} data-i18n="common.scan">扫码</button>
-                <button type="button" class="btn-ghost-sm" onClick={() => callWin('pasteToSendAddress')} data-i18n="common.paste">粘贴</button>
-                <button type="button" class="btn-ghost-sm" onClick={() => callWin('openContactsPicker', 'send')} data-i18n="common.contacts">地址簿</button>
+                <button type="button" class="btn-ghost-sm" onClick={() => callWin('openQrScannerSheet', 'send')} data-i18n="common.scan">{tr('common.scan', '扫码')}</button>
+                <button type="button" class="btn-ghost-sm" onClick={() => callWin('pasteToSendAddress')} data-i18n="common.paste">{tr('common.paste', '粘贴')}</button>
+                <button type="button" class="btn-ghost-sm" onClick={() => callWin('openContactsPicker', 'send')} data-i18n="common.contacts">{tr('common.contacts', '地址簿')}</button>
               </div>
             </div>
             <input
@@ -52,24 +53,24 @@ export function CoreSheets() {
               type="text"
               class="input-field mono"
               data-i18n-placeholder="sheet.sendToPlaceholder"
-              placeholder="输入 .near / 0x / Solana / prl1p / bc1 地址"
+              placeholder={tr('sheet.sendToPlaceholder', '输入 .near / 0x / Solana / prl1p / bc1 地址')}
               onInput={() => callWin('handleSendRecipientInput')}
             />
             <div id="send-detected-net" style={{ fontSize: '11px', color: 'var(--cyan-glow)' }} />
             <div id="send-evm-chain-row" class="flex flex-col gap-1 hidden" style={{ marginTop: '4px' }}>
-              <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }} data-i18n="sheet.sendEvmChainLabel">目标 EVM 网络</span>
+              <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }} data-i18n="sheet.sendEvmChainLabel">{tr('sheet.sendEvmChainLabel', '目标 EVM 网络')}</span>
               <div id="send-evm-chain-pills" class="pill-scroll" />
             </div>
           </div>
 
           <div class="flex flex-col gap-1">
             <div class="flex items-center justify-between">
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }} data-i18n="sheet.sendAmountLabel">转账数量</span>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }} data-i18n="sheet.sendAmountLabel">{tr('sheet.sendAmountLabel', '转账数量')}</span>
               <div class="flex items-center gap-2">
                 <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
-                  <span data-i18n="swap.balanceLabel">可用</span>: <span id="send-available-bal" class="mono">--</span>
+                  <span data-i18n="swap.balanceLabel">{tr('swap.balanceLabel', '可用')}</span>: <span id="send-available-bal" class="mono">--</span>
                 </span>
-                <button type="button" id="btn-send-max" class="mini-action-btn primary" onClick={() => callWin('setSendMaxAmount')} data-i18n="swap.maxBtn">全部</button>
+                <button type="button" id="btn-send-max" class="mini-action-btn primary" onClick={() => callWin('setSendMaxAmount')} data-i18n="swap.maxBtn">{tr('swap.maxBtn', '全部')}</button>
               </div>
             </div>
             <input
@@ -83,13 +84,13 @@ export function CoreSheets() {
             />
             <div id="send-gas-fix-banner" class="gas-fix-banner hidden">
               <span id="send-gas-fix-text" class="gas-fix-text" />
-              <button type="button" id="btn-send-gas-fix" class="mini-action-btn primary" onClick={() => callWin('applySendMaxSpendableFix')} data-i18n="swap.useMaxBtn">设为最大可用</button>
+              <button type="button" id="btn-send-gas-fix" class="mini-action-btn primary" onClick={() => callWin('applySendMaxSpendableFix')} data-i18n="swap.useMaxBtn">{tr('swap.useMaxBtn', '设为最大可用')}</button>
             </div>
           </div>
 
           <div id="send-route-preview" class="meta-list hidden"><PanelSlot slotId="send-route-preview" component={SendFeeSummaryPanel} /></div>
           <div id="send-tx-receipt" class="meta-list hidden" />
-          <button type="button" id="btn-confirm-send" class="btn-primary" onClick={() => callWin('executeUnifiedSend')} data-i18n="sheet.sendConfirmBtn">确认发送</button>
+          <button type="button" id="btn-confirm-send" class="btn-primary" onClick={() => callWin('executeUnifiedSend')} data-i18n="sheet.sendConfirmBtn">{tr('sheet.sendConfirmBtn', '确认发送')}</button>
         </div>
       </div>
 
@@ -97,15 +98,15 @@ export function CoreSheets() {
       <div id="sheet-receive" class="bottom-sheet" aria-hidden="true">
         <div class="sheet-handle" />
         <div class="sheet-header">
-          <h3 class="sheet-title" data-i18n="sheet.receiveTitle">多链统一收款</h3>
-          <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">关闭</button>
+          <h3 class="sheet-title" data-i18n="sheet.receiveTitle">{tr('sheet.receiveTitle', '多链统一收款')}</h3>
+          <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">{tr('common.close', '关闭')}</button>
         </div>
         <div class="sheet-body" style={{ textAlign: 'center' }}>
           <div id="receive-network-pills" class="pill-scroll"><PanelSlot slotId="receive-network-pills" component={ReceiveAddressListPanel} /></div>
           <div id="receive-qr-container" class="qr-frame" />
           <div id="receive-addr-label" style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>--</div>
           <div id="receive-addr-value" class="input-field mono" style={{ wordBreak: 'break-all', fontSize: '11.5px', textAlign: 'center' }}><PanelSlot slotId="receive-addr-value" component={ReceiveAddressListPanel} renderEmpty="--" /></div>
-          <button type="button" class="btn-primary" onClick={() => callWin('copyReceiveAddress')} data-i18n="sheet.receiveCopyBtn">复制收款地址</button>
+          <button type="button" class="btn-primary" onClick={() => callWin('copyReceiveAddress')} data-i18n="sheet.receiveCopyBtn">{tr('sheet.receiveCopyBtn', '复制收款地址')}</button>
         </div>
       </div>
 
@@ -117,7 +118,7 @@ export function CoreSheets() {
             <div id="token-detail-icon" />
             <h3 id="token-detail-title" class="sheet-title">--</h3>
           </div>
-          <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">关闭</button>
+          <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">{tr('common.close', '关闭')}</button>
         </div>
         <div class="sheet-body flex flex-col gap-3" style={{ maxHeight: '78vh', overflowY: 'auto' }}>
           <div id="token-detail-chains" class="pill-scroll" />
@@ -129,33 +130,33 @@ export function CoreSheets() {
             <div class="quick-actions-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
               <button type="button" class="action-pill" onClick={() => callWin('tokenDetailAction', 'send')}>
                 <span class="action-icon">↑</span>
-                <span data-i18n="home.sendBtn">转账</span>
+                <span data-i18n="home.sendBtn">{tr('home.sendBtn', '转账')}</span>
               </button>
               <button type="button" class="action-pill" onClick={() => callWin('tokenDetailAction', 'receive')}>
                 <span class="action-icon">↓</span>
-                <span data-i18n="home.receiveBtn">收款</span>
+                <span data-i18n="home.receiveBtn">{tr('home.receiveBtn', '收款')}</span>
               </button>
               <button type="button" class="action-pill" onClick={() => callWin('tokenDetailAction', 'swap')}>
                 <span class="action-icon">⇄</span>
-                <span data-i18n="home.swapBtn">闪兑</span>
+                <span data-i18n="home.swapBtn">{tr('home.swapBtn', '闪兑')}</span>
               </button>
               <button type="button" class="action-pill" onClick={() => callWin('tokenDetailAction', 'bridge')}>
                 <span class="action-icon">⛓</span>
-                <span data-i18n="detail.bridgeBtn">跨链桥</span>
+                <span data-i18n="detail.bridgeBtn">{tr('detail.bridgeBtn', '跨链桥')}</span>
               </button>
             </div>
             <div id="token-detail-addr-row" class="meta-row hidden" style={{ paddingTop: '6px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
               <div class="flex flex-col" style={{ minWidth: 0, flex: 1 }}>
-                <span class="meta-key" data-i18n="detail.receiveAddrLabel">当前网络收款地址</span>
+                <span class="meta-key" data-i18n="detail.receiveAddrLabel">{tr('detail.receiveAddrLabel', '当前网络收款地址')}</span>
                 <span id="token-detail-addr" class="mono" style={{ fontSize: '11.5px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>--</span>
               </div>
-              <button type="button" class="mini-action-btn" onClick={() => callWin('copyTokenDetailAddress')} data-i18n="common.copy">复制</button>
+              <button type="button" class="mini-action-btn" onClick={() => callWin('copyTokenDetailAddress')} data-i18n="common.copy">{tr('common.copy', '复制')}</button>
             </div>
           </div>
 
           {/* Per-Chain Breakdown when 'all' is selected */}
           <div id="token-detail-breakdown-card" class="ios-glass-card flex flex-col gap-2">
-            <span style={{ fontWeight: 700, fontSize: '13px' }} data-i18n="detail.chainBreakdownTitle">分链余额明细</span>
+            <span style={{ fontWeight: 700, fontSize: '13px' }} data-i18n="detail.chainBreakdownTitle">{tr('detail.chainBreakdownTitle', '分链余额明细')}</span>
             <div id="token-detail-breakdown-list" class="flex flex-col gap-2"><PanelSlot slotId="token-detail-breakdown-list" component={TokenBreakdownPanel} /></div>
           </div>
 
@@ -167,10 +168,10 @@ export function CoreSheets() {
           {/* On-Chain Activity & Transaction History */}
           <div class="ios-glass-card flex flex-col gap-2">
             <div class="flex items-center justify-between gap-2">
-              <span style={{ fontWeight: 700, fontSize: '13px' }} data-i18n="detail.historyTitle">最近交易</span>
+              <span style={{ fontWeight: 700, fontSize: '13px' }} data-i18n="detail.historyTitle">{tr('detail.historyTitle', '最近交易')}</span>
               <div class="flex items-center gap-2">
-                <button type="button" id="token-detail-history-all-btn" class="btn-ghost-sm hidden" onClick={() => callWin('openAllTokenHistorySheet')} data-i18n="detail.allBtn">全部 ›</button>
-                <a id="token-detail-explorer-link" href="#" target="_blank" rel="noopener noreferrer" class="mono" style={{ fontSize: '11.5px', color: 'var(--near-emerald)', textDecoration: 'none' }} data-i18n="detail.openExplorerBtn">前往浏览器 ↗</a>
+                <button type="button" id="token-detail-history-all-btn" class="btn-ghost-sm hidden" onClick={() => callWin('openAllTokenHistorySheet')} data-i18n="detail.allBtn">{tr('detail.allBtn', '全部 ›')}</button>
+                <a id="token-detail-explorer-link" href="#" target="_blank" rel="noopener noreferrer" class="mono" style={{ fontSize: '11.5px', color: 'var(--near-emerald)', textDecoration: 'none' }} data-i18n="detail.openExplorerBtn">{tr('detail.openExplorerBtn', '前往浏览器 ↗')}</a>
               </div>
             </div>
             <div id="token-detail-history-list" class="flex flex-col gap-2" style={{ fontSize: '12px' }}><PanelSlot slotId="token-detail-history-list" component={TokenHistoryPanel} /></div>
@@ -188,8 +189,8 @@ export function CoreSheets() {
       <div id="sheet-token-picker" class="bottom-sheet" aria-hidden="true">
         <div class="sheet-handle" />
         <div class="sheet-header">
-          <h3 class="sheet-title" data-i18n="sheet.tokenPickerTitle">选择代币</h3>
-          <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">关闭</button>
+          <h3 class="sheet-title" data-i18n="sheet.tokenPickerTitle">{tr('sheet.tokenPickerTitle', '选择代币')}</h3>
+          <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">{tr('common.close', '关闭')}</button>
         </div>
         <div class="sheet-body">
           <input
@@ -197,7 +198,7 @@ export function CoreSheets() {
             type="text"
             class="input-field"
             data-i18n-placeholder="sheet.tokenPickerSearch"
-            placeholder="搜索币种名称或合约"
+            placeholder={tr('sheet.tokenPickerSearch', '搜索币种名称或合约')}
             onInput={() => callWin('renderTokenPickerList')}
           />
           <div id="token-picker-favorites" class="pill-scroll" />
@@ -212,14 +213,14 @@ export function CoreSheets() {
       <div id="sheet-confirm-dialog" class="bottom-sheet" aria-hidden="true" style={{ zIndex: 1200 }}>
         <div class="sheet-handle" />
         <div class="sheet-header">
-          <h3 id="confirm-dialog-title" class="sheet-title" data-i18n="sheet.confirmTitle">确认操作</h3>
-          <button type="button" id="btn-confirm-dialog-close" class="btn-ghost-sm" data-i18n="common.cancel">取消</button>
+          <h3 id="confirm-dialog-title" class="sheet-title" data-i18n="sheet.confirmTitle">{tr('sheet.confirmTitle', '确认操作')}</h3>
+          <button type="button" id="btn-confirm-dialog-close" class="btn-ghost-sm" data-i18n="common.cancel">{tr('common.cancel', '取消')}</button>
         </div>
         <div class="sheet-body flex flex-col gap-3">
           <div id="confirm-dialog-message" style={{ fontSize: '13px', lineHeight: 1.55, color: 'var(--text-primary)', wordBreak: 'break-word' }} />
           <div class="flex gap-2" style={{ marginTop: '4px' }}>
-            <button type="button" id="btn-confirm-dialog-cancel" class="btn-ghost" style={{ flex: 1 }} data-i18n="common.cancel">取消</button>
-            <button type="button" id="btn-confirm-dialog-ok" class="btn-primary" style={{ flex: 1 }} data-i18n="common.confirm">确认</button>
+            <button type="button" id="btn-confirm-dialog-cancel" class="btn-ghost" style={{ flex: 1 }} data-i18n="common.cancel">{tr('common.cancel', '取消')}</button>
+            <button type="button" id="btn-confirm-dialog-ok" class="btn-primary" style={{ flex: 1 }} data-i18n="common.confirm">{tr('common.confirm', '确认')}</button>
           </div>
         </div>
       </div>
