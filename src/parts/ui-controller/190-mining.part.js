@@ -156,6 +156,7 @@
     try {
       const tel = await mining.queryMinerDeepStats(addr, st.mining.poolKey);
       if (myGen !== _miningQueryGen) return;
+      st.mining.loading = false;
       st.mining.telemetry = tel;
       renderMiningTelemetry();
       if (tel && tel.hashrateCurrent === null && tel.unpaidBalancePrl === null && (tel.workersOnlineCount === null || tel.workersOnlineCount === 0)) {
@@ -166,13 +167,16 @@
       }
     } catch (err) {
       if (myGen === _miningQueryGen) {
+        st.mining.loading = false;
+        renderMiningTelemetry();
         const errMsg = toUserFriendlyError(err, '矿工数据查询失败', 'Miner query failed');
         const isStaticWeb = typeof window !== 'undefined' && window.location && !/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname || '') && !window.Capacitor?.Plugins?.CapacitorHttp;
         showToast(isStaticWeb ? t('网页版暂无法直接连接矿池，请使用原生 App 查看矿机状态', 'Pool status is unavailable in web view; please use the native App') : errMsg);
       }
     } finally {
-      if (myGen === _miningQueryGen) {
+      if (myGen === _miningQueryGen && st.mining.loading) {
         st.mining.loading = false;
+        renderMiningTelemetry();
       }
       if (queryBtn) {
         queryBtn.disabled = false;

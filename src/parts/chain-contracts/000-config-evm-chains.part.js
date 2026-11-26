@@ -79,6 +79,13 @@
   }
   const NEAR_EXPLORER_TX = 'https://nearblocks.io/txns/';
   const SOLANA_RPC_ENDPOINTS = ['https://api.mainnet-beta.solana.com', 'https://solana-rpc.publicnode.com'];
+  if (typeof window !== 'undefined' &&
+      typeof location !== 'undefined' &&
+      /^https?:$/i.test(location.protocol || '') &&
+      (location.hostname === '127.0.0.1' || location.hostname === 'localhost') &&
+      !(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform())) {
+    SOLANA_RPC_ENDPOINTS.unshift(`${location.origin}/solana-rpc`);
+  }
   const SOLSCAN_TX = 'https://solscan.io/tx/';
   const JUPITER_BASE_URL = (root && root.NEXUS_JUPITER_BASE_URL) || NEXUS_ENDPOINTS.JUPITER_BASE_URL || (NEXUS_ENDPOINTS.JUPITER_BASE_URL = 'https://lite-api.jup.ag');
   const JUPITER_API_URL = `${JUPITER_BASE_URL}/swap/v1`;

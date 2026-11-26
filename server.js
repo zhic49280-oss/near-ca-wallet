@@ -55,6 +55,51 @@ function isSafeProxyPath(pathParam, requiredPrefixes, upstreamHost) {
   }
 }
 
+function isRetryableSocketError(err) {
+  if (!err) return false;
+  return err.code === 'ECONNRESET' || /socket hang up/i.test(String(err.message || ''));
+}
+
+function forwardHttpsRequest(req, res, buildOpts, bodyBuf, retriesLeft = 1) {
+  let clientAborted = false;
+  let activeProxyReq = null;
+  const onClose = () => {
+    clientAborted = true;
+    if (activeProxyReq && !activeProxyReq.destroyed) activeProxyReq.destroy();
+  };
+  req.once('close', onClose);
+
+  const attempt = (remaining) => {
+    if (clientAborted || res.writableEnded) return;
+    const opts = Object.assign({ agent: false, timeout: UPSTREAM_TIMEOUT_MS }, buildOpts());
+    const proxyReq = https.request(opts, (proxyRes) => {
+      req.removeListener('close', onClose);
+      if (!res.headersSent) {
+        res.writeHead(proxyRes.statusCode || 200, {
+          'Content-Type': proxyRes.headers['content-type'] || 'application/json; charset=utf-8',
+          'Access-Control-Allow-Origin': '*'
+        });
+      }
+      proxyRes.on('error', () => { if (!res.writableEnded) res.end(); });
+      proxyRes.pipe(res);
+    });
+    activeProxyReq = proxyReq;
+    proxyReq.on('timeout', () => proxyReq.destroy(new Error('Upstream timeout')));
+    proxyReq.on('error', (err) => {
+      if (!clientAborted && !res.headersSent && remaining > 0 && isRetryableSocketError(err)) {
+        attempt(remaining - 1);
+        return;
+      }
+      req.removeListener('close', onClose);
+      sendJsonError(res, 502, err.message);
+    });
+    if (bodyBuf && bodyBuf.length > 0) proxyReq.write(bodyBuf);
+    proxyReq.end();
+  };
+
+  attempt(retriesLeft);
+}
+
 const server = http.createServer((req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
@@ -70,20 +115,14 @@ const server = http.createServer((req, res) => {
   const reqUrlStr = String(req.url || '/');
   const parsedRouteUrl = safeParseReqUrl(reqUrlStr);
   const reqPathname = parsedRouteUrl ? parsedRouteUrl.pathname : '';
-  if (reqPathname === '/pearl-proxy') {
-    const pathParam = parsedRouteUrl.searchParams.get('path');
-    const targetUrl = isSafeProxyPath(pathParam, ['/api/v2/'], 'blockbook.pearlresearch.ai');
-    if (!targetUrl) {
-      sendJsonError(res, 400, 'Invalid path parameter');
+  if (reqPathname === '/solana-rpc') {
+    if (req.method !== 'POST') {
+      sendJsonError(res, 405, 'Method Not Allowed');
       return;
     }
     const chunks = [];
     let totalLen = 0;
     let bodyTooLarge = false;
-    let activeProxyReq = null;
-    req.on('close', () => {
-      if (activeProxyReq && !activeProxyReq.destroyed) activeProxyReq.destroy();
-    });
     req.on('data', (c) => {
       if (bodyTooLarge) return;
       totalLen += c.length;
@@ -101,34 +140,64 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       if (bodyTooLarge) return;
       const bodyBuf = Buffer.concat(chunks);
-      const opts = {
-        method: req.method || 'GET',
-        hostname: 'blockbook.pearlresearch.ai',
-        path: `${targetUrl.pathname}${targetUrl.search}`,
-        agent: keepAliveHttpsAgent,
-        timeout: UPSTREAM_TIMEOUT_MS,
+      forwardHttpsRequest(req, res, () => ({
+        method: 'POST',
+        hostname: 'api.mainnet-beta.solana.com',
+        path: '/',
         headers: {
+          'Content-Type': req.headers['content-type'] || 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': 'NearCAWallet/1.0',
+          'Content-Length': bodyBuf.length
+        }
+      }), bodyBuf, 1);
+    });
+    return;
+  }
+
+  if (reqPathname === '/pearl-proxy') {
+    const pathParam = parsedRouteUrl.searchParams.get('path');
+    const targetUrl = isSafeProxyPath(pathParam, ['/api/v2/'], 'blockbook.pearlresearch.ai');
+    if (!targetUrl) {
+      sendJsonError(res, 400, 'Invalid path parameter');
+      return;
+    }
+    const chunks = [];
+    let totalLen = 0;
+    let bodyTooLarge = false;
+    req.on('data', (c) => {
+      if (bodyTooLarge) return;
+      totalLen += c.length;
+      if (totalLen > MAX_PROXY_BODY_BYTES) {
+        bodyTooLarge = true;
+        sendJsonError(res, 413, 'Payload Too Large');
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('error', () => {
+      sendJsonError(res, 400, 'Request stream error');
+    });
+    req.on('end', () => {
+      if (bodyTooLarge) return;
+      const bodyBuf = Buffer.concat(chunks);
+      forwardHttpsRequest(req, res, () => {
+        const headers = {
           'User-Agent': 'NearCAWallet/1.0',
           'Accept': 'application/json,text/plain,*/*'
+        };
+        if (bodyBuf.length > 0) {
+          headers['Content-Type'] = req.headers['content-type'] || 'text/plain';
+          headers['Content-Length'] = bodyBuf.length;
         }
-      };
-      if (bodyBuf.length > 0) {
-        opts.headers['Content-Type'] = req.headers['content-type'] || 'text/plain';
-        opts.headers['Content-Length'] = bodyBuf.length;
-      }
-      const proxyReq = https.request(opts, (proxyRes) => {
-        res.writeHead(proxyRes.statusCode || 200, {
-          'Content-Type': proxyRes.headers['content-type'] || 'application/json; charset=utf-8',
-          'Access-Control-Allow-Origin': '*'
-        });
-        proxyRes.on('error', () => { if (!res.writableEnded) res.end(); });
-        proxyRes.pipe(res);
-      });
-      activeProxyReq = proxyReq;
-      proxyReq.on('timeout', () => proxyReq.destroy(new Error('Upstream timeout')));
-      proxyReq.on('error', (err) => sendJsonError(res, 502, err.message));
-      if (bodyBuf.length > 0) proxyReq.write(bodyBuf);
-      proxyReq.end();
+        return {
+          method: req.method || 'GET',
+          hostname: 'blockbook.pearlresearch.ai',
+          path: `${targetUrl.pathname}${targetUrl.search}`,
+          headers
+        };
+      }, bodyBuf, 1);
     });
     return;
   }
@@ -140,26 +209,15 @@ const server = http.createServer((req, res) => {
       sendJsonError(res, 400, 'Invalid path parameter');
       return;
     }
-    const proxyReq = https.get(targetUrl.toString(), {
-      agent: keepAliveHttpsAgent,
-      timeout: UPSTREAM_TIMEOUT_MS,
+    forwardHttpsRequest(req, res, () => ({
+      method: 'GET',
+      hostname: 'pool.kryptex.com',
+      path: `${targetUrl.pathname}${targetUrl.search}`,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36',
         'Accept': 'application/json,text/html,*/*;q=0.8'
       }
-    }, (proxyRes) => {
-      res.writeHead(proxyRes.statusCode || 200, {
-        'Content-Type': proxyRes.headers['content-type'] || 'application/json; charset=utf-8',
-        'Access-Control-Allow-Origin': '*'
-      });
-      proxyRes.on('error', () => { if (!res.writableEnded) res.end(); });
-      proxyRes.pipe(res);
-    });
-    req.on('close', () => {
-      if (!proxyReq.destroyed) proxyReq.destroy();
-    });
-    proxyReq.on('timeout', () => proxyReq.destroy(new Error('Upstream timeout')));
-    proxyReq.on('error', (err) => sendJsonError(res, 502, err.message));
+    }), null, 1);
     return;
   }
 

@@ -420,6 +420,26 @@
       }
     }
 
+    const proxyUrls = getBrowserKryptexProxyUrls(apiPath);
+    if (proxyUrls.length > 0) {
+      for (let i = 0; i < proxyUrls.length; i++) {
+        try {
+          const res = await fetchWithTimeout(
+            proxyUrls[i],
+            { headers: { Accept: acceptHeader } },
+            KRYPTEX_TIMEOUT_MS
+          );
+          if (res && res.ok) {
+            return await parseResponse(res);
+          }
+          if (res && res.status === 404) {
+            return null;
+          }
+        } catch (_) {}
+      }
+      return null;
+    }
+
     try {
       const res = await fetchWithTimeout(
         directUrl,
@@ -434,21 +454,7 @@
         return null;
       }
     } catch (_) {
-      // Fall through to proxy routes on CORS / network failure
-    }
-
-    const proxyUrls = getBrowserKryptexProxyUrls(apiPath);
-    for (let i = 0; i < proxyUrls.length; i++) {
-      try {
-        const res = await fetchWithTimeout(
-          proxyUrls[i],
-          { headers: { Accept: acceptHeader } },
-          KRYPTEX_TIMEOUT_MS
-        );
-        if (res && res.ok) {
-          return await parseResponse(res);
-        }
-      } catch (_) {}
+      // Fall through on CORS / network failure
     }
     return null;
   }

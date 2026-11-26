@@ -155,3 +155,13 @@ test('D4-01..05: Preact reactivity hooks, mountSwapHistory loop guard & PerpOrde
   const obSideFn = obSrc.slice(obSrc.indexOf('export function PerpOrderbookSidePanel('), obSrc.indexOf('export function PerpBottomListPanel('));
   assert.ok(obSideFn.includes('key={`${side}_${r.px}`}'), 'PerpOrderbookSidePanel rows must be keyed by side and r.px');
 });
+
+test('Wave 3 Live-Fix: #app-root width rule in style.css and /solana-rpc proxy in server.js', () => {
+  const cssSrc = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
+  assert.match(cssSrc, /#app-root\s*\{[^}]*width:\s*100%/, 'style.css must define #app-root width: 100%');
+  assert.ok(cssSrc.includes('.nav-item:focus:not(:focus-visible)'), 'style.css must suppress non-keyboard nav focus ring');
+
+  const serverSrc = fs.readFileSync(path.join(ROOT_DIR, 'server.js'), 'utf8');
+  assert.ok(serverSrc.includes("reqPathname === '/solana-rpc'"), 'server.js must expose /solana-rpc proxy route');
+  assert.ok(serverSrc.includes('api.mainnet-beta.solana.com'), 'server.js /solana-rpc must forward to api.mainnet-beta.solana.com');
+});

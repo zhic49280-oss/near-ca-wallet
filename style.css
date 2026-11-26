@@ -93,6 +93,12 @@ body,
 }
 
 /* App Shell */
+#app-root {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
 .app-shell {
   position: relative;
   z-index: 1;
@@ -1022,6 +1028,17 @@ textarea.input-field {
 
 .nav-item.active {
   color: var(--near-emerald);
+}
+
+.nav-item:focus:not(:focus-visible),
+button:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.nav-item:focus-visible,
+button:focus-visible {
+  outline: 2px solid rgba(0, 236, 151, 0.55);
+  outline-offset: 2px;
 }
 
 .nav-icon {
@@ -2005,6 +2022,14 @@ html.nexus-locked #app-lock-overlay {
   color: var(--near-emerald);
 }
 
+.perp-okx-split-grid .mode-pill-btn {
+  white-space: nowrap;
+  font-size: 11.5px;
+  line-height: 1.2;
+  padding: 5px 6px;
+  min-width: 0;
+}
+
 .limit-order-card-item {
   padding: 11px 12px;
   border-radius: 14px;
@@ -2859,7 +2884,8 @@ html.nexus-locked #app-lock-overlay {
   }
   .perp-okx-split-grid .mode-pill-btn {
     font-size: 11px;
-    padding: 4px 6px;
+    line-height: 1.2;
+    padding: 4px 4px;
     white-space: nowrap;
   }
   .perp-ob-power-wrap > .flex {

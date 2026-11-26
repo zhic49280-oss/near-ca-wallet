@@ -1,28 +1,28 @@
-const CACHE_NAME = 'nexus-wallet-v6.79';
+const CACHE_NAME = 'nexus-wallet-v6.80';
 const CORE_ASSETS = [
   './',
   './index.html',
   './manifest.json',
-  './style.css?v=6.79',
-  './assets/favicon.png?v=6.79',
-  './assets/nexus-logo-192.png?v=6.79',
-  './assets/nexus-logo-512.png?v=6.79',
-  './bip39-wordlist.js?v=6.79',
-  './src/crypto-engine.js?v=6.79',
-  './src/token-registry.js?v=6.79',
-  './src/near-intents.js?v=6.79',
-  './src/chain-contracts.js?v=6.79',
-  './src/limit-orders.js?v=6.79',
-  './src/hyperliquid-perps.js?v=6.79',
-  './src/state.js?v=6.79',
-  './src/dapp-browser.js?v=6.79',
-  './src/framework-ui.js?v=6.79',
-  './src/jsqr-lazy.js?v=6.79',
-  './src/ui-controller.js?v=6.79',
-  './src/mining-pro.js?v=6.79',
-  './ethers.umd.min.js?v=6.79',
-  './qrcode.min.js?v=6.79',
-  './walletconnect.umd.min.js?v=6.79'
+  './style.css?v=6.80',
+  './assets/favicon.png?v=6.80',
+  './assets/nexus-logo-192.png?v=6.80',
+  './assets/nexus-logo-512.png?v=6.80',
+  './bip39-wordlist.js?v=6.80',
+  './src/crypto-engine.js?v=6.80',
+  './src/token-registry.js?v=6.80',
+  './src/near-intents.js?v=6.80',
+  './src/chain-contracts.js?v=6.80',
+  './src/limit-orders.js?v=6.80',
+  './src/hyperliquid-perps.js?v=6.80',
+  './src/state.js?v=6.80',
+  './src/dapp-browser.js?v=6.80',
+  './src/framework-ui.js?v=6.80',
+  './src/jsqr-lazy.js?v=6.80',
+  './src/ui-controller.js?v=6.80',
+  './src/mining-pro.js?v=6.80',
+  './ethers.umd.min.js?v=6.80',
+  './qrcode.min.js?v=6.80',
+  './walletconnect.umd.min.js?v=6.80'
 ];
 
 self.addEventListener('install', (event) => {
@@ -58,7 +58,7 @@ self.addEventListener('fetch', (event) => {
   if (reqUrl.origin !== self.location.origin) {
     return;
   }
-  if (reqUrl.pathname.startsWith('/pearl-proxy') || reqUrl.pathname.startsWith('/kryptex-proxy') || reqUrl.pathname.startsWith('/nearcom-proxy')) {
+  if (reqUrl.pathname.startsWith('/pearl-proxy') || reqUrl.pathname.startsWith('/kryptex-proxy') || reqUrl.pathname.startsWith('/nearcom-proxy') || reqUrl.pathname.startsWith('/solana-rpc')) {
     return;
   }
   const isImmutableStatic = /[?&]v=|\/assets\/icons\/.*\.(?:svg|png|webp|jpe?g|avif)$/i.test(reqUrl.pathname + reqUrl.search);
