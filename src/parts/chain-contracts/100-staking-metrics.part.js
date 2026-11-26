@@ -212,7 +212,7 @@
       () => ethReadCall('eth', '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497', '0x07a2d13a0000000000000000000000000000000000000000000000000de0b6b3a7640000'),
       () => fetchJsonWithTimeout(
         'https://aggregator-api.kyberswap.com/hyperevm/api/v1/routes?tokenIn=0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE&tokenOut=0xfD739d4e423301CE9385c1fb8850539D657C296D&amountIn=1000000000000000000',
-        {},
+        { headers: { 'x-client-id': 'nexus-wallet' } },
         6000
       ),
       () => fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84', {}, 6000),
@@ -229,7 +229,16 @@
       () => fetchJsonWithTimeout('https://eth.blockscout.com/api/v2/tokens/0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8', {}, 6000),
       () => fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/arbitrum/tokens/0x724dc807b04555b71ed48a6896b6f41593b8c637/info', {}, 6000),
       () => fetchJsonWithTimeout('https://api.geckoterminal.com/api/v2/networks/hyperevm/tokens/0xfd739d4e423301ce9385c1fb8850539d657c296d/info', {}, 6000),
-      () => fetchJsonWithTimeout('https://explorer.arc.io/api/v2/tokens/0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', {}, 5000)
+      () => (
+        (globalThis.__arcExplorer403Until && Date.now() < globalThis.__arcExplorer403Until)
+          ? Promise.resolve(null)
+          : fetchJsonWithTimeout('https://explorer.arc.io/api/v2/tokens/0xbeef0016cb2Fd5C352ea7CA08a9f54739DFa7298', {}, 5000).catch((err) => {
+              if (err && (err.status === 403 || /403|forbidden|cloudflare/i.test(String(err.message || '')))) {
+                globalThis.__arcExplorer403Until = Date.now() + 10 * 60_000;
+              }
+              return null;
+            })
+      )
     ];
 
     const fastResults = await runTasksWithLimit(fastTaskFns, 6);

@@ -190,6 +190,18 @@
       delBtn.textContent = t('删除中...', 'Deleting...');
     }
     try {
+      const confirmed = await showConfirmDialogAsync(
+        t(
+          `确认永久删除 NEAR 访问密钥 ${shortenAddr(targetPublicKeyStr, 10, 8)}？删除后该密钥将立即失效且不可恢复。`,
+          `Permanently delete NEAR access key ${shortenAddr(targetPublicKeyStr, 10, 8)}? This action is irreversible and the key will stop working immediately.`
+        ),
+        {
+          danger: true,
+          title: t('高危操作：删除访问密钥', 'Danger: Delete Access Key'),
+          confirmText: t('确认删除', 'Delete Key')
+        }
+      );
+      if (!confirmed) return;
       if (!(await verifySecurityAuthAsync(wallet, t('删除 NEAR 访问密钥', 'Delete NEAR Access Key')))) return;
       showToast(t('正在提交删除密钥请求...', 'Removing key on-chain...'));
       const res = await contracts.deleteNearAccessKeyAsync({ wallet, targetPublicKeyStr });

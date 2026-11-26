@@ -736,7 +736,7 @@
                   try {
                     const kResp = await fetchJsonWithTimeout(
                       `https://aggregator-api.kyberswap.com/arc/api/v1/routes?tokenIn=${ARC_USDC_CONTRACT}&tokenOut=${encodeURIComponent(sample.contractAddress)}&amountIn=10000000`,
-                      { signal: sig },
+                      { signal: sig, headers: { 'x-client-id': 'nexus-wallet' } },
                       1600
                     );
                     const rs = kResp && kResp.ok && kResp.data && kResp.data.code === 0 && kResp.data.data && kResp.data.data.routeSummary

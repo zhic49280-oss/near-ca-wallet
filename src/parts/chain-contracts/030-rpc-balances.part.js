@@ -445,6 +445,28 @@
       }
     }
 
+    if (wallet.legacyEvmMnemonic && !wallet.evmPrivateKey && cryptoEngine && typeof cryptoEngine.deriveEvmFromSeedAsync === 'function') {
+      try {
+        const evm = await cryptoEngine.deriveEvmFromSeedAsync(wallet.legacyEvmMnemonic);
+        if (evm && evm.privateKeyHex) {
+          wallet.evmPrivateKey = evm.privateKeyHex;
+          if (evm.address) wallet.evmAddress = evm.address;
+        }
+      } catch (_) {}
+    }
+    if (wallet.legacySolMnemonic && !wallet.solPrivateSeedHex && cryptoEngine && typeof cryptoEngine.deriveSolanaFromSeedAsync === 'function') {
+      try {
+        const sol = await cryptoEngine.deriveSolanaFromSeedAsync(wallet.legacySolMnemonic, 0);
+        if (sol && sol.solPrivateSeedHex) {
+          wallet.solPrivateSeedHex = sol.solPrivateSeedHex;
+          if (sol.solAddress) {
+            wallet.solAddress = sol.solAddress;
+            wallet.solPublicKey = sol.solPublicKey || sol.solAddress;
+          }
+        }
+      } catch (_) {}
+    }
+
     const nearId = wallet.nearNamedAccount || wallet.nearAddress;
     if (nearId) {
       const hasCachedMpc = Boolean(

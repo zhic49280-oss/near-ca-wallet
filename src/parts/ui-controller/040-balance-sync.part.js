@@ -128,6 +128,7 @@
   let _isRefreshing = false;
   let _feedbackRefreshing = false;
   let _refreshGen = 0;
+  let _refreshingWalletId = null;
   let _lastStakingPositionsSyncAt = 0;
 
   function ensureStakingMetricsFresh(maxAgeMs = 300_000) {
@@ -146,9 +147,11 @@
     const contracts = getContracts();
     const tokens = getTokens();
     const wallet = st.getActiveWallet();
-    if (!wallet || (_isRefreshing && (!showFeedback || _feedbackRefreshing))) return;
+    const isDifferentWallet = Boolean(wallet && _refreshingWalletId && _refreshingWalletId !== wallet.id);
+    if (!wallet || (_isRefreshing && !isDifferentWallet && (!showFeedback || _feedbackRefreshing))) return;
 
     _isRefreshing = true;
+    _refreshingWalletId = wallet.id;
     if (showFeedback) _feedbackRefreshing = true;
     const gen = ++_refreshGen;
     const targetWalletId = wallet.id;
@@ -575,6 +578,7 @@
       if (gen === _refreshGen) {
         _isRefreshing = false;
         _feedbackRefreshing = false;
+        _refreshingWalletId = null;
         const viewWallet = $('view-wallet');
         if (ptrInd) {
           ptrInd.classList.remove('pulling', 'refreshing');

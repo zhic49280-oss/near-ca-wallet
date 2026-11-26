@@ -497,6 +497,7 @@
     }
 
     if (!skipStorageCheck) {
+      let storageDepositAttempted = false;
       try {
         const sbArgs = bytesToBase64(new TextEncoder().encode(JSON.stringify({ account_id: dest })));
         const sbRes = await nearRpcPostAsync(
@@ -531,6 +532,7 @@
               throw new Error(t(`NEAR 余额不足以支付收款方代币存储押金 (需约 ${minNearNeeded.toFixed(4)} NEAR)`, `Insufficient NEAR for recipient token storage deposit (~${minNearNeeded.toFixed(4)} NEAR)`));
             }
             const creds = getWalletNearSignerCredentials(resolvedWallet);
+            storageDepositAttempted = true;
             await api.signAndSendNearFunctionCall({
               accountId: sender,
               publicKeyStr: creds.publicKeyStr,
@@ -544,7 +546,7 @@
           }
         }
       } catch (storageErr) {
-        if (storageErr && /Insufficient NEAR|storage/i.test(String(storageErr.message || ''))) {
+        if (storageDepositAttempted || (storageErr && /Insufficient NEAR|storage/i.test(String(storageErr.message || '')))) {
           throw storageErr;
         }
       }

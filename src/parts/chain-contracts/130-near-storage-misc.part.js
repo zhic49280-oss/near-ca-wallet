@@ -1025,7 +1025,19 @@
       const nowSec = Math.floor(Date.now() / 1000);
 
       if (cdDur > 0) {
-        if (mode === 'unstake' || (underlyingAmt > 0n && nowSec >= cooldownEnd)) {
+        if (mode === 'unstake') {
+          if (underlyingAmt <= 0n || nowSec < cooldownEnd) {
+            if (underlyingAmt > 0n && nowSec < cooldownEnd) {
+              const remainHours = Math.max(1, Math.ceil((cooldownEnd - nowSec) / 3600));
+              throw new Error(t(`sUSDe 仍在冷却期中，预计约 ${remainHours} 小时后可领取 USDe`, `sUSDe cooldown active (~${remainHours}h remaining)`));
+            }
+            throw new Error(t('当前暂无已到期可领取的 USDe', 'No matured USDe cooldown to unstake'));
+          }
+          const data = ethenaIface.encodeFunctionData('unstake', [evmSender]);
+          const res = await sendCall(data);
+          return { ...res, poolId: pool.id, step: 'unstaked' };
+        }
+        if (underlyingAmt > 0n && nowSec >= cooldownEnd) {
           const data = ethenaIface.encodeFunctionData('unstake', [evmSender]);
           const res = await sendCall(data);
           return { ...res, poolId: pool.id, step: 'unstaked' };

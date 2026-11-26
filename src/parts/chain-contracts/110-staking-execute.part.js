@@ -432,13 +432,16 @@
           wallet.erc20Balances?.[pool.chain]?.[addrLower] ??
           0
         );
-        if (wethBal < Number(amount)) {
-          const shortfallHuman = Math.max(0, Number(amount) - Math.max(0, wethBal));
+        const amountWei = BigInt(rawAssets);
+        const wethRaw = BigInt(toBaseUnits(Math.max(0, Number.isFinite(wethBal) ? wethBal : 0), 18));
+        if (wethRaw < amountWei) {
+          const shortfallWeiBig = amountWei - wethRaw;
+          const shortfallHuman = Number(fromBaseUnits(shortfallWeiBig.toString(), 18));
           if (gasBal < shortfallHuman + minGas) {
             throw new Error(t(`${pool.chainLabel} ETH 余额不足以完成 Wrap 与 Supply Gas`, `Insufficient ${pool.chainLabel} ETH for wrap + supply gas`));
           }
-          const shortfallWei = toBaseUnits(shortfallHuman, 18);
-          if (BigInt(shortfallWei) > 0n) {
+          const shortfallWei = shortfallWeiBig.toString();
+          if (shortfallWeiBig > 0n) {
             const wrapRes = await sendEvmContractCall({
               chainKey: pool.chain,
               to: pool.tokenContract,

@@ -42,6 +42,9 @@
 
   function cancelOnboardSubPanel() {
     const st = getState();
+    st.pendingMnemonic = '';
+    const grid = $('onboard-seed-grid');
+    if (grid) unmountPreactContainer(grid);
     if (st.wallets.length > 0 && $('view-onboarding') && !$('view-onboarding').classList.contains('hidden')) {
       const choice = $('onboard-choice-panel');
       const createP = $('onboard-create-panel');
@@ -71,7 +74,13 @@
       showToast(t('加密引擎未就绪', 'Crypto engine unavailable'));
       return;
     }
-    const rawGenerated = crypto.generateMnemonic(12);
+    let rawGenerated;
+    try {
+      rawGenerated = crypto.generateMnemonic(12);
+    } catch (e) {
+      showToast(toUserFriendlyError(e, '生成助记词失败，请重试', 'Failed to generate recovery phrase'));
+      return;
+    }
     const words = Array.isArray(rawGenerated)
       ? rawGenerated
       : String(rawGenerated || '').trim().split(/\s+/).filter(Boolean);
@@ -159,6 +168,8 @@
       st.wallets.push(wallet);
       st.activeWalletId = wallet.id;
       st.pendingMnemonic = '';
+      const grid = $('onboard-seed-grid');
+      if (grid) unmountPreactContainer(grid);
       if ($('onboard-create-name')) $('onboard-create-name').value = '';
       resetPerWalletTransientState(wallet);
       _isAddingAdditionalWallet = false;
@@ -390,6 +401,9 @@
     const st = getState();
     const found = st.wallets.find((w) => w.id === walletId);
     if (!found) return;
+    const crypto = getCrypto();
+    if (crypto && typeof crypto.clearPbkdf2Cache === 'function') crypto.clearPbkdf2Cache();
+    else if (typeof globalThis !== 'undefined' && typeof globalThis.__clearPbkdf2Cache === 'function') globalThis.__clearPbkdf2Cache();
     st.activeWalletId = found.id;
     resetPerWalletTransientState(found);
     st.saveWallets();
@@ -402,35 +416,48 @@
     showToast(`${t('已切换账户', 'Switched to')}: ${found.name}`);
   }
 
+  let _deletingWalletBusy = false;
+
   async function deleteWalletById(walletId) {
+    if (_deletingWalletBusy) return;
     const st = getState();
     if (st.wallets.length <= 1) {
       showToast(t('至少保留一个钱包', 'Keep at least one wallet'));
       return;
     }
     const target = st.wallets.find((w) => w.id === walletId);
-    const delMsg = t(
-      `确认永久移除钱包「${target?.name || walletId}」？请确保已备份助记词。`,
-      `Permanently remove wallet "${target?.name || walletId}"? Ensure you backed up its recovery phrase.`
-    );
-    const confirmed = await showConfirmDialogAsync(delMsg, {
-      danger: true,
-      title: t('移除钱包', 'Remove Wallet'),
-      confirmText: t('确认移除', 'Remove')
-    });
-    if (!confirmed) return;
-    if (target && !(await verifySecurityAuthAsync(target, t('删除钱包账户', 'Delete wallet account')))) return;
-    const deletedActive = st.activeWalletId === walletId;
-    st.wallets = st.wallets.filter((w) => w.id !== walletId);
-    if (deletedActive) {
-      st.activeWalletId = st.wallets[0] ? st.wallets[0].id : null;
-      resetPerWalletTransientState(st.wallets[0] || null);
+    if (!target) return;
+    _deletingWalletBusy = true;
+    try {
+      const delMsg = t(
+        `确认永久移除钱包「${target?.name || walletId}」？请确保已备份助记词。`,
+        `Permanently remove wallet "${target?.name || walletId}"? Ensure you backed up its recovery phrase.`
+      );
+      const confirmed = await showConfirmDialogAsync(delMsg, {
+        danger: true,
+        title: t('移除钱包', 'Remove Wallet'),
+        confirmText: t('确认移除', 'Remove')
+      });
+      if (!confirmed) return;
+      if (target && !(await verifySecurityAuthAsync(target, t('删除钱包账户', 'Delete wallet account')))) return;
+      if (st.wallets.length <= 1 || !st.wallets.some((w) => w.id === walletId)) return;
+      const crypto = getCrypto();
+      if (crypto && typeof crypto.clearPbkdf2Cache === 'function') crypto.clearPbkdf2Cache();
+      else if (typeof globalThis !== 'undefined' && typeof globalThis.__clearPbkdf2Cache === 'function') globalThis.__clearPbkdf2Cache();
+      const deletedActive = st.activeWalletId === walletId;
+      st.wallets = st.wallets.filter((w) => w.id !== walletId);
+      if (deletedActive) {
+        st.activeWalletId = st.wallets[0] ? st.wallets[0].id : null;
+        resetPerWalletTransientState(st.wallets[0] || null);
+      }
+      st.saveWallets();
+      renderWalletSwitcherList();
+      renderAll();
+      if (deletedActive) refreshAllBalancesAsync(true);
+      showToast(t('已移除钱包', 'Wallet removed'));
+    } finally {
+      _deletingWalletBusy = false;
     }
-    st.saveWallets();
-    renderWalletSwitcherList();
-    renderAll();
-    if (deletedActive) refreshAllBalancesAsync(true);
-    showToast(t('已移除钱包', 'Wallet removed'));
   }
 
   let _backupRevealActive = false;
@@ -444,6 +471,33 @@
     }
   }
 
+  function renderBackupSecretsFallback(container, rows, revealed) {
+    if (!container || !Array.isArray(rows)) return;
+    const warnBox = `
+        <div class="ios-glass-card flex flex-col gap-1" style="padding:10px 12px;border-color:rgba(251,113,133,0.45);background:rgba(251,113,133,0.08);">
+          <div style="font-size:12.5px;font-weight:700;color:var(--rose-alert);">⚠️ ${escapeHtml(t('最高安全等级提醒：切勿截图或泄露', 'High Security Warning: Never Screenshot or Share'))}</div>
+          <div style="font-size:11.5px;color:var(--text-secondary);line-height:1.5;">
+            ${escapeHtml(t('• 请使用纸笔或金属板离线抄写，切勿截图、录屏或存入微信/网盘/备忘录。', '• Write down offline on paper/metal. Never screenshot, record, or save in cloud/chat apps.'))}<br/>
+            ${escapeHtml(t('• 任何索要助记词或私钥的人都是骗子，一旦泄露资产将永久被盗且无法追回。', '• Anyone asking for your phrase or key is a scammer. Leaked assets cannot be recovered.'))}
+          </div>
+          <button type="button" id="btn-backup-reveal-toggle" class="btn-secondary" style="margin-top:6px;padding:7px 12px;font-size:12px;" data-action="toggle-backup-reveal">${escapeHtml(revealed ? t('隐藏助记词与私钥', 'Hide Phrase & Keys') : t('显示助记词与私钥', 'Reveal Phrase & Keys'))}</button>
+        </div>
+      `;
+    const hint = `<div style="font-size:11.5px;color:var(--text-secondary);padding:4px 2px;">${escapeHtml(t('EVM、Solana 由当前主账户安全派生管理；Pearl (PRL) 与 Bitcoin (BTC) 由助记词本地独立派生。', 'EVM & Solana are securely managed by this master account; Pearl (PRL) & Bitcoin (BTC) are locally derived from your phrase.'))}</div>`;
+    container.innerHTML = warnBox + hint + rows.map((r) => {
+      const showPlain = !r.secret || revealed;
+      return `
+        <div class="meta-list">
+          <div class="meta-row">
+            <span class="meta-key">${escapeHtml(r.label)}</span>
+            <button type="button" class="btn-ghost-sm" ${r.secret ? 'data-secret-copy="1"' : ''} data-action="copy-text" data-val="${showPlain ? escapeHtml(r.val || '') : ''}" data-label="${escapeHtml(r.label)}">${t('复制', 'Copy')}</button>
+          </div>
+          <div class="mono ${r.secret ? 'backup-secret-val' : ''}" ${showPlain && r.secret ? `data-secret="${escapeHtml(r.val || '')}"` : ''} style="font-size:11px;word-break:break-all;color:#fff;${!showPlain ? 'filter:blur(4px);user-select:none;' : ''}">${escapeHtml(showPlain ? (r.val || '--') : (r.val ? '•••• •••• •••• •••• •••• ••••' : '--'))}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
   function setBackupRevealState(revealed) {
     _backupRevealActive = Boolean(revealed);
     clearBackupAutoHideTimer();
@@ -454,13 +508,17 @@
     }
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const container = $('backup-keys-content');
-    if (fw && typeof fw.mountBackupSecretsPanel === 'function' && container && _lastBackupRows) {
-      fw.mountBackupSecretsPanel(container, {
-        rows: _lastBackupRows,
-        revealed: _backupRevealActive,
-        isEn: getState().lang === 'en',
-        onToggleReveal: toggleBackupKeysReveal
-      });
+    if (container && _lastBackupRows) {
+      if (fw && typeof fw.mountBackupSecretsPanel === 'function') {
+        fw.mountBackupSecretsPanel(container, {
+          rows: _lastBackupRows,
+          revealed: _backupRevealActive,
+          isEn: getState().lang === 'en',
+          onToggleReveal: toggleBackupKeysReveal
+        });
+      } else {
+        renderBackupSecretsFallback(container, _lastBackupRows, _backupRevealActive);
+      }
     }
   }
 
@@ -480,67 +538,56 @@
     }
   }
 
+  let _backupSheetOpening = false;
+
   async function openBackupKeysSheet() {
+    if (_backupSheetOpening) return;
     const st = getState();
     const contracts = getContracts();
     const wallet = st.getActiveWallet();
     if (!wallet) return;
-    if (!(await verifySecurityAuthAsync(wallet, t('查看助记词与私钥', 'View recovery phrase & keys')))) return;
-    await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-    st.saveWallets();
+    _backupSheetOpening = true;
+    try {
+      if (!(await verifySecurityAuthAsync(wallet, t('查看助记词与私钥', 'View recovery phrase & keys')))) return;
+      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+      st.saveWallets();
 
-    const rows = [
-      { label: t('助记词 (12/24词)', 'Recovery Phrase'), val: wallet.mnemonic, secret: true },
-      ...(wallet.prlMnemonic && wallet.prlMnemonic !== wallet.mnemonic
-        ? [{ label: t('Pearl (PRL) 专用助记词 (独立绑定)', 'Pearl (PRL) Custom Seed Phrase'), val: wallet.prlMnemonic, secret: true }]
-        : []),
-      ...(wallet.btcMnemonic && wallet.btcMnemonic !== wallet.mnemonic && wallet.btcMnemonic !== wallet.prlMnemonic
-        ? [{ label: t('Bitcoin (BTC) 专用助记词', 'Bitcoin (BTC) Custom Seed Phrase'), val: wallet.btcMnemonic, secret: true }]
-        : []),
-      { label: t('NEAR 主账户', 'NEAR Master Account'), val: wallet.nearNamedAccount || wallet.nearAddress, secret: false },
-      { label: t('NEAR 主私钥', 'NEAR Master Private Key'), val: wallet.nearPrivateKey, secret: true },
-      { label: t('Bitcoin (BTC) 地址', 'Bitcoin (BTC) Address'), val: wallet.btcAddress, secret: false },
-      { label: t('Bitcoin (BTC) 私钥', 'Bitcoin (BTC) Private Key'), val: wallet.btcPrivateKeyHex, secret: true },
-      { label: t('Pearl (PRL) 地址', 'Pearl (PRL) Address'), val: wallet.address, secret: false },
-      { label: t('Pearl (PRL) 私钥', 'Pearl (PRL) Private Key'), val: wallet.privateKeyHex, secret: true }
-    ];
+      const rows = [
+        { label: t('助记词 (12/24词)', 'Recovery Phrase'), val: wallet.mnemonic, secret: true },
+        ...(wallet.prlMnemonic && wallet.prlMnemonic !== wallet.mnemonic
+          ? [{ label: t('Pearl (PRL) 专用助记词 (独立绑定)', 'Pearl (PRL) Custom Seed Phrase'), val: wallet.prlMnemonic, secret: true }]
+          : []),
+        ...(wallet.btcMnemonic && wallet.btcMnemonic !== wallet.mnemonic && wallet.btcMnemonic !== wallet.prlMnemonic
+          ? [{ label: t('Bitcoin (BTC) 专用助记词', 'Bitcoin (BTC) Custom Seed Phrase'), val: wallet.btcMnemonic, secret: true }]
+          : []),
+        { label: t('NEAR 主账户', 'NEAR Master Account'), val: wallet.nearNamedAccount || wallet.nearAddress, secret: false },
+        { label: t('NEAR 主私钥', 'NEAR Master Private Key'), val: wallet.nearPrivateKey, secret: true },
+        { label: t('Bitcoin (BTC) 地址', 'Bitcoin (BTC) Address'), val: wallet.btcAddress, secret: false },
+        { label: t('Bitcoin (BTC) 私钥', 'Bitcoin (BTC) Private Key'), val: wallet.btcPrivateKeyHex, secret: true },
+        { label: t('Pearl (PRL) 地址', 'Pearl (PRL) Address'), val: wallet.address, secret: false },
+        { label: t('Pearl (PRL) 私钥', 'Pearl (PRL) Private Key'), val: wallet.privateKeyHex, secret: true }
+      ];
 
-    clearBackupAutoHideTimer();
-    _backupRevealActive = false;
-    _lastBackupRows = rows;
-    openSheet('sheet-backup');
-    const container = $('backup-keys-content');
-    if (container) {
-      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
-      if (fw && typeof fw.mountBackupSecretsPanel === 'function') {
-        fw.mountBackupSecretsPanel(container, {
-          rows,
-          revealed: false,
-          isEn: st.lang === 'en',
-          onToggleReveal: toggleBackupKeysReveal
-        });
-      } else {
-        const warnBox = `
-        <div class="ios-glass-card flex flex-col gap-1" style="padding:10px 12px;border-color:rgba(251,113,133,0.45);background:rgba(251,113,133,0.08);">
-          <div style="font-size:12.5px;font-weight:700;color:var(--rose-alert);">⚠️ ${escapeHtml(t('最高安全等级提醒：切勿截图或泄露', 'High Security Warning: Never Screenshot or Share'))}</div>
-          <div style="font-size:11.5px;color:var(--text-secondary);line-height:1.5;">
-            ${escapeHtml(t('• 请使用纸笔或金属板离线抄写，切勿截图、录屏或存入微信/网盘/备忘录。', '• Write down offline on paper/metal. Never screenshot, record, or save in cloud/chat apps.'))}<br/>
-            ${escapeHtml(t('• 任何索要助记词或私钥的人都是骗子，一旦泄露资产将永久被盗且无法追回。', '• Anyone asking for your phrase or key is a scammer. Leaked assets cannot be recovered.'))}
-          </div>
-          <button type="button" id="btn-backup-reveal-toggle" class="btn-secondary" style="margin-top:6px;padding:7px 12px;font-size:12px;" data-action="toggle-backup-reveal">${escapeHtml(t('显示助记词与私钥', 'Reveal Phrase & Keys'))}</button>
-        </div>
-      `;
-        const hint = `<div style="font-size:11.5px;color:var(--text-secondary);padding:4px 2px;">${escapeHtml(t('EVM、Solana 由当前主账户安全派生管理；Pearl (PRL) 与 Bitcoin (BTC) 由助记词本地独立派生。', 'EVM & Solana are securely managed by this master account; Pearl (PRL) & Bitcoin (BTC) are locally derived from your phrase.'))}</div>`;
-        container.innerHTML = warnBox + hint + rows.map((r) => `
-        <div class="meta-list">
-          <div class="meta-row">
-            <span class="meta-key">${escapeHtml(r.label)}</span>
-            <button type="button" class="btn-ghost-sm" ${r.secret ? 'data-secret-copy="1"' : ''} data-action="copy-text" data-val="${escapeHtml(r.val || '')}" data-label="${escapeHtml(r.label)}">${t('复制', 'Copy')}</button>
-          </div>
-          <div class="mono ${r.secret ? 'backup-secret-val' : ''}" data-secret="${escapeHtml(r.val || '')}" style="font-size:11px;word-break:break-all;color:#fff;${r.secret ? 'filter:blur(4px);user-select:none;' : ''}">${escapeHtml(r.secret ? (r.val ? '•••• •••• •••• •••• •••• ••••' : '--') : (r.val || '--'))}</div>
-        </div>
-      `).join('');
+      clearBackupAutoHideTimer();
+      _backupRevealActive = false;
+      _lastBackupRows = rows;
+      openSheet('sheet-backup');
+      const container = $('backup-keys-content');
+      if (container) {
+        const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+        if (fw && typeof fw.mountBackupSecretsPanel === 'function') {
+          fw.mountBackupSecretsPanel(container, {
+            rows,
+            revealed: false,
+            isEn: st.lang === 'en',
+            onToggleReveal: toggleBackupKeysReveal
+          });
+        } else {
+          renderBackupSecretsFallback(container, rows, false);
+        }
       }
+    } finally {
+      _backupSheetOpening = false;
     }
   }
 

@@ -116,6 +116,9 @@
           valEl.dataset.error = isFetching ? '' : '1';
         }
         if (isFetching) {
+          if (fw && typeof fw.render === 'function') {
+            try { fw.render(null, valEl); } catch (_) {}
+          }
           valEl.textContent = t('正在获取 QTC 收款地址...', 'Fetching QTC deposit address...');
         } else if (fw && typeof fw.mountReceiveAddressListPanel === 'function') {
           fw.mountReceiveAddressListPanel(valEl, { mode: 'qtc-error', isEn: st.lang === 'en' });
@@ -131,6 +134,9 @@
       if (valEl.dataset) {
         valEl.dataset.loading = '';
         valEl.dataset.error = '';
+      }
+      if (fw && typeof fw.render === 'function') {
+        try { fw.render(null, valEl); } catch (_) {}
       }
       valEl.textContent = active.addr || '--';
     }

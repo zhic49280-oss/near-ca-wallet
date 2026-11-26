@@ -247,13 +247,25 @@
         let _swReloaded = false;
         navigator.serviceWorker.addEventListener?.('controllerchange', () => {
           if (_swReloaded) return;
-          _swReloaded = true;
           const curSt = getState();
-          const busy = Boolean((typeof document !== 'undefined' && document.querySelector && document.querySelector('.sheet-backdrop.open')) || (curSt && ((curSt.swap && curSt.swap._executing) || (curSt.perp && curSt.perp.submitting))));
+          const inOnboarding = Boolean($('view-onboarding') && !$('view-onboarding').classList.contains('hidden'));
+          const hasPendingSeed = Boolean(curSt && curSt.pendingMnemonic);
+          const lockedOrAuth = Boolean(
+            (typeof isAppLocked === 'function' && isAppLocked()) ||
+            (typeof _appLockState !== 'undefined' && _appLockState && _appLockState.authenticating)
+          );
+          const busy = Boolean(
+            inOnboarding ||
+            hasPendingSeed ||
+            lockedOrAuth ||
+            (typeof document !== 'undefined' && document.querySelector && document.querySelector('.sheet-backdrop.open')) ||
+            (curSt && ((curSt.swap && curSt.swap._executing) || (curSt.perp && curSt.perp.submitting)))
+          );
           if (busy) {
             showToast(t('新版本已就绪，将在下次打开时生效', 'Update ready; will apply on next launch'));
             return;
           }
+          _swReloaded = true;
           if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
             window.location.reload();
           }

@@ -227,15 +227,16 @@
       }
       return;
     }
+    const dappApproveSheet = $('sheet-dapp-approve');
+    if (dappApproveSheet && dappApproveSheet.classList && dappApproveSheet.classList.contains('open') && typeof rejectDAppApproval === 'function') {
+      rejectDAppApproval();
+    }
     _backupRevealActive = false;
+    _lastBackupRows = null;
     if (typeof clearBackupAutoHideTimer === 'function') clearBackupAutoHideTimer();
-    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const backupContent = $('backup-keys-content');
     if (backupContent) {
-      if (fw && typeof fw.render === 'function') {
-        try { fw.render(null, backupContent); } catch (_) {}
-      }
-      backupContent.innerHTML = '';
+      unmountPreactContainer(backupContent);
     }
     if (st && st.staking) st.staking.amountIn = '';
     if (st && st.send && typeof st.send === 'object') {
@@ -247,7 +248,7 @@
     const sendRec = $('send-tx-receipt');
     if (sendRec) {
       sendRec.classList.add('hidden');
-      sendRec.innerHTML = '';
+      unmountPreactContainer(sendRec);
     }
     if ($('btn-confirm-send')) $('btn-confirm-send').classList.remove('hidden');
     if (typeof _sendCrossQuoteTimer !== 'undefined' && _sendCrossQuoteTimer) {

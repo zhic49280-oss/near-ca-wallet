@@ -262,7 +262,10 @@
 
     let mpcEvmAddress = String(raw.mpcEvmAddress || '').trim();
     let evmAddress = String(raw.evmAddress || '').trim();
+    const evmPrivateKey = String(raw.evmPrivateKey || '').trim();
     let solAddress = String(raw.solAddress || '').trim();
+    let solPublicKey = String(raw.solPublicKey || '').trim();
+    const solPrivateSeedHex = String(raw.solPrivateSeedHex || '').trim();
     let pearlAddress = String(raw.address || raw.pearlAddress || '').trim();
     let privateKeyHex = String(raw.privateKeyHex || '').trim();
     let tweakedPrivateKeyHex = String(raw.tweakedPrivateKeyHex || '').trim();
@@ -307,7 +310,8 @@
       mpcDerivedForNearId === activeNearId &&
       mpcEvmAddress &&
       evmAddress &&
-      solAddress
+      solAddress &&
+      solPublicKey
     );
     if (activeNearId && !hasCachedMpc && cryptoEngine) {
       if (typeof cryptoEngine.deriveNearMpcEvmAddress === 'function' && typeof cryptoEngine.deriveNearMpcSolanaAddress === 'function') {
@@ -315,8 +319,15 @@
           const evmMpc = cryptoEngine.deriveNearMpcEvmAddress(activeNearId, 'ethereum-1');
           const solMpc = cryptoEngine.deriveNearMpcSolanaAddress(activeNearId, 'solana-1');
           mpcEvmAddress = evmMpc.mpcEvmAddress;
-          evmAddress = evmMpc.mpcEvmAddress;
-          solAddress = solMpc.mpcSolAddress;
+          if (!evmPrivateKey) evmAddress = evmMpc.mpcEvmAddress;
+          else evmAddress = evmAddress || evmMpc.mpcEvmAddress;
+          if (!solPrivateSeedHex) {
+            solAddress = solMpc.mpcSolAddress;
+            solPublicKey = solMpc.mpcSolAddress;
+          } else {
+            solAddress = solAddress || solMpc.mpcSolAddress;
+            solPublicKey = solPublicKey || solAddress;
+          }
           mpcDerivedForNearId = activeNearId;
           didSelfHeal = true;
         } catch (_) {}
@@ -324,13 +335,21 @@
         try {
           const mpcAll = cryptoEngine.deriveNearMpcAllAddresses(activeNearId);
           mpcEvmAddress = mpcAll.evmAddress;
-          evmAddress = mpcAll.evmAddress;
-          solAddress = mpcAll.solAddress;
+          if (!evmPrivateKey) evmAddress = mpcAll.evmAddress;
+          else evmAddress = evmAddress || mpcAll.evmAddress;
+          if (!solPrivateSeedHex) {
+            solAddress = mpcAll.solAddress;
+            solPublicKey = mpcAll.solAddress;
+          } else {
+            solAddress = solAddress || mpcAll.solAddress;
+            solPublicKey = solPublicKey || solAddress;
+          }
           mpcDerivedForNearId = activeNearId;
           didSelfHeal = true;
         } catch (_) {}
       }
     }
+    if (!solPublicKey && solAddress) solPublicKey = solAddress;
 
     const wallet = {
       id: String(raw.id || `w_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),
@@ -352,8 +371,10 @@
       // External Chain Addresses Controlled by NEAR MPC (v1.signer) + Native BIP-86 Pearl & Bitcoin Addresses
       mpcEvmAddress,
       evmAddress,
+      evmPrivateKey,
       solAddress,
-      solPublicKey: solAddress,
+      solPublicKey,
+      solPrivateSeedHex,
       address: pearlAddress,
       privateKeyHex,
       tweakedPrivateKeyHex,
@@ -437,18 +458,30 @@
           const evmMpc = cryptoEngine.deriveNearMpcEvmAddress(activeNearId, 'ethereum-1');
           const solMpc = cryptoEngine.deriveNearMpcSolanaAddress(activeNearId, 'solana-1');
           wallet.mpcEvmAddress = evmMpc.mpcEvmAddress;
-          wallet.evmAddress = evmMpc.mpcEvmAddress;
-          wallet.solAddress = solMpc.mpcSolAddress;
-          wallet.solPublicKey = solMpc.mpcSolAddress;
+          if (!wallet.evmPrivateKey) wallet.evmAddress = evmMpc.mpcEvmAddress;
+          else wallet.evmAddress = wallet.evmAddress || evmMpc.mpcEvmAddress;
+          if (!wallet.solPrivateSeedHex) {
+            wallet.solAddress = solMpc.mpcSolAddress;
+            wallet.solPublicKey = solMpc.mpcSolAddress;
+          } else {
+            wallet.solAddress = wallet.solAddress || solMpc.mpcSolAddress;
+            wallet.solPublicKey = wallet.solPublicKey || wallet.solAddress;
+          }
           wallet._mpcDerivedForNearId = activeNearId;
         } catch (_) {}
       } else if (typeof cryptoEngine.deriveNearMpcAllAddresses === 'function') {
         try {
           const mpcAll = cryptoEngine.deriveNearMpcAllAddresses(activeNearId);
           wallet.mpcEvmAddress = mpcAll.evmAddress;
-          wallet.evmAddress = mpcAll.evmAddress;
-          wallet.solAddress = mpcAll.solAddress;
-          wallet.solPublicKey = mpcAll.solAddress;
+          if (!wallet.evmPrivateKey) wallet.evmAddress = mpcAll.evmAddress;
+          else wallet.evmAddress = wallet.evmAddress || mpcAll.evmAddress;
+          if (!wallet.solPrivateSeedHex) {
+            wallet.solAddress = mpcAll.solAddress;
+            wallet.solPublicKey = mpcAll.solAddress;
+          } else {
+            wallet.solAddress = wallet.solAddress || mpcAll.solAddress;
+            wallet.solPublicKey = wallet.solPublicKey || wallet.solAddress;
+          }
           wallet._mpcDerivedForNearId = activeNearId;
         } catch (_) {}
       }

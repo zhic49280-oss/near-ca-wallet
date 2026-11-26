@@ -547,6 +547,17 @@
 
   const _pbkdf2Cache = new Map();
 
+  function clearPbkdf2Cache() {
+    _pbkdf2Cache.clear();
+  }
+  if (root) {
+    root.__clearPbkdf2Cache = clearPbkdf2Cache;
+    if (root.NearCACrypto) root.NearCACrypto.clearPbkdf2Cache = clearPbkdf2Cache;
+  }
+  if (typeof globalThis !== 'undefined') {
+    globalThis.__clearPbkdf2Cache = clearPbkdf2Cache;
+  }
+
   function cryptoPbkdf2Sync(mnemonic, passphrase = '') {
     const passStr = normalizeMnemonicInput(mnemonic);
     const saltSuffix = String(passphrase || '').normalize('NFKD');

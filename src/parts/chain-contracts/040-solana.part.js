@@ -825,12 +825,24 @@
     if (mintPubkey.length !== 32) throw new Error(t('Solana Mint 地址无效', 'Invalid Solana mint address'));
     if (toPubkey.length !== 32) throw new Error(t('Solana 收款地址无效', 'Invalid Solana recipient address'));
 
-    const cachedSplBal =
+    let cachedSplBal =
       tokenBalance !== null && tokenBalance !== undefined
         ? Number(tokenBalance)
         : (wallet.splBalances && wallet.splBalances[mintStr] !== undefined && wallet.splBalances[mintStr] !== null
             ? Number(wallet.splBalances[mintStr])
             : null);
+    if ((cachedSplBal === null || !Number.isFinite(cachedSplBal)) && wallet.solAddress) {
+      const splAccRes = await callSolanaRpc('getTokenAccountsByOwner', [wallet.solAddress, { mint: mintStr }, { encoding: 'jsonParsed' }], 5000).catch(() => null);
+      const splAccList = splAccRes && Array.isArray(splAccRes.value) ? splAccRes.value : null;
+      if (splAccList) {
+        let sumUi = 0;
+        for (const item of splAccList) {
+          const uiAmt = Number(item?.account?.data?.parsed?.info?.tokenAmount?.uiAmount || 0);
+          if (Number.isFinite(uiAmt) && uiAmt > 0) sumUi += uiAmt;
+        }
+        cachedSplBal = sumUi;
+      }
+    }
     validateSufficientChainBalance({
       wallet,
       chain: 'sol',

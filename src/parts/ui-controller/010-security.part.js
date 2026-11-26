@@ -346,8 +346,12 @@
     } catch (err) {
       const name = err && err.name ? String(err.name) : '';
       const rawMsg = err && err.message ? String(err.message) : '';
+      const hasRegisteredCred = Boolean(activeWallet && activeWallet.webauthnCredentialId);
       const cancelled = name === 'NotAllowedError' || name === 'AbortError' || /cancel/i.test(rawMsg);
-      const unavailable = name === 'SecurityError' || name === 'NotSupportedError' || name === 'InvalidStateError' || /unavailable|not supported/i.test(rawMsg);
+      const unavailable =
+        name === 'NotSupportedError' ||
+        (!hasRegisteredCred && (name === 'SecurityError' || name === 'InvalidStateError')) ||
+        (!hasRegisteredCred && /unavailable|not supported/i.test(rawMsg));
       const msg = cancelled
         ? t('已取消生物识别验证', 'Biometric verification cancelled')
         : toUserFriendlyError(err, '生物识别验证失败，请重试', 'Biometric verification failed. Please retry.');
@@ -416,6 +420,9 @@
       clearAppLock();
       return false;
     }
+    const crypto = getCrypto();
+    if (crypto && typeof crypto.clearPbkdf2Cache === 'function') crypto.clearPbkdf2Cache();
+    else if (typeof globalThis !== 'undefined' && typeof globalThis.__clearPbkdf2Cache === 'function') globalThis.__clearPbkdf2Cache();
     _appLockState.locked = true;
     setRootClass('nexus-locked', true);
     const overlay = $('app-lock-overlay');
@@ -556,6 +563,9 @@
   }
 
   async function requestBiometricAuth(reason, wallet, overrides = {}) {
+    if (_appLockState.authenticating) {
+      return { ok: false, cancelled: true, busy: true, error: t('身份验证正在进行中', 'Authentication already in progress') };
+    }
     const promptReason = String(reason || t('请验证身份以继续', 'Authenticate to continue'));
     const nativePlugin = getNativeSecurityPlugin(overrides.nativePlugin);
     _appLockState.authenticating = true;

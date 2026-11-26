@@ -317,7 +317,7 @@
       _lastTokenDetailMergedItems = [];
       _lastDetailHistorySig = '';
       if (allBtn) allBtn.classList.add('hidden');
-      listEl.innerHTML = '';
+      unmountPreactContainer(listEl);
       return;
     }
 
@@ -472,7 +472,7 @@
       return;
     }
     if (!it) {
-      body.innerHTML = '';
+      unmountPreactContainer(body);
       return;
     }
     const sym = String(it.symbol || _tokenDetailState.symbolKey || '').toUpperCase();

@@ -142,7 +142,7 @@
         if (fw && typeof fw.mountTokenBreakdownPanel === 'function') {
           fw.mountTokenBreakdownPanel(breakdownList, { entries: [], symbol: group.symbol, isEn: st.lang === 'en' });
         } else {
-          breakdownList.innerHTML = '';
+          unmountPreactContainer(breakdownList);
         }
       }
     }
@@ -210,7 +210,7 @@
         earnList.innerHTML = cards.join('');
       } else {
         earnCard.classList.add('hidden');
-        earnList.innerHTML = '';
+        unmountPreactContainer(earnList);
       }
     }
 
@@ -610,7 +610,9 @@
       arc: 'https://explorer.arc.io'
     };
     let partialUnavailable = false;
-    const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
+    const evmAddr = wallet.evmPrivateKey
+      ? (wallet.evmAddress || wallet.mpcEvmAddress)
+      : (wallet.mpcEvmAddress || wallet.evmAddress);
     if (evmAddr) {
       for (const [evmChain, baseUrl] of Object.entries(BLOCKSCOUT_BASES)) {
         if (!targetChains.includes(evmChain)) continue;
