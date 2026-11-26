@@ -92,6 +92,9 @@
       return;
     }
     if (list.length === 0) {
+      if (fw && typeof fw.render === 'function') {
+        try { fw.render(null, wrap); } catch (_) {}
+      }
       wrap.innerHTML = '';
       return;
     }

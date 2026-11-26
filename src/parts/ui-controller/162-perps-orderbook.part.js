@@ -330,6 +330,10 @@
           `;
         }).join('');
       } else {
+        const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+        if (fw && typeof fw.render === 'function') {
+          try { fw.render(null, posWrap); } catch (_) {}
+        }
         posWrap.innerHTML = '';
       }
     }

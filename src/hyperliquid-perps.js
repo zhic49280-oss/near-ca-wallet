@@ -724,10 +724,13 @@
     };
   }
 
-  async function fetchHlOpenOrders(userAddress) {
+  async function fetchHlOpenOrders(userAddress, dex = '') {
     const addr = String(userAddress || '').trim();
     if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) return [];
-    const list = await postHlInfo({ type: 'frontendOpenOrders', user: addr }).catch(() => []);
+    const payload = { type: 'frontendOpenOrders', user: addr };
+    const cleanDex = String(dex || '').trim();
+    if (cleanDex) payload.dex = cleanDex;
+    const list = await postHlInfo(payload).catch(() => []);
     if (!Array.isArray(list)) return [];
     return list.map((o) => ({
       ...o,
@@ -891,7 +894,7 @@
 
   // ==================== Exchange Actions ====================
 
-  async function postHlExchange({ action, nonce, signature, vaultAddress = undefined }) {
+  async function postHlExchange({ action, nonce, signature, vaultAddress = undefined, throwOnSubOrderError = true }) {
     const body = { action, nonce, signature };
     if (vaultAddress) body.vaultAddress = vaultAddress;
     const res = await fetchJsonWithTimeout(`${HL_API_URL}/exchange`, {
@@ -907,9 +910,11 @@
     const statuses = json.response && json.response.data && Array.isArray(json.response.data.statuses)
       ? json.response.data.statuses
       : [];
-    const errItem = statuses.find((s) => s && s.error);
-    if (errItem) {
-      throw new Error(String(errItem.error));
+    if (throwOnSubOrderError) {
+      const errItem = statuses.find((s) => s && s.error);
+      if (errItem) {
+        throw new Error(String(errItem.error));
+      }
     }
     return json;
   }
@@ -1059,7 +1064,18 @@
 
     const action = { type: 'order', orders, grouping };
     const signed = await signHlL1Action({ wallet, action });
-    const res = await postHlExchange({ action, nonce: signed.nonce, signature: signed.signature });
+    const res = await postHlExchange({ action, nonce: signed.nonce, signature: signed.signature, throwOnSubOrderError: false });
+    const statuses = res?.response?.data?.statuses;
+    if (Array.isArray(statuses) && statuses.length > 0) {
+      const primaryStatus = statuses[0];
+      if (primaryStatus && primaryStatus.error) {
+        throw new Error(String(primaryStatus.error));
+      }
+      const subErrors = statuses.slice(1).filter((s) => s && s.error).map((s) => String(s.error));
+      if (subErrors.length > 0) {
+        return { ok: true, action, response: res, partialTpslError: subErrors.join('; ') };
+      }
+    }
     return { ok: true, action, response: res };
   }
 
@@ -1218,7 +1234,7 @@
         ? contracts.resolveWalletEvmSender(resolvedWallet)
         : (resolvedWallet.mpcEvmAddress || resolvedWallet.evmAddress);
       if (addr) {
-        const orders = await fetchHlOpenOrders(addr).catch(() => []);
+        const orders = await fetchHlOpenOrders(addr, market.dex || extractPerpDexTag(market.name)).catch(() => []);
         const coinTriggers = (orders || []).filter((o) => o && o.coin === market.name && o.isTrigger);
         if (coinTriggers.length > 0) {
           await cancelHlOrdersBatch({ wallet: resolvedWallet, cancels: coinTriggers.map((o) => ({ a: market.index, o: o.oid })) });

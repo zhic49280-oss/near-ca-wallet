@@ -269,6 +269,15 @@ public class NativeDAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin, WKNavigationD
         notifyListeners("bridgeMessage", data: ["payload": body])
     }
 
+    public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if navigationAction.targetFrame == nil,
+           let url = navigationAction.request.url,
+           isAllowedDAppUrl(url) {
+            webView.load(navigationAction.request)
+        }
+        return nil
+    }
+
     public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if isAllowedDAppUrl(navigationAction.request.url) {
             decisionHandler(.allow)

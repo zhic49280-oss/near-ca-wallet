@@ -908,13 +908,27 @@
         slPrice: slNum,
         availableMargin: avail
       });
-      if (stepper) {
-        stepper.setStep(0, 'done', { txHash: (orderRes && orderRes.txHash) || '', chain: 'hype' });
-        stepper.finish(true, t('合约委托已提交', 'Perp order submitted'));
+      if (orderRes && orderRes.partialTpslError) {
+        const warnMsg = t(
+          `主单已成交/挂单，但止盈止损设置失败 (${orderRes.partialTpslError})，请在下方持仓卡片重设 TP/SL`,
+          `Main order submitted, but TP/SL failed (${orderRes.partialTpslError}). Please reset TP/SL on the position card below.`
+        );
+        if (stepper) {
+          stepper.setStep(0, 'done', { txHash: (orderRes && orderRes.txHash) || '', chain: 'hype' });
+          stepper.finish(true, warnMsg);
+        }
+        resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
+        showToast(`⚠️ ${warnMsg}`);
+        await refreshPerpDataAsync(false).catch(() => {});
+      } else {
+        if (stepper) {
+          stepper.setStep(0, 'done', { txHash: (orderRes && orderRes.txHash) || '', chain: 'hype' });
+          stepper.finish(true, t('合约委托已提交', 'Perp order submitted'));
+        }
+        resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
+        showToast(`✅ ${t('合约委托已提交', 'Perp order submitted')}`);
+        await refreshPerpDataAsync(false).catch(() => {});
       }
-      resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
-      showToast(`✅ ${t('合约委托已提交', 'Perp order submitted')}`);
-      await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
       const rawMsg = (err && err.message) || '';
       st.perp.errorMsg = /does not exist/i.test(rawMsg)
@@ -1145,11 +1159,26 @@
     const acct = st.perp && st.perp.account;
     if (!hl || !wallet || !acct) return;
     const tab = st.perp.bottomTab || 'positions';
+    const positions = acct.positions || [];
+    const openOrders = acct.openOrders || [];
+    const targetCount = tab === 'orders' ? openOrders.length : positions.length;
+    if (targetCount === 0) return;
     const actionLabel = tab === 'orders' ? t('确认撤销全部委托', 'Confirm Cancel All Orders') : t('确认一键全平所有仓位', 'Confirm Close All Positions');
+    const confirmMsg = tab === 'orders'
+      ? t(`确定要撤销当前全部 ${targetCount} 笔挂单委托吗？此操作不可撤销。`, `Cancel all ${targetCount} open orders? This cannot be undone.`)
+      : t(`确定要按市价立即平掉全部 ${targetCount} 个持仓吗？此操作不可撤销。`, `Market close all ${targetCount} open positions? This cannot be undone.`);
     _perpBatchBusy = true;
     st.perp.actionBusyKey = 'batch';
     renderPerpBottomList();
     try {
+      if (typeof showConfirmDialogAsync === 'function') {
+        const confirmed = await showConfirmDialogAsync(confirmMsg, {
+          title: actionLabel,
+          danger: true,
+          confirmText: tab === 'orders' ? t('全部撤单', 'Cancel All') : t('一键全平', 'Close All')
+        });
+        if (!confirmed) return;
+      }
       if (!(await verifySecurityAuthAsync(wallet, actionLabel))) return;
       await ensureEthersLoaded();
       if ((!st.perp.markets || st.perp.markets.length === 0) && typeof hl.fetchHlMarkets === 'function') {
@@ -1223,7 +1252,7 @@
     }
   }
 
-  async function quickTransferSpotToPerpUI() {
+  async function quickTransferSpotToPerpUI(triggerEl = null) {
     if (_perpTradeActionBusy) return;
     const st = getState();
     const hl = getHyperliquid();
@@ -1232,9 +1261,13 @@
     const amt = Number(st.perp.account.spotUsdc || 0);
     if (amt <= 0) return;
     _perpTradeActionBusy = true;
-    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
-    const prevTxt = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = t('划转中...', 'Moving...'); }
+    const btns = triggerEl && typeof triggerEl.closest === 'function'
+      ? [triggerEl.closest('button') || triggerEl]
+      : (typeof document !== 'undefined'
+        ? Array.from(document.querySelectorAll('#perp-spot-banner button, #perp-wd-spot-banner button'))
+        : []);
+    const prevStates = btns.map((b) => ({ el: b, text: b.textContent }));
+    btns.forEach((b) => { b.disabled = true; b.textContent = t('划转中...', 'Moving...'); });
     try {
       if (!(await verifySecurityAuthAsync(wallet, `${t('现货划转至合约账户', 'Transfer Spot to Perp')} ${formatBal(amt, 4)} USDC`))) return;
       await ensureEthersLoaded();
@@ -1245,7 +1278,7 @@
       showToast(formatPerpError(err, '划转失败，请稍后重试', 'Transfer failed. Please try again.'));
     } finally {
       _perpTradeActionBusy = false;
-      if (btn) { btn.disabled = false; btn.textContent = prevTxt; }
+      prevStates.forEach(({ el, text }) => { el.disabled = false; el.textContent = text; });
     }
   }
 

@@ -418,6 +418,9 @@
         if (fw && typeof fw.mountEarnStakeSheetPanel === 'function') {
           fw.mountEarnStakeSheetPanel(lockTiersEl, { mode: 'lock-tiers', tiers: [], isEn: st.lang === 'en' });
         } else {
+          if (fw && typeof fw.render === 'function') {
+            try { fw.render(null, lockTiersEl); } catch (_) {}
+          }
           lockTiersEl.innerHTML = '';
         }
       }
@@ -517,6 +520,9 @@
       if (fw && typeof fw.mountEarnStakeSheetPanel === 'function') {
         fw.mountEarnStakeSheetPanel(rec, { mode: 'receipt', receipt: null, isEn: st.lang === 'en' });
       } else {
+        if (fw && typeof fw.render === 'function') {
+          try { fw.render(null, rec); } catch (_) {}
+        }
         rec.innerHTML = '';
       }
     }
@@ -603,7 +609,7 @@
 
   let _earnActionInFlight = false;
 
-  async function executeEarnPositionAction(actionType, actionTarget, customAmount = null) {
+  async function executeEarnPositionAction(actionType, actionTarget, customAmount = null, triggerEl = null) {
     if (_earnActionInFlight) return;
     const st = getState();
     const contracts = getContracts();
@@ -633,7 +639,12 @@
     };
     const baseAuthLabel = actionLabelMap[actionType] || t('确认质押赎回操作', 'Confirm Stake Redemption');
     const authLabel = parsedCustom ? `${baseAuthLabel} · ${formatBal(parsedCustom, 4)}` : baseAuthLabel;
-    const btn = typeof event !== 'undefined' && event?.target?.closest ? event.target.closest('button') : null;
+    const btn = (triggerEl && typeof triggerEl.closest === 'function' ? triggerEl.closest('button') : triggerEl)
+      || (typeof document !== 'undefined'
+        ? Array.from(document.querySelectorAll('button[data-action="earn-pos-action"]')).find(
+            (el) => el.getAttribute('data-type') === String(actionType) && el.getAttribute('data-target') === String(actionTarget)
+          ) || null
+        : null);
     const actionChain = (() => {
       if (actionType === 'sol_validator_deactivate' || actionType === 'sol_validator_withdraw' || actionType === 'jup_dao_toggle' || actionType === 'jup_dao_withdraw') return 'sol';
       if (actionType === 'lst_exit') {

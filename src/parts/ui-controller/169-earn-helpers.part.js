@@ -223,7 +223,7 @@
     const apyText = Number.isFinite(apyVal) && apyVal > 0 ? `${apyVal.toFixed(2)}%` : '--';
     const lockText = pool.lockDays
       ? `${pool.lockDays} ${t('天', 'days')}`
-      : (pool.id === 'near_xrhea' || pool.id === 'rhea'
+      : (pool.isLockConvert || pool.id === 'rhea_orhea_convert'
           ? `${st.staking.lockDays || 181} ${t('天', 'days')}`
           : t('随存随取 / 按协议冷却', 'Flexible / Protocol cooldown'));
     const stakeFeeText = pool.chain === 'near'

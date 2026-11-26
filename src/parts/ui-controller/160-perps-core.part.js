@@ -136,33 +136,34 @@
 
     const coinLabel = market ? formatPerpDisplayPair(market.name) : formatPerpDisplayPair(st.perp.selectedCoin || 'BTC');
     const actionLabel = isBuy ? `${t('开多', 'Long')} ${coinLabel}` : `${t('开空', 'Short')} ${coinLabel}`;
+    const marginNeeded = Number.isFinite(margin) && margin > 0 ? margin : null;
 
     if (st.perp.submitting) {
-      return { disabled: true, error: '', text: t('提交签名中...', 'Submitting...'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike };
+      return { disabled: true, error: '', text: t('提交签名中...', 'Submitting...'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
     }
     if (!market || !markPx) {
-      return { disabled: true, error: '', text: t('同步市场行情...', 'Loading market...'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike };
+      return { disabled: true, error: '', text: t('同步市场行情...', 'Loading market...'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
     }
     if (isLimitLike && (!Number.isFinite(limitPx) || limitPx <= 0)) {
-      return { disabled: true, error: '', text: t('请输入限价价格', 'Enter limit price'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike };
+      return { disabled: true, error: '', text: t('请输入限价价格', 'Enter limit price'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
     }
     if (!Number.isFinite(margin) || margin <= 0) {
-      return { disabled: true, error: '', text: actionLabel, notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike };
+      return { disabled: true, error: '', text: actionLabel, notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
     }
     if (!reduceOnly && availMargin !== null && margin > availMargin + 1e-6) {
       const msg = t(`可用保证金不足 (当前: $${availMargin.toFixed(2)} USDC)`, `Insufficient margin (avail: $${availMargin.toFixed(2)} USDC)`);
-      return { disabled: true, error: msg, text: t('保证金不足', 'Insufficient Margin'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike };
+      return { disabled: true, error: msg, text: t('保证金不足', 'Insufficient Margin'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
     }
     const minNotional = hl ? hl.HL_MIN_ORDER_USD : 10;
     const flooredNotional = (sizeNum > 0 && execPx > 0) ? (sizeNum * execPx) : 0;
     if (!reduceOnly && (!flooredNotional || flooredNotional < minNotional)) {
       const msg = t(`名义价值需 >= $${minNotional} USDC (按精度取整后 $${flooredNotional.toFixed(2)})`, `Notional must be >= $${minNotional} USDC ($${flooredNotional.toFixed(2)} after size step)`);
-      return { disabled: true, error: msg, text: t(`最低名义 $${minNotional}`, `Min $${minNotional} Notional`), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike };
+      return { disabled: true, error: msg, text: t(`最低名义 $${minNotional}`, `Min $${minNotional} Notional`), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
     }
     if (!sizeNum || sizeNum <= 0) {
-      return { disabled: true, error: t('数量低于最小精度', 'Size below tick step'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike };
+      return { disabled: true, error: t('数量低于最小精度', 'Size below tick step'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
     }
-    return { disabled: false, error: '', text: actionLabel, notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike };
+    return { disabled: false, error: '', text: actionLabel, notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
   }
 
   function formatCompactUsd(val) {

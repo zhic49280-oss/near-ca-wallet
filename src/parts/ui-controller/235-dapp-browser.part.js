@@ -107,6 +107,9 @@
     }
     if (byOrigin.size === 0) {
       sec.classList.add('hidden');
+      if (fw && typeof fw.render === 'function') {
+        try { fw.render(null, sec); } catch (_) {}
+      }
       sec.innerHTML = '';
       return;
     }
@@ -240,9 +243,22 @@
 
   function rejectDAppApproval() {
     if (_dappSession.pendingApproval && typeof _dappSession.pendingApproval.resolve === 'function') {
-      _dappSession.pendingApproval.resolve(false);
-    } else {
-      closeAllSheets();
+      const resolvePending = _dappSession.pendingApproval.resolve;
+      _dappSession.pendingApproval = null;
+      resolvePending(false);
+      return;
+    }
+    const approveSheet = $('sheet-dapp-approve');
+    if (approveSheet && approveSheet.classList.contains('open')) {
+      approveSheet.classList.remove('open');
+      approveSheet.setAttribute('aria-hidden', 'true');
+    }
+    const backdrop = $('sheet-backdrop');
+    const stillOpen = typeof document !== 'undefined' && document.querySelector('.bottom-sheet.open');
+    if (backdrop && !stillOpen) backdrop.classList.remove('open');
+    if (typeof syncSheetScrollLock === 'function') syncSheetScrollLock();
+    if (_dappSession.nativeOpen) {
+      setNativeBrowserOverlayVisible(true);
     }
   }
 
