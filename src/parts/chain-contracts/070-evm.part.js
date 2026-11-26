@@ -555,18 +555,16 @@
       };
 
       try {
-        const [kRes, pRes, oRes, lRes] = await raceWithGraceWindow(
+        const [kRes, pRes, lRes] = await raceWithGraceWindow(
           [
             fetchAgg(kyberUrl, `kyber:${key}`, 4500),
             fetchAgg(paraUrl, `paraswap:${key}`, 4500),
-            fetchAgg(ooUrl, 'openocean', 4000),
             fetchAgg(lifiUrl, `lifi:${key}`, 4500)
           ],
           (v) => Boolean(
             v && (
               (v.code === 0 && v.data && v.data.routeSummary && v.data.routeSummary.amountOut) ||
               (v.priceRoute && v.priceRoute.destAmount) ||
-              (Number(v.code) === 200 && v.data && v.data.outAmount) ||
               (v.estimate && v.estimate.toAmount)
             )
           ),
@@ -609,23 +607,6 @@
           });
         }
 
-        const ooRoute =
-          oRes && oRes.status === 'fulfilled' && oRes.value && Number(oRes.value.code) === 200 && oRes.value.data && oRes.value.data.outAmount
-            ? oRes.value.data
-            : null;
-        if (ooRoute && /^\d+$/.test(String(ooRoute.outAmount)) && BigInt(ooRoute.outAmount) > 0n) {
-          const scaledOut = scaleArcOut(ooRoute.outAmount);
-          candidates.push({
-            routeSource: 'openocean',
-            label: 'OpenOcean',
-            outBig: scaledOut,
-            amountOut: scaledOut.toString(),
-            amountInUsd: null,
-            amountOutUsd: null,
-            routeData: { ...ooRoute, _arcNormSrc: effSrc, _arcNormDest: effDest, _arcNormAmtIn: effAmtStr }
-          });
-        }
-
         const lRoute =
           lRes && lRes.status === 'fulfilled' && lRes.value && lRes.value.estimate && lRes.value.estimate.toAmount
             ? lRes.value
@@ -641,6 +622,35 @@
             amountOutUsd: lRoute.estimate.toAmountUSD || null,
             routeData: { ...lRoute, _arcNormSrc: effSrc, _arcNormDest: effDest, _arcNormAmtIn: effAmtStr }
           });
+        }
+
+        // OpenOcean 作为最后兜底：仅当 KyberSwap / ParaSwap（及 LI.FI）均无可用报价时才发起请求，避免冷启动首单白发 403 请求
+        if (candidates.length === 0 && ooUrl) {
+          const ooVal = await fetchJsonWithTimeout(ooUrl, { signal }, 4000).catch((err) => {
+            const msg = String((err && err.message) || '');
+            const status = (err && Number(err.status)) || (/403|forbidden|cloudflare/i.test(msg) ? 403 : 0);
+            if (status === 403 && err && !err.status) err.status = 403;
+            if (status === 403 || status === 429 || (err && err.name === 'AbortError') || status >= 500) {
+              markAggCooldown('openocean', status === 403 ? 10 * 60_000 : 120_000);
+            }
+            return null;
+          });
+          const ooRoute =
+            ooVal && Number(ooVal.code) === 200 && ooVal.data && ooVal.data.outAmount
+              ? ooVal.data
+              : null;
+          if (ooRoute && /^\d+$/.test(String(ooRoute.outAmount)) && BigInt(ooRoute.outAmount) > 0n) {
+            const scaledOut = scaleArcOut(ooRoute.outAmount);
+            candidates.push({
+              routeSource: 'openocean',
+              label: 'OpenOcean',
+              outBig: scaledOut,
+              amountOut: scaledOut.toString(),
+              amountInUsd: null,
+              amountOutUsd: null,
+              routeData: { ...ooRoute, _arcNormSrc: effSrc, _arcNormDest: effDest, _arcNormAmtIn: effAmtStr }
+            });
+          }
         }
 
         if (candidates.length === 0) {
