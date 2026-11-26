@@ -178,6 +178,7 @@
     const st = getState();
     if (st.activeTab !== 'perp' || st.perp.subView !== 'trade') return;
     if (typeof document !== 'undefined' && document.hidden) return;
+    if (typeof isAppInBackground === 'function' && isAppInBackground()) return;
     const coin = st.perp.selectedCoin || 'BTC';
     const wallet = st.getActiveWallet();
     const contracts = getContracts();
@@ -300,7 +301,8 @@
           if (_perpWs === ws) {
             _perpWs = null;
             const s = getState();
-            if (s.activeTab === 'perp' && s.perp.subView === 'trade' && !(typeof document !== 'undefined' && document.hidden)) {
+            const bg = (typeof document !== 'undefined' && document.hidden) || (typeof isAppInBackground === 'function' && isAppInBackground());
+            if (s.activeTab === 'perp' && s.perp.subView === 'trade' && !bg) {
               const delay = Math.min(15_000, 1500 * Math.pow(2, Math.min(3, _perpWsAttempt++)));
               _perpWsReconnectTimer = setTimeout(connectWs, delay);
               if (_perpWsReconnectTimer && typeof _perpWsReconnectTimer.unref === 'function') _perpWsReconnectTimer.unref();
@@ -319,12 +321,31 @@
         return;
       }
       if (typeof document !== 'undefined' && document.hidden) return;
+      if (typeof isAppInBackground === 'function' && isAppInBackground()) return;
       if (!_perpWs || _perpWs.readyState !== 1) {
         refreshPerpOrderbookAndCandlesAsync().catch(() => {});
         refreshPerpDataAsync(false).catch(() => {});
       }
     }, 4500);
     if (_perpPollTimer && typeof _perpPollTimer.unref === 'function') _perpPollTimer.unref();
+  }
+
+  function pausePerpRealtime() {
+    stopPerpLiveFeed();
+  }
+
+  function resumePerpRealtime() {
+    const st = getState();
+    if (!st || st.activeTab !== 'perp' || st.perp.subView !== 'trade') return;
+    if (typeof isAppInBackground === 'function' && isAppInBackground()) return;
+    startPerpLiveFeed();
+    refreshPerpOrderbookAndCandlesAsync().catch(() => {});
+    refreshPerpDataAsync(false).catch(() => {});
+  }
+
+  function isPerpActionBusy() {
+    const st = getState();
+    return Boolean((st && st.perp && st.perp.submitting) || _perpTradeActionBusy || _perpBatchBusy);
   }
 
   function formatPerpError(err, fallbackZh = '操作失败，请稍后重试', fallbackEn = 'Operation failed. Please try again.') {
@@ -460,8 +481,8 @@
   }
 
   async function executePerpOrderUI() {
+    if (isPerpActionBusy()) return;
     const st = getState();
-    if (st.perp.submitting || _perpBatchBusy) return;
     const hl = getHyperliquid();
     const wallet = st.getActiveWallet();
     if (!hl || !wallet) return;
@@ -505,8 +526,8 @@
         { label: t('参考价格', 'Price'), value: refPx > 0 ? `$${formatPerpPx(refPx)}` : t('市价', 'Market'), mono: true },
         { label: t('杠杆与模式', 'Leverage'), value: `${st.perp.leverage}x (${st.perp.marginMode === 'isolated' ? t('逐仓', 'Isolated') : t('全仓', 'Cross')})` },
         ...(evalRes.marginNeeded > 0 ? [{ label: t('预计保证金', 'Est. Margin'), value: `$${Number(evalRes.marginNeeded).toFixed(2)} USDC`, mono: true }] : []),
-        ...(tpNum ? [{ label: t('止盈价', 'Take Profit'), value: `$${formatPerpPx(tpNum)}`, mono: true, tone: 'emerald' }] : []),
-        ...(slNum ? [{ label: t('止损价', 'Stop Loss'), value: `$${formatPerpPx(slNum)}`, mono: true, tone: 'rose' }] : [])
+        ...(!st.perp.reduceOnly && tpNum ? [{ label: t('止盈价', 'Take Profit'), value: `$${formatPerpPx(tpNum)}`, mono: true, tone: 'emerald' }] : []),
+        ...(!st.perp.reduceOnly && slNum ? [{ label: t('止损价', 'Stop Loss'), value: `$${formatPerpPx(slNum)}`, mono: true, tone: 'rose' }] : [])
       ],
       confirmLabel: t('确认下单', 'Confirm Order'),
       steps: orderSteps
@@ -549,9 +570,10 @@
         availableMargin: avail
       });
       if (orderRes && orderRes.partialTpslError) {
+        const safeTpslErr = formatPerpError(orderRes.partialTpslError, '止盈止损设置失败', 'TP/SL setup failed');
         const warnMsg = t(
-          `主单已成交/挂单，但止盈止损设置失败 (${orderRes.partialTpslError})，请在下方持仓卡片重设 TP/SL`,
-          `Main order submitted, but TP/SL failed (${orderRes.partialTpslError}). Please reset TP/SL on the position card below.`
+          `主单已成交/挂单，但止盈止损设置失败 (${safeTpslErr})，请在下方持仓卡片重设 TP/SL`,
+          `Main order submitted, but TP/SL failed (${safeTpslErr}). Please reset TP/SL on the position card below.`
         );
         if (stepper) {
           stepper.setStep(0, 'done', { txHash: (orderRes && orderRes.txHash) || '', chain: 'hype' });
@@ -586,7 +608,7 @@
   }
 
   async function closePerpPositionUI(coin) {
-    if (_perpTradeActionBusy) return;
+    if (isPerpActionBusy()) return;
     const st = getState();
     const hl = getHyperliquid();
     const wallet = st.getActiveWallet();
@@ -608,8 +630,9 @@
       confirmLabel: t('确认平仓', 'Close Position'),
       steps: closeSteps
     };
+    const myBusyKey = `close:${coin}`;
     _perpTradeActionBusy = true;
-    st.perp.actionBusyKey = `close:${coin}`;
+    st.perp.actionBusyKey = myBusyKey;
     renderPerpBottomList();
     let stepper = null;
     try {
@@ -645,7 +668,7 @@
       showToast(msg);
     } finally {
       _perpTradeActionBusy = false;
-      st.perp.actionBusyKey = '';
+      if (st.perp.actionBusyKey === myBusyKey) st.perp.actionBusyKey = '';
       renderPerpBottomList();
     }
   }
@@ -668,7 +691,7 @@
   }
 
   async function submitPerpPositionTpSlUI(clearOnly = false) {
-    if (_perpTradeActionBusy) return;
+    if (isPerpActionBusy()) return;
     const st = getState();
     const hl = getHyperliquid();
     const wallet = st.getActiveWallet();
@@ -726,7 +749,7 @@
   }
 
   async function reversePerpPositionUI(coin) {
-    if (_perpTradeActionBusy) return;
+    if (isPerpActionBusy()) return;
     const st = getState();
     const hl = getHyperliquid();
     const wallet = st.getActiveWallet();
@@ -745,8 +768,9 @@
       confirmLabel: t('确认反手', 'Reverse Position'),
       steps: reverseSteps
     };
+    const myBusyKey = `reverse:${coin}`;
     _perpTradeActionBusy = true;
-    st.perp.actionBusyKey = `reverse:${coin}`;
+    st.perp.actionBusyKey = myBusyKey;
     renderPerpBottomList();
     let stepper = null;
     try {
@@ -784,7 +808,7 @@
       showToast(msg);
     } finally {
       _perpTradeActionBusy = false;
-      st.perp.actionBusyKey = '';
+      if (st.perp.actionBusyKey === myBusyKey) st.perp.actionBusyKey = '';
       renderPerpBottomList();
     }
   }
@@ -792,7 +816,7 @@
   let _perpBatchBusy = false;
 
   async function executePerpBatchAction() {
-    if (_perpBatchBusy) return;
+    if (isPerpActionBusy()) return;
     const st = getState();
     const hl = getHyperliquid();
     const wallet = st.getActiveWallet();
@@ -807,8 +831,9 @@
     const confirmMsg = tab === 'orders'
       ? t(`确定要撤销当前全部 ${targetCount} 笔挂单委托吗？此操作不可撤销。`, `Cancel all ${targetCount} open orders? This cannot be undone.`)
       : t(`确定要按市价立即平掉全部 ${targetCount} 个持仓吗？此操作不可撤销。`, `Market close all ${targetCount} open positions? This cannot be undone.`);
+    const myBusyKey = 'batch';
     _perpBatchBusy = true;
-    st.perp.actionBusyKey = 'batch';
+    st.perp.actionBusyKey = myBusyKey;
     renderPerpBottomList();
     try {
       if (typeof showConfirmDialogAsync === 'function') {
@@ -859,13 +884,13 @@
       showToast(formatPerpError(err, '批量操作失败，请稍后重试', 'Batch action failed. Please try again.'));
     } finally {
       _perpBatchBusy = false;
-      st.perp.actionBusyKey = '';
+      if (st.perp.actionBusyKey === myBusyKey) st.perp.actionBusyKey = '';
       renderPerpBottomList();
     }
   }
 
   async function cancelPerpOrderUI(coin, oid) {
-    if (_perpTradeActionBusy) return;
+    if (isPerpActionBusy()) return;
     const st = getState();
     const hl = getHyperliquid();
     const wallet = st.getActiveWallet();
@@ -882,8 +907,9 @@
       confirmLabel: t('确认撤单', 'Cancel Order'),
       steps: cancelSteps
     };
+    const myBusyKey = `cancel:${coin}:${oid}`;
     _perpTradeActionBusy = true;
-    st.perp.actionBusyKey = `cancel:${coin}:${oid}`;
+    st.perp.actionBusyKey = myBusyKey;
     renderPerpBottomList();
     let market = (st.perp.markets || []).find((m) => m.name === coin);
     let stepper = null;
@@ -920,13 +946,13 @@
       showToast(errMsg);
     } finally {
       _perpTradeActionBusy = false;
-      st.perp.actionBusyKey = '';
+      if (st.perp.actionBusyKey === myBusyKey) st.perp.actionBusyKey = '';
       renderPerpBottomList();
     }
   }
 
   async function quickTransferSpotToPerpUI(triggerEl = null) {
-    if (_perpTradeActionBusy) return;
+    if (isPerpActionBusy()) return;
     const st = getState();
     const hl = getHyperliquid();
     const wallet = st.getActiveWallet();

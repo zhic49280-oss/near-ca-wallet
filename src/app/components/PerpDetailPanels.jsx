@@ -120,11 +120,22 @@ export function PerpFundingInfoPanel({
 }) {
   const list = Array.isArray(entries) ? entries : [];
   if (list.length === 0) return null;
-  return list.map((e) => (
-    <option key={e.key} value={e.key} selected={selectedValue ? e.key === selectedValue : undefined}>
-      {`${e.symbol} · ${e.chainLabel} (${formatBal(e.balance, 4)})`}
-    </option>
-  ));
+  const cleanLabel = (e) => String(e.chainLabel || e.blockchain || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const counts = {};
+  for (const e of list) {
+    const k = `${e.symbol}::${cleanLabel(e)}`;
+    counts[k] = (counts[k] || 0) + 1;
+  }
+  return list.map((e) => {
+    const baseChain = cleanLabel(e);
+    const dup = counts[`${e.symbol}::${baseChain}`] > 1;
+    const chainDisplay = dup && e.chainLabel ? e.chainLabel : baseChain;
+    return (
+      <option key={e.key} value={e.key} selected={selectedValue ? e.key === selectedValue : undefined}>
+        {`${e.symbol} · ${chainDisplay} (${formatBal(e.balance, 4)})`}
+      </option>
+    );
+  });
 }
 
 export function PerpChartHudPanel({

@@ -112,7 +112,7 @@ export function PerpView() {
             <button type="button" className="perp-sort-hdr-btn" data-action="sort-perp-overview" data-sort="vol">
               <span data-i18n="perp.colContractVol">合约 / 成交额</span> <span id="perp-sort-ind-vol">↓</span>
             </button>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <button type="button" className="perp-sort-hdr-btn" data-action="sort-perp-overview" data-sort="px">
                 <span data-i18n="perp.colLastPx">最新价</span> <span id="perp-sort-ind-px">⇅</span>
               </button>
@@ -121,7 +121,7 @@ export function PerpView() {
                 className="perp-sort-hdr-btn"
                 data-action="sort-perp-overview"
                 data-sort="chg"
-                style={{ minWidth: '70px', justifyContent: 'flex-end' }}
+                style={{ minWidth: '64px', justifyContent: 'flex-end' }}
               >
                 <span data-i18n="perp.colChg24h">24h 涨跌</span> <span id="perp-sort-ind-chg">⇅</span>
               </button>
@@ -159,11 +159,11 @@ export function PerpView() {
                 <span style={{ flexShrink: 0 }}>▾</span>
               </button>
             </div>
+            <div className="flex flex-col perp-top-px-wrap">
+              <span id="perp-mark-px" className="mono" style={{ fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>--</span>
+              <span id="perp-change-24h" className="mono" style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>--</span>
+            </div>
             <div className="perp-trade-top-right">
-              <div className="flex flex-col perp-top-px-wrap">
-                <span id="perp-mark-px" className="mono" style={{ fontSize: '14px', fontWeight: 800, color: '#ffffff' }}>--</span>
-                <span id="perp-change-24h" className="mono" style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>--</span>
-              </div>
               <button
                 type="button"
                 id="btn-perp-fav-current"
@@ -472,7 +472,7 @@ export function PerpView() {
               <div className="perp-ob-hcol">
                 <span id="perp-ob-bid-sz-hdr" data-i18n="perp.obSizeHdr">数量</span>
                 <span id="perp-ob-ask-sz-hdr" data-i18n="perp.obSizeHdr" style={{ display: 'none' }}>数量</span>
-                <span data-i18n="perp.obBidPx">价格 (USDC)</span>
+                <span data-i18n="perp.obPriceShort">价格</span>
               </div>
             </div>
 

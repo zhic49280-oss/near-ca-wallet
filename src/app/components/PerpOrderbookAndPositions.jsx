@@ -134,7 +134,7 @@ export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText =
                 </div>
                 <div className="flex items-center gap-1">
                   {isTrigger && (
-                    <button type="button" className="mini-action-btn" data-action="open-perp-pos-tpsl" data-coin={String(item.coin || '')}>
+                    <button type="button" className="mini-action-btn" data-action="open-perp-pos-tpsl" data-coin={String(item.coin || '')} disabled={isCancelling}>
                       {isEn ? 'Modify' : '修改'}
                     </button>
                   )}

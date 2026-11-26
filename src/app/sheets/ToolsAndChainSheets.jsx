@@ -425,7 +425,7 @@ export function ToolsAndChainSheets() {
               <div id="perp-oc-form" class="flex flex-col gap-3">
                 <div class="flex flex-col gap-1">
                   <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }} data-i18n="perp.ocOriginLabel">支付资产</span>
-                  <select id="perp-oc-origin-select" class="input-field" onChange={() => callWin('schedulePerpOneClickQuote')}><PanelSlot slotId="perp-oc-origin-select" component={PerpFundingInfoPanel} /></select>
+                  <select id="perp-oc-origin-select" class="input-field" onChange={() => callWin('schedulePerpOneClickQuote', true)}><PanelSlot slotId="perp-oc-origin-select" component={PerpFundingInfoPanel} /></select>
                 </div>
                 <div class="swap-box">
                   <div class="swap-box-top">
@@ -447,6 +447,7 @@ export function ToolsAndChainSheets() {
                     <span id="perp-oc-target-addr" class="meta-val mono">--</span>
                   </div>
                 </div>
+                <div id="perp-oc-fee-warn" class="hidden" style={{ fontSize: '11px', color: '#fbbf24', lineHeight: 1.45, background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.22)', borderRadius: '8px', padding: '6px 8px' }} />
                 <div id="perp-oc-error" class="swap-error-banner hidden" />
                 <button type="button" id="btn-perp-oc-deposit" class="btn-primary" onClick={() => callWin('executePerpOneClickDepositUI')} data-i18n="perp.ocDepositBtn">确认跨链充值</button>
               </div>

@@ -41,31 +41,33 @@ export function PerpOverviewPanel({ rows = [], emptyText = '', formatPerpPx, row
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <button
                 type="button"
-                className="btn-ghost-sm"
+                className="btn-ghost-sm perp-fav-btn"
                 data-action="toggle-perp-fav"
                 data-stop="1"
                 data-coin={m.name}
                 style={{
-                  minWidth: '40px',
-                  minHeight: '40px',
+                  width: '28px',
+                  height: '28px',
+                  minWidth: '28px',
+                  minHeight: '28px',
                   display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  padding: '2px 4px',
-                  fontSize: '14px',
+                  padding: 0,
+                  fontSize: '13px',
                   color: m.isFav ? '#fbbf24' : 'var(--text-muted)'
                 }}
               >
                 {m.isFav ? '★' : '☆'}
               </button>
-              <TokenIconBadge symbol={m.name} blockchain="hype" size={30} showChainBadge={false} />
+              <TokenIconBadge symbol={m.name} blockchain="hype" size={26} showChainBadge={false} />
               <div className="flex flex-col min-w-0" style={{ gap: '1px' }}>
-                <div className="flex items-center gap-1" style={{ flexWrap: 'wrap' }}>
-                  <strong style={{ fontSize: '13px' }}>{m.pair || m.name}</strong>
-                  <span className="ca-badge">{`${String(m.maxLeverage || 20)}x`}</span>
-                  {m.dexTag ? <span className="perp-dex-pill">{m.dexTag}</span> : null}
+                <div className="flex items-center gap-1 min-w-0" style={{ flexWrap: 'nowrap', overflow: 'hidden' }}>
+                  <strong style={{ fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.pair || m.name}</strong>
+                  <span className="ca-badge" style={{ flexShrink: 0 }}>{`${String(m.maxLeverage || 20)}x`}</span>
+                  {m.dexTag ? <span className="perp-dex-pill" style={{ flexShrink: 0 }}>{m.dexTag}</span> : null}
                 </div>
-                <span style={{ fontSize: '10.5px', color: 'var(--text-muted)' }}>{m.volText || '--'}</span>
+                <span style={{ fontSize: '10.5px', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.volText || '--'}</span>
               </div>
             </div>
             <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>

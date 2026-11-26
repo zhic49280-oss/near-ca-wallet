@@ -1229,19 +1229,32 @@
       resolvedWallet = await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => wallet);
     }
     let cancelledTriggers = 0;
-    try {
-      const addr = contracts && typeof contracts.resolveWalletEvmSender === 'function'
-        ? contracts.resolveWalletEvmSender(resolvedWallet)
-        : (resolvedWallet.mpcEvmAddress || resolvedWallet.evmAddress);
-      if (addr) {
-        const orders = await fetchHlOpenOrders(addr, market.dex || extractPerpDexTag(market.name)).catch(() => []);
-        const coinTriggers = (orders || []).filter((o) => o && o.coin === market.name && o.isTrigger);
-        if (coinTriggers.length > 0) {
+    const addr = contracts && typeof contracts.resolveWalletEvmSender === 'function'
+      ? contracts.resolveWalletEvmSender(resolvedWallet)
+      : (resolvedWallet.mpcEvmAddress || resolvedWallet.evmAddress);
+    if (addr) {
+      let orders = [];
+      try {
+        orders = await fetchHlOpenOrders(addr, market.dex || extractPerpDexTag(market.name));
+      } catch (err) {
+        throw new Error(t(
+          `查询现有止盈止损挂单失败，已中止反手开仓以防重复触发 (${err?.message || 'Network error'})`,
+          `Failed to check existing TP/SL orders; aborted reverse to prevent conflicts (${err?.message || 'Network error'})`
+        ));
+      }
+      const coinTriggers = (orders || []).filter((o) => o && o.coin === market.name && o.isTrigger);
+      if (coinTriggers.length > 0) {
+        try {
           await cancelHlOrdersBatch({ wallet: resolvedWallet, cancels: coinTriggers.map((o) => ({ a: market.index, o: o.oid })) });
           cancelledTriggers = coinTriggers.length;
+        } catch (err) {
+          throw new Error(t(
+            `取消现有止盈止损挂单失败，已中止反手开仓 (${err?.message || 'Cancel failed'})`,
+            `Failed to cancel existing TP/SL orders; aborted reverse (${err?.message || 'Cancel failed'})`
+          ));
         }
       }
-    } catch (_) {}
+    }
 
     try {
       return await placeHlPerpOrder({

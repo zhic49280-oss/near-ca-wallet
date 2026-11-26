@@ -121,6 +121,31 @@
       errEl.textContent = res.error || '';
       errEl.classList.toggle('hidden', !res.error);
     }
+    const warnEl = $('perp-oc-fee-warn');
+    if (warnEl) {
+      let warnMsg = '';
+      if (!st.perp.fundingQuoting && st.perp.fundingQuote && st.perp.fundingQuote.ok) {
+        const q = st.perp.fundingQuote;
+        const inUsd = Number(q.amountInUsd);
+        const outUsd = Number(q.amountOutUsd);
+        const outNum = Number(q.amountOutFormatted);
+        let lossPct = NaN;
+        if (Number.isFinite(inUsd) && inUsd > 0 && Number.isFinite(outUsd) && outUsd >= 0) {
+          lossPct = ((inUsd - outUsd) / inUsd) * 100;
+        } else if (entry && /^(USDC|USDT|USD)/i.test(String(entry.symbol || '')) && Number.isFinite(amt) && amt > 0 && Number.isFinite(outNum) && outNum >= 0) {
+          lossPct = ((amt - outNum) / amt) * 100;
+        }
+        if ((Number.isFinite(lossPct) && lossPct > 3) || (Number.isFinite(outNum) && outNum > 0 && outNum < 5)) {
+          const pctText = Number.isFinite(lossPct) && lossPct > 0 ? ` (~${lossPct.toFixed(1)}%)` : '';
+          warnMsg = t(
+            `小额跨链充值固定网络/跨链费用占比较高${pctText}，建议单笔 >= $10–$20 或使用 Arbitrum 直接充值。`,
+            `Small cross-chain deposits incur a fixed network/bridge fee${pctText}. Consider >= $10–$20 or Arbitrum direct deposit.`
+          );
+        }
+      }
+      warnEl.textContent = warnMsg;
+      warnEl.classList.toggle('hidden', !warnMsg);
+    }
     const btn = $('btn-perp-oc-deposit');
     if (btn) {
       btn.disabled = Boolean(res.disabled);
@@ -407,15 +432,22 @@
 
   let _perpQuoteSeq = 0;
 
-  function schedulePerpOneClickQuote() {
+  function schedulePerpOneClickQuote(isOriginChange = false) {
     const st = getState();
+    const sel = $('perp-oc-origin-select');
+    if (sel && sel.value && st.perp.fundingOriginAssetId !== sel.value) {
+      st.perp.fundingOriginAssetId = sel.value;
+    }
+    if (isOriginChange === true) {
+      resetFormFields(['perp-oc-amount']);
+    }
     st.perp.fundingQuote = null;
     st.perp.fundingQuoteError = '';
     if (_perpQuoteTimer) clearTimeout(_perpQuoteTimer);
     const seq = ++_perpQuoteSeq;
     const amt = Number($('perp-oc-amount')?.value || 0);
     const entries = getEligiblePerpOneClickEntries(st.getActiveWallet());
-    const selKey = $('perp-oc-origin-select')?.value || '';
+    const selKey = sel?.value || st.perp.fundingOriginAssetId || '';
     const entry = entries.find((e) => e.key === selKey) || entries[0] || null;
     if (!entry || !Number.isFinite(amt) || amt <= 0 || amt > Number(entry.balance || 0)) {
       st.perp.fundingQuoting = false;
