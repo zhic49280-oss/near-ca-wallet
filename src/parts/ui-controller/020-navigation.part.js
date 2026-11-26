@@ -97,9 +97,22 @@
       if (sheet.style) sheet.style.transition = '';
       const sheetH = sheet.offsetHeight || 360;
       const dismissThreshold = Math.min(120, Math.max(72, sheetH * 0.25));
-      if (sheet.style) sheet.style.transform = '';
       if (lastDy >= dismissThreshold) {
-        closeAllSheets();
+        if (sheet.style) {
+          sheet.style.transform = 'translate(-50%, 100%)';
+        }
+        if (sheet.id === 'sheet-confirm-dialog' && typeof dismissConfirmDialog === 'function') {
+          dismissConfirmDialog(false);
+        } else {
+          closeAllSheets();
+        }
+        setTimeout(() => {
+          if (sheet.style && !sheet.classList.contains('open')) {
+            sheet.style.transform = '';
+          }
+        }, 300);
+      } else if (sheet.style) {
+        sheet.style.transform = '';
       }
       lastDy = 0;
     };
@@ -181,6 +194,10 @@
       backdrop.classList.add('open');
     }
     if (sheet) {
+      if (sheet.style) {
+        sheet.style.transition = '';
+        sheet.style.transform = '';
+      }
       bindSheetHandleDrag(sheet);
       sheet.classList.add('open');
       sheet.setAttribute('aria-hidden', 'false');
@@ -189,6 +206,7 @@
   }
 
   function closeAllSheets() {
+    if (typeof dismissConfirmDialog === 'function') dismissConfirmDialog(false);
     if (typeof stopQrScannerStream === 'function') stopQrScannerStream();
     const st = getState();
     if (st && st.limit) st.limit.pickerSide = null;

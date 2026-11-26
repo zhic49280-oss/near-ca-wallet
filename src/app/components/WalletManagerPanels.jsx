@@ -128,7 +128,6 @@ export function BackupSecretsPanel({
           id="btn-backup-reveal-toggle"
           className="btn-secondary"
           style={{ marginTop: '6px', padding: '7px 12px', fontSize: '12px' }}
-          data-action="toggle-backup-reveal"
           onClick={typeof onToggleReveal === 'function' ? onToggleReveal : undefined}
         >
           {revealed
@@ -139,7 +138,7 @@ export function BackupSecretsPanel({
       <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', padding: '4px 2px' }}>
         {isEn
           ? 'EVM & Solana are securely managed by this master account; Pearl (PRL) & Bitcoin (BTC) are locally derived from your phrase.'
-          : 'EVM、Solana 由当前主账户安全派生管理；Pearl (PRL) 与 Bitcoin (BTC) 由助记词本地独立派生。'}
+          : 'EVM、Solana 由当前主账户安全管理；Pearl (PRL) 与 Bitcoin (BTC) 由助记词本地生成。'}
       </div>
       {rows.map((r, idx) => {
         const isSecret = Boolean(r.secret);

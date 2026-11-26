@@ -163,6 +163,35 @@
     openSheet('sheet-dapp-browser');
   }
 
+  function renderDAppApproveSheet() {
+    if (typeof document === 'undefined' || !$('sheet-dapp-approve')) return;
+    const pending = _dappSession && _dappSession.pendingApproval;
+    if (!pending || !pending.details) return;
+    const details = pending.details;
+    const approveSheet = $('sheet-dapp-approve');
+    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+    const approveBody = approveSheet && typeof approveSheet.querySelector === 'function' ? approveSheet.querySelector('.sheet-body') : null;
+    if (fw && typeof fw.mountDAppApprovePanel === 'function' && approveBody) {
+      fw.mountDAppApprovePanel(approveBody, {
+        origin: details.origin || '--',
+        chainLabel: details.chainLabel || details.namespace || '--',
+        method: details.method || '--',
+        account: details.account || '--',
+        summary: details.summary || '--',
+        approving: false,
+        isEn: getState().lang === 'en',
+        onConfirm: confirmDAppApproval,
+        onReject: rejectDAppApproval
+      });
+    } else {
+      if ($('dapp-approve-origin')) $('dapp-approve-origin').textContent = details.origin || '--';
+      if ($('dapp-approve-chain')) $('dapp-approve-chain').textContent = details.chainLabel || details.namespace || '--';
+      if ($('dapp-approve-method')) $('dapp-approve-method').textContent = details.method || '--';
+      if ($('dapp-approve-account')) $('dapp-approve-account').textContent = details.account || '--';
+      if ($('dapp-approve-detail')) $('dapp-approve-detail').textContent = details.summary || '--';
+    }
+  }
+
   function requestDAppApprovalAsync(details) {
     return new Promise(async (resolve) => {
       if (_dappSession.pendingApproval && typeof _dappSession.pendingApproval.resolve === 'function') {
@@ -175,34 +204,12 @@
         return;
       }
 
-      const approveSheet = $('sheet-dapp-approve');
-      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
-      const approveBody = approveSheet && typeof approveSheet.querySelector === 'function' ? approveSheet.querySelector('.sheet-body') : null;
-      if (fw && typeof fw.mountDAppApprovePanel === 'function' && approveBody) {
-        fw.mountDAppApprovePanel(approveBody, {
-          origin: details.origin || '--',
-          chainLabel: details.chainLabel || details.namespace || '--',
-          method: details.method || '--',
-          account: details.account || '--',
-          summary: details.summary || '--',
-          approving: false,
-          isEn: getState().lang === 'en',
-          onConfirm: confirmDAppApproval,
-          onReject: rejectDAppApproval
-        });
-      } else {
-        if ($('dapp-approve-origin')) $('dapp-approve-origin').textContent = details.origin || '--';
-        if ($('dapp-approve-chain')) $('dapp-approve-chain').textContent = details.chainLabel || details.namespace || '--';
-        if ($('dapp-approve-method')) $('dapp-approve-method').textContent = details.method || '--';
-        if ($('dapp-approve-account')) $('dapp-approve-account').textContent = details.account || '--';
-        if ($('dapp-approve-detail')) $('dapp-approve-detail').textContent = details.summary || '--';
-      }
-
       if (_dappSession.nativeOpen) {
         await setNativeBrowserOverlayVisible(false);
       }
 
       _dappSession.pendingApproval = {
+        details,
         resolve: async (accepted) => {
           _dappSession.pendingApproval = null;
           const approveSheet = $('sheet-dapp-approve');
@@ -220,6 +227,7 @@
           resolve(Boolean(accepted));
         }
       };
+      renderDAppApproveSheet();
       openSheet('sheet-dapp-approve');
     });
   }

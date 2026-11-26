@@ -1085,7 +1085,14 @@
       if (typeof contracts.ensureWalletSigningKeysAsync === 'function') {
         await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
       }
-      const rawTyped = typeof params[1] === 'string' ? JSON.parse(params[1]) : (params[1] || params[0] || {});
+      const isEvmAddr = (v) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v.trim());
+      const typedArg = (params[1] !== undefined && !isEvmAddr(params[1])) ? params[1] : params[0];
+      let rawTyped = {};
+      try {
+        rawTyped = typeof typedArg === 'string' ? JSON.parse(typedArg) : (typedArg || {});
+      } catch (_) {
+        throw buildRpcError(-32602, 'Invalid typed data');
+      }
       const cleanTypes = { ...(rawTyped.types || {}) };
       delete cleanTypes.EIP712Domain;
       const addr = contracts.resolveWalletEvmSender ? contracts.resolveWalletEvmSender(wallet) : wallet.evmAddress;

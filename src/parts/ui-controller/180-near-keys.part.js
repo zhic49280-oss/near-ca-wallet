@@ -301,11 +301,16 @@
         return;
       }
       const oldPrlBal = await checkWalletPrlBalanceBeforeOverwriteAsync(wallet);
-      if (oldPrlBal > 0) {
-        const msg = t(
-          `当前 PRL 账户 (${shortenAddr(wallet.address)}) 仍有 ${formatBal(oldPrlBal, 4)} PRL 余额，更换前请确认已备份原助记词。是否继续更换？`,
-          `Current PRL account (${shortenAddr(wallet.address)}) holds ${formatBal(oldPrlBal, 4)} PRL. Ensure you have backed up its recovery phrase before switching. Continue?`
-        );
+      if (oldPrlBal === null || oldPrlBal > 0) {
+        const msg = oldPrlBal === null
+          ? t(
+              `无法确认当前 PRL 账户 (${shortenAddr(wallet.address)}) 余额，更换前请确认已备份原助记词。是否继续更换？`,
+              `Unable to verify balance of current PRL account (${shortenAddr(wallet.address)}). Ensure you have backed up its recovery phrase before switching. Continue?`
+            )
+          : t(
+              `当前 PRL 账户 (${shortenAddr(wallet.address)}) 仍有 ${formatBal(oldPrlBal, 4)} PRL 余额，更换前请确认已备份原助记词。是否继续更换？`,
+              `Current PRL account (${shortenAddr(wallet.address)}) holds ${formatBal(oldPrlBal, 4)} PRL. Ensure you have backed up its recovery phrase before switching. Continue?`
+            );
         if (!(await showConfirmDialogAsync(msg, { danger: true, title: t('更换 PRL 账户', 'Switch PRL Account') }))) return;
       }
       if (!(await verifySecurityAuthAsync(wallet, t('绑定 / 更换 PRL 挖矿账户', 'Bind / Switch PRL Mining Account')))) return;
@@ -351,11 +356,16 @@
     }
     try {
       const oldPrlBal = await checkWalletPrlBalanceBeforeOverwriteAsync(wallet);
-      if (oldPrlBal > 0) {
-        const msg = t(
-          `当前独立绑定的 PRL 账户 (${shortenAddr(wallet.address)}) 仍有 ${formatBal(oldPrlBal, 4)} PRL 余额，恢复默认前请确认已备份该 PRL 助记词。是否继续？`,
-          `Current custom PRL account (${shortenAddr(wallet.address)}) holds ${formatBal(oldPrlBal, 4)} PRL. Ensure you have backed up its phrase before restoring default. Continue?`
-        );
+      if (oldPrlBal === null || oldPrlBal > 0) {
+        const msg = oldPrlBal === null
+          ? t(
+              `无法确认当前独立绑定的 PRL 账户 (${shortenAddr(wallet.address)}) 余额，恢复默认前请确认已备份该 PRL 助记词。是否继续？`,
+              `Unable to verify balance of current custom PRL account (${shortenAddr(wallet.address)}). Ensure you have backed up its phrase before restoring default. Continue?`
+            )
+          : t(
+              `当前独立绑定的 PRL 账户 (${shortenAddr(wallet.address)}) 仍有 ${formatBal(oldPrlBal, 4)} PRL 余额，恢复默认前请确认已备份该 PRL 助记词。是否继续？`,
+              `Current custom PRL account (${shortenAddr(wallet.address)}) holds ${formatBal(oldPrlBal, 4)} PRL. Ensure you have backed up its phrase before restoring default. Continue?`
+            );
         if (!(await showConfirmDialogAsync(msg, { danger: true, title: t('更换 PRL 账户', 'Switch PRL Account') }))) return;
       }
       if (!(await verifySecurityAuthAsync(wallet, t('恢复默认派生 PRL 账户', 'Restore Default PRL Account')))) return;

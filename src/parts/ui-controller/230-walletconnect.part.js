@@ -24,7 +24,7 @@
     let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
       updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-      await loadScriptOnce('walletconnect.umd.min.js?v=6.75');
+      await loadScriptOnce('walletconnect.umd.min.js?v=6.76');
       sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
     }
     if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -241,7 +241,7 @@
   async function pairWalletConnectUri() {
     const st = getState();
     const uri = ($('wc-uri-input')?.value || '').trim();
-    if (!uri.startsWith('wc:')) {
+    if (!/^wc:/i.test(uri)) {
       showToast(t('请输入有效的 wc: 链接', 'Paste a valid wc: URI'));
       return;
     }
@@ -400,7 +400,10 @@
       approveBtn.textContent = t('处理中...', 'Signing...');
     }
     try {
-      if (!(await verifySecurityAuthAsync(wallet, t('批准 WalletConnect DApp 请求', 'Approve WalletConnect request')))) return;
+      if (!(await verifySecurityAuthAsync(wallet, t('批准 WalletConnect DApp 请求', 'Approve WalletConnect request')))) {
+        showToast(t('安全验证未通过，可重试批准或点击拒绝', 'Security verification cancelled. Retry approval or reject.'));
+        return;
+      }
       await contracts.ensureWalletSigningKeysAsync(wallet);
       const ethersLib = await ensureEthersLoaded();
       if (!ethersLib) throw new Error(t('EVM 签名库不可用', 'EVM signer unavailable'));
@@ -540,8 +543,9 @@
       _wcApprovingRequest = false;
       if (approveBtn) {
         approveBtn.disabled = false;
-        approveBtn.textContent = prevBtnText;
+        if (prevBtnText) approveBtn.textContent = prevBtnText;
       }
+      if (st.wc.pendingRequest) renderWcCards();
     }
   }
 
@@ -644,7 +648,7 @@
     const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
     if (existing) return existing;
     if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
-      await loadScriptOnce('src/jsqr-lazy.js?v=6.75').catch(() => false);
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.76').catch(() => false);
       return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     }
     return null;

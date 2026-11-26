@@ -12,6 +12,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -175,6 +176,15 @@ public class NativeDAppBrowserPlugin extends Plugin {
             settings.setDatabaseEnabled(true);
             settings.setSupportMultipleWindows(false);
             wv.addJavascriptInterface(new BridgeJsInterface(), "NexusAndroidBridge");
+            wv.setWebChromeClient(new WebChromeClient() {
+                @Override
+                public void onProgressChanged(WebView view, int newProgress) {
+                    super.onProgressChanged(view, newProgress);
+                    if (newProgress >= 5 && view != null) {
+                        injectProviderIfAllowed(view, view.getUrl());
+                    }
+                }
+            });
             wv.setWebViewClient(new WebViewClient() {
                 @Override
                 public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -185,18 +195,20 @@ public class NativeDAppBrowserPlugin extends Plugin {
                 @Override
                 public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                     super.onPageStarted(view, url, favicon);
-                    if (!injectedScriptSource.isEmpty() && isAllowedDAppUrl(url)) {
-                        view.evaluateJavascript(injectedScriptSource, null);
-                    }
+                    injectProviderIfAllowed(view, url);
                     syncChrome(view);
+                }
+
+                @Override
+                public void onPageCommitVisible(WebView view, String url) {
+                    super.onPageCommitVisible(view, url);
+                    injectProviderIfAllowed(view, url);
                 }
 
                 @Override
                 public void onPageFinished(WebView view, String url) {
                     super.onPageFinished(view, url);
-                    if (!injectedScriptSource.isEmpty() && isAllowedDAppUrl(url)) {
-                        view.evaluateJavascript(injectedScriptSource, null);
-                    }
+                    injectProviderIfAllowed(view, url);
                     syncChrome(view);
                 }
             });
@@ -220,6 +232,12 @@ public class NativeDAppBrowserPlugin extends Plugin {
             out.put("opened", true);
             call.resolve(out);
         });
+    }
+
+    private void injectProviderIfAllowed(WebView view, String url) {
+        if (view == null || injectedScriptSource == null || injectedScriptSource.isEmpty()) return;
+        if (!isAllowedDAppUrl(url)) return;
+        view.evaluateJavascript(injectedScriptSource, null);
     }
 
     private void syncChrome(WebView view) {

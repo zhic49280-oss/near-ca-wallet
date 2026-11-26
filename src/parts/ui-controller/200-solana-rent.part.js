@@ -165,6 +165,16 @@
       btn.textContent = t('回收中...', 'Reclaiming...');
     }
     try {
+      if (burnItems.length > 0) {
+        const confirmMsg = t(
+          `所选账户包含仍有余额的代币 [${burnSummary}]，销毁后资产将永久丢失且无法找回！是否确认销毁并回收 +${totalSol.toFixed(4)} SOL 租金？`,
+          `Selected accounts still hold tokens [${burnSummary}]. Burning them will permanently destroy those assets! Continue to burn and reclaim +${totalSol.toFixed(4)} SOL?`
+        );
+        if (!(await showConfirmDialogAsync(confirmMsg, {
+          danger: true,
+          title: t('确认销毁代币并回收租金', 'Confirm Burn & Reclaim')
+        }))) return;
+      }
       if (!(await verifySecurityAuthAsync(wallet, promptText))) return;
       const res = await contracts.executeSolanaRentReclaim({ wallet, accounts: selected });
       const firstHash = res.txHashes && res.txHashes[0] ? `: ${shortenAddr(res.txHashes[0])}` : '';
