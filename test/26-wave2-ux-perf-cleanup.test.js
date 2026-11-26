@@ -45,7 +45,7 @@ test('Item 11-15: toUserFriendlyError mappings, jargon sanitization, and unified
     const coreSheets = fs.readFileSync(path.join(ROOT_DIR, 'src/app/sheets/CoreSheets.jsx'), 'utf8');
     assert.ok(coreSheets.includes('id="sheet-confirm-dialog"'));
     assert.ok(coreSheets.includes('id="send-tx-receipt"'));
-    const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/TradingViews.jsx'), 'utf8');
+    const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/PerpsView.jsx'), 'utf8');
     assert.ok(perpHtml.includes('id="perp-ob-bid-sz-hdr" data-i18n="perp.obSizeHdr"'));
   } finally {
     state.setLanguage(prevLang || 'zh');

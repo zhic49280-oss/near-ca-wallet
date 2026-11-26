@@ -1,17 +1,25 @@
 import { h, Fragment } from 'preact';
+import { useLang, useActiveWallet, useWalletState } from '../store/useWalletStore.js';
+
+function shortenAddr(addr, head = 6, tail = 4) {
+  const s = String(addr || '');
+  if (!s) return '';
+  if (s.length <= head + tail + 3) return s;
+  return `${s.slice(0, head)}...${s.slice(-tail)}`;
+}
 
 export function AppShellOverlays() {
   return (
     <Fragment>
       <div id="app-privacy-shield" className="app-privacy-shield" aria-hidden="true">
         <div className="app-lock-card">
-          <img src="assets/nexus-logo-192.png?v=6.78" alt="Nexus Wallet" className="app-lock-logo" />
+          <img src="assets/nexus-logo-192.png?v=6.79" alt="Nexus Wallet" className="app-lock-logo" />
           <div className="app-lock-brand">Nexus Wallet</div>
         </div>
       </div>
       <div id="app-lock-overlay" className="app-lock-overlay" role="dialog" aria-modal="true" aria-hidden="true">
         <div className="app-lock-card">
-          <img src="assets/nexus-logo-192.png?v=6.78" alt="Nexus Wallet" className="app-lock-logo" />
+          <img src="assets/nexus-logo-192.png?v=6.79" alt="Nexus Wallet" className="app-lock-logo" />
           <div className="app-lock-brand">Nexus Wallet</div>
           <div id="app-lock-title" className="app-lock-title" data-i18n="lock.title">安全锁定</div>
           <div id="app-lock-status" className="app-lock-status" data-i18n="lock.hint">请通过生物识别或锁屏密码解锁</div>
@@ -34,6 +42,11 @@ export function AppShellOverlays() {
 }
 
 export function AppHeader() {
+  const { t } = useLang();
+  const activeWallet = useActiveWallet();
+  const accountLabel = activeWallet
+    ? (activeWallet.nearNamedAccount || shortenAddr(activeWallet.nearAddress) || activeWallet.name || '--')
+    : '--';
   return (
     <header className="app-header">
       <button
@@ -43,8 +56,8 @@ export function AppHeader() {
         onClick={() => window.openWalletSwitcherSheet && window.openWalletSwitcherSheet()}
       >
         <span className="header-account-dot"></span>
-        <span id="header-account-label" className="header-account-label">--</span>
-        <span className="ca-badge" data-i18n="header.caBadge">NEAR CA</span>
+        <span id="header-account-label" className="header-account-label">{accountLabel}</span>
+        <span className="ca-badge" data-i18n="header.caBadge">{t('NEAR CA', 'NEAR CA')}</span>
       </button>
 
       <div className="header-actions">
@@ -54,7 +67,7 @@ export function AppHeader() {
           onClick={() => window.openWalletConnectSheet && window.openWalletConnectSheet()}
         >
           <span id="header-wc-dot" className="wc-dot"></span>
-          <span data-i18n="header.wcBtn">WC</span>
+          <span data-i18n="header.wcBtn">{t('WC', 'WC')}</span>
         </button>
         <button
           type="button"
@@ -62,7 +75,7 @@ export function AppHeader() {
           className="header-chip-btn"
           onClick={() => window.toggleLanguage && window.toggleLanguage()}
         >
-          <span data-i18n="header.langToggle">EN</span>
+          <span data-i18n="header.langToggle">{t('EN', '中文')}</span>
         </button>
       </div>
     </header>
@@ -76,7 +89,7 @@ export function OnboardingAndWalletViews() {
       <section id="view-onboarding" className="view-section hidden">
         <div className="ios-glass-card hero-card" style={{ padding: '24px 18px', textAlign: 'center' }}>
           <img
-            src="assets/nexus-logo-512.png?v=6.78"
+            src="assets/nexus-logo-512.png?v=6.79"
             alt="Nexus Wallet"
             style={{
               width: '64px',
@@ -280,23 +293,28 @@ export function OnboardingAndWalletViews() {
 }
 
 export function BottomNav() {
+  const { t } = useLang();
+  const st = useWalletState(['wallet', 'nav']);
+  const hasWallet = Boolean(st && Array.isArray(st.wallets) && st.wallets.length > 0);
+  const activeTab = (st && st.activeTab) || 'wallet';
+  const navTarget = activeTab === 'earn' ? 'wallet' : activeTab;
   return (
-    <nav id="bottom-nav" className="bottom-nav hidden" aria-label="Main Navigation">
-      <button type="button" className="nav-item active" data-tab="wallet" onClick={() => window.switchTab && window.switchTab('wallet')}>
+    <nav id="bottom-nav" className={`bottom-nav${hasWallet ? '' : ' hidden'}`} aria-label="Main Navigation">
+      <button type="button" className={`nav-item${navTarget === 'wallet' ? ' active' : ''}`} data-tab="wallet" onClick={() => window.switchTab && window.switchTab('wallet')}>
         <span className="nav-icon">◈</span>
-        <span data-i18n="nav.wallet">资产</span>
+        <span data-i18n="nav.wallet">{t('资产', 'Assets')}</span>
       </button>
-      <button type="button" className="nav-item" data-tab="swap" onClick={() => window.switchTab && window.switchTab('swap')}>
+      <button type="button" className={`nav-item${navTarget === 'swap' ? ' active' : ''}`} data-tab="swap" onClick={() => window.switchTab && window.switchTab('swap')}>
         <span className="nav-icon">⇄</span>
-        <span data-i18n="nav.swap">闪兑</span>
+        <span data-i18n="nav.swap">{t('闪兑', 'Swap')}</span>
       </button>
-      <button type="button" className="nav-item" data-tab="perp" onClick={() => window.switchTab && window.switchTab('perp')}>
+      <button type="button" className={`nav-item${navTarget === 'perp' ? ' active' : ''}`} data-tab="perp" onClick={() => window.switchTab && window.switchTab('perp')}>
         <span className="nav-icon">⚡</span>
-        <span data-i18n="nav.perp">合约</span>
+        <span data-i18n="nav.perp">{t('合约', 'Perps')}</span>
       </button>
-      <button type="button" className="nav-item" data-tab="hub" onClick={() => window.switchTab && window.switchTab('hub')}>
+      <button type="button" className={`nav-item${navTarget === 'hub' ? ' active' : ''}`} data-tab="hub" onClick={() => window.switchTab && window.switchTab('hub')}>
         <span className="nav-icon">⌘</span>
-        <span data-i18n="nav.hub">枢纽</span>
+        <span data-i18n="nav.hub">{t('枢纽', 'Hub')}</span>
       </button>
     </nav>
   );

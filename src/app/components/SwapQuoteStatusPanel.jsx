@@ -4,7 +4,7 @@ import { StatusBadge } from './ui/StatusBadge.jsx';
 
 const DEV_JARGON_RE = /\b(1Click|Bridge2|DCL|Ref\s*Finance|HTTP|RPC)\b/gi;
 
-export function sanitizeRouteLabel(raw, isEn = false) {
+function sanitizeRouteLabel(raw, isEn = false) {
   const s = String(raw || '').trim();
   if (!s || s === '--') return '--';
   if (!DEV_JARGON_RE.test(s)) return s;

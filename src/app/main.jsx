@@ -4,7 +4,7 @@ import { SwapHistoryPanel } from './components/SwapHistoryPanel.jsx';
 import { AssetListPanel } from './components/AssetListPanel.jsx';
 import { TokenPickerPanel } from './components/TokenPickerPanel.jsx';
 import { PerpOverviewPanel } from './components/PerpOverviewPanel.jsx';
-import { PerpOrderbookSidePanel, PerpBottomListPanel } from './components/PerpOrderbookAndPositions.jsx';
+import { PerpOrderbookSidePanel, PerpBottomListPanel, PerpOverviewPositionsPanel } from './components/PerpOrderbookAndPositions.jsx';
 import { LimitOrdersPanel } from './components/LimitOrdersPanel.jsx';
 import { EarnPoolsPanel } from './components/EarnPoolsPanel.jsx';
 import { TokenHistoryPanel } from './components/TokenHistoryPanel.jsx';
@@ -26,7 +26,6 @@ import { useWalletState, notifyFrameworkState, useLang, useActiveWallet } from '
 export function mountSwapHistory(containerEl, opts = {}) {
   if (!containerEl) return false;
   render(h(SwapHistoryPanel, { getStatusLabel: opts.getStatusLabel }), containerEl);
-  notifyFrameworkState('swap');
   return true;
 }
 
@@ -57,6 +56,17 @@ export function mountPerpOrderbookSide(containerEl, props = {}) {
 export function mountPerpBottomList(containerEl, props = {}) {
   if (!containerEl) return false;
   render(h(PerpBottomListPanel, props), containerEl);
+  return true;
+}
+
+export function mountPerpOverviewPositionsPanel(containerEl, props = {}) {
+  if (!containerEl) return false;
+  const positions = props && Array.isArray(props.positions) ? props.positions : [];
+  if (!positions.length) {
+    render(null, containerEl);
+    return true;
+  }
+  render(h(PerpOverviewPositionsPanel, props), containerEl);
   return true;
 }
 
@@ -263,6 +273,7 @@ const NearCAFramework = {
   mountPerpOverview,
   mountPerpOrderbookSide,
   mountPerpBottomList,
+  mountPerpOverviewPositionsPanel,
   mountLimitOrdersPanel,
   mountEarnPoolsPanel,
   mountTokenHistoryPanel,

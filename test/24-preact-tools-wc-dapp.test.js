@@ -19,12 +19,20 @@ function loadJsxModule(relPath, cache = new Map()) {
   const mod = { exports: {} };
   cache.set(absPath, mod.exports);
 
+  const hooksStub = {
+    useState: (init) => [typeof init === 'function' ? init() : init, () => {}],
+    useEffect: () => {},
+    useMemo: (fn) => fn(),
+    useRef: (init) => ({ current: init }),
+    useCallback: (fn) => fn
+  };
   const fn = vm.runInNewContext(
     `(function(require, module, exports) {\n${out.code}\n})`,
     { console, Date, Number, String, Boolean, Array, Object, Set, Map, Math, URL }
   );
   fn((id) => {
     if (id === 'preact') return preact;
+    if (id === 'preact/hooks') return hooksStub;
     if (id.startsWith('./') || id.startsWith('../')) {
       const targetAbs = path.resolve(path.dirname(absPath), id);
       const targetRel = path.relative(ROOT_DIR, targetAbs);

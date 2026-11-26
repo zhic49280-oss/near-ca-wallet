@@ -1,4 +1,5 @@
 import { h } from 'preact';
+import { useLang } from '../store/useWalletStore.js';
 
 function defaultShortenAddr(addr, head = 14, tail = 8) {
   const s = String(addr || '');
@@ -18,9 +19,13 @@ export function NearKeysPanel({
   unactivated = false,
   errorMsg = '',
   busyKey = '',
-  isEn = false,
+  isEn: isEnProp,
   shortenAddr
 }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
   if (loading) {
     return (
       <div className="text-muted" style={{ fontSize: '12px', padding: '8px' }}>
@@ -108,9 +113,13 @@ export function SolRentPanel({
   loading = false,
   errorMsg = '',
   disabled = false,
-  isEn = false,
+  isEn: isEnProp,
   formatBal
 }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
   if (loading) {
     return (
       <div style={{ fontSize: '12px', color: 'var(--text-secondary)', padding: '12px', textAlign: 'center' }}>
@@ -196,9 +205,13 @@ export function NearStoragePanel({
   loading = false,
   errorMsg = '',
   disabled = false,
-  isEn = false,
+  isEn: isEnProp,
   formatBal
 }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
   if (loading) {
     return (
       <div style={{ fontSize: '12px', color: 'var(--text-secondary)', padding: '12px', textAlign: 'center' }}>

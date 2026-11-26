@@ -1,4 +1,5 @@
 import { h } from 'preact';
+import { useLang } from '../store/useWalletStore.js';
 
 function defaultFormatBal(val, dp = 6) {
   const n = Number(val);
@@ -77,7 +78,7 @@ export function TokenHistoryPanel({
   symKey = '',
   loading = false,
   partialUnavailable = false,
-  isEn = false,
+  isEn: isEnProp,
   resolveTxDisplayParts,
   formatRelativeActivityTime,
   formatActivityTime,
@@ -85,6 +86,10 @@ export function TokenHistoryPanel({
   getChainMeta,
   onOpenTxDetail
 }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
   if (loading && items.length === 0) {
     return (
       <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '8px 0' }}>

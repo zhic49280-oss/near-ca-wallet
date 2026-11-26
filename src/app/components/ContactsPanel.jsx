@@ -1,4 +1,5 @@
 import { h } from 'preact';
+import { useLang } from '../store/useWalletStore.js';
 
 function defaultShortenAddr(addr, head = 10, tail = 8) {
   const s = String(addr || '');
@@ -9,9 +10,13 @@ function defaultShortenAddr(addr, head = 10, tail = 8) {
 export function ContactsPanel({
   contacts = [],
   pickerTarget = null,
-  isEn = false,
+  isEn: isEnProp,
   shortenAddr
 }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
   if (!contacts || contacts.length === 0) {
     return (
       <div className="text-muted" style={{ textAlign: 'center', padding: '12px' }}>

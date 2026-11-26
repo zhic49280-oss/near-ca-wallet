@@ -27,23 +27,23 @@ function PearlIridescentSvg({ size }) {
     <svg width={s} height={s} viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" className="rounded-full flex-shrink-0">
       <defs>
         <radialGradient id={shellId} cx="35%" cy="28%" r="72%" fx="30%" fy="24%">
-          <stop offset="0%" stop-color="#FFFFFF" />
-          <stop offset="32%" stop-color="#E0F7FA" />
-          <stop offset="65%" stop-color="#C7D2FE" />
-          <stop offset="88%" stop-color="#67E8F9" />
-          <stop offset="100%" stop-color="#0E7490" />
+          <stop offset="0%" stopColor="#FFFFFF" />
+          <stop offset="32%" stopColor="#E0F7FA" />
+          <stop offset="65%" stopColor="#C7D2FE" />
+          <stop offset="88%" stopColor="#67E8F9" />
+          <stop offset="100%" stopColor="#0E7490" />
         </radialGradient>
         <linearGradient id={rimId} x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#A5F3FC" stop-opacity="0.9" />
-          <stop offset="50%" stop-color="#E9D5FF" stop-opacity="0.7" />
-          <stop offset="100%" stop-color="#22D3EE" stop-opacity="0.9" />
+          <stop offset="0%" stopColor="#A5F3FC" stopOpacity="0.9" />
+          <stop offset="50%" stopColor="#E9D5FF" stopOpacity="0.7" />
+          <stop offset="100%" stopColor="#22D3EE" stopOpacity="0.9" />
         </linearGradient>
       </defs>
-      <circle cx="18" cy="18" r="17.2" fill={`url(#${shellId})`} stroke={`url(#${rimId})`} stroke-width="1.5" />
-      <ellipse cx="12.5" cy="10.8" rx="5.2" ry="2.7" transform="rotate(-24 12.5 10.8)" fill="#FFFFFF" fill-opacity="0.72" />
-      <circle cx="9.2" cy="14.5" r="1.3" fill="#FFFFFF" fill-opacity="0.65" />
-      <path d="M13.6 10.8C10.5 10.8 8.4 13.1 8.4 16C8.4 18.9 10.5 21.2 13.6 21.2V10.8Z" fill="#0F172A" fill-opacity="0.88" />
-      <path fill-rule="evenodd" clip-rule="evenodd" d="M15.4 10.8H20.6C24 10.8 26.2 12.9 26.2 16C26.2 19.1 24 21.2 20.6 21.2H18.4V24.6H20.6V26.2H13.6V24.6H15.4V10.8ZM18.4 12.8V19.2H20.4C22.3 19.2 23.4 18 23.4 16C23.4 14 22.3 12.8 20.4 12.8H18.4Z" fill="#0F172A" fill-opacity="0.88" />
+      <circle cx="18" cy="18" r="17.2" fill={`url(#${shellId})`} stroke={`url(#${rimId})`} strokeWidth="1.5" />
+      <ellipse cx="12.5" cy="10.8" rx="5.2" ry="2.7" transform="rotate(-24 12.5 10.8)" fill="#FFFFFF" fillOpacity="0.72" />
+      <circle cx="9.2" cy="14.5" r="1.3" fill="#FFFFFF" fillOpacity="0.65" />
+      <path d="M13.6 10.8C10.5 10.8 8.4 13.1 8.4 16C8.4 18.9 10.5 21.2 13.6 21.2V10.8Z" fill="#0F172A" fillOpacity="0.88" />
+      <path fillRule="evenodd" clipRule="evenodd" d="M15.4 10.8H20.6C24 10.8 26.2 12.9 26.2 16C26.2 19.1 24 21.2 20.6 21.2H18.4V24.6H20.6V26.2H13.6V24.6H15.4V10.8ZM18.4 12.8V19.2H20.4C22.3 19.2 23.4 18 23.4 16C23.4 14 22.3 12.8 20.4 12.8H18.4Z" fill="#0F172A" fillOpacity="0.88" />
     </svg>
   );
 }
@@ -112,7 +112,7 @@ export function TokenIconBadge({ symbol = '?', blockchain = '', logoURI = '', co
         ) : (
           <svg width={s} height={s} viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="rounded-full flex-shrink-0">
             <circle cx="16" cy="16" r="16" fill={bg} />
-            <text x="16" y="19.5" text-anchor="middle" fill={textColor} font-size={fontSize} font-weight="800" font-family="system-ui,-apple-system,sans-serif">
+            <text x="16" y="19.5" textAnchor="middle" fill={textColor} fontSize={fontSize} fontWeight="800" fontFamily="system-ui,-apple-system,sans-serif">
               {label}
             </text>
           </svg>

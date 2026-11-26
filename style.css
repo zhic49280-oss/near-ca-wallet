@@ -458,31 +458,6 @@ body,
   font-variant-numeric: tabular-nums;
 }
 
-.network-pills-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.net-mini-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 9.5px;
-  font-weight: 600;
-  padding: 1.5px 6px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.055);
-  color: var(--text-secondary);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-}
-
-.net-mini-pill.intents {
-  background: rgba(0, 236, 151, 0.1);
-  color: var(--near-emerald);
-  border-color: rgba(0, 236, 151, 0.25);
-}
-
 .asset-right {
   display: flex;
   flex-direction: column;
@@ -502,16 +477,6 @@ body,
   font-size: 11.5px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
-}
-
-/* Inline Accordion Breakdown Drawer */
-.asset-drawer {
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  padding: 10px 12px 12px;
-  background: rgba(5, 8, 16, 0.55);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 .asset-sub-row {
@@ -767,6 +732,7 @@ input[type="number"] {
 }
 
 .swap-flip-btn {
+  position: relative;
   width: 34px;
   height: 34px;
   border-radius: 999px;
@@ -781,6 +747,12 @@ input[type="number"] {
   align-items: center;
   justify-content: center;
   transition: transform 0.2s ease, background 0.15s ease;
+}
+
+.swap-flip-btn::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
 }
 
 .swap-flip-btn:hover {
@@ -1068,9 +1040,7 @@ body.sheet-scroll-locked {
   position: fixed;
   inset: 0;
   z-index: 60;
-  background: rgba(3, 6, 14, 0.72);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(4, 7, 15, 0.72);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.24s ease;
@@ -1156,7 +1126,7 @@ body.sheet-scroll-locked {
 .sheet-handle::after {
   content: '';
   position: absolute;
-  inset: -10px -28px;
+  inset: -18px -28px;
 }
 
 .sheet-header {
@@ -1188,17 +1158,18 @@ body.sheet-scroll-locked {
 /* Mining Pro Telemetry Styles */
 .kpi-grid-3 {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
 .kpi-grid-2 {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
 .kpi-box {
+  min-width: 0;
   padding: 10px;
   border-radius: 13px;
   background: rgba(255, 255, 255, 0.035);
@@ -2061,11 +2032,12 @@ html.nexus-locked #app-lock-overlay {
 /* Perpetual Futures (#view-perp) */
 .perp-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
 .perp-stat-box {
+  min-width: 0;
   padding: 9px 10px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.035);
@@ -2110,7 +2082,7 @@ html.nexus-locked #app-lock-overlay {
 
 .perp-market-stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   padding: 6px 8px;
   border-radius: 10px;
@@ -2119,6 +2091,7 @@ html.nexus-locked #app-lock-overlay {
 }
 
 .perp-mstat {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2498,12 +2471,13 @@ html.nexus-locked #app-lock-overlay {
 
 .perp-meta-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 6px 12px;
   padding: 8px 10px;
 }
 
 .perp-meta-cell {
+  min-width: 0;
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
@@ -2650,11 +2624,15 @@ html.nexus-locked #app-lock-overlay {
 
 .perp-pos-metrics-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   padding: 6px 0;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.perp-pos-metrics-grid > div {
+  min-width: 0;
 }
 
 .perp-dex-pill {
@@ -2904,9 +2882,7 @@ html.nexus-locked #app-lock-overlay {
 .tx-flow-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(3, 6, 14, 0.76);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(4, 7, 15, 0.72);
   z-index: 1180;
   transition: opacity 0.2s ease;
 }

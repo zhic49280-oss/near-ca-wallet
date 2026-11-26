@@ -59,13 +59,13 @@ test('FW-2.3: 151-limit-orders-ui and 170-earn wire mountLimitOrdersPanel and mo
   assert.ok(earnSrc.includes('setHtmlIfChanged(listEl,'), '170-earn must preserve innerHTML fallback for Node tests');
 });
 
-test('FW-2.4: TokenIconBadge.jsx uses kebab-case SVG presentation attributes for Preact 11 (fixes PRL black-circle icon)', () => {
+test('FW-2.4: TokenIconBadge.jsx uses camelCase SVG presentation attributes (D2-01/02)', () => {
   const badgeSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/app/components/TokenIconBadge.jsx'), 'utf8');
-  for (const kebab of ['stop-color', 'stop-opacity', 'stroke-width', 'fill-opacity', 'fill-rule', 'clip-rule', 'text-anchor']) {
-    assert.ok(badgeSrc.includes(kebab), `TokenIconBadge.jsx must use kebab-case SVG attribute: ${kebab}`);
-  }
   for (const camel of ['stopColor', 'stopOpacity', 'strokeWidth', 'fillOpacity', 'fillRule', 'clipRule', 'textAnchor']) {
-    assert.equal(badgeSrc.includes(camel), false, `TokenIconBadge.jsx must not use React camelCase SVG attribute: ${camel}`);
+    assert.ok(badgeSrc.includes(camel), `TokenIconBadge.jsx must use camelCase SVG attribute: ${camel}`);
+  }
+  for (const kebab of ['stop-color', 'stop-opacity', 'stroke-width', 'fill-opacity', 'fill-rule', 'clip-rule', 'text-anchor']) {
+    assert.equal(badgeSrc.includes(kebab), false, `TokenIconBadge.jsx must not use kebab-case SVG attribute: ${kebab}`);
   }
 });
 

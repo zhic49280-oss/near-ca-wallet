@@ -3,10 +3,12 @@
 const vm = require('vm');
 const { test, assert, fs, path, ROOT_DIR } = require('./helpers.js');
 
-function loadJsxModule(relPath) {
+function loadJsxModule(relPath, cache = new Map()) {
+  const absPath = path.resolve(ROOT_DIR, relPath);
+  if (cache.has(absPath)) return cache.get(absPath);
+
   const esbuild = require('esbuild');
   const preact = require('preact');
-  const absPath = path.join(ROOT_DIR, relPath);
   const src = fs.readFileSync(absPath, 'utf8');
   const out = esbuild.transformSync(src, {
     loader: 'jsx',
@@ -15,14 +17,31 @@ function loadJsxModule(relPath) {
     format: 'cjs'
   });
   const mod = { exports: {} };
+  cache.set(absPath, mod.exports);
+
+  const hooksStub = {
+    useState: (init) => [typeof init === 'function' ? init() : init, () => {}],
+    useEffect: () => {},
+    useMemo: (fn) => fn(),
+    useRef: (init) => ({ current: init }),
+    useCallback: (fn) => fn
+  };
   const fn = vm.runInNewContext(
     `(function(require, module, exports) {\n${out.code}\n})`,
-    { console, Date, Number, String, Boolean, Array, Object, Set, Map, Math }
+    { console, Date, Number, String, Boolean, Array, Object, Set, Map, Math, URL }
   );
   fn((id) => {
     if (id === 'preact') return preact;
+    if (id === 'preact/hooks') return hooksStub;
+    if (id.startsWith('./') || id.startsWith('../')) {
+      const targetAbs = path.resolve(path.dirname(absPath), id);
+      const targetRel = path.relative(ROOT_DIR, targetAbs);
+      return loadJsxModule(targetRel, cache);
+    }
     throw new Error(`Unexpected import "${id}" in ${relPath}`);
   }, mod, mod.exports);
+
+  cache.set(absPath, mod.exports);
   return mod.exports;
 }
 

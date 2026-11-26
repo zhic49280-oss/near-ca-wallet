@@ -1,11 +1,16 @@
 import { h, Fragment } from 'preact';
 import { ActionButton } from './ui/ActionButton.jsx';
 import { EmptyState } from './ui/EmptyState.jsx';
+import { useLang } from '../store/useWalletStore.js';
 
 export function WcSessionsPanel({
   sessions = [],
-  isEn = false
+  isEn: isEnProp
 }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
   const list = Array.isArray(sessions) ? sessions : [];
   if (list.length === 0) {
     return (
@@ -68,10 +73,14 @@ function resolveProposalInfo(proposal) {
 export function WcProposalPanel({
   proposal = null,
   approving = false,
-  isEn = false,
+  isEn: isEnProp,
   onApprove,
   onReject
 }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
   const info = resolveProposalInfo(proposal);
   if (!info) return null;
 

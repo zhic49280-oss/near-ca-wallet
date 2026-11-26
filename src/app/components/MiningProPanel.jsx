@@ -1,6 +1,7 @@
 import { h, Fragment } from 'preact';
 import { EmptyState } from './ui/EmptyState.jsx';
 import { StatusBadge } from './ui/StatusBadge.jsx';
+import { useLang } from '../store/useWalletStore.js';
 
 function defaultShortenAddr(addr, head = 6, tail = 5) {
   const s = String(addr || '');
@@ -45,9 +46,13 @@ export function MiningTelemetryPanel({
   watchlist = [],
   payouts = [],
   isOnChainMode = false,
-  isEn = false,
+  isEn: isEnProp,
   shortenAddr
 }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
   const fmtAddr = typeof shortenAddr === 'function' ? shortenAddr : defaultShortenAddr;
 
   if (mode === 'watchlist') {
@@ -178,8 +183,12 @@ export function MiningTelemetryPanel({
 export function MiningWorkersPanel({
   workers = [],
   loading = false,
-  isEn = false
+  isEn: isEnProp
 }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
   if (loading) {
     return (
       <tr>

@@ -28,7 +28,7 @@ const ethersLib = require('../ethers.umd.min.js');
 
 test('v6.24 UI & UX Fixes: global sheet scroll lock, keyboard-safe picker/perp height, and Earn sheet modal', () => {
   const styleCss = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
-  const earnHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'views', 'TradingViews.jsx'), 'utf8');
+  const earnHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'views', 'EarnView.jsx'), 'utf8');
   const sheetsHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'sheets', 'ToolsAndChainSheets.jsx'), 'utf8');
 
   assert.ok(styleCss.includes('body.sheet-scroll-locked'), 'style.css must lock body scroll when sheets open');
@@ -93,7 +93,7 @@ test('v6.24 UI & UX Fixes: kPEPE/kBONK/kSHIB perp icon normalization preserves k
   const khypeIcon = tokenRegistry.resolveTokenIcon({ symbol: 'kHYPE', blockchain: 'hype' });
   assert.notEqual(khypeIcon.primaryUrl, tokenRegistry.resolveTokenIcon({ symbol: 'HYPE', blockchain: 'hype' }).primaryUrl, 'kHYPE must retain its dedicated icon');
 
-  const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'views', 'TradingViews.jsx'), 'utf8');
+  const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'views', 'PerpsView.jsx'), 'utf8');
   assert.ok(perpHtml.includes('id="perp-tpsl-drawer"'), 'Perp TP/SL must be collapsible');
   assert.ok(perpHtml.includes('perp-meta-grid'), 'Perp metadata must use compact 2-column grid');
 
@@ -824,7 +824,7 @@ test('v6.25->v6.29 Unified Pure-External Gas Model: exact input matches quote/br
 
 test('v6.26 OKX Default-On K-Line Chart, Full HIP-3 Icon Resolution & Scrollability Fixes', () => {
   assert.equal(state.perp.showChart, true, 'K-line chart must be enabled by default');
-  const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'views', 'TradingViews.jsx'), 'utf8');
+  const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'views', 'PerpsView.jsx'), 'utf8');
   assert.equal(/id="perp-chart-wrap"[^>]*\bhidden\b/.test(perpHtml), false, '#perp-chart-wrap must not start hidden');
   assert.ok(perpHtml.includes('data-iv="1d"'), 'Interval pills must include 1d');
 
@@ -988,7 +988,7 @@ test('v6.27 Local Bundled Icons, Multi-Target Sync Verification, Perp SWR Snapsh
 });
 
 test('v6.28 Perp Order Ticket Cleanup: remove redundant 0 Gas row while keeping Arbitrum ETH gas check', () => {
-  const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'views', 'TradingViews.jsx'), 'utf8');
+  const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'views', 'PerpsView.jsx'), 'utf8');
   for (const id of ['perp-meta-notional', 'perp-meta-size', 'perp-meta-liq', 'perp-meta-fee']) {
     assert.ok(perpHtml.includes(id), `Perp order ticket must retain ${id}`);
   }
@@ -1173,7 +1173,7 @@ test('v6.29 Full-Precision MAX, Live Gas Estimator, Auto-Fix Banners & Home Dust
   }
 
   // 5. HTML Gas-Fix Banners, Zero Inline Events in ui-controller & SW v6.29
-  const swapHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'views', 'TradingViews.jsx'), 'utf8');
+  const swapHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'views', 'SwapLimitView.jsx'), 'utf8');
   const sendHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'sheets', 'CoreSheets.jsx'), 'utf8');
   assert.ok(swapHtml.includes('id="swap-gas-fix-banner"') && swapHtml.includes('applySwapMaxSpendableFix()'));
   assert.ok(sendHtml.includes('id="send-gas-fix-banner"') && sendHtml.includes('applySendMaxSpendableFix'));

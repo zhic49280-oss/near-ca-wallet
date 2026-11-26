@@ -46,7 +46,7 @@
 
 ### 2.1 资产首页 (`view-wallet`)
 1. **顶部栏与总资产 Hero 区**：
-   - 左上角切换/管理多钱包（`sheet-wallets`），右上角语言切换（中/英）、DApp 浏览器（`sheet-dapp-browser`）、WalletConnect v2（`sheet-walletconnect`）；
+   - 左上角切换/管理多钱包（`sheet-wallets`），右上角 WalletConnect v2（`sheet-walletconnect`）与语言切换（中/英）；DApp 浏览器（`sheet-dapp-browser`）位于枢纽页（`view-hub`）；
    - 显示总资产 USD 估值（所有已加载链上资产实时汇总，未返回价格时显示 `--`）、当前 NEAR 账户 ID（一键复制，未注册 `.near` 时显示注册入口）；
    - 四个快捷金刚区按钮：**发送** (`openSendSheet`)、**收款** (`openReceiveSheet`)、**闪兑** (`switchTab('swap')`)、**赚币** (`switchTab('earn')`)。
 2. **下拉刷新 (`initHomePullToRefresh`)**：

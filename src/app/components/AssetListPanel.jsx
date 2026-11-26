@@ -1,5 +1,6 @@
 import { h } from 'preact';
 import { TokenIconBadge } from './TokenIconBadge.jsx';
+import { useLang } from '../store/useWalletStore.js';
 
 function AssetGroupCard({ g, formatBal, formatTokenPrice, formatUsd }) {
   const priceText = g.price !== null && g.price !== undefined ? formatTokenPrice(g.price) : '--';
@@ -22,7 +23,6 @@ function AssetGroupCard({ g, formatBal, formatTokenPrice, formatUsd }) {
               <span className="asset-symbol">{g.symbol}</span>
               <span className="asset-price">{priceText}</span>
             </div>
-            <div className="network-pills-row" />
           </div>
         </div>
         <div className="asset-right">
@@ -42,8 +42,12 @@ export function AssetListPanel({
   formatBal,
   formatTokenPrice,
   formatUsd,
-  isEn
+  isEn: isEnProp
 }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
   return (
     <div className="flex flex-col gap-2">
       {mainGroups.map((g, idx) => (

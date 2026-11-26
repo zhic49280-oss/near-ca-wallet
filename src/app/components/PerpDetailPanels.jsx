@@ -115,12 +115,13 @@ export function PerpMarketsSheetPanel({
 
 export function PerpFundingInfoPanel({
   entries = [],
+  selectedValue = '',
   formatBal = defaultFormatBal
 }) {
   const list = Array.isArray(entries) ? entries : [];
   if (list.length === 0) return null;
   return list.map((e) => (
-    <option key={e.key} value={e.key}>
+    <option key={e.key} value={e.key} selected={selectedValue ? e.key === selectedValue : undefined}>
       {`${e.symbol} · ${e.chainLabel} (${formatBal(e.balance, 4)})`}
     </option>
   ));

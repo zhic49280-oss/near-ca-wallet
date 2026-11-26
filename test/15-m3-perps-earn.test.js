@@ -175,7 +175,7 @@ test('M3.3: Perps 1Click deposit background polling tracks status and stops on S
 });
 
 test('M3.4: #perp-ls-ratio-wrap has Zero CLS fixed-height placeholder and stays visible when lsRatio is null', () => {
-  const html = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/TradingViews.jsx'), 'utf8');
+  const html = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/PerpsView.jsx'), 'utf8');
   assert.match(html, /id="perp-ls-ratio-wrap" className="perp-ob-power-wrap" style=\{\{ minHeight: '22px'/);
   assert.doesNotMatch(html, /id="perp-ls-ratio-wrap"[^>]*\bhidden\b/);
 

@@ -1,13 +1,14 @@
 import { h } from 'preact';
+import { useLang } from '../store/useWalletStore.js';
 
 export function PerpOrderbookSidePanel({ rows = [], side = 'bid', maxSz = 0, fmtObSz, formatPerpPx }) {
   return (
     <div className="flex flex-col">
-      {rows.map((r, idx) => {
+      {rows.map((r) => {
         const pct = maxSz > 0 ? Math.max(6, (r.sz / maxSz) * 100) : 0;
         return (
           <button
-            key={`${side}_${idx}`}
+            key={`${side}_${r.px}`}
             type="button"
             className={`perp-ob-row ${side}`}
             data-action="fill-perp-ob-px"
@@ -23,7 +24,11 @@ export function PerpOrderbookSidePanel({ rows = [], side = 'bid', maxSz = 0, fmt
   );
 }
 
-export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText = '', isEn = false, formatPerpPx, busyKey = '' }) {
+export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText = '', isEn: isEnProp, formatPerpPx, busyKey = '' }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
   if (!Array.isArray(items) || items.length === 0) {
     return (
       <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '14px 0' }}>
@@ -179,6 +184,65 @@ export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText =
                 <span className="mono">{`$${feeNum.toFixed(4)} USDC`}</span>
               </div>
             )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function PerpOverviewPositionsPanel({ positions = [], onSelectCoin, isEn: isEnProp }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
+  const list = Array.isArray(positions) ? positions : [];
+  if (list.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-2">
+      {list.map((pos, idx) => {
+        const coin = String(pos.coin || '');
+        const dirText = pos.isLong ? (isEn ? 'Long' : '做多') : (isEn ? 'Short' : '做空');
+        const levText = pos.leverage ? `${pos.leverage}x` : '--';
+        return (
+          <div
+            key={coin || idx}
+            className="perp-pos-card"
+            role="button"
+            tabIndex={0}
+            data-action="open-perp-trade"
+            data-coin={coin}
+            onClick={() => {
+              if (typeof onSelectCoin === 'function' && coin) onSelectCoin(coin);
+            }}
+            style={{ cursor: 'pointer' }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1" style={{ flexWrap: 'wrap' }}>
+                <strong style={{ fontSize: '13px' }}>{coin}</strong>
+                <span className={`ca-badge ${pos.isLong ? 'badge-emerald' : 'badge-rose'}`}>
+                  {`${dirText} ${levText}`}
+                </span>
+              </div>
+              <span className="mono" style={{ fontSize: '12.5px', fontWeight: 800, color: pos.pnlColor || '#f8fafc' }}>
+                {pos.pnlDisplay || '--'}
+              </span>
+            </div>
+            <div className="perp-pos-metrics-grid" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+              <div>
+                <div className="meta-key">{isEn ? 'Size' : '持仓'}</div>
+                <strong className="mono">{pos.sizeDisplay || '--'}</strong>
+              </div>
+              <div>
+                <div className="meta-key">{isEn ? 'Entry' : '开仓价'}</div>
+                <span className="mono">{pos.entryDisplay || '--'}</span>
+              </div>
+              <div>
+                <div className="meta-key">{isEn ? 'Liq.' : '强平价'}</div>
+                <span className="mono text-rose">{pos.liqDisplay || '--'}</span>
+              </div>
+            </div>
           </div>
         );
       })}

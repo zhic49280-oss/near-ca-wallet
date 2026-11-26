@@ -1,7 +1,9 @@
 import { h } from 'preact';
 import { TokenIconBadge } from './TokenIconBadge.jsx';
+import { useLang } from '../store/useWalletStore.js';
 
 export function PerpOverviewPanel({ rows = [], emptyText = '', formatPerpPx, rowAction = 'open-perp-trade', selectedCoin = '' }) {
+  useLang();
   if (!Array.isArray(rows) || rows.length === 0) {
     return (
       <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '14px 0' }}>
@@ -43,7 +45,16 @@ export function PerpOverviewPanel({ rows = [], emptyText = '', formatPerpPx, row
                 data-action="toggle-perp-fav"
                 data-stop="1"
                 data-coin={m.name}
-                style={{ padding: '2px 4px', fontSize: '13px', color: m.isFav ? '#fbbf24' : 'var(--text-muted)' }}
+                style={{
+                  minWidth: '40px',
+                  minHeight: '40px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '2px 4px',
+                  fontSize: '14px',
+                  color: m.isFav ? '#fbbf24' : 'var(--text-muted)'
+                }}
               >
                 {m.isFav ? '★' : '☆'}
               </button>

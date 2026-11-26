@@ -1680,8 +1680,8 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
   const strippedScripts = scriptSrcs.map((s) => s.split('?')[0]);
   assert.deepEqual(strippedScripts, expectedScripts);
 
-  // Verify style.css contains parent-token drawer styles
-  for (const cssClass of ['.asset-group-card', '.asset-drawer', '.asset-sub-row', '.net-mini-pill']) {
+  // Verify style.css contains parent-token card styles
+  for (const cssClass of ['.asset-group-card', '.asset-sub-row']) {
     assert.ok(styleCss.includes(cssClass), `style.css must define ${cssClass}`);
   }
 
@@ -1721,8 +1721,8 @@ test('Build & Sync Verification: HTML/CSS/SW artifacts & dist/, android/, ios/ m
     }
   }
 
-  // Verify pure NEAR Master-Account L1-only Chain Abstraction UI (single-root Preact in TradingViews.jsx)
-  const tradingViewsSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/TradingViews.jsx'), 'utf8');
+  // Verify pure NEAR Master-Account L1-only Chain Abstraction UI (single-root Preact in SwapLimitView.jsx)
+  const tradingViewsSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/SwapLimitView.jsx'), 'utf8');
   assert.equal(indexHtml.includes('swap-signer-row'), false, 'Pure CA wallet must not show local-key vs MPC dual-track toggle');
   assert.equal(indexHtml.includes('swap-mode-intents-btn'), false, 'Unified Swap must not show Intents vs Contracts mode toggle');
   assert.equal(indexHtml.includes('swap-intents-options'), false, 'Unified Swap must not show intents.near balance options');

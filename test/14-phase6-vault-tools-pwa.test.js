@@ -44,7 +44,8 @@ test('Phase 6.2: Active swap order isolates by walletId & backup sheet guards se
   assert.ok(stateRender.includes("el.getAttribute('data-i18n-dynamic') === '1'"));
 
   const onboard = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/030-onboarding.part.js'), 'utf8');
-  assert.ok(onboard.includes('data-secret-copy="1"'));
+  const walletMgr = fs.readFileSync(path.join(ROOT_DIR, 'src/app/components/WalletManagerPanels.jsx'), 'utf8');
+  assert.ok(walletMgr.includes("data-secret-copy={isSecret ? '1' : undefined}"));
   assert.ok(onboard.includes('!_backupRevealActive'));
   assert.ok(onboard.includes('_tokenDetailState.fetchSeq'));
 });
@@ -73,6 +74,6 @@ test('Phase 6.3: Unqueried ERC-20 stays null (--), tools preserve button disable
   assert.ok(swCode.includes('walletconnect.umd.min.js'));
   assert.ok(swCode.includes("type === 'SKIP_WAITING'"));
 
-  const hubHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/TradingViews.jsx'), 'utf8');
+  const hubHtml = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/HubView.jsx'), 'utf8');
   assert.ok(hubHtml.includes('data-i18n="hub.langCurrent"'));
 });

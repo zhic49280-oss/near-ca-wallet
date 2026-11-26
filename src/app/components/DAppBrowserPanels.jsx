@@ -1,14 +1,19 @@
 import { h, Fragment } from 'preact';
 import { ActionButton } from './ui/ActionButton.jsx';
 import { EmptyState } from './ui/EmptyState.jsx';
+import { useLang } from '../store/useWalletStore.js';
 
 export function DAppBookmarksPanel({
   mode = 'catalog',
   connected = [],
   catalog = [],
   chainFilter = 'ALL',
-  isEn = false
+  isEn: isEnProp
 }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
   if (mode === 'connected') {
     const list = Array.isArray(connected) ? connected : [];
     if (list.length === 0) return null;
@@ -127,10 +132,14 @@ export function DAppApprovePanel({
   account = '--',
   summary = '--',
   approving = false,
-  isEn = false,
+  isEn: isEnProp,
   onConfirm,
   onReject
 }) {
+  const { isEn: ctxIsEn } = useLang();
+  const isEn = (typeof window !== 'undefined' && window.NearCAState)
+    ? ctxIsEn
+    : (typeof isEnProp === 'boolean' ? isEnProp : ctxIsEn);
   return (
     <Fragment>
       <div class="meta-list">
