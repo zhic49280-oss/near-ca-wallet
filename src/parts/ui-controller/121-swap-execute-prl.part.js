@@ -274,11 +274,18 @@
         const postUsdc = await intents.fetchNearNep141Balances(nearId, { usdc: intents.NEAR_USDC_CONTRACT }).catch(() => null);
         const expectedUsdc = BigInt(step1Q.amountOut || step1Q.minAmountOut || '0');
         const fallbackUsdc = BigInt(step1Q.minAmountOut || step1Q.amountOut || '0');
-        let deltaRaw = (preUsdcRaw !== null && postUsdc?.usdc?.raw != null)
-          ? (BigInt(postUsdc.usdc.raw) > preUsdcRaw ? (BigInt(postUsdc.usdc.raw) - preUsdcRaw) : fallbackUsdc)
-          : fallbackUsdc;
+        const hasPreUsdc = preUsdcRaw !== null;
+        let deltaRaw = (hasPreUsdc && postUsdc?.usdc?.raw != null)
+          ? (BigInt(postUsdc.usdc.raw) > preUsdcRaw ? (BigInt(postUsdc.usdc.raw) - preUsdcRaw) : 0n)
+          : (hasPreUsdc ? 0n : fallbackUsdc);
+        if (hasPreUsdc && deltaRaw <= 0n) {
+          throw new Error(t(
+            `第一阶段兑换后 USDC 余额未增加，已暂停第二阶段以保护既有余额${refPrlRes?.txHash ? ` (Tx: ${refPrlRes.txHash})` : ''}`,
+            `USDC balance did not increase after Stage 1 swap; Stage 2 paused to protect existing balance${refPrlRes?.txHash ? ` (Tx: ${refPrlRes.txHash})` : ''}`
+          ));
+        }
         if (expectedUsdc > 0n && deltaRaw > expectedUsdc) deltaRaw = expectedUsdc;
-        const sendUsdcRaw = deltaRaw > 0n ? deltaRaw.toString() : String(step1Q.amountOut);
+        const sendUsdcRaw = (hasPreUsdc ? deltaRaw : (deltaRaw > 0n ? deltaRaw : BigInt(step1Q.amountOut || '0'))).toString();
 
         // If destination is QTC on NEAR, execute atomic Step 2 directly on Rhea CLMM (dclv2.ref-labs.near) when quoted
         if (

@@ -94,11 +94,18 @@
             if (dclFollow && typeof contracts.executeNearDclPoolSwap === 'function') {
               const postUsdcBal = await intents.fetchNearNep141Balances(nearId, { [dclFollow.tokenIn]: 6 }).catch(() => null);
               const expectedUsdc = BigInt(swapRes.amountOut || '0');
-              let deltaUsdc = (preOutRaw !== null && postUsdcBal?.[dclFollow.tokenIn]?.raw != null)
-                ? (BigInt(postUsdcBal[dclFollow.tokenIn].raw) > preOutRaw ? (BigInt(postUsdcBal[dclFollow.tokenIn].raw) - preOutRaw) : expectedUsdc)
-                : expectedUsdc;
+              const hasPreOut = preOutRaw !== null;
+              let deltaUsdc = (hasPreOut && postUsdcBal?.[dclFollow.tokenIn]?.raw != null)
+                ? (BigInt(postUsdcBal[dclFollow.tokenIn].raw) > preOutRaw ? (BigInt(postUsdcBal[dclFollow.tokenIn].raw) - preOutRaw) : 0n)
+                : (hasPreOut ? 0n : expectedUsdc);
+              if (hasPreOut && deltaUsdc <= 0n) {
+                throw new Error(t(
+                  `第一阶段兑换后余额未增加，已暂停第二阶段以保护既有余额${swapRes?.txHash ? ` (Tx: ${swapRes.txHash})` : ''}`,
+                  `Balance did not increase after Stage 1 swap; Stage 2 paused to protect existing balance${swapRes?.txHash ? ` (Tx: ${swapRes.txHash})` : ''}`
+                ));
+              }
               if (expectedUsdc > 0n && deltaUsdc > expectedUsdc) deltaUsdc = expectedUsdc;
-              const dclInRaw = (deltaUsdc > 0n ? deltaUsdc : expectedUsdc).toString();
+              const dclInRaw = (hasPreOut ? deltaUsdc : (deltaUsdc > 0n ? deltaUsdc : expectedUsdc)).toString();
               // Promote nested DCL step before executing so retries never re-run Ref Finance
               order.followUpRefSwap = null;
               order.followUpDclSwap = { ...dclFollow, amountRaw: dclInRaw };
@@ -135,11 +142,18 @@
             if (outFollow && outFollow.destinationAsset) {
               const postOutBal = await intents.fetchNearNep141Balances(nearId, { [follow.tokenOut]: outFollow.hubDecimals || 8 }).catch(() => null);
               const expectedOut = BigInt(swapRes.amountOut || outFollow.expectedInRaw || '0');
-              let deltaOut = (preOutRaw !== null && postOutBal?.[follow.tokenOut]?.raw != null)
-                ? (BigInt(postOutBal[follow.tokenOut].raw) > preOutRaw ? (BigInt(postOutBal[follow.tokenOut].raw) - preOutRaw) : expectedOut)
-                : expectedOut;
+              const hasPreOut = preOutRaw !== null;
+              let deltaOut = (hasPreOut && postOutBal?.[follow.tokenOut]?.raw != null)
+                ? (BigInt(postOutBal[follow.tokenOut].raw) > preOutRaw ? (BigInt(postOutBal[follow.tokenOut].raw) - preOutRaw) : 0n)
+                : (hasPreOut ? 0n : expectedOut);
+              if (hasPreOut && deltaOut <= 0n) {
+                throw new Error(t(
+                  `第一阶段兑换后余额未增加，已暂停第二阶段以保护既有余额${swapRes?.txHash ? ` (Tx: ${swapRes.txHash})` : ''}`,
+                  `Balance did not increase after Stage 1 swap; Stage 2 paused to protect existing balance${swapRes?.txHash ? ` (Tx: ${swapRes.txHash})` : ''}`
+                ));
+              }
               if (expectedOut > 0n && deltaOut > expectedOut) deltaOut = expectedOut;
-              const bridgeInRaw = (deltaOut > 0n ? deltaOut : BigInt(outFollow.expectedInRaw || '0')).toString();
+              const bridgeInRaw = (hasPreOut ? deltaOut : (deltaOut > 0n ? deltaOut : BigInt(outFollow.expectedInRaw || '0'))).toString();
               // Promote nested BridgeOut step before executing so retries never re-run Ref Finance
               order.followUpRefSwap = null;
               order.followUpBridgeOut = { ...outFollow, expectedInRaw: bridgeInRaw };

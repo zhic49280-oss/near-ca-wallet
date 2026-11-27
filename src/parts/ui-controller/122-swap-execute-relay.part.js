@@ -33,7 +33,13 @@
         });
 
         if (s1Tx?.txHash && typeof contracts.waitForSolanaTxConfirmation === 'function') {
-          await contracts.waitForSolanaTxConfirmation(s1Tx.txHash, 45000);
+          const s1Confirmed = await contracts.waitForSolanaTxConfirmation(s1Tx.txHash, 45000);
+          if (!s1Confirmed) {
+            throw new Error(t(
+              `第一阶段交易尚未确认，已暂停第二阶段以保护既有余额 (Tx: ${s1Tx.txHash})`,
+              `Stage 1 tx not yet confirmed on-chain; Stage 2 paused to protect existing balance (Tx: ${s1Tx.txHash})`
+            ));
+          }
         }
         const postSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
         const postLamports = BigInt(postSolRes?.nativeLamports || '0');
@@ -45,9 +51,16 @@
         const solGasReserve = typeof contracts.getNativeGasReserve === 'function' ? contracts.getNativeGasReserve('sol') : 0.002;
         const reserveLamports = BigInt(contracts.toBaseUnits(String(solGasReserve), 9));
         const expectedLamports = BigInt(s1Quote.outAmount || '0');
-        let deltaLamports = (preLamports !== null && postSolRes?.nativeLamports != null)
-          ? (postLamports > preLamports ? (postLamports - preLamports) : expectedLamports)
-          : expectedLamports;
+        const hasPreLamports = preLamports !== null;
+        let deltaLamports = (hasPreLamports && postSolRes?.nativeLamports != null)
+          ? (postLamports > preLamports ? (postLamports - preLamports) : 0n)
+          : (hasPreLamports ? 0n : expectedLamports);
+        if (hasPreLamports && deltaLamports <= 0n) {
+          throw new Error(t(
+            `第一阶段兑换后 SOL 余额未增加，已暂停第二阶段以保护既有余额${s1Tx?.txHash ? ` (Tx: ${s1Tx.txHash})` : ''}`,
+            `SOL balance did not increase after Stage 1 swap; Stage 2 paused to protect existing balance${s1Tx?.txHash ? ` (Tx: ${s1Tx.txHash})` : ''}`
+          ));
+        }
         if (expectedLamports > 0n && deltaLamports > expectedLamports) deltaLamports = expectedLamports;
         const maxSendable = postLamports > reserveLamports ? (postLamports - reserveLamports) : 0n;
         const sendLamports = deltaLamports > maxSendable ? maxSendable : deltaLamports;
@@ -504,7 +517,13 @@
           });
           showToast(`✅ ${t('跨链处理中，预计几分钟到账', 'Cross-chain swap processing, arriving in a few minutes')}: ${shortenAddr(s1Tx.txHash)}`);
           if (s1Tx?.txHash && typeof contracts.waitForEvmTxConfirmation === 'function') {
-            await contracts.waitForEvmTxConfirmation('arc', s1Tx.txHash, 45000);
+            const s1Confirmed = await contracts.waitForEvmTxConfirmation('arc', s1Tx.txHash, 45000);
+            if (!s1Confirmed) {
+              throw new Error(t(
+                `第一阶段交易尚未确认，已暂停第二阶段以保护既有余额 (Tx: ${s1Tx.txHash})`,
+                `Stage 1 tx not yet confirmed on-chain; Stage 2 paused to protect existing balance (Tx: ${s1Tx.txHash})`
+              ));
+            }
           }
           const postArcRes = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
           const postArcWei = BigInt(postArcRes?.nativeRaw || '0');
@@ -515,11 +534,18 @@
           }
           const reserveArcWei = BigInt(intents.toBaseUnits('0.02', 18));
           const maxSpendableWei = postArcWei > reserveArcWei ? (postArcWei - reserveArcWei) : 0n;
-          const deltaArcWei = (preArcWei !== null && postArcRes?.nativeRaw != null && postArcWei > preArcWei)
+          const hasPreArc = preArcWei !== null;
+          const deltaArcWei = (hasPreArc && postArcRes?.nativeRaw != null && postArcWei > preArcWei)
             ? (postArcWei - preArcWei)
             : 0n;
+          if (hasPreArc && deltaArcWei <= 0n) {
+            throw new Error(t(
+              `第一阶段兑换后 Arc USDC 余额未增加，已暂停第二阶段以保护既有余额${s1Tx?.txHash ? ` (Tx: ${s1Tx.txHash})` : ''}`,
+              `Arc USDC balance did not increase after Stage 1 swap; Stage 2 paused to protect existing balance${s1Tx?.txHash ? ` (Tx: ${s1Tx.txHash})` : ''}`
+            ));
+          }
           const expectedArcWei = BigInt(s1Q.amountOut || '0') * 1000000000000n;
-          let bridgeArcWei = deltaArcWei > 0n ? deltaArcWei : expectedArcWei;
+          let bridgeArcWei = hasPreArc ? deltaArcWei : expectedArcWei;
           if (expectedArcWei > 0n && bridgeArcWei > expectedArcWei) bridgeArcWei = expectedArcWei;
           if (postArcRes && bridgeArcWei > maxSpendableWei) bridgeArcWei = maxSpendableWei;
           const bridgeArc6 = bridgeArcWei / 1000000000000n;

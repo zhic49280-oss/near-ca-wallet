@@ -569,7 +569,13 @@
               title: `${fromToken.symbol} ➔ SOL (Stage 1)`
             });
             if (origTx?.txHash && typeof contracts.waitForSolanaTxConfirmation === 'function') {
-              await contracts.waitForSolanaTxConfirmation(origTx.txHash, 45000);
+              const origConfirmed = await contracts.waitForSolanaTxConfirmation(origTx.txHash, 45000);
+              if (!origConfirmed) {
+                throw new Error(t(
+                  `第一阶段交易尚未确认，已暂停第二阶段以保护既有余额 (Tx: ${origTx.txHash})`,
+                  `Stage 1 tx not yet confirmed on-chain; Stage 2 paused to protect existing balance (Tx: ${origTx.txHash})`
+                ));
+              }
             }
             const postSolRes = await contracts.fetchSolanaNativeAndSplBalances(solAddr, []).catch(() => null);
             if (postSolRes && typeof postSolRes.nativeSol === 'number') {
@@ -578,11 +584,18 @@
               if (typeof st.syncWalletCompatBalances === 'function') st.syncWalletCompatBalances(wallet);
             }
             const expectedL = BigInt(s0Quote.outAmount || '0');
-            let deltaL = (preLamports !== null && postSolRes?.nativeLamports != null)
-              ? (BigInt(postSolRes.nativeLamports) > preLamports ? (BigInt(postSolRes.nativeLamports) - preLamports) : expectedL)
-              : expectedL;
+            const hasPreL = preLamports !== null;
+            let deltaL = (hasPreL && postSolRes?.nativeLamports != null)
+              ? (BigInt(postSolRes.nativeLamports) > preLamports ? (BigInt(postSolRes.nativeLamports) - preLamports) : 0n)
+              : (hasPreL ? 0n : expectedL);
+            if (hasPreL && deltaL <= 0n) {
+              throw new Error(t(
+                `第一阶段兑换后 SOL 余额未增加，已暂停第二阶段以保护既有余额${origTx?.txHash ? ` (Tx: ${origTx.txHash})` : ''}`,
+                `SOL balance did not increase after Stage 1 swap; Stage 2 paused to protect existing balance${origTx?.txHash ? ` (Tx: ${origTx.txHash})` : ''}`
+              ));
+            }
             if (expectedL > 0n && deltaL > expectedL) deltaL = expectedL;
-            stageAmtRaw = (deltaL > 0n ? deltaL : expectedL).toString();
+            stageAmtRaw = (hasPreL ? deltaL : (deltaL > 0n ? deltaL : expectedL)).toString();
             advanceStep(smartStep, 'done', { txHash: origTx?.txHash, chain: 'sol' });
             smartStep += 1;
           } else {
@@ -622,7 +635,13 @@
               title: `${fromToken.symbol} ➔ ${origStage.chain.toUpperCase()} (Stage 1)`
             });
             if (origTx?.txHash && typeof contracts.waitForEvmTxConfirmation === 'function') {
-              await contracts.waitForEvmTxConfirmation(origStage.chain, origTx.txHash, 45000);
+              const origConfirmed = await contracts.waitForEvmTxConfirmation(origStage.chain, origTx.txHash, 45000);
+              if (!origConfirmed) {
+                throw new Error(t(
+                  `第一阶段交易尚未确认，已暂停第二阶段以保护既有余额 (Tx: ${origTx.txHash})`,
+                  `Stage 1 tx not yet confirmed on-chain; Stage 2 paused to protect existing balance (Tx: ${origTx.txHash})`
+                ));
+              }
             }
             const postEvm = await contracts.fetchEvmNativeAndErc20Balance(origStage.chain, evmAddr).catch(() => null);
             if (postEvm && typeof postEvm.nativeFormatted === 'number') {
@@ -631,11 +650,18 @@
               if (typeof st.syncWalletCompatBalances === 'function') st.syncWalletCompatBalances(wallet);
             }
             const expectedW = BigInt(s0Q.amountOut || '0');
-            let deltaW = (preWei !== null && postEvm?.nativeRaw != null)
-              ? (BigInt(postEvm.nativeRaw) > preWei ? (BigInt(postEvm.nativeRaw) - preWei) : expectedW)
-              : expectedW;
+            const hasPreW = preWei !== null;
+            let deltaW = (hasPreW && postEvm?.nativeRaw != null)
+              ? (BigInt(postEvm.nativeRaw) > preWei ? (BigInt(postEvm.nativeRaw) - preWei) : 0n)
+              : (hasPreW ? 0n : expectedW);
+            if (hasPreW && deltaW <= 0n) {
+              throw new Error(t(
+                `第一阶段兑换后 ${origStage.chain.toUpperCase()} 余额未增加，已暂停第二阶段以保护既有余额${origTx?.txHash ? ` (Tx: ${origTx.txHash})` : ''}`,
+                `${origStage.chain.toUpperCase()} balance did not increase after Stage 1 swap; Stage 2 paused to protect existing balance${origTx?.txHash ? ` (Tx: ${origTx.txHash})` : ''}`
+              ));
+            }
             if (expectedW > 0n && deltaW > expectedW) deltaW = expectedW;
-            stageAmtRaw = (deltaW > 0n ? deltaW : expectedW).toString();
+            stageAmtRaw = (hasPreW ? deltaW : (deltaW > 0n ? deltaW : expectedW)).toString();
             advanceStep(smartStep, 'done', { txHash: origTx?.txHash, chain: origStage.chain });
             smartStep += 1;
           }
@@ -851,11 +877,18 @@
           });
           const postOutBal = await intents.fetchNearNep141Balances(nearId, { [first.tokenOut]: first.outDecimals || 8 }).catch(() => null);
           const expectedOut = BigInt(swapRes.amountOut || first.expectedOut || '0');
-          let deltaOut = (preOutRaw !== null && postOutBal?.[first.tokenOut]?.raw != null)
-            ? (BigInt(postOutBal[first.tokenOut].raw) > preOutRaw ? (BigInt(postOutBal[first.tokenOut].raw) - preOutRaw) : expectedOut)
-            : expectedOut;
+          const hasPreOut = preOutRaw !== null;
+          let deltaOut = (hasPreOut && postOutBal?.[first.tokenOut]?.raw != null)
+            ? (BigInt(postOutBal[first.tokenOut].raw) > preOutRaw ? (BigInt(postOutBal[first.tokenOut].raw) - preOutRaw) : 0n)
+            : (hasPreOut ? 0n : expectedOut);
+          if (hasPreOut && deltaOut <= 0n) {
+            throw new Error(t(
+              `第一阶段兑换后余额未增加，已暂停第二阶段以保护既有余额${swapRes?.txHash ? ` (Tx: ${swapRes.txHash})` : ''}`,
+              `Balance did not increase after Stage 1 swap; Stage 2 paused to protect existing balance${swapRes?.txHash ? ` (Tx: ${swapRes.txHash})` : ''}`
+            ));
+          }
           if (expectedOut > 0n && deltaOut > expectedOut) deltaOut = expectedOut;
-          const bridgeInRaw = (deltaOut > 0n ? deltaOut : BigInt(first.expectedOut || '0')).toString();
+          const bridgeInRaw = (hasPreOut ? deltaOut : (deltaOut > 0n ? deltaOut : BigInt(first.expectedOut || '0'))).toString();
           const destFollow = await buildDestDexFollowUp(outLeg.expectedOut);
           let liveOut;
           let sendBridge = null;
