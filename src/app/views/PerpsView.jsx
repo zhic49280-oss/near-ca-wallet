@@ -10,6 +10,8 @@ export function PerpView() {
   const st = useWalletState(['perp', 'lang']);
   const { tr, lang } = useI18n();
   const isCoinUnit = Boolean(st && st.perp && st.perp.inputUnit === 'coin');
+  const orderType = (st && st.perp && st.perp.orderType) || 'market';
+  const isMarketOrder = orderType !== 'limit' && orderType !== 'post_only';
   const rawPerpCoin = String((st && st.perp && st.perp.selectedCoin) || 'BTC').trim();
   const perpBaseCoin = (rawPerpCoin.includes(':') ? rawPerpCoin.split(':').slice(1).join(':') : rawPerpCoin) || 'BTC';
   const marginInputPlaceholder = isCoinUnit
@@ -296,15 +298,19 @@ export function PerpView() {
                 </button>
               </div>
 
-              <div id="perp-limit-price-row" className="perp-okx-input-row hidden">
+              <div
+                id="perp-limit-price-row"
+                className={`perp-okx-input-row${isMarketOrder ? ' is-market-locked' : ''}`}
+              >
                 <input
                   id="perp-limit-price-input"
                   type="number"
                   step="any"
                   min="0"
+                  disabled={isMarketOrder}
                   className="perp-okx-input mono"
-                  data-i18n-placeholder="perp.limitPriceLabel"
-                  placeholder={tr('perp.limitPriceLabel', '委托价格')}
+                  data-i18n-placeholder={isMarketOrder ? 'perp.marketPricePlaceholder' : 'perp.limitPriceLabel'}
+                  placeholder={isMarketOrder ? tr('perp.marketPricePlaceholder', '以最优市价成交') : tr('perp.limitPriceLabel', '委托价格')}
                   onInput={() => window.handlePerpLimitPriceInput && window.handlePerpLimitPriceInput()}
                 />
                 <button
@@ -386,29 +392,42 @@ export function PerpView() {
                 </label>
                 <span className="meta-key" style={{ fontSize: '10.5px' }} data-i18n="perp.tpslLabel">{tr('perp.tpslLabel', '止盈/止损')}</span>
               </div>
-              <div id="perp-tpsl-drawer" className="flex gap-1">
-                <input
-                  id="perp-tp-input"
-                  type="number"
-                  step="any"
-                  min="0"
-                  className="input-field mono flex-1"
-                  style={{ fontSize: '11.5px', padding: '5px 7px' }}
-                  data-i18n-placeholder="perp.tpPlaceholder"
-                  placeholder={tr('perp.tpPlaceholder', '止盈触发价')}
-                  onInput={() => window.evaluatePerpOrderUI && window.evaluatePerpOrderUI()}
-                />
-                <input
-                  id="perp-sl-input"
-                  type="number"
-                  step="any"
-                  min="0"
-                  className="input-field mono flex-1"
-                  style={{ fontSize: '11.5px', padding: '5px 7px' }}
-                  data-i18n-placeholder="perp.slPlaceholder"
-                  placeholder={tr('perp.slPlaceholder', '止损触发价')}
-                  onInput={() => window.evaluatePerpOrderUI && window.evaluatePerpOrderUI()}
-                />
+              <div className="perp-tpsl-wrap">
+                <div id="perp-tpsl-est-tooltip" className="perp-tpsl-est-tooltip hidden" />
+                <div id="perp-tpsl-drawer" className="flex gap-1">
+                  <input
+                    id="perp-tp-input"
+                    type="number"
+                    step="any"
+                    min="0"
+                    className="input-field mono flex-1"
+                    style={{ fontSize: '11.5px', padding: '5px 7px' }}
+                    data-i18n-placeholder="perp.tpPlaceholder"
+                    placeholder={tr('perp.tpPlaceholder', '止盈触发价')}
+                    onFocus={() => window.updatePerpTpSlEstimateTooltip && window.updatePerpTpSlEstimateTooltip('tp', true)}
+                    onInput={() => {
+                      if (window.evaluatePerpOrderUI) window.evaluatePerpOrderUI();
+                      if (window.updatePerpTpSlEstimateTooltip) window.updatePerpTpSlEstimateTooltip('tp', true);
+                    }}
+                    onBlur={() => window.updatePerpTpSlEstimateTooltip && window.updatePerpTpSlEstimateTooltip('tp', false)}
+                  />
+                  <input
+                    id="perp-sl-input"
+                    type="number"
+                    step="any"
+                    min="0"
+                    className="input-field mono flex-1"
+                    style={{ fontSize: '11.5px', padding: '5px 7px' }}
+                    data-i18n-placeholder="perp.slPlaceholder"
+                    placeholder={tr('perp.slPlaceholder', '止损触发价')}
+                    onFocus={() => window.updatePerpTpSlEstimateTooltip && window.updatePerpTpSlEstimateTooltip('sl', true)}
+                    onInput={() => {
+                      if (window.evaluatePerpOrderUI) window.evaluatePerpOrderUI();
+                      if (window.updatePerpTpSlEstimateTooltip) window.updatePerpTpSlEstimateTooltip('sl', true);
+                    }}
+                    onBlur={() => window.updatePerpTpSlEstimateTooltip && window.updatePerpTpSlEstimateTooltip('sl', false)}
+                  />
+                </div>
               </div>
 
               <div className="perp-okx-meta-grid">

@@ -216,6 +216,64 @@
     return { disabled: false, error: '', text: actionLabel, notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded, margin: marginNeeded, inputUnit };
   }
 
+  let _activeTpSlFocusKind = null;
+
+  function computePerpTpSlSideEstimate(kind, side, triggerPx, entryPx, size, margin) {
+    if (!(triggerPx > 0) || !Number.isFinite(entryPx) || entryPx <= 0 || !Number.isFinite(size) || size <= 0) {
+      return null;
+    }
+    const isLong = side === 'long';
+    const isTp = kind === 'tp';
+    const valid = isTp
+      ? (isLong ? triggerPx > entryPx : triggerPx < entryPx)
+      : (isLong ? triggerPx < entryPx : triggerPx > entryPx);
+    if (!valid) return { valid: false, pnl: null, roe: null };
+    const pnl = isLong ? (triggerPx - entryPx) * size : (entryPx - triggerPx) * size;
+    const roe = (Number.isFinite(margin) && margin > 0) ? (pnl / margin) * 100 : null;
+    return { valid: true, pnl, roe };
+  }
+
+  function updatePerpTpSlEstimateTooltip(kind, visible) {
+    const tipEl = $('perp-tpsl-est-tooltip');
+    if (visible === false) {
+      if (!kind || _activeTpSlFocusKind === kind) _activeTpSlFocusKind = null;
+      if (tipEl) tipEl.classList.add('hidden');
+      return;
+    }
+    if (kind === 'tp' || kind === 'sl') _activeTpSlFocusKind = kind;
+    if (!tipEl || !_activeTpSlFocusKind) {
+      if (tipEl) tipEl.classList.add('hidden');
+      return;
+    }
+    const st = getState();
+    const isTp = _activeTpSlFocusKind === 'tp';
+    const inpEl = $(isTp ? 'perp-tp-input' : 'perp-sl-input');
+    const triggerPx = Number(inpEl && inpEl.value !== '' ? inpEl.value : (isTp ? st.perp.tpInput : st.perp.slInput));
+    const evalRes = evaluatePerpOrderState();
+    const entryPx = Number(evalRes && evalRes.execPx);
+    const size = Number(evalRes && evalRes.sizeNum);
+    const margin = Number(evalRes && evalRes.marginNeeded);
+    if (!(triggerPx > 0) || !Number.isFinite(entryPx) || entryPx <= 0 || !Number.isFinite(size) || size <= 0) {
+      tipEl.classList.add('hidden');
+      return;
+    }
+    const fmtRow = (side, est) => {
+      const sideLabel = side === 'long' ? t('开多', 'Long') : t('开空', 'Short');
+      const pnlLabel = t('盈亏', 'PnL');
+      if (!est || !est.valid || !Number.isFinite(est.pnl)) {
+        return `<div class="perp-tpsl-est-row"><span>${escapeHtml(sideLabel)} ${escapeHtml(pnlLabel)}</span><span class="mono muted">--</span></div>`;
+      }
+      const sign = est.pnl >= 0 ? '+' : '-';
+      const roeTxt = Number.isFinite(est.roe) ? ` (${est.roe >= 0 ? '+' : '-'}${Math.abs(est.roe).toFixed(2)}%)` : '';
+      const cls = est.pnl >= 0 ? 'is-profit' : 'is-loss';
+      return `<div class="perp-tpsl-est-row"><span>${escapeHtml(sideLabel)} ${escapeHtml(pnlLabel)}</span><span class="mono ${cls}">${sign}$${Math.abs(est.pnl).toFixed(2)}${roeTxt}</span></div>`;
+    };
+    const longEst = computePerpTpSlSideEstimate(_activeTpSlFocusKind, 'long', triggerPx, entryPx, size, margin);
+    const shortEst = computePerpTpSlSideEstimate(_activeTpSlFocusKind, 'short', triggerPx, entryPx, size, margin);
+    tipEl.innerHTML = fmtRow('long', longEst) + fmtRow('short', shortEst);
+    tipEl.classList.remove('hidden');
+  }
+
   function formatCompactUsd(val) {
     const n = Number(val);
     if (!Number.isFinite(n) || n <= 0) return '--';

@@ -83,11 +83,11 @@
     }
     bidsEl.innerHTML = bidRows.map((r) => {
       const pct = maxBidSz > 0 ? Math.max(6, (r.sz / maxBidSz) * 100) : 0;
-      return `<button type="button" class="perp-ob-row bid" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></div><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span><span>${escapeHtml(fmtObSz(r.sz))}</span></button>`;
+      return `<button type="button" class="perp-ob-row bid" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="transform:scaleX(${(pct / 100).toFixed(3)})"></div><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span><span>${escapeHtml(fmtObSz(r.sz))}</span></button>`;
     }).join('');
     asksEl.innerHTML = askRows.map((r) => {
       const pct = maxAskSz > 0 ? Math.max(6, (r.sz / maxAskSz) * 100) : 0;
-      return `<button type="button" class="perp-ob-row ask" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></div><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span><span>${escapeHtml(fmtObSz(r.sz))}</span></button>`;
+      return `<button type="button" class="perp-ob-row ask" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="transform:scaleX(${(pct / 100).toFixed(3)})"></div><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span><span>${escapeHtml(fmtObSz(r.sz))}</span></button>`;
     }).join('');
   }
 
@@ -220,6 +220,9 @@
       btnShort.textContent = st.perp.submitting
         ? t('提交签名中...', 'Submitting...')
         : t(`卖出 (做空) ${lev}x`, `Sell Short ${lev}x`);
+    }
+    if (typeof updatePerpTpSlEstimateTooltip === 'function') {
+      updatePerpTpSlEstimateTooltip(null, true);
     }
     return evalRes;
   }
@@ -475,7 +478,22 @@
     $('perp-type-market')?.classList.toggle('active', oType === 'market');
     $('perp-type-limit')?.classList.toggle('active', oType === 'limit');
     $('perp-type-post-only')?.classList.toggle('active', oType === 'post_only');
-    $('perp-limit-price-row')?.classList.toggle('hidden', oType !== 'limit' && oType !== 'post_only');
+    const isMarket = oType !== 'limit' && oType !== 'post_only';
+    const priceRow = $('perp-limit-price-row');
+    if (priceRow) {
+      priceRow.classList.remove('hidden');
+      priceRow.classList.toggle('is-market-locked', isMarket);
+    }
+    const priceInp = $('perp-limit-price-input');
+    if (priceInp) {
+      priceInp.disabled = isMarket;
+      if (isMarket) priceInp.value = '';
+      const phKey = isMarket ? 'perp.marketPricePlaceholder' : 'perp.limitPriceLabel';
+      if (typeof priceInp.setAttribute === 'function') priceInp.setAttribute('data-i18n-placeholder', phKey);
+      priceInp.placeholder = isMarket
+        ? t('以最优市价成交', 'Best Market Price')
+        : t('委托价格', 'Limit Price');
+    }
     if ($('perp-reduce-only-chk')) $('perp-reduce-only-chk').checked = Boolean(st.perp.reduceOnly);
 
     const slider = $('perp-leverage-slider');
@@ -662,6 +680,7 @@
       defaults.reduceOnly = false;
     }
     resetFormFields(domIds, st.perp, defaults);
+    if (typeof updatePerpTpSlEstimateTooltip === 'function') updatePerpTpSlEstimateTooltip(null, false);
     if (typeof syncPerpInputUnitUI === 'function') syncPerpInputUnitUI();
   }
 

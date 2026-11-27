@@ -4,17 +4,17 @@ import { useLang } from '../store/useWalletStore.js';
 export function PerpOrderbookSidePanel({ rows = [], side = 'bid', maxSz = 0, fmtObSz, formatPerpPx }) {
   return (
     <div className="flex flex-col">
-      {rows.map((r) => {
+      {rows.map((r, idx) => {
         const pct = maxSz > 0 ? Math.max(6, (r.sz / maxSz) * 100) : 0;
         return (
           <button
-            key={`${side}_${r.px}`}
+            key={idx}
             type="button"
             className={`perp-ob-row ${side}`}
             data-action="fill-perp-ob-px"
             data-px={String(r.px)}
           >
-            <div className="perp-ob-row-depth" style={{ width: `${pct.toFixed(0)}%` }} />
+            <div className="perp-ob-row-depth" style={{ transform: `scaleX(${(pct / 100).toFixed(3)})` }} />
             <span className="perp-ob-px">{typeof formatPerpPx === 'function' ? formatPerpPx(r.px) : String(r.px)}</span>
             <span className="perp-ob-sz">{typeof fmtObSz === 'function' ? fmtObSz(r.sz) : String(r.sz)}</span>
           </button>

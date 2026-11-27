@@ -379,3 +379,73 @@ test('Wave-6: togglePerpInputUnit, evaluatePerpOrderState coin mode, and PerpsVi
     'PerpsView.jsx must derive #perp-meta-size-label reactively from isCoinUnit'
   );
 });
+
+test('Wave-8: TP/SL estimated PnL & ROE% floating tooltip for Long and Short', () => {
+  const prevPerp = { ...state.perp };
+  const prevDoc = globalThis.document;
+  const prevWin = globalThis.window;
+
+  const makeEl = (val = '') => ({
+    value: val,
+    innerHTML: '',
+    textContent: '',
+    classList: {
+      _set: new Set(['hidden']),
+      add(c) { this._set.add(c); },
+      remove(c) { this._set.delete(c); },
+      toggle(c, f) { if (f) this._set.add(c); else this._set.delete(c); },
+      contains(c) { return this._set.has(c); }
+    },
+    setAttribute() {}
+  });
+
+  const tipEl = makeEl();
+  const tpEl = makeEl('61000');
+  const slEl = makeEl('59000');
+  const domMap = new Map([
+    ['perp-tpsl-est-tooltip', tipEl],
+    ['perp-tp-input', tpEl],
+    ['perp-sl-input', slEl]
+  ]);
+
+  globalThis.document = {
+    getElementById(id) { return domMap.get(id) || null; },
+    querySelectorAll() { return []; },
+    querySelector() { return null; }
+  };
+  globalThis.window = {};
+
+  try {
+    state.perp.selectedCoin = 'BTC';
+    state.perp.markets = [{ name: 'BTC', markPx: 60000, szDecimals: 5, maxLeverage: 50 }];
+    state.perp.account = { availableMargin: 1000 };
+    state.perp.orderType = 'market';
+    state.perp.inputUnit = 'margin';
+    state.perp.marginInput = '120';
+    state.perp.leverage = 5; // notional=600, size=0.01 BTC, margin=120
+
+    uiController.updatePerpTpSlEstimateTooltip('tp', true);
+    assert.equal(tipEl.classList.contains('hidden'), false, 'TP tooltip should be visible when focused with valid trigger');
+    assert.ok(tipEl.innerHTML.includes('+$10.00 (+8.33%)'), 'Long TP at 61000 should show +$10.00 (+8.33%)');
+    assert.ok(tipEl.innerHTML.includes('class="mono muted">--</span>'), 'Short TP at 61000 (> entry 60000) should show --');
+
+    uiController.updatePerpTpSlEstimateTooltip('sl', true);
+    assert.equal(tipEl.classList.contains('hidden'), false, 'SL tooltip should be visible');
+    assert.ok(tipEl.innerHTML.includes('-$10.00 (-8.33%)'), 'Long SL at 59000 should show -$10.00 (-8.33%)');
+
+    tpEl.value = '59000';
+    uiController.updatePerpTpSlEstimateTooltip('tp', true);
+    assert.ok(tipEl.innerHTML.includes('+$10.00 (+8.33%)'), 'Short TP at 59000 (< entry 60000) should show +$10.00 (+8.33%)');
+
+    slEl.value = '61000';
+    uiController.updatePerpTpSlEstimateTooltip('sl', true);
+    assert.ok(tipEl.innerHTML.includes('-$10.00 (-8.33%)'), 'Short SL at 61000 (> entry 60000) should show -$10.00 (-8.33%)');
+
+    uiController.updatePerpTpSlEstimateTooltip('sl', false);
+    assert.equal(tipEl.classList.contains('hidden'), true, 'Tooltip should hide on blur');
+  } finally {
+    Object.assign(state.perp, prevPerp);
+    globalThis.document = prevDoc;
+    globalThis.window = prevWin;
+  }
+});

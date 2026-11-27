@@ -43,8 +43,6 @@
   let _perpWsPingTimer = null;
   let _perpWsReconnectTimer = null;
   let _perpWsAttempt = 0;
-  let _perpObRenderTs = 0;
-  let _perpObRenderTimer = null;
   let _perpObRafId = 0;
   let _perpPollTimer = null;
   let _perpObFallbackTimer = null;
@@ -76,10 +74,6 @@
     if (_perpWsReconnectTimer) {
       clearTimeout(_perpWsReconnectTimer);
       _perpWsReconnectTimer = null;
-    }
-    if (_perpObRenderTimer) {
-      clearTimeout(_perpObRenderTimer);
-      _perpObRenderTimer = null;
     }
     if (_perpObRafId && typeof cancelAnimationFrame === 'function') {
       cancelAnimationFrame(_perpObRafId);
@@ -158,20 +152,7 @@
     }
   }
 
-  function scheduleThrottledOrderbookRender() {
-    const now = Date.now();
-    if (now - _perpObRenderTs >= 100) {
-      _perpObRenderTs = now;
-      flushOrderbookRenderRaf();
-      return;
-    }
-    if (_perpObRenderTimer) return;
-    _perpObRenderTimer = setTimeout(() => {
-      _perpObRenderTimer = null;
-      _perpObRenderTs = Date.now();
-      flushOrderbookRenderRaf();
-    }, Math.max(20, 100 - (now - _perpObRenderTs)));
-  }
+  const scheduleThrottledOrderbookRender = flushOrderbookRenderRaf;
 
   function startPerpLiveFeed() {
     stopPerpLiveFeed();
@@ -200,6 +181,7 @@
           try {
             ws.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'l2Book', coin } }));
             ws.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'allMids' } }));
+            ws.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'trades', coin } }));
             if (hlAddr) {
               ws.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'webData2', user: hlAddr } }));
             }
@@ -240,6 +222,14 @@
               const nextPx = Number(msg.data.mids[s.perp.selectedCoin]);
               if (m && Number.isFinite(nextPx) && nextPx > 0) {
                 m.markPx = nextPx;
+                scheduleThrottledAllMidsRender();
+              }
+            } else if (msg?.channel === 'trades' && Array.isArray(msg.data) && msg.data.length) {
+              const last = msg.data[msg.data.length - 1];
+              const px = Number(last?.px);
+              const m = getSelectedPerpMarket();
+              if (m && last?.coin === s.perp.selectedCoin && px > 0 && Number.isFinite(px)) {
+                m.markPx = px;
                 scheduleThrottledAllMidsRender();
               }
             } else if (msg && msg.channel === 'webData2' && msg.data) {

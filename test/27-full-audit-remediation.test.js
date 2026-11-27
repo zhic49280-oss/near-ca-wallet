@@ -153,7 +153,7 @@ test('D4-01..05: Preact reactivity hooks, mountSwapHistory loop guard & PerpOrde
 
   const obSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/app/components/PerpOrderbookAndPositions.jsx'), 'utf8');
   const obSideFn = obSrc.slice(obSrc.indexOf('export function PerpOrderbookSidePanel('), obSrc.indexOf('export function PerpBottomListPanel('));
-  assert.ok(obSideFn.includes('key={`${side}_${r.px}`}'), 'PerpOrderbookSidePanel rows must be keyed by side and r.px');
+  assert.ok(obSideFn.includes('key={idx}'), 'PerpOrderbookSidePanel rows must be keyed by fixed slot idx for 60fps DOM reuse');
 });
 
 test('Wave 3 Live-Fix: #app-root width rule in style.css and /solana-rpc proxy in server.js', () => {
