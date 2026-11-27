@@ -44,10 +44,21 @@ export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText =
         if (tab === 'positions') {
           const pnl = Number(item.unrealizedPnl || 0);
           const pnlCls = pnl >= 0 ? 'text-emerald' : 'text-rose';
+          const pnlStr = `${pnl >= 0 ? '+' : '-'}$${Math.abs(pnl).toFixed(2)}`;
           const dirText = item.isLong ? (isEn ? 'Long' : '做多') : (isEn ? 'Short' : '做空');
           const modeText = item.leverageType === 'cross' ? (isEn ? 'Cross' : '全仓') : (isEn ? 'Isolated' : '逐仓');
-          const roeStr = item.returnOnEquity !== null && item.returnOnEquity !== undefined && Number.isFinite(Number(item.returnOnEquity))
-            ? `${Number(item.returnOnEquity) >= 0 ? '+' : ''}${(Number(item.returnOnEquity) * 100).toFixed(2)}%`
+          const roeNum = item.returnOnEquity !== null && item.returnOnEquity !== undefined && Number.isFinite(Number(item.returnOnEquity))
+            ? Number(item.returnOnEquity)
+            : null;
+          const roeStr = roeNum !== null
+            ? `${roeNum >= 0 ? '+' : ''}${(roeNum * 100).toFixed(2)}%`
+            : '--';
+          const roeCls = roeNum !== null ? (roeNum >= 0 ? 'text-emerald' : 'text-rose') : '';
+          const fundingNum = item.cumFunding !== null && item.cumFunding !== undefined && Number.isFinite(Number(item.cumFunding))
+            ? Number(item.cumFunding)
+            : null;
+          const fundingStr = fundingNum !== null
+            ? `${fundingNum >= 0 ? '+' : '-'}$${Math.abs(fundingNum).toFixed(2)}`
             : '--';
           const liq = item.liquidationPx || item.liqPx;
           const markStr = item.markPx ? `$${fmtPx(item.markPx)}` : '--';
@@ -71,9 +82,16 @@ export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText =
                   </span>
                   <span className="perp-dex-pill">{modeText}</span>
                 </div>
-                <span className={`mono ${pnlCls}`} style={{ fontSize: '13px', fontWeight: 800 }}>
-                  {`${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${roeStr})`}
-                </span>
+              </div>
+              <div className="perp-pos-pnl-row">
+                <div>
+                  <div className="meta-key">{isEn ? 'Unrealized PnL (USDC)' : '未实现盈亏 (USDC)'}</div>
+                  <div className={`perp-pos-pnl-val mono ${pnlCls}`}>{pnlStr}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div className="meta-key">{isEn ? 'ROE' : '收益率'}</div>
+                  <div className={`perp-pos-pnl-val mono ${roeCls}`}>{roeStr}</div>
+                </div>
               </div>
               <div className="perp-pos-metrics-grid" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
                 <div>
@@ -81,12 +99,12 @@ export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText =
                   <strong className="mono">{String(item.absSize ?? '--')}</strong>
                 </div>
                 <div>
-                  <div className="meta-key">{isEn ? 'Margin' : '保证金 (USDC)'}</div>
+                  <div className="meta-key">{isEn ? 'Margin (USDC)' : '保证金 (USDC)'}</div>
                   <strong className="mono">{marginText}</strong>
                 </div>
                 <div>
-                  <div className="meta-key">{isEn ? 'Est. Liq. Price' : '预估强平价'}</div>
-                  <strong className="mono text-rose">{liq ? `$${fmtPx(liq)}` : '--'}</strong>
+                  <div className="meta-key">{isEn ? 'Funding' : '资金费用'}</div>
+                  <strong className="mono">{fundingStr}</strong>
                 </div>
                 <div>
                   <div className="meta-key">{isEn ? 'Entry' : '开仓均价'}</div>
@@ -97,10 +115,11 @@ export function PerpBottomListPanel({ items = [], tab = 'positions', emptyText =
                   <span className="mono">{markStr}</span>
                 </div>
                 <div>
-                  <div className="meta-key">{isEn ? 'TP / SL' : '止盈/止损'}</div>
-                  <span className="mono" style={{ fontSize: '10px' }}>{tpslSummary}</span>
+                  <div className="meta-key">{isEn ? 'Est. Liq.' : '预估强平价'}</div>
+                  <strong className="mono text-rose">{liq ? `$${fmtPx(liq)}` : '--'}</strong>
                 </div>
               </div>
+              <div className="perp-pos-tpsl-summary mono">{tpslSummary}</div>
               <div className="flex items-center gap-2" style={{ marginTop: '2px' }}>
                 <button type="button" className="mini-action-btn flex-1" data-action="reverse-perp-pos" data-coin={item.coin} disabled={isAnyPosBusy}>
                   {isReversing ? (isEn ? 'Reversing...' : '反手中...') : (isEn ? 'Reverse' : '反手')}

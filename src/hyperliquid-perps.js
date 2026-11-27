@@ -653,6 +653,9 @@
         marginUsed: Number.isFinite(Number(p.marginUsed)) ? Number(p.marginUsed) : null,
         leverageValue: p.leverage && Number.isFinite(Number(p.leverage.value)) ? Number(p.leverage.value) : null,
         leverageType: p.leverage && p.leverage.type ? String(p.leverage.type) : 'isolated',
+        cumFunding: p.cumFunding && p.cumFunding.sinceOpen !== null && p.cumFunding.sinceOpen !== undefined && Number.isFinite(Number(p.cumFunding.sinceOpen))
+          ? Number(p.cumFunding.sinceOpen)
+          : null,
         tpTriggerPx: null,
         slTriggerPx: null,
         tpslOrders: []
@@ -867,14 +870,14 @@
     };
   }
 
-  async function fetchHlCandles(coin, interval = '15m', count = 64) {
+  async function fetchHlCandles(coin, interval = '15m', count = 180) {
     const clean = String(coin || '').trim();
     if (!clean) return [];
     const iv = ['5m', '15m', '1h', '4h', '1d'].includes(String(interval)) ? String(interval) : '15m';
     const intervalMsMap = { '5m': 300_000, '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000 };
     const endTime = Date.now();
     const intervalMs = intervalMsMap[iv] || 900_000;
-    const startTime = endTime - intervalMs * Math.max(12, Number(count) || 64);
+    const startTime = endTime - intervalMs * Math.max(12, Number(count) || 180);
     const raw = await postHlInfo({
       type: 'candleSnapshot',
       req: { coin: clean, interval: iv, startTime, endTime }

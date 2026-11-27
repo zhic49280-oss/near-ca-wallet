@@ -193,13 +193,9 @@ export function PerpView() {
               <span className="meta-key" data-i18n="perp.vol24hLabel">{tr('perp.vol24hLabel', '24h 成交额')}</span>
               <span id="perp-vol-24h" className="mono" style={{ fontSize: '11px', fontWeight: 700 }}>--</span>
             </div>
-            <div className="perp-mstat">
+            <div className="perp-mstat" style={{ textAlign: 'right' }}>
               <span className="meta-key" data-i18n="perp.oiLabel">{tr('perp.oiLabel', '全网持仓 (OI)')}</span>
               <span id="perp-oi-val" className="mono" style={{ fontSize: '11px', fontWeight: 700 }}>--</span>
-            </div>
-            <div className="perp-mstat" style={{ textAlign: 'right' }}>
-              <span className="meta-key" data-i18n="perp.fundingRateLabel">{tr('perp.fundingRateLabel', '资金费率(1h)')}</span>
-              <span id="perp-funding-rate" className="mono" style={{ fontSize: '11px', fontWeight: 700 }}>--</span>
             </div>
           </div>
 
@@ -475,7 +471,7 @@ export function PerpView() {
             {/* Right: Compact Live Orderbook */}
             <div className="perp-okx-ob-col flex flex-col gap-1">
               <div className="perp-ob-funding-row">
-                <span className="meta-key" data-i18n="perp.fundingCountdownLabel">{tr('perp.fundingCountdownLabel', '资金费率/倒计时')}</span>
+                <span className="meta-key" data-i18n="perp.fundingCountdownLabel">{tr('perp.fundingCountdownLabel', '资金费率(1h)/倒计时')}</span>
                 <span id="perp-ob-funding-countdown" className="mono">--</span>
               </div>
 

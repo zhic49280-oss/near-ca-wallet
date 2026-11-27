@@ -2,7 +2,7 @@
     const fullList = Array.isArray(candles) ? candles : [];
     const st = getState();
     const rawCount = Number(st.perp && st.perp.chartVisibleCount);
-    const maxVisible = Number.isFinite(rawCount) ? Math.max(20, Math.min(120, Math.round(rawCount))) : 48;
+    const maxVisible = Number.isFinite(rawCount) ? Math.max(20, Math.min(140, Math.round(rawCount))) : 48;
     const rawOffset = Number(st.perp && st.perp.chartOffsetFromEnd);
     const maxOffset = Math.max(0, fullList.length - Math.min(fullList.length, maxVisible));
     const offsetFromEnd = Number.isFinite(rawOffset) ? Math.max(0, Math.min(maxOffset, Math.round(rawOffset))) : 0;
@@ -435,6 +435,7 @@
     const host = $('perp-chart-svg');
     if (!host || (host.dataset && host.dataset.gesturesBound === '1') || typeof host.addEventListener !== 'function') return;
     if (host.dataset) host.dataset.gesturesBound = '1';
+    if (host.style) host.style.cursor = 'grab';
 
     let mode = null; // 'pan' | 'scrub' | 'pinch' | 'scroll'
     let startX = 0;
@@ -445,6 +446,26 @@
     let longPressTimer = null;
     let rafId = 0;
     let scrubRafId = 0;
+    let mouseDown = false;
+    let mouseDragged = false;
+    let mouseStartX = 0;
+    let mouseStartOffset = 0;
+
+    const applyPanDelta = (dx, baseOffset) => {
+      const st = getState();
+      const rect = typeof host.getBoundingClientRect === 'function' ? host.getBoundingClientRect() : null;
+      const width = (rect && rect.width) || 320;
+      const visCount = Number(st.perp.chartVisibleCount || 48);
+      const candleDelta = Math.round((dx / width) * visCount);
+      const total = Array.isArray(st.perp.candles) ? st.perp.candles.length : 0;
+      const maxOff = Math.max(0, total - Math.min(total, visCount));
+      const nextOff = Math.max(0, Math.min(maxOff, baseOffset + candleDelta));
+      if (nextOff !== st.perp.chartOffsetFromEnd) {
+        st.perp.chartOffsetFromEnd = nextOff;
+        st.perp.inspectedCandleIdx = null;
+        scheduleChartRedraw();
+      }
+    };
 
     const clientXToCandleIdx = (clientX) => {
       const rect = typeof host.getBoundingClientRect === 'function' ? host.getBoundingClientRect() : null;
@@ -519,7 +540,7 @@
             st.perp.inspectedCandleIdx = idx;
             scheduleCrosshairUpdate();
           }
-        }, 180);
+        }, 260);
       }
     }, { passive: true });
 
@@ -533,7 +554,7 @@
           e.touches[0].clientY - e.touches[1].clientY
         );
         const scale = startPinchDist / Math.max(10, dist);
-        st.perp.chartVisibleCount = Math.max(20, Math.min(120, Math.round(startVisibleCount * scale)));
+        st.perp.chartVisibleCount = Math.max(20, Math.min(140, Math.round(startVisibleCount * scale)));
         scheduleChartRedraw();
         return;
       }
@@ -543,13 +564,15 @@
         const dx = curX - startX;
         const dy = curY - startY;
         if (!mode) {
+          if (longPressTimer && (Math.abs(dx) > 5 || Math.abs(dy) > 6)) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+          }
           if (Math.abs(dy) > 6 && Math.abs(dy) > Math.abs(dx)) {
-            if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
             mode = 'scroll';
             return;
           }
           if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.2) {
-            if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
             mode = 'pan';
           }
         }
@@ -563,18 +586,7 @@
           }
         } else if (mode === 'pan') {
           if (e.cancelable) e.preventDefault();
-          const rect = typeof host.getBoundingClientRect === 'function' ? host.getBoundingClientRect() : null;
-          const width = (rect && rect.width) || 320;
-          const visCount = Number(st.perp.chartVisibleCount || 48);
-          const candleDelta = Math.round((dx / width) * visCount);
-          const total = Array.isArray(st.perp.candles) ? st.perp.candles.length : 0;
-          const maxOff = Math.max(0, total - Math.min(total, visCount));
-          const nextOff = Math.max(0, Math.min(maxOff, startOffset + candleDelta));
-          if (nextOff !== st.perp.chartOffsetFromEnd) {
-            st.perp.chartOffsetFromEnd = nextOff;
-            st.perp.inspectedCandleIdx = null;
-            scheduleChartRedraw();
-          }
+          applyPanDelta(dx, startOffset);
         }
       }
     }, { passive: false });
@@ -587,12 +599,44 @@
     host.addEventListener('touchend', endTouch, { passive: true });
     host.addEventListener('touchcancel', endTouch, { passive: true });
 
+    host.addEventListener('mousedown', (e) => {
+      if (!e || (e.button !== undefined && e.button !== 0)) return;
+      const st = getState();
+      mouseDown = true;
+      mouseDragged = false;
+      mouseStartX = e.clientX;
+      mouseStartOffset = Number((st.perp && st.perp.chartOffsetFromEnd) || 0);
+      if (host.style) host.style.cursor = 'grabbing';
+    });
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('mousemove', (e) => {
+        if (!mouseDown || !e) return;
+        const dx = e.clientX - mouseStartX;
+        if (!mouseDragged && Math.abs(dx) >= 5) {
+          mouseDragged = true;
+        }
+        if (mouseDragged) {
+          applyPanDelta(dx, mouseStartOffset);
+        }
+      });
+      window.addEventListener('mouseup', () => {
+        if (!mouseDown) return;
+        mouseDown = false;
+        if (host.style) host.style.cursor = 'grab';
+        if (mouseDragged) {
+          _lastLongPressAt = Date.now();
+          mouseDragged = false;
+        }
+      });
+    }
+
     host.addEventListener('wheel', (e) => {
       if (!e || typeof e.deltaY !== 'number') return;
       const st = getState();
       const cur = Number(st.perp.chartVisibleCount || 48);
       const step = e.deltaY > 0 ? 6 : -6;
-      const next = Math.max(20, Math.min(120, cur + step));
+      const next = Math.max(20, Math.min(140, cur + step));
       if (next !== cur) {
         e.preventDefault();
         st.perp.chartVisibleCount = next;

@@ -5,7 +5,7 @@
     const coin = st.perp.selectedCoin || 'BTC';
     const iv = st.perp.chartInterval || '15m';
     const tasks = [hl.fetchHlOrderbook(coin).catch(() => null)];
-    if (st.perp.showChart) tasks.push(hl.fetchHlCandles(coin, iv, 200).catch(() => []));
+    if (st.perp.showChart) tasks.push(hl.fetchHlCandles(coin, iv, 180).catch(() => []));
     const [ob, candles] = await Promise.all(tasks);
     if (st.perp.selectedCoin !== coin) return;
     const ivStillCurrent = (st.perp.chartInterval || '15m') === iv;
@@ -47,6 +47,9 @@
   let _perpObRenderTimer = null;
   let _perpObRafId = 0;
   let _perpPollTimer = null;
+  let _perpObFallbackTimer = null;
+  let _perpObFallbackInFlight = false;
+  let _perpFundingTickTimer = null;
   let _perpTradeActionBusy = false;
   let _perpMidsRenderTimer = null;
   let _perpMidsRenderTs = 0;
@@ -56,6 +59,15 @@
     if (_perpPollTimer) {
       clearInterval(_perpPollTimer);
       _perpPollTimer = null;
+    }
+    if (_perpObFallbackTimer) {
+      clearInterval(_perpObFallbackTimer);
+      _perpObFallbackTimer = null;
+    }
+    _perpObFallbackInFlight = false;
+    if (_perpFundingTickTimer) {
+      clearInterval(_perpFundingTickTimer);
+      _perpFundingTickTimer = null;
     }
     if (_perpWsPingTimer) {
       clearInterval(_perpWsPingTimer);
@@ -116,7 +128,7 @@
     };
     const now = Date.now();
     const elapsed = now - _perpMidsRenderTs;
-    if (elapsed >= 200) {
+    if (elapsed >= 150) {
       if (_perpMidsRenderTimer) {
         clearTimeout(_perpMidsRenderTimer);
         _perpMidsRenderTimer = null;
@@ -128,7 +140,7 @@
     _perpMidsRenderTimer = setTimeout(() => {
       _perpMidsRenderTimer = null;
       runFrame();
-    }, Math.max(20, 200 - elapsed));
+    }, Math.max(20, 150 - elapsed));
     if (_perpMidsRenderTimer && typeof _perpMidsRenderTimer.unref === 'function') {
       _perpMidsRenderTimer.unref();
     }
@@ -148,7 +160,7 @@
 
   function scheduleThrottledOrderbookRender() {
     const now = Date.now();
-    if (now - _perpObRenderTs >= 300) {
+    if (now - _perpObRenderTs >= 100) {
       _perpObRenderTs = now;
       flushOrderbookRenderRaf();
       return;
@@ -158,7 +170,7 @@
       _perpObRenderTimer = null;
       _perpObRenderTs = Date.now();
       flushOrderbookRenderRaf();
-    }, Math.max(20, 300 - (now - _perpObRenderTs)));
+    }, Math.max(20, 100 - (now - _perpObRenderTs)));
   }
 
   function startPerpLiveFeed() {
@@ -302,14 +314,47 @@
 
     connectWs();
 
-    _perpPollTimer = setInterval(() => {
+    const isPerpTradeActive = () => {
       const curSt = getState();
       if (curSt.activeTab !== 'perp' || curSt.perp.subView !== 'trade') {
         stopPerpLiveFeed();
-        return;
+        return false;
       }
-      if (typeof document !== 'undefined' && document.hidden) return;
-      if (typeof isAppInBackground === 'function' && isAppInBackground()) return;
+      if (typeof document !== 'undefined' && document.hidden) return false;
+      if (typeof isAppInBackground === 'function' && isAppInBackground()) return false;
+      return true;
+    };
+
+    if (typeof updatePerpFundingCountdown === 'function') updatePerpFundingCountdown();
+    _perpFundingTickTimer = setInterval(() => {
+      if (!isPerpTradeActive()) return;
+      if (typeof updatePerpFundingCountdown === 'function') updatePerpFundingCountdown();
+    }, 1000);
+    if (_perpFundingTickTimer && typeof _perpFundingTickTimer.unref === 'function') _perpFundingTickTimer.unref();
+
+    _perpObFallbackTimer = setInterval(async () => {
+      if (!isPerpTradeActive()) return;
+      if (_perpWs && _perpWs.readyState === 1) return;
+      if (_perpObFallbackInFlight) return;
+      const hl = getHyperliquid();
+      if (!hl || typeof hl.fetchHlOrderbook !== 'function') return;
+      const targetCoin = getState().perp.selectedCoin || coin;
+      _perpObFallbackInFlight = true;
+      try {
+        const ob = await hl.fetchHlOrderbook(targetCoin).catch(() => null);
+        const latestSt = getState();
+        if (ob && latestSt.perp && latestSt.perp.selectedCoin === targetCoin) {
+          latestSt.perp.orderbook = ob;
+          flushOrderbookRenderRaf();
+        }
+      } finally {
+        _perpObFallbackInFlight = false;
+      }
+    }, 1500);
+    if (_perpObFallbackTimer && typeof _perpObFallbackTimer.unref === 'function') _perpObFallbackTimer.unref();
+
+    _perpPollTimer = setInterval(() => {
+      if (!isPerpTradeActive()) return;
       if (typeof updatePerpFundingCountdown === 'function') updatePerpFundingCountdown();
       if (!_perpWs || _perpWs.readyState !== 1) {
         refreshPerpOrderbookAndCandlesAsync().catch(() => {});

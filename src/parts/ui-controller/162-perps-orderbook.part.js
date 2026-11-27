@@ -64,8 +64,8 @@
     if (bidBarEl) bidBarEl.style.transform = `scaleX(${bidFrac.toFixed(3)})`;
     if (askBarEl) askBarEl.style.transform = `scaleX(${askFrac.toFixed(3)})`;
 
-    const bidRows = ob.bids.slice(0, 6);
-    const askRows = [...ob.asks.slice(0, 6)].reverse();
+    const bidRows = ob.bids.slice(0, 8);
+    const askRows = [...ob.asks.slice(0, 8)].reverse();
     let maxBidSz = 0;
     let maxAskSz = 0;
     for (const r of bidRows) if (r.sz > maxBidSz) maxBidSz = r.sz;
@@ -408,7 +408,6 @@
     }
     const markPxEl = $('perp-mark-px');
     const chgEl = $('perp-change-24h');
-    const frEl = $('perp-funding-rate');
     const volEl = $('perp-vol-24h');
     const oiEl = $('perp-oi-val');
     if (coinNameEl) coinNameEl.textContent = dexTag ? `${pairLabel} (${dexTag})` : pairLabel;
@@ -430,11 +429,6 @@
     if (oiEl) {
       const oiUsd = (market && market.openInterest && market.markPx) ? market.openInterest * market.markPx : null;
       oiEl.textContent = oiUsd ? formatCompactUsd(oiUsd) : '--';
-    }
-    if (frEl) {
-      frEl.textContent = market && typeof market.fundingRate === 'number'
-        ? `${(market.fundingRate * 100).toFixed(4)}%`
-        : '--';
     }
     updatePerpFundingCountdown();
 
