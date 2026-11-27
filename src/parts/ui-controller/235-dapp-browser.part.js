@@ -185,6 +185,8 @@
         method: details.method || '--',
         account: details.account || '--',
         summary: details.summary || '--',
+        isHighRisk: Boolean(details.isHighRisk),
+        riskWarning: details.riskWarning || '',
         approving: false,
         isEn: getState().lang === 'en',
         onConfirm: confirmDAppApproval,
@@ -196,6 +198,16 @@
       if ($('dapp-approve-method')) $('dapp-approve-method').textContent = details.method || '--';
       if ($('dapp-approve-account')) $('dapp-approve-account').textContent = details.account || '--';
       if ($('dapp-approve-detail')) $('dapp-approve-detail').textContent = details.summary || '--';
+      if ($('dapp-approve-risk-banner')) {
+        const banner = $('dapp-approve-risk-banner');
+        if (details.riskWarning) {
+          banner.textContent = details.riskWarning;
+          banner.classList.remove('hidden');
+        } else {
+          banner.textContent = '';
+          banner.classList.add('hidden');
+        }
+      }
     }
   }
 
@@ -244,9 +256,35 @@
     });
   }
 
-  function confirmDAppApproval() {
-    if (_dappSession.pendingApproval && typeof _dappSession.pendingApproval.resolve === 'function') {
-      _dappSession.pendingApproval.resolve(true);
+  async function confirmDAppApproval() {
+    const pending = _dappSession.pendingApproval;
+    if (!pending || typeof pending.resolve !== 'function') return;
+    const details = pending.details || {};
+    if (details.requireSecondConfirm || details.method === 'eth_sign') {
+      if (typeof showConfirmDialogAsync === 'function') {
+        const confirmedBlind = await showConfirmDialogAsync(
+          t(
+            `此请求要求对原始摘要进行高危盲签（eth_sign），可能导致资产被盗：\n${String(details.summary || '')}\n\n仅在完全信任该应用时继续。`,
+            `This request asks for high-risk blind signing (eth_sign), which can drain your assets:\n${String(details.summary || '')}\n\nContinue only if you fully trust this DApp.`
+          ),
+          {
+            danger: true,
+            title: t('⚠️ 高危盲签二次确认', '⚠️ High-Risk Blind Sign'),
+            confirmText: t('确认盲签', 'Confirm Blind Sign'),
+            cancelText: t('拒绝', 'Reject')
+          }
+        );
+        if (!confirmedBlind) {
+          rejectDAppApproval();
+          return;
+        }
+      } else {
+        rejectDAppApproval();
+        return;
+      }
+    }
+    if (_dappSession.pendingApproval === pending && typeof pending.resolve === 'function') {
+      pending.resolve(true);
     }
   }
 

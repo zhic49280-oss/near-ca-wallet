@@ -283,6 +283,77 @@
     return p0 !== undefined ? p0 : '';
   }
 
+  function parseEthSignParams(reqParams) {
+    const p0 = reqParams && reqParams[0];
+    const p1 = reqParams && reqParams[1];
+    const isAddr = (v) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v.trim());
+    if (isAddr(p1) && p0 !== undefined && !isAddr(p0)) {
+      return p0;
+    }
+    if (isAddr(p0) && p1 !== undefined && !isAddr(p1)) {
+      return p1;
+    }
+    return p1 !== undefined ? p1 : (p0 !== undefined ? p0 : '');
+  }
+
+  function decodeEvmApprovalCalldata(dataHex) {
+    const raw = String(dataHex || '').trim();
+    const lower = raw.toLowerCase();
+    if (lower.startsWith('0x095ea7b3') && raw.length >= 138) {
+      const spender = `0x${raw.slice(34, 74)}`;
+      let amountBig = 0n;
+      try {
+        amountBig = BigInt(`0x${raw.slice(74, 138)}`);
+      } catch (_) {
+        amountBig = 0n;
+      }
+      const isUnlimited = amountBig >= (1n << 255n);
+      const allowanceText = isUnlimited
+        ? 'Unlimited Approval (无限授权)'
+        : amountBig.toString();
+      return {
+        type: 'erc20_approve',
+        spender,
+        amountBig,
+        isUnlimited,
+        isHighRisk: isUnlimited,
+        summaryLines: [
+          'Approval: ERC-20 approve',
+          `Spender: ${spender}`,
+          `Allowance: ${allowanceText}`
+        ],
+        riskWarning: isUnlimited
+          ? '⚠️ High-risk unlimited token approval (无限授权): spender can transfer all of this token from your wallet.'
+          : ''
+      };
+    }
+    if (lower.startsWith('0xa22cb465') && raw.length >= 138) {
+      const operator = `0x${raw.slice(34, 74)}`;
+      let approved = false;
+      try {
+        approved = BigInt(`0x${raw.slice(74, 138)}`) !== 0n;
+      } catch (_) {
+        approved = false;
+      }
+      const statusText = approved ? 'Enabled (All)' : 'Revoked';
+      return {
+        type: 'nft_setApprovalForAll',
+        operator,
+        approved,
+        isHighRisk: approved,
+        summaryLines: [
+          'Approval: NFT setApprovalForAll',
+          `Operator: ${operator}`,
+          `Approved: ${statusText}`
+        ],
+        riskWarning: approved
+          ? '⚠️ High-risk NFT full approval (全部资产授权): operator can transfer all NFTs in this collection.'
+          : ''
+      };
+    }
+    return null;
+  }
+
   function buildInjectedProviderScript(opts = {}) {
     const cfg = {
       evmAddress: opts.evmAddress ? String(opts.evmAddress) : '',
@@ -1064,7 +1135,8 @@
         await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
       }
       const addr = contracts.resolveWalletEvmSender ? contracts.resolveWalletEvmSender(wallet) : wallet.evmAddress;
-      const msgRaw = method === 'personal_sign' ? parsePersonalSignParams(params) : (params[1] || '');
+      const isBlindSign = method === 'eth_sign';
+      const msgRaw = isBlindSign ? parseEthSignParams(params) : parsePersonalSignParams(params);
       let previewText = String(msgRaw || '');
       const ethersLib = getEthersLib(ctx);
       if (typeof msgRaw === 'string' && msgRaw.startsWith('0x') && ethersLib && ethersLib.getBytes && ethersLib.toUtf8String) {
@@ -1072,10 +1144,15 @@
       }
 
       await ensureApproval(req, ctx, {
-        kind: 'signMessage',
+        kind: isBlindSign ? 'blindSign' : 'signMessage',
         chainLabel: activeChain.cfg.name || activeChain.key.toUpperCase(),
         account: addr || '',
-        summary: previewText.slice(0, 600)
+        summary: previewText.slice(0, 600),
+        ...(isBlindSign ? {
+          isHighRisk: true,
+          requireSecondConfirm: true,
+          riskWarning: '⚠️ High-risk blind sign (eth_sign): signing raw hashes can drain your wallet assets. Only continue if you fully trust this DApp. (高危盲签：eth_sign 对原始摘要签名可能导致资产被盗，仅在完全信任该应用时继续。)'
+        } : {})
       });
       await ensureBiometricAuth(req, ctx);
 
@@ -1193,11 +1270,22 @@
         });
       }
 
+      const decodedApproval = decodeEvmApprovalCalldata(dataHex);
+      const approvalDetailLines = decodedApproval ? decodedApproval.summaryLines.join('\n') : '';
+      const txSummary = [
+        `To: ${txReq.to || '(Contract Creation)'}`,
+        `Value: ${formattedVal} ${nativeSym}`,
+        approvalDetailLines,
+        `Data: ${dataHex.slice(0, 128)}${dataHex.length > 128 ? '...' : ''}`
+      ].filter(Boolean).join('\n');
+
       await ensureApproval(req, ctx, {
         kind: 'sendTransaction',
         chainLabel: `${txChain.cfg.name || txChain.key.toUpperCase()} (${txChain.cfg.chainId})`,
         account: addr || '',
-        summary: `To: ${txReq.to || '(Contract Creation)'}\nValue: ${formattedVal} ${nativeSym}\nData: ${dataHex.slice(0, 128)}${dataHex.length > 128 ? '...' : ''}`
+        summary: txSummary,
+        ...(decodedApproval && decodedApproval.isHighRisk ? { isHighRisk: true } : {}),
+        ...(decodedApproval && decodedApproval.riskWarning ? { riskWarning: decodedApproval.riskWarning } : {})
       });
       await ensureBiometricAuth(req, ctx);
 
@@ -1559,6 +1647,7 @@
     DEFAULT_WALLET_ICON,
     sanitizeDAppUrl,
     buildInjectedProviderScript,
+    decodeEvmApprovalCalldata,
     handleDAppRpcRequest,
     serializeRpcError,
     resolveEvmChainByIdOrKey

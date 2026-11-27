@@ -131,6 +131,8 @@ export function DAppApprovePanel({
   method = '--',
   account = '--',
   summary = '--',
+  isHighRisk = false,
+  riskWarning = '',
   approving = false,
   isEn: isEnProp,
   onConfirm,
@@ -160,6 +162,25 @@ export function DAppApprovePanel({
           <span id="dapp-approve-account" class="meta-val mono">{account || '--'}</span>
         </div>
       </div>
+      {riskWarning ? (
+        <div
+          id="dapp-approve-risk-banner"
+          role="alert"
+          style={{
+            padding: '10px 12px',
+            borderRadius: '10px',
+            fontSize: '11.5px',
+            lineHeight: '1.45',
+            fontWeight: 600,
+            wordBreak: 'break-word',
+            background: isHighRisk ? 'rgba(239, 68, 68, 0.14)' : 'rgba(245, 158, 11, 0.14)',
+            border: isHighRisk ? '1px solid rgba(239, 68, 68, 0.42)' : '1px solid rgba(245, 158, 11, 0.42)',
+            color: isHighRisk ? '#fca5a5' : '#fcd34d'
+          }}
+        >
+          {riskWarning}
+        </div>
+      ) : null}
       <div
         id="dapp-approve-detail"
         class="ios-glass-card mono"
