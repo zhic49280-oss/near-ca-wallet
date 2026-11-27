@@ -443,6 +443,22 @@
     throw lastErr || new Error(t('EVM RPC 执行失败', 'EVM RPC execution failed'));
   }
 
+  function isEvmDeterministicEstimateError(err) {
+    if (!err) return false;
+    const msg = String(err.shortMessage || err.message || '').toLowerCase();
+    return Boolean(
+      err.code === 'CALL_EXCEPTION' ||
+      err.code === 'INSUFFICIENT_FUNDS' ||
+      err.code === 'NONCE_EXPIRED' ||
+      /revert|execution reverted|insufficient funds|invalid opcode|out of gas/i.test(msg)
+    );
+  }
+
+  function getEvmFallbackGasLimit(chainKey, hasData) {
+    if (!hasData) return 21000n;
+    return String(chainKey || '').toLowerCase() === 'arb' ? 600000n : 350000n;
+  }
+
   async function sendEvmMpcSignedTransaction({
     wallet,
     chainKey,
@@ -472,7 +488,10 @@
           const explicitTransferGas = Boolean(gasLimit && (!txData || txData === '0x'));
           let resolvedOverrideGas = BigInt(gasLimit || 21000);
           if (!explicitTransferGas) {
-            const estOverride = await provider.estimateGas({ from: fromAddr, to: normalizedTxTo, data: txData || '0x', value: valBig }).catch(() => null);
+            const estOverride = await provider.estimateGas({ from: fromAddr, to: normalizedTxTo, data: txData || '0x', value: valBig }).catch((err) => {
+              if (isEvmDeterministicEstimateError(err)) throw err;
+              return null;
+            });
             const safeGasLimit = estOverride !== null ? ((estOverride * 120n) / 100n) : resolvedOverrideGas;
             if (safeGasLimit > resolvedOverrideGas) resolvedOverrideGas = safeGasLimit;
           }
@@ -489,9 +508,12 @@
         }
         const [feeData, est] = await Promise.all([
           provider.getFeeData(),
-          provider.estimateGas({ from: fromAddr, to: normalizedTxTo, data: txData, value: valBig }).catch(() => null)
+          provider.estimateGas({ from: fromAddr, to: normalizedTxTo, data: txData, value: valBig }).catch((err) => {
+            if (isEvmDeterministicEstimateError(err)) throw err;
+            return null;
+          })
         ]);
-        const resolvedGasLimit = est !== null ? ((est * 125n) / 100n) : (txData && txData !== '0x' ? 350000n : 21000n);
+        const resolvedGasLimit = est !== null ? ((est * 125n) / 100n) : getEvmFallbackGasLimit(chainKey, Boolean(txData && txData !== '0x'));
         const useEip1559 = Boolean(feeData.maxFeePerGas);
         const maxFee = feeData.maxFeePerGas || 1000000000n;
         const prioFeeRaw = feeData.maxPriorityFeePerGas || (maxFee / 4n) || 1000000n;
@@ -725,9 +747,14 @@
       const [nonce, feeData, est] = await Promise.all([
         provider.getTransactionCount(signer.address, 'pending'),
         provider.getFeeData(),
-        explicitTransferGas ? Promise.resolve(null) : provider.estimateGas({ from: signer.address, to: normTo, data, value: valBig }).catch(() => null)
+        explicitTransferGas
+          ? Promise.resolve(null)
+          : provider.estimateGas({ from: signer.address, to: normTo, data, value: valBig }).catch((err) => {
+              if (isEvmDeterministicEstimateError(err)) throw err;
+              return null;
+            })
       ]);
-      const baseGasLimit = (!approvalToken && gasLimit) ? BigInt(gasLimit) : (data && data !== '0x' ? 350000n : 21000n);
+      const baseGasLimit = (!approvalToken && gasLimit) ? BigInt(gasLimit) : getEvmFallbackGasLimit(chainKey, Boolean(data && data !== '0x'));
       const estLimit = est !== null ? ((est * 120n) / 100n) : baseGasLimit;
       const resolvedGasLimit = explicitTransferGas ? baseGasLimit : (estLimit > baseGasLimit ? estLimit : baseGasLimit);
 

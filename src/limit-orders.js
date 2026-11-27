@@ -1318,8 +1318,12 @@
     if (!res.ok) {
       const desc = String((res.data && (res.data.description || res.data.errorType || res.data.error)) || res.rawText || `HTTP ${res.status}`);
       if (res.status === 429 || res.status === 402 || /x402/i.test(desc)) {
-        if (key === 'bsc') {
-          throw new Error(t('BSC 限价单服务当前繁忙或暂不可用，请稍后重试', 'BSC limit order service is currently busy or unavailable. Please try again later.'));
+        if (res.status === 402 || /x402/i.test(desc)) {
+          const chainLabel = key === 'bsc' ? 'BSC' : (cfg.name || key.toUpperCase());
+          throw new Error(t(
+            `${chainLabel} 限价单服务当前繁忙或暂不可用，请稍后重试`,
+            `${chainLabel} limit order service is currently busy or unavailable. Please try again later.`
+          ));
         }
         throw new Error(t('限价单服务请求过于频繁，请稍后重试', 'Limit order service is busy. Please try again shortly.'));
       }
@@ -1350,11 +1354,13 @@
     ).catch(() => null);
     if (!res) return { active: [], history: [], rateLimited: false };
     if (res.status === 429 || res.status === 402) {
+      const desc = String((res.data && (res.data.description || res.data.errorType || res.data.error)) || res.rawText || '');
+      const isX402 = res.status === 402 || /x402/i.test(desc);
       return {
         active: [],
         history: [],
         rateLimited: true,
-        unavailable: key === 'bsc' && res.status === 402
+        unavailable: isX402
       };
     }
     if (!res.ok || !Array.isArray(res.data)) return { active: [], history: [], rateLimited: false };
@@ -1399,8 +1405,12 @@
     if (!res.ok) {
       const desc = String((res.data && (res.data.description || res.data.error)) || res.rawText || `HTTP ${res.status}`);
       if (res.status === 429 || res.status === 402 || /x402/i.test(desc)) {
-        if (key === 'bsc') {
-          throw new Error(t('BSC 限价单服务当前繁忙或暂不可用，请稍后重试', 'BSC limit order service is currently busy or unavailable. Please try again later.'));
+        if (res.status === 402 || /x402/i.test(desc)) {
+          const chainLabel = key === 'bsc' ? 'BSC' : (cfg.name || key.toUpperCase());
+          throw new Error(t(
+            `${chainLabel} 限价单服务当前繁忙或暂不可用，请稍后重试`,
+            `${chainLabel} limit order service is currently busy or unavailable. Please try again later.`
+          ));
         }
         throw new Error(t('限价单服务请求过于频繁，请稍后重试', 'Limit order service is busy. Please try again shortly.'));
       }

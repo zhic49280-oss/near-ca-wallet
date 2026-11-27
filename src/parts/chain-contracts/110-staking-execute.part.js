@@ -105,6 +105,19 @@
       if (Array.isArray(bytes)) {
         const parsed = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes)));
         if (parsed === null) {
+          let finalDeposit = depositYoctoStr;
+          try {
+            const bounds = await viewNearContractCall(contractId, 'storage_balance_bounds', {}).catch(() => null);
+            const minStr = bounds && typeof bounds === 'object' ? (bounds.min ?? bounds.minimum ?? null) : null;
+            if (minStr !== null && minStr !== undefined && /^\d+$/.test(String(minStr))) {
+              const minBig = BigInt(String(minStr));
+              const maxCap = 200_000_000_000_000_000_000_000n; // 0.2 NEAR safety cap
+              if (minBig > 0n && minBig <= maxCap) {
+                const fallbackBig = /^\d+$/.test(String(depositYoctoStr || '')) ? BigInt(String(depositYoctoStr)) : 0n;
+                finalDeposit = (minBig > fallbackBig ? minBig : fallbackBig).toString();
+              }
+            }
+          } catch (_) {}
           await api.signAndSendNearFunctionCall({
             accountId: acctId,
             publicKeyStr: wallet.nearPublicKey,
@@ -113,7 +126,7 @@
             methodName: 'storage_deposit',
             argsJson: JSON.stringify({ account_id: acctId, registration_only: true }),
             gas: '30000000000000',
-            depositYocto: depositYoctoStr
+            depositYocto: finalDeposit
           });
         }
       }
@@ -187,12 +200,29 @@
         }
         if (pool.isBurrowSupply || pool.id === 'rhea_xrhea') {
           await ensureNearStorageIfExplicitlyNull(accountId, pool.contract, '100000000000000000000000');
+        } else if (pool.isLockConvert) {
+          await ensureNearStorageIfExplicitlyNull(accountId, pool.contract, '3000000000000000000000');
+        }
+        let validatedLockDays = null;
+        if (pool.isLockConvert) {
+          const allowedDays = Array.isArray(pool.lockTiers) && pool.lockTiers.length > 0
+            ? pool.lockTiers.map((tier) => Number(tier && tier.days)).filter((d) => Number.isInteger(d) && d > 0)
+            : [15, 45, 91, 181];
+          const validTiers = allowedDays.length > 0 ? allowedDays : [15, 45, 91, 181];
+          const parsedLockDays = Number(lockDays);
+          if (!Number.isInteger(parsedLockDays) || !validTiers.includes(parsedLockDays)) {
+            throw new Error(t(
+              `不支持的锁仓周期: ${lockDays} 天 (可选: ${validTiers.join(' / ')} 天)`,
+              `Unsupported lock period: ${lockDays} days (allowed: ${validTiers.join(', ')})`
+            ));
+          }
+          validatedLockDays = parsedLockDays;
         }
         const rawAmt = toBaseUnits(amount, pool.decimals || 18);
         const msg = pool.isLockConvert
           ? JSON.stringify({
               Oneshot: {
-                lock_period_days: Number(lockDays) || 181,
+                lock_period_days: validatedLockDays,
                 source_token_id: pool.tokenContract,
                 target_token_id: 'token.rhealab.near'
               }

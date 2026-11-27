@@ -663,7 +663,13 @@
           } else {
             const relTime = BigInt(String(detail.release_timestamp ?? detail.unlock_time ?? detail.end_timestamp ?? c.release_timestamp ?? c.unlock_time ?? c.end_timestamp ?? '0'));
             if (relTime > 0n) {
-              isClaimable = relTime < 1000000000000000n ? (Number(relTime) <= nowMs) : (relTime <= nowNs);
+              if (relTime < 10_000_000_000n) {
+                isClaimable = (Number(relTime) * 1000) <= nowMs;
+              } else if (relTime < 10_000_000_000_000n) {
+                isClaimable = Number(relTime) <= nowMs;
+              } else {
+                isClaimable = relTime <= nowNs;
+              }
             }
           }
           if (isClaimable) ids.push(String(cid));
@@ -673,6 +679,12 @@
     if (ids.length === 0) {
       throw new Error(t('暂无已到期可领取的 oRHEA 兑换记录', 'No matured oRHEA conversions ready to claim'));
     }
+
+    await ensureNearNep141StorageRegistered({
+      resolvedWallet: wallet,
+      accountId,
+      tokenContract: 'token.rhealab.near'
+    });
 
     const useBatch = ids.length > 1;
     const methodName = useBatch ? 'batch_claim' : 'claim';
