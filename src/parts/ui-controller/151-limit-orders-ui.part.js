@@ -67,6 +67,7 @@
 
   let _limitCtxSeq = 0;
   let _limitOrdSeq = 0;
+  let _limitRefreshBaseText = '';
   let _limitOrderActionInFlight = false;
 
   function formatPlainDecimalRate(num) {
@@ -224,10 +225,17 @@
       renderLimitOrdersList();
     }
     const refreshBtn = $('btn-refresh-limit-orders');
-    const prevRefreshText = refreshBtn ? refreshBtn.textContent : '';
+    const loadingTextZh = '刷新中...';
+    const loadingTextEn = 'Refreshing...';
+    if (refreshBtn && !refreshBtn.disabled) {
+      const rawText = String(refreshBtn.textContent || '').trim();
+      if (rawText && rawText !== loadingTextZh && rawText !== loadingTextEn) {
+        _limitRefreshBaseText = rawText;
+      }
+    }
     if (refreshBtn && showFeedback) {
       refreshBtn.disabled = true;
-      refreshBtn.textContent = t('刷新中...', 'Refreshing...');
+      refreshBtn.textContent = t(loadingTextZh, loadingTextEn);
     }
     try {
       let res;
@@ -267,9 +275,10 @@
         const wasLoading = Boolean(st.limit.ordersLoading);
         st.limit.ordersLoading = false;
         if (wasLoading) renderLimitOrdersList();
-        if (refreshBtn && showFeedback) {
-          refreshBtn.disabled = false;
-          refreshBtn.textContent = prevRefreshText || t('刷新', 'Refresh');
+        const curRefreshBtn = $('btn-refresh-limit-orders') || refreshBtn;
+        if (curRefreshBtn && (showFeedback || curRefreshBtn.disabled || curRefreshBtn.textContent === loadingTextZh || curRefreshBtn.textContent === loadingTextEn)) {
+          curRefreshBtn.disabled = false;
+          curRefreshBtn.textContent = _limitRefreshBaseText || t('刷新', 'Refresh');
         }
       }
     }

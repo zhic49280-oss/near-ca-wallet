@@ -518,7 +518,7 @@
     const chartSvgEl = $('perp-chart-svg');
     const chartHlEl = $('perp-chart-hl');
     if (chartWrap) chartWrap.classList.remove('hidden');
-    if (chartSvgEl) {
+    if (chartSvgEl && !(chartSvgEl.dataset && chartSvgEl.dataset.interacting === '1')) {
       const selIdx = Number.isInteger(st.perp.inspectedCandleIdx) ? st.perp.inspectedCandleIdx : null;
       chartSvgEl.innerHTML = renderPerpCandleSvg(st.perp.candles, market, selIdx);
       bindPerpChartGestures();
@@ -592,10 +592,14 @@
   }
 
   let _perpRefreshInFlight = null;
+  let _perpRefreshWalletId = null;
   let _lastHip3SyncAt = 0;
 
   async function refreshPerpDataAsync(force = false) {
-    if (!force && _perpRefreshInFlight) {
+    const initWallet = getState().getActiveWallet();
+    const initWalletId = initWallet ? initWallet.id : null;
+    const isDifferentWallet = Boolean(initWalletId && _perpRefreshWalletId && _perpRefreshWalletId !== initWalletId);
+    if (!force && _perpRefreshInFlight && !isDifferentWallet) {
       return _perpRefreshInFlight;
     }
     const refreshBtns = force
@@ -668,10 +672,15 @@
     })();
 
     if (!force) {
-      _perpRefreshInFlight = run.finally(() => {
-        if (_perpRefreshInFlight === wrapped) _perpRefreshInFlight = null;
+      _perpRefreshWalletId = initWalletId;
+      let wrapped = null;
+      wrapped = run.finally(() => {
+        if (_perpRefreshInFlight === wrapped) {
+          _perpRefreshInFlight = null;
+          _perpRefreshWalletId = null;
+        }
       });
-      var wrapped = _perpRefreshInFlight;
+      _perpRefreshInFlight = wrapped;
       return wrapped;
     }
     return run;
