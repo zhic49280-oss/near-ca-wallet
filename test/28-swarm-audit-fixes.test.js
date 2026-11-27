@@ -291,3 +291,91 @@ test('Wave-5: single funding rate without #perp-funding-rate, cumFunding in posi
     '161-perps-chart.part.js must support desktop mouse drag pan'
   );
 });
+
+test('Wave-6: togglePerpInputUnit, evaluatePerpOrderState coin mode, and PerpsView reactive unit labels', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const root = path.resolve(__dirname, '..');
+
+  const prevDoc = globalThis.document;
+  const prevWin = globalThis.window;
+  const prevPerp = { ...state.perp };
+
+  const marginInputEl = {
+    value: '150',
+    attributes: {},
+    placeholder: '',
+    setAttribute(k, v) { this.attributes[k] = v; },
+    removeAttribute(k) { delete this.attributes[k]; }
+  };
+  const unitBtnEl = { textContent: '' };
+  const sizeLabelEl = {
+    textContent: '',
+    attributes: {},
+    setAttribute(k, v) { this.attributes[k] = v; }
+  };
+
+  globalThis.document = {
+    getElementById(id) {
+      if (id === 'perp-margin-input') return marginInputEl;
+      if (id === 'btn-perp-input-unit') return unitBtnEl;
+      if (id === 'perp-meta-size-label') return sizeLabelEl;
+      return null;
+    },
+    querySelectorAll() { return []; },
+    querySelector() { return null; }
+  };
+  globalThis.window = { NearCAFramework: {} };
+
+  try {
+    state.perp.selectedCoin = 'BTC';
+    state.perp.inputUnit = 'margin';
+    state.perp.marginInput = '150';
+    state.perp.errorMsg = 'stale';
+
+    uiController.togglePerpInputUnit();
+    assert.equal(state.perp.inputUnit, 'coin');
+    assert.equal(state.perp.marginInput, '');
+    assert.equal(marginInputEl.value, '');
+
+    marginInputEl.value = '0.01';
+    state.perp.marginInput = '0.01';
+    uiController.togglePerpInputUnit();
+    assert.equal(state.perp.inputUnit, 'margin');
+    assert.equal(state.perp.marginInput, '');
+    assert.equal(marginInputEl.value, '');
+
+    const res = uiController.evaluatePerpOrderState({
+      inputUnit: 'coin',
+      marginInput: '0.01',
+      leverage: 5,
+      orderType: 'market',
+      market: { name: 'BTC', markPx: 60000, szDecimals: 5, maxLeverage: 50 },
+      account: { availableMargin: 1000 }
+    });
+    assert.equal(res.notional, 600);
+    assert.equal(res.marginNeeded, 120);
+    assert.equal(res.sizeNum, 0.01);
+    assert.equal(res.inputUnit, 'coin');
+  } finally {
+    Object.assign(state.perp, prevPerp);
+    globalThis.document = prevDoc;
+    globalThis.window = prevWin;
+  }
+
+  const perpsViewSrc = fs.readFileSync(path.join(root, 'src/app/views/PerpsView.jsx'), 'utf8');
+  assert.ok(
+    perpsViewSrc.includes("inputUnit === 'coin'"),
+    'PerpsView.jsx must derive isCoinUnit reactively from inputUnit === \'coin\''
+  );
+  assert.ok(
+    perpsViewSrc.includes('id="btn-perp-input-unit"') &&
+    perpsViewSrc.includes("isCoinUnit ? `${perpBaseCoin} ▾` : 'USDC ▾'"),
+    'PerpsView.jsx must derive #btn-perp-input-unit label reactively from isCoinUnit'
+  );
+  assert.ok(
+    perpsViewSrc.includes('id="perp-meta-size-label"') &&
+    perpsViewSrc.includes("isCoinUnit ? 'perp.requiredMarginLabel' : 'perp.sizeLabel'"),
+    'PerpsView.jsx must derive #perp-meta-size-label reactively from isCoinUnit'
+  );
+});
