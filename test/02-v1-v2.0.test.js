@@ -311,8 +311,9 @@ test('Arc Network: EVM_CHAINS.arc config, balance pre-validation, and USDC-only 
 });
 
 test('v1.8: Official QTC icon, zero ref-new-1 S3 URLs, sanitizeImageUrl SVG/base64, ft_metadata hydration & receipt token filtering', async () => {
-  assert.ok(
-    tokenRegistry.TOKEN_ICON_MAP.QTC.startsWith('https://')
+  assert.equal(
+    tokenRegistry.TOKEN_ICON_MAP.QTC,
+    'assets/icons/QTC.webp'
   );
   for (const [sym, url] of Object.entries(tokenRegistry.TOKEN_ICON_MAP)) {
     assert.equal(String(url).includes('ref-new-1.s3.amazonaws.com'), false, `TOKEN_ICON_MAP.${sym} must not use 403 S3 URL`);
@@ -436,7 +437,7 @@ test('v1.9: Whitish Circle Arc icon/badge, QTC orange badge, 18 Arc Mainnet toke
   const arcMeta = tokenRegistry.getChainMeta('arc');
   assert.equal(arcMeta.color, '#F8FAFC');
   assert.equal(arcMeta.textColor, '#0F172A');
-  assert.ok(arcMeta.logoUrl.endsWith('/arc-dark.svg'));
+  assert.equal(arcMeta.logoUrl, 'assets/icons/ARC.svg');
   assert.ok(arcMeta.fallbackLogoUrl.startsWith('data:image/svg+xml;base64,'));
   assert.ok(arcMeta.badgeSvg.includes('#F8FAFC') && arcMeta.badgeSvg.includes('#0F172A'));
 

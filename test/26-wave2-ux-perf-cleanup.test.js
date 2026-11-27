@@ -65,7 +65,10 @@ test('Item 16-19: Perp chart MA cache & overlay scrub, allMids throttle, visibil
 
   const cssSrc = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
   assert.ok(cssSrc.includes('#view-wallet.ptr-pulling'));
-  assert.ok(cssSrc.includes('backdrop-filter: blur(12px)'));
+  const appHeaderBlock = cssSrc.slice(cssSrc.indexOf('.app-header {'), cssSrc.indexOf('.header-account-pill {'));
+  const bottomNavBlock = cssSrc.slice(cssSrc.indexOf('.bottom-nav {'), cssSrc.indexOf('.nav-item {'));
+  assert.ok(appHeaderBlock.includes('linear-gradient(') && !appHeaderBlock.includes('backdrop-filter'));
+  assert.ok(bottomNavBlock.includes('linear-gradient(') && !bottomNavBlock.includes('backdrop-filter'));
   assert.ok(!cssSrc.includes('.hub-menu-group {\n  margin-bottom: 14px;\n  border-radius: 16px;\n  background: rgba(20, 26, 40, 0.72);\n  border: 1px solid rgba(255, 255, 255, 0.08);\n  overflow: hidden;\n  backdrop-filter:'));
 });
 

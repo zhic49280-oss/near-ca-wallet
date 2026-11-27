@@ -826,7 +826,7 @@ test('v6.26 OKX Default-On K-Line Chart, Full HIP-3 Icon Resolution & Scrollabil
   assert.equal(state.perp.showChart, true, 'K-line chart must be enabled by default');
   const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'views', 'PerpsView.jsx'), 'utf8');
   assert.equal(/id="perp-chart-wrap"[^>]*\bhidden\b/.test(perpHtml), false, '#perp-chart-wrap must not start hidden');
-  assert.ok(perpHtml.includes('data-iv="1d"'), 'Interval pills must include 1d');
+  assert.ok(perpHtml.includes("'1d'") && perpHtml.includes('data-iv={iv}'), 'Interval pills must include 1d');
 
   const now = Date.now();
   const series = Array.from({ length: 28 }, (_, i) => {

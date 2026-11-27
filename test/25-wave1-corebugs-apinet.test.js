@@ -92,8 +92,8 @@ test('Item 7, 8, 9, 10: Swap followUpSolBridgeOut, Arc 6-dec scaling, string pre
   assert.ok(prlSrc.includes('Stage 1 swapped to PRL; tap Resume for Stage 2'), 'PRL stage 2 transfer must save resumable followUpBridgeOut on failure');
 
   // Item 8: Arc 6-dec scaling
-  const swapStateSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/100-swap-state.part.js'), 'utf8');
-  assert.ok(swapStateSrc.includes('function scaleSwapLiveGasUnits('), 'scaleSwapLiveGasUnits helper must exist');
+  const swapCatalogSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/101-swap-catalog.part.js'), 'utf8');
+  assert.ok(swapCatalogSrc.includes('function scaleSwapLiveGasUnits('), 'scaleSwapLiveGasUnits helper must exist');
 
   // Item 9: chain-contracts toBaseUnits accepts exact decimal strings without Number() truncation
   assert.equal(chainContracts.toBaseUnits('0.12345678', 8), '12345678');

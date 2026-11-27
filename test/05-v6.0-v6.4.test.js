@@ -670,7 +670,7 @@ test('v6.4 Fixes: Official Icons + Fallback, Live Jupiter ASR APY, Swap USD & Bu
   const arcusTok = (tokenRegistry.DEX_CHAIN_TOKENS.arc || []).find((t) => t.symbol === 'ARCUS');
   assert.ok(arcusTok && String(arcusTok.logoURI).startsWith('https://'), 'ARCUS must retain official remote logoURI');
   const arcChain = tokenRegistry.getChainMeta('arc');
-  assert.ok(arcChain.logoUrl.endsWith('/arc-dark.svg'), 'CHAIN_META.arc.logoUrl must use official arc-dark.svg');
+  assert.equal(arcChain.logoUrl, 'assets/icons/ARC.svg', 'CHAIN_META.arc.logoUrl must use local ARC.svg');
   assert.ok(arcChain.fallbackLogoUrl.startsWith('data:image/svg+xml;base64,'), 'CHAIN_META.arc.fallbackLogoUrl must use local SVG fallback');
 
   // 2. Jupiter DAO ASR formatting in zh & en

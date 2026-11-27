@@ -136,11 +136,11 @@ test('D3-01..04: No dead api.kitwallet.app calls and OpenOcean disabled by defau
 test('D4-01..05: Preact reactivity hooks, mountSwapHistory loop guard & PerpOrderbookSidePanel row keys', () => {
   const shellSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/AppShellViews.jsx'), 'utf8');
   const headerFn = shellSrc.slice(shellSrc.indexOf('export function AppHeader()'), shellSrc.indexOf('export function OnboardingAndWalletViews()'));
-  assert.ok(headerFn.includes('useLang()'), 'AppHeader must use useLang()');
+  assert.ok(headerFn.includes('useI18n()'), 'AppHeader must use useI18n()');
   assert.ok(headerFn.includes('useActiveWallet()'), 'AppHeader must use useActiveWallet()');
 
   const navFn = shellSrc.slice(shellSrc.indexOf('export function BottomNav()'));
-  assert.ok(navFn.includes('useLang()'), 'BottomNav must use useLang()');
+  assert.ok(navFn.includes('useI18n()'), 'BottomNav must use useI18n()');
   assert.ok(navFn.includes("useWalletState(['wallet', 'nav'])"), 'BottomNav must subscribe to wallet & nav topics');
 
   const mainSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/app/main.jsx'), 'utf8');
@@ -187,7 +187,7 @@ test('Wave 4: 100% single-tree reactive Preact PanelSlot architecture', () => {
 
   for (const filePath of [...viewFiles, ...sheetFiles]) {
     const src = fs.readFileSync(filePath, 'utf8');
-    const usesHooks = /\b(useLang|useWalletState|usePanelProps)\b/.test(src);
+    const usesHooks = /\b(useI18n|useLang|useWalletState|usePanelProps)\b/.test(src);
     assert.ok(usesHooks, `${path.basename(filePath)} must use Preact Hooks (useLang/useWalletState/usePanelProps)`);
   }
 
