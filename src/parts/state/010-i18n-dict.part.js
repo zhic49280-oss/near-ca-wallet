@@ -161,6 +161,7 @@
       'perp.slPlaceholder': '止损触发价',
       'perp.notionalLabel': '名义价值',
       'perp.sizeLabel': '委托数量',
+      'perp.requiredMarginLabel': '所需保证金',
       'perp.liqEstLabel': '预估强平价',
       'perp.minOrderLabel': '最低下单',
       'perp.minOrderVal': '$10 USDC',
@@ -537,6 +538,7 @@
       'perp.slPlaceholder': 'Stop Loss px',
       'perp.notionalLabel': 'Notional',
       'perp.sizeLabel': 'Size',
+      'perp.requiredMarginLabel': 'Req. Margin',
       'perp.liqEstLabel': 'Est. Liq. Price',
       'perp.minOrderLabel': 'Min Order',
       'perp.minOrderVal': '$10 USDC',
@@ -852,6 +854,7 @@
       tif: 'Gtc',
       reduceOnly: false,
       leverage: 5,
+      inputUnit: 'margin', // 'margin' | 'coin'
       marginInput: '',
       limitPriceInput: '',
       tpInput: '',

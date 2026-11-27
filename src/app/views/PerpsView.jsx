@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useLang, useI18n } from '../store/useWalletStore.js';
+import { useLang, useI18n, useWalletState } from '../store/useWalletStore.js';
 import { PanelSlot } from '../components/PanelSlot.jsx';
 import { PerpOverviewPanel } from '../components/PerpOverviewPanel.jsx';
 import { PerpOrderbookSidePanel, PerpBottomListPanel, PerpOverviewPositionsPanel } from '../components/PerpOrderbookAndPositions.jsx';
@@ -7,7 +7,14 @@ import { PerpChartHudPanel } from '../components/PerpDetailPanels.jsx';
 
 export function PerpView() {
   useLang();
-  const { tr } = useI18n();
+  const st = useWalletState(['perp', 'lang']);
+  const { tr, lang } = useI18n();
+  const isCoinUnit = Boolean(st && st.perp && st.perp.inputUnit === 'coin');
+  const rawPerpCoin = String((st && st.perp && st.perp.selectedCoin) || 'BTC').trim();
+  const perpBaseCoin = (rawPerpCoin.includes(':') ? rawPerpCoin.split(':').slice(1).join(':') : rawPerpCoin) || 'BTC';
+  const marginInputPlaceholder = isCoinUnit
+    ? (lang === 'en' ? `Size (${perpBaseCoin})` : `数量 (${perpBaseCoin})`)
+    : tr('perp.marginInputLabel', '保证金 (USDC)');
   return (
     <section id="view-perp" className="view-section hidden">
       {/* 1. Contract Wallet Summary (Always visible in Overview) */}
@@ -327,11 +334,18 @@ export function PerpView() {
                   step="any"
                   min="0"
                   className="perp-okx-input mono"
-                  data-i18n-placeholder="perp.marginInputLabel"
-                  placeholder={tr('perp.marginInputLabel', '保证金 (USDC)')}
+                  data-i18n-placeholder={isCoinUnit ? undefined : 'perp.marginInputLabel'}
+                  placeholder={marginInputPlaceholder}
                   onInput={() => window.handlePerpMarginInput && window.handlePerpMarginInput()}
                 />
-                <span className="perp-okx-unit-tag mono">USDC</span>
+                <button
+                  type="button"
+                  id="btn-perp-input-unit"
+                  className="perp-okx-unit-toggle mono"
+                  onClick={() => window.togglePerpInputUnit && window.togglePerpInputUnit()}
+                >
+                  {isCoinUnit ? `${perpBaseCoin} ▾` : 'USDC ▾'}
+                </button>
               </div>
 
               <div className="perp-okx-pct-dots" role="group" aria-label="Margin percentage">
@@ -422,7 +436,14 @@ export function PerpView() {
                   <span id="perp-meta-notional" className="meta-val">--</span>
                 </div>
                 <div className="perp-okx-meta-cell">
-                  <span className="meta-key" data-i18n="perp.sizeLabel">{tr('perp.sizeLabel', '委托数量')}</span>
+                  <span
+                    id="perp-meta-size-label"
+                    className="meta-key"
+                    data-i18n={isCoinUnit ? 'perp.requiredMarginLabel' : 'perp.sizeLabel'}
+                    data-i18n-dynamic="1"
+                  >
+                    {isCoinUnit ? tr('perp.requiredMarginLabel', '所需保证金') : tr('perp.sizeLabel', '委托数量')}
+                  </span>
                   <span id="perp-meta-size" className="meta-val">--</span>
                 </div>
                 <div className="perp-okx-meta-cell">

@@ -94,6 +94,46 @@
     return n.toPrecision(4);
   }
 
+  function getPerpBaseCoinSymbol(coin) {
+    const base = formatPerpDisplayPair(coin || 'BTC').split('-')[0];
+    return base || 'BTC';
+  }
+
+  function syncPerpInputUnitUI() {
+    const st = getState();
+    const unit = (st.perp && st.perp.inputUnit === 'coin') ? 'coin' : 'margin';
+    const market = getSelectedPerpMarket();
+    const baseCoin = getPerpBaseCoinSymbol(market ? market.name : (st.perp && st.perp.selectedCoin));
+    const unitBtn = $('btn-perp-input-unit');
+    if (unitBtn) {
+      unitBtn.textContent = unit === 'coin' ? `${baseCoin} ▾` : 'USDC ▾';
+    }
+    const inp = $('perp-margin-input');
+    if (inp) {
+      if (unit === 'coin') {
+        inp.removeAttribute('data-i18n-placeholder');
+        inp.placeholder = t(`数量 (${baseCoin})`, `Size (${baseCoin})`);
+      } else {
+        inp.setAttribute('data-i18n-placeholder', 'perp.marginInputLabel');
+        inp.placeholder = t('保证金 (USDC)', 'Margin (USDC)');
+      }
+    }
+  }
+
+  function togglePerpInputUnit() {
+    const st = getState();
+    const nextUnit = (st.perp && st.perp.inputUnit === 'coin') ? 'margin' : 'coin';
+    st.perp.inputUnit = nextUnit;
+    st.perp.marginInput = '';
+    st.perp.errorMsg = '';
+    const inp = $('perp-margin-input');
+    if (inp) inp.value = '';
+    if (typeof clearPerpPctDots === 'function') clearPerpPctDots();
+    syncPerpInputUnitUI();
+    if (typeof evaluatePerpOrderUI === 'function') evaluatePerpOrderUI(false);
+    if (typeof st.emitStateTopic === 'function') st.emitStateTopic('perp');
+  }
+
   function evaluatePerpOrderState(override = {}) {
     const st = getState();
     const hl = getHyperliquid();
@@ -106,7 +146,8 @@
     const isPostOnly = String(orderType).toLowerCase() === 'post_only';
     const isLimitLike = String(orderType).toLowerCase() === 'limit' || isPostOnly;
     const lev = Math.max(1, Number(override.leverage ?? st.perp.leverage) || 5);
-    const margin = Number(override.marginInput ?? st.perp.marginInput);
+    const inputUnit = ((override.inputUnit || (st.perp && st.perp.inputUnit) || 'margin') === 'coin') ? 'coin' : 'margin';
+    const rawInputVal = Number(override.marginInput ?? st.perp.marginInput);
     const limitPx = Number(override.limitPriceInput ?? st.perp.limitPriceInput);
     const availMargin = acct ? Number(acct.availableMargin || 0) : null;
     const markPx = market ? Number(market.markPx || 0) : null;
@@ -118,17 +159,26 @@
       ? (acct && Number.isFinite(Number(acct.makerFeeRate)) ? Number(acct.makerFeeRate) : 0.00015)
       : (acct && Number.isFinite(Number(acct.takerFeeRate)) ? Number(acct.takerFeeRate) : 0.00045);
 
+    let margin = inputUnit === 'margin' ? rawInputVal : NaN;
     let notional = null;
     let sizeNum = null;
     let sizeStr = '--';
     let estLiqPx = null;
     let estFeeUsd = null;
-    if (Number.isFinite(margin) && margin > 0 && execPx && Number.isFinite(execPx) && execPx > 0) {
-      notional = margin * lev;
-      estFeeUsd = notional * feeRate;
-      const rawSize = notional / execPx;
-      sizeStr = hl ? hl.formatHlSize(rawSize, market ? market.szDecimals : 4) : rawSize.toFixed(4);
-      sizeNum = Number(sizeStr);
+    if (Number.isFinite(rawInputVal) && rawInputVal > 0 && execPx && Number.isFinite(execPx) && execPx > 0) {
+      if (inputUnit === 'coin') {
+        sizeStr = hl ? hl.formatHlSize(rawInputVal, market ? market.szDecimals : 4) : rawInputVal.toFixed(4);
+        sizeNum = Number(sizeStr);
+        notional = (sizeNum > 0 ? sizeNum : rawInputVal) * execPx;
+        margin = lev > 0 ? notional / lev : notional;
+        estFeeUsd = notional * feeRate;
+      } else {
+        notional = margin * lev;
+        estFeeUsd = notional * feeRate;
+        const rawSize = notional / execPx;
+        sizeStr = hl ? hl.formatHlSize(rawSize, market ? market.szDecimals : 4) : rawSize.toFixed(4);
+        sizeNum = Number(sizeStr);
+      }
       if (hl) {
         estLiqPx = hl.computeEstimatedLiqPrice({ markPx: execPx, leverage: lev, isLong: isBuy, maxLeverage: market ? market.maxLeverage : 100 });
       }
@@ -139,31 +189,31 @@
     const marginNeeded = Number.isFinite(margin) && margin > 0 ? margin : null;
 
     if (st.perp.submitting) {
-      return { disabled: true, error: '', text: t('提交签名中...', 'Submitting...'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
+      return { disabled: true, error: '', text: t('提交签名中...', 'Submitting...'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded, margin: marginNeeded, inputUnit };
     }
     if (!market || !markPx) {
-      return { disabled: true, error: '', text: t('同步市场行情...', 'Loading market...'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
+      return { disabled: true, error: '', text: t('同步市场行情...', 'Loading market...'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded, margin: marginNeeded, inputUnit };
     }
     if (isLimitLike && (!Number.isFinite(limitPx) || limitPx <= 0)) {
-      return { disabled: true, error: '', text: t('请输入限价价格', 'Enter limit price'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
+      return { disabled: true, error: '', text: t('请输入限价价格', 'Enter limit price'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded, margin: marginNeeded, inputUnit };
     }
-    if (!Number.isFinite(margin) || margin <= 0) {
-      return { disabled: true, error: '', text: actionLabel, notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
+    if (!Number.isFinite(rawInputVal) || rawInputVal <= 0) {
+      return { disabled: true, error: '', text: actionLabel, notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded, margin: marginNeeded, inputUnit };
     }
     if (!reduceOnly && availMargin !== null && margin > availMargin + 1e-6) {
       const msg = t(`可用保证金不足 (当前: $${availMargin.toFixed(2)} USDC)`, `Insufficient margin (avail: $${availMargin.toFixed(2)} USDC)`);
-      return { disabled: true, error: msg, text: t('保证金不足', 'Insufficient Margin'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
+      return { disabled: true, error: msg, text: t('保证金不足', 'Insufficient Margin'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded, margin: marginNeeded, inputUnit };
     }
     const minNotional = hl ? hl.HL_MIN_ORDER_USD : 10;
     const flooredNotional = (sizeNum > 0 && execPx > 0) ? (sizeNum * execPx) : 0;
     if (!reduceOnly && (!flooredNotional || flooredNotional < minNotional)) {
       const msg = t(`名义价值需 >= $${minNotional} USDC (按精度取整后 $${flooredNotional.toFixed(2)})`, `Notional must be >= $${minNotional} USDC ($${flooredNotional.toFixed(2)} after size step)`);
-      return { disabled: true, error: msg, text: t(`最低名义 $${minNotional}`, `Min $${minNotional} Notional`), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
+      return { disabled: true, error: msg, text: t(`最低名义 $${minNotional}`, `Min $${minNotional} Notional`), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded, margin: marginNeeded, inputUnit };
     }
     if (!sizeNum || sizeNum <= 0) {
-      return { disabled: true, error: t('数量低于最小精度', 'Size below tick step'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
+      return { disabled: true, error: t('数量低于最小精度', 'Size below tick step'), notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded, margin: marginNeeded, inputUnit };
     }
-    return { disabled: false, error: '', text: actionLabel, notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded };
+    return { disabled: false, error: '', text: actionLabel, notional, sizeNum, sizeStr, estLiqPx, execPx, estFeeUsd, feeRate, isLimitLike, marginNeeded, margin: marginNeeded, inputUnit };
   }
 
   function formatCompactUsd(val) {

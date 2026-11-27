@@ -170,12 +170,23 @@
     }
 
     const evalRes = evaluatePerpOrderState({ market });
+    const isCoinMode = (st.perp && st.perp.inputUnit === 'coin');
     const ntlEl = $('perp-meta-notional');
+    const szLblEl = $('perp-meta-size-label');
     const szEl = $('perp-meta-size');
     const liqEl = $('perp-meta-liq');
     const feeEl = $('perp-meta-fee');
     if (ntlEl) ntlEl.textContent = evalRes.notional ? `$${evalRes.notional.toFixed(2)} USDC` : '--';
-    if (szEl) szEl.textContent = evalRes.sizeNum > 0 ? `${evalRes.sizeStr} ${formatPerpDisplayPair(market ? market.name : st.perp.selectedCoin).split('-')[0]}` : '--';
+    if (szLblEl) {
+      szLblEl.textContent = isCoinMode ? t('所需保证金', 'Req. Margin') : t('委托数量', 'Size');
+    }
+    if (szEl) {
+      if (isCoinMode) {
+        szEl.textContent = evalRes.marginNeeded > 0 ? `$${evalRes.marginNeeded.toFixed(2)} USDC` : '--';
+      } else {
+        szEl.textContent = evalRes.sizeNum > 0 ? `${evalRes.sizeStr} ${formatPerpDisplayPair(market ? market.name : st.perp.selectedCoin).split('-')[0]}` : '--';
+      }
+    }
     if (liqEl) liqEl.textContent = evalRes.estLiqPx ? `$${formatPerpPx(evalRes.estLiqPx)}` : '--';
     if (feeEl) {
       const ratePct = `${((evalRes.feeRate || 0.00045) * 100).toFixed(3).replace(/0$/, '')}%`;
@@ -475,6 +486,7 @@
     const levValEl = $('perp-lev-val');
     if (levValEl) levValEl.textContent = `${st.perp.leverage}x`;
 
+    if (typeof syncPerpInputUnitUI === 'function') syncPerpInputUnitUI();
     evaluatePerpOrderUI(false);
     renderPerpBottomList();
   }
@@ -654,6 +666,7 @@
       if (btn) btn.setAttribute('aria-expanded', 'false');
     }
     resetFormFields(domIds, st.perp, defaults);
+    if (typeof syncPerpInputUnitUI === 'function') syncPerpInputUnitUI();
   }
 
   function backToPerpOverview() {
@@ -835,7 +848,27 @@
     const lev = Math.max(1, Number(st.perp.leverage) || 5);
     const feeRate = Number(st.perp.account?.takerFeeRate) || 0.00045;
     const maxSafeRatio = targetPct >= 0.99 ? Math.max(0.5, 1 / (1 + lev * feeRate) - 0.005) : targetPct;
-    const amt = Math.max(0, avail * maxSafeRatio).toFixed(2);
+    const isCoinMode = (st.perp && st.perp.inputUnit === 'coin');
+    let amt = '';
+    if (isCoinMode) {
+      const market = getSelectedPerpMarket();
+      const oType = st.perp.orderType || 'market';
+      const isLimitLike = oType === 'limit' || oType === 'post_only';
+      const refPx = isLimitLike
+        ? (Number(st.perp.limitPriceInput) || Number(market && market.markPx) || 0)
+        : Number((market && market.markPx) || 0);
+      if (!refPx || refPx <= 0) {
+        showToast(t('正在同步市场价格，请稍候', 'Market price loading, please wait'));
+        return;
+      }
+      const rawCoin = Math.max(0, (avail * maxSafeRatio * lev) / refPx);
+      const hl = getHyperliquid();
+      const szDec = market && Number.isFinite(Number(market.szDecimals)) ? Number(market.szDecimals) : 4;
+      const formatted = hl ? hl.formatHlSize(rawCoin, szDec) : (Math.floor(rawCoin * Math.pow(10, szDec)) / Math.pow(10, szDec)).toFixed(szDec);
+      amt = Number(formatted) > 0 ? formatted : '';
+    } else {
+      amt = Math.max(0, avail * maxSafeRatio).toFixed(2);
+    }
     st.perp.marginInput = amt;
     const inp = $('perp-margin-input');
     if (inp) inp.value = amt;
