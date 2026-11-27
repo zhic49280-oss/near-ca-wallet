@@ -147,21 +147,7 @@
             const meta = tokens.getChainMeta(e.blockchain);
             const cleanNetName = meta.name || e.networkName;
             const balStr = formatBal(e.balance, 6);
-            return `
-              <div class="detail-row-item">
-                <div class="flex items-center gap-2" style="min-width:0;flex:1;">
-                  ${tokens.renderTokenIconWithBadge(e.token, 28, true)}
-                  <div class="flex flex-col" style="min-width:0;">
-                    <span style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(cleanNetName)}</span>
-                    <span class="mono" style="font-size:11.5px;color:var(--text-secondary);">${escapeHtml(balStr)} ${escapeHtml(group.symbol)}</span>
-                  </div>
-                </div>
-                <div class="flex gap-1" style="flex-shrink:0;">
-                  <button type="button" class="mini-action-btn primary" data-action="detail-swap" data-asset-id="${escapeHtml(e.assetId)}" data-chain="${escapeHtml(e.blockchain)}" data-contract="${escapeHtml(e.contractAddress || '')}">${escapeHtml(t('闪兑', 'Swap'))}</button>
-                  <button type="button" class="mini-action-btn" data-action="detail-send" data-symbol="${escapeHtml(group.symbol)}" data-chain="${escapeHtml(e.blockchain)}" data-asset-id="${escapeHtml(e.assetId)}" data-contract="${escapeHtml(e.contractAddress || '')}">${escapeHtml(t('转账', 'Send'))}</button>
-                </div>
-              </div>
-            `;
+            return `<div class="detail-row-item"><div class="flex items-center gap-2" style="min-width:0;flex:1;">${tokens.renderTokenIconWithBadge(e.token, 28, true)}<div class="flex flex-col" style="min-width:0;"><span style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(cleanNetName)}</span><span class="mono" style="font-size:11.5px;color:var(--text-secondary);">${escapeHtml(balStr)} ${escapeHtml(group.symbol)}</span></div></div><div class="flex gap-1" style="flex-shrink:0;"><button type="button" class="mini-action-btn primary" data-action="detail-swap" data-asset-id="${escapeHtml(e.assetId)}" data-chain="${escapeHtml(e.blockchain)}" data-contract="${escapeHtml(e.contractAddress || '')}">${escapeHtml(t('闪兑', 'Swap'))}</button><button type="button" class="mini-action-btn" data-action="detail-send" data-symbol="${escapeHtml(group.symbol)}" data-chain="${escapeHtml(e.blockchain)}" data-asset-id="${escapeHtml(e.assetId)}" data-contract="${escapeHtml(e.contractAddress || '')}">${escapeHtml(t('转账', 'Send'))}</button></div></div>`;
           }).join('');
         }
       } else {
@@ -202,51 +188,15 @@
             onOpenPool: (pid) => openTokenDetailPool(pid)
           });
         } else {
-          const stakingPools = matchedPools.filter((p) => !p.isErc4626 && !p.isAaveV3 && !p.isLockConvert && !p.isBurrowSupply);
-          const earnLendingPools = matchedPools.filter((p) => p.isErc4626 || p.isAaveV3 || p.isLockConvert || p.isBurrowSupply);
-
           const renderPoolRows = (poolList) => poolList.map((p) => {
             const catMeta = getPoolCategoryMeta(p);
-            return `
-              <button type="button" class="detail-row-item detail-row-clickable" data-action="open-token-detail-pool" data-pool-id="${escapeHtml(p.id)}">
-                <div class="flex items-center gap-2" style="min-width:0;flex:1;">
-                  ${tokens.renderTokenIconWithBadge({ symbol: p.outSymbol, blockchain: p.chain, logoURI: getPoolIconUrl(p) }, 26, true)}
-                  <div class="flex flex-col" style="min-width:0;">
-                    <div class="flex items-center gap-1" style="flex-wrap:wrap;">
-                      <span style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(p.name)}</span>
-                      <span class="pool-cat-badge ${catMeta.cls}">${escapeHtml(catMeta.label)}</span>
-                    </div>
-                    <span style="font-size:11px;color:var(--text-secondary);">${escapeHtml(p.protocol || p.chainLabel || '')} · ${escapeHtml(p.inSymbol)} ➔ ${escapeHtml(p.outSymbol)}</span>
-                  </div>
-                </div>
-                <span class="mono text-emerald" style="font-weight:800;font-size:13px;flex-shrink:0;">${escapeHtml(formatPoolApyText(p))}</span>
-              </button>
-            `;
+            return `<button type="button" class="detail-row-item detail-row-clickable" data-action="open-token-detail-pool" data-pool-id="${escapeHtml(p.id)}"><div class="flex items-center gap-2" style="min-width:0;flex:1;">${tokens.renderTokenIconWithBadge({ symbol: p.outSymbol, blockchain: p.chain, logoURI: getPoolIconUrl(p) }, 26, true)}<div class="flex flex-col" style="min-width:0;"><div class="flex items-center gap-1" style="flex-wrap:wrap;"><span style="font-weight:700;font-size:12.5px;color:#fff;">${escapeHtml(p.name)}</span><span class="pool-cat-badge ${catMeta.cls}">${escapeHtml(catMeta.label)}</span></div><span style="font-size:11px;color:var(--text-secondary);">${escapeHtml(p.protocol || p.chainLabel || '')} · ${escapeHtml(p.inSymbol)} ➔ ${escapeHtml(p.outSymbol)}</span></div></div><span class="mono text-emerald" style="font-weight:800;font-size:13px;flex-shrink:0;">${escapeHtml(formatPoolApyText(p))}</span></button>`;
           }).join('');
-
+          const stakingPools = matchedPools.filter((p) => !p.isErc4626 && !p.isAaveV3 && !p.isLockConvert && !p.isBurrowSupply);
+          const earnLendingPools = matchedPools.filter((p) => p.isErc4626 || p.isAaveV3 || p.isLockConvert || p.isBurrowSupply);
           const cards = [];
-          if (stakingPools.length > 0) {
-            cards.push(`
-              <div class="ios-glass-card flex flex-col gap-2">
-                <div class="flex items-center justify-between">
-                  <span style="font-weight:700;font-size:13px;color:#fff;">⚡ ${escapeHtml(t('链上质押 (Staking)', 'Staking'))}</span>
-                  <span class="pool-cat-badge cat-staking">${escapeHtml(t('质押', 'Staking'))}</span>
-                </div>
-                <div class="flex flex-col gap-2">${renderPoolRows(stakingPools)}</div>
-              </div>
-            `);
-          }
-          if (earnLendingPools.length > 0) {
-            cards.push(`
-              <div class="ios-glass-card flex flex-col gap-2">
-                <div class="flex items-center justify-between">
-                  <span style="font-weight:700;font-size:13px;color:#fff;">🏦 ${escapeHtml(t('借贷与存款生息 (Lending & Earn)', 'Lending & Earn'))}</span>
-                  <span class="pool-cat-badge cat-lending">${escapeHtml(t('借贷', 'Lending'))}</span>
-                </div>
-                <div class="flex flex-col gap-2">${renderPoolRows(earnLendingPools)}</div>
-              </div>
-            `);
-          }
+          if (stakingPools.length > 0) cards.push(`<div class="ios-glass-card flex flex-col gap-2"><div class="flex items-center justify-between"><span style="font-weight:700;font-size:13px;color:#fff;">⚡ ${escapeHtml(t('链上质押 (Staking)', 'Staking'))}</span><span class="pool-cat-badge cat-staking">${escapeHtml(t('质押', 'Staking'))}</span></div><div class="flex flex-col gap-2">${renderPoolRows(stakingPools)}</div></div>`);
+          if (earnLendingPools.length > 0) cards.push(`<div class="ios-glass-card flex flex-col gap-2"><div class="flex items-center justify-between"><span style="font-weight:700;font-size:13px;color:#fff;">🏦 ${escapeHtml(t('借贷与存款生息 (Lending & Earn)', 'Lending & Earn'))}</span><span class="pool-cat-badge cat-lending">${escapeHtml(t('借贷', 'Lending'))}</span></div><div class="flex flex-col gap-2">${renderPoolRows(earnLendingPools)}</div></div>`);
           earnList.innerHTML = cards.join('');
         }
       } else {
@@ -778,11 +728,30 @@
   }
 
   let _autoSyncTimer = null;
+  let _autoSyncVisibilityBound = false;
 
-  function startAutoPriceAndBalanceSync() {
+  function stopAutoPriceAndBalanceSync() {
     if (_autoSyncTimer) {
       clearInterval(_autoSyncTimer);
       _autoSyncTimer = null;
+    }
+  }
+
+  function startAutoPriceAndBalanceSync() {
+    stopAutoPriceAndBalanceSync();
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function' && !_autoSyncVisibilityBound) {
+      _autoSyncVisibilityBound = true;
+      document.addEventListener('visibilitychange', () => {
+        const bg = (typeof isAppInBackground === 'function' && isAppInBackground()) || Boolean(document.hidden);
+        if (bg) {
+          stopAutoPriceAndBalanceSync();
+        } else {
+          startAutoPriceAndBalanceSync();
+        }
+      });
+    }
+    if (typeof isAppInBackground === 'function' ? isAppInBackground() : (typeof document !== 'undefined' && document.hidden)) {
+      return null;
     }
     _autoSyncTimer = setInterval(() => {
       if (typeof isAppInBackground === 'function' ? isAppInBackground() : (typeof document !== 'undefined' && document.hidden)) return;

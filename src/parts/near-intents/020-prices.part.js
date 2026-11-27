@@ -138,13 +138,67 @@
         arcDexUrl ? fetchAux('dex_arc', arcDexUrl, {}, 4200) : () => Promise.resolve(null)
       ];
 
-      const [resp, auxResults] = await Promise.all([
-        oneClickPromise,
-        settleWithSoftCap(auxFactories, 4500)
-      ]);
+      const auxPromise = settleWithSoftCap(auxFactories, 4500);
+      const resp = await oneClickPromise;
+      const oneClickOk = Boolean(resp && resp.ok && Array.isArray(resp.data));
+
+      if (oneClickOk && opts && typeof opts.onFastUpdate === 'function') {
+        const fastList = [];
+        const fastByAssetId = new Map();
+        const fastByChainContract = new Map();
+        const fastByCanonicalSymbol = new Map();
+        for (const rawItem of resp.data) {
+          if (!rawItem || !rawItem.assetId) continue;
+          const rawSym = String(rawItem.symbol || '').trim();
+          if (/DEPRECATED|TESTNEBULA/i.test(`${rawSym} ${rawItem.assetId || ''} ${rawItem.name || ''}`)) continue;
+          if (DEAD_ONECLICK_SYMBOL_REGEX.test(rawSym)) continue;
+          const norm = normalizeDefuseToken(rawItem);
+          fastList.push(norm);
+          fastByAssetId.set(String(norm.assetId).toLowerCase(), norm);
+          const bcLow = String(norm.blockchain || '').trim().toLowerCase();
+          const contractLower = String(norm.contractAddress || '').trim().toLowerCase();
+          if (bcLow && contractLower && contractLower !== EVM_NATIVE_SENTINEL_LOWER) {
+            const ccKey = `${bcLow}:${contractLower}`;
+            if (!fastByChainContract.has(ccKey)) fastByChainContract.set(ccKey, norm);
+          }
+          const symUpper = String(norm.symbol || '').trim().replace(/^\$/, '').toUpperCase();
+          if (CANONICAL_PRICE_SYMBOLS.has(symUpper) && norm.price !== null && norm.price > 0 && !fastByCanonicalSymbol.has(symUpper)) {
+            fastByCanonicalSymbol.set(symUpper, norm);
+          }
+        }
+        if (registryEarly) {
+          const coreTokens = Array.isArray(registryEarly.UNIFIED_CORE_TOKENS) ? registryEarly.UNIFIED_CORE_TOKENS : [];
+          for (const token of coreTokens) {
+            if (!token || !token.assetId) continue;
+            const assetLower = String(token.assetId).toLowerCase();
+            const tokenBc = String(token.blockchain || '').trim().toLowerCase();
+            const contractLower = String(token.contractAddress || '').trim().toLowerCase();
+            const ccKey = tokenBc && contractLower && contractLower !== EVM_NATIVE_SENTINEL_LOWER ? `${tokenBc}:${contractLower}` : '';
+            const symUpper = String(token.symbol || '').trim().replace(/^\$/, '').toUpperCase();
+            const symLookup = tokenBc === 'arc' && symUpper === 'WUSDC' ? 'USDC' : (tokenBc === 'arc' && symUpper === 'CIRBTC' ? 'BTC' : symUpper);
+            const live = fastByAssetId.get(assetLower)
+              || (ccKey ? fastByChainContract.get(ccKey) : null)
+              || (CANONICAL_PRICE_SYMBOLS.has(symLookup) ? fastByCanonicalSymbol.get(symLookup) : null)
+              || null;
+            if (live && live.price !== null && live.price > 0) {
+              token.price = live.price;
+              token.priceUpdatedAt = live.priceUpdatedAt || null;
+            }
+          }
+          if (typeof registryEarly.setLiveDefuseTokens === 'function') {
+            registryEarly.setLiveDefuseTokens(fastList);
+          } else {
+            registryEarly.LIVE_DEFUSE_TOKENS = fastList;
+          }
+        }
+        _cachedDefuseTokens = fastList;
+        _livePricesCache = { ts: Date.now(), list: fastList, fetchRef: curFetch };
+        try { opts.onFastUpdate(fastList); } catch (_) {}
+      }
+
+      const auxResults = await auxPromise;
       const [dexRes, prlRes, hlRes, refListRes, cgRes, xStockRes, kyberTokRes, arcscanTokRes, refPriceRes, arcDexRes] = auxResults;
 
-      const oneClickOk = Boolean(resp && resp.ok && Array.isArray(resp.data));
       const anyAuxOk = auxResults.some((r) => r && r.status === 'fulfilled' && r.value && r.value.ok);
       if (!oneClickOk && !anyAuxOk && _cachedDefuseTokens.length === 0) {
         return null;
@@ -653,9 +707,6 @@
           registry.setLiveDefuseTokens(normalizedList);
         } else {
           registry.LIVE_DEFUSE_TOKENS = normalizedList;
-        }
-        if (opts && typeof opts.onFastUpdate === 'function') {
-          try { opts.onFastUpdate(normalizedList); } catch (_) {}
         }
 
         // Batch DexScreener for non-Arc EVM/Solana DEX tokens + Arc KyberSwap background pricing

@@ -5,7 +5,7 @@
       shortName: 'NEAR',
       color: '#00EC97',
       textColor: '#000000',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/near/info/logo.png',
+      logoUrl: makeLocalIcon('near'),
       fallbackLogoUrl: makeLocalIcon('near'),
       badgeSvg: makeChainBadgeSvg(
         '#00EC97',
@@ -19,7 +19,7 @@
       shortName: 'ETH',
       color: '#627EEA',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png',
+      logoUrl: makeLocalIcon('eth'),
       fallbackLogoUrl: makeLocalIcon('eth'),
       badgeSvg: makeChainBadgeSvg(
         '#627EEA',
@@ -33,7 +33,7 @@
       shortName: 'SOL',
       color: '#9945FF',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/solana/info/logo.png',
+      logoUrl: 'assets/icons/SOL.png',
       fallbackLogoUrl: makeLocalIcon('sol'),
       badgeSvg: makeChainBadgeSvg(
         '#141726',
@@ -47,7 +47,7 @@
       shortName: 'BASE',
       color: '#0052FF',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/base/info/logo.png',
+      logoUrl: 'assets/icons/BASE.png',
       fallbackLogoUrl: makeLocalIcon('base'),
       badgeSvg: makeChainBadgeSvg(
         '#0052FF',
@@ -61,7 +61,7 @@
       shortName: 'ARB',
       color: '#12AAFF',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/arbitrum/info/logo.png',
+      logoUrl: 'assets/icons/ARB.png',
       fallbackLogoUrl: makeLocalIcon('arb'),
       badgeSvg: makeChainBadgeSvg(
         '#213147',
@@ -75,7 +75,7 @@
       shortName: 'BSC',
       color: '#F3BA2F',
       textColor: '#000000',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/smartchain/info/logo.png',
+      logoUrl: 'assets/icons/BNB.png',
       fallbackLogoUrl: makeLocalIcon('bnb'),
       badgeSvg: makeChainBadgeSvg(
         '#F3BA2F',
@@ -89,7 +89,7 @@
       shortName: 'BTC',
       color: '#F7931A',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/bitcoin/info/logo.png',
+      logoUrl: 'assets/icons/BTC.png',
       fallbackLogoUrl: makeLocalIcon('btc'),
       badgeSvg: makeChainBadgeSvg(
         '#F7931A',
@@ -103,7 +103,7 @@
       shortName: 'TRX',
       color: '#EB0029',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/tron/info/logo.png',
+      logoUrl: 'assets/icons/TRX.png',
       fallbackLogoUrl: makeLocalIcon('trx'),
       badgeSvg: makeChainBadgeSvg(
         '#EB0029',
@@ -117,7 +117,7 @@
       shortName: 'HYPE',
       color: '#97FCE4',
       textColor: '#072723',
-      logoUrl: 'https://assets.coingecko.com/coins/images/50882/standard/hyperliquid.jpg',
+      logoUrl: 'assets/icons/HYPE.jpg',
       fallbackLogoUrl: makeLocalIcon('hype'),
       badgeSvg: makeChainBadgeSvg(
         '#072723',
@@ -131,7 +131,7 @@
       shortName: 'HOOD',
       color: '#00C805',
       textColor: '#000000',
-      logoUrl: makeLocalIcon('hood'),
+      logoUrl: 'assets/icons/HOOD.webp',
       fallbackLogoUrl: makeLocalIcon('hood'),
       badgeSvg: makeChainBadgeSvg(
         '#00C805',
@@ -145,7 +145,7 @@
       shortName: 'ARC',
       color: '#F8FAFC',
       textColor: '#0F172A',
-      logoUrl: 'https://raw.githubusercontent.com/ulyanas/frontend-configs/add-usdc-eurc-latest-token-icons/configs/network-icons/arc-dark.svg',
+      logoUrl: 'assets/icons/ARC.svg',
       fallbackLogoUrl: makeLocalIcon('arc'),
       badgeSvg: makeChainBadgeSvg(
         '#F8FAFC',
@@ -172,7 +172,7 @@
       shortName: 'OP',
       color: '#FF0420',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/optimism/info/logo.png',
+      logoUrl: 'assets/icons/OP.png',
       fallbackLogoUrl: makeLocalIcon('op'),
       badgeSvg: makeChainBadgeSvg(
         '#FF0420',
@@ -186,7 +186,7 @@
       shortName: 'POL',
       color: '#8247E5',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/polygon/info/logo.png',
+      logoUrl: 'assets/icons/POL.png',
       fallbackLogoUrl: makeLocalIcon('pol'),
       badgeSvg: makeChainBadgeSvg(
         '#8247E5',
@@ -200,7 +200,7 @@
       shortName: 'SUI',
       color: '#4DA2FF',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/sui/info/logo.png',
+      logoUrl: 'assets/icons/SUI.png',
       fallbackLogoUrl: makeLocalIcon('sui'),
       badgeSvg: makeChainBadgeSvg(
         '#4DA2FF',
@@ -214,7 +214,7 @@
       shortName: 'TON',
       color: '#0098EA',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ton/info/logo.png',
+      logoUrl: 'assets/icons/TON.png',
       fallbackLogoUrl: makeLocalIcon('ton'),
       badgeSvg: makeChainBadgeSvg(
         '#0098EA',
@@ -228,7 +228,7 @@
       shortName: 'APT',
       color: '#111827',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/aptos/info/logo.png',
+      logoUrl: 'assets/icons/APT.png',
       fallbackLogoUrl: makeLocalIcon('apt'),
       badgeSvg: makeChainBadgeSvg(
         '#111827',
@@ -242,7 +242,7 @@
       shortName: 'DOGE',
       color: '#C2A633',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/doge/info/logo.png',
+      logoUrl: 'assets/icons/DOGE.png',
       fallbackLogoUrl: makeLocalIcon('doge'),
       badgeSvg: makeChainBadgeSvg(
         '#C2A633',
@@ -256,7 +256,7 @@
       shortName: 'XRP',
       color: '#23292F',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ripple/info/logo.png',
+      logoUrl: 'assets/icons/XRP.png',
       fallbackLogoUrl: makeLocalIcon('xrp'),
       badgeSvg: makeChainBadgeSvg(
         '#23292F',
@@ -270,7 +270,7 @@
       shortName: 'AVAX',
       color: '#E84142',
       textColor: '#FFFFFF',
-      logoUrl: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/avalanchec/info/logo.png',
+      logoUrl: 'assets/icons/AVAX.png',
       fallbackLogoUrl: makeLocalIcon('avax'),
       badgeSvg: makeChainBadgeSvg(
         '#E84142',
@@ -284,7 +284,7 @@
       shortName: 'GNO',
       color: '#04795B',
       textColor: '#FFFFFF',
-      logoUrl: 'https://coin-images.coingecko.com/coins/images/662/large/logo_square_simple_300px.png?1696501854',
+      logoUrl: 'assets/icons/GNO.png',
       fallbackLogoUrl: makeLocalIcon('gnosis'),
       badgeSvg: makeChainBadgeSvg(
         '#04795B',
@@ -548,7 +548,7 @@
       const safeFb = escapeHtml(fallbackUrl);
       const safeFb2 = escapeHtml(secondFallbackUrl || '');
       const hiddenFallbackSvg = fallbackSvg.replace('<svg ', '<svg style="display:none" ');
-      iconInner = `<img src="${escapeHtml(primaryUrl)}" alt="${safeAlt}" data-fb="${safeFb}" data-fb2="${safeFb2}" width="${s}" height="${s}" style="width:${s}px;height:${s}px" class="rounded-full object-cover flex-shrink-0 bg-white/[0.06] token-img-fb" />${hiddenFallbackSvg}`;
+      iconInner = `<img src="${escapeHtml(primaryUrl)}" alt="${safeAlt}" data-fb="${safeFb}" data-fb2="${safeFb2}" width="${s}" height="${s}" decoding="async" loading="lazy" style="width:${s}px;height:${s}px" class="rounded-full object-cover flex-shrink-0 bg-white/[0.06] token-img-fb" />${hiddenFallbackSvg}`;
     } else {
       iconInner = fallbackSvg;
     }

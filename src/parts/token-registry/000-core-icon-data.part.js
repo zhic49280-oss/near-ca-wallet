@@ -17,8 +17,7 @@
       .replace(/'/g, '&#39;');
   }
 
-  const QTC_OFFICIAL_ICON_URL =
-    'https://static.datapi.jup.ag/token-icons/0d58709eb553999608b6d798b17018d4974eb86a3eaa68a4f05614056fb9e9bd.webp';
+  const QTC_OFFICIAL_ICON_URL = 'assets/icons/QTC.webp';
 
   function sanitizeImageUrl(url) {
     const clean = String(url || '').trim();

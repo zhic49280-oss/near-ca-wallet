@@ -1,11 +1,46 @@
   // ==================== Earn / Liquid Staking Controller ====================
 
+  let _lastEarnSwrRef = null;
+  function syncEarnPoolsSwr(st, contracts) {
+    if (!st || !st.staking) return;
+    if (!st.staking.pools && typeof st.loadCachedStakingMetrics === 'function') {
+      try { st.loadCachedStakingMetrics(); } catch (_) {}
+    }
+    if (!st.staking.pools && typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function') {
+      try {
+        const parsed = JSON.parse(localStorage.getItem('near_ca_earn_pools_swr_v1') || 'null');
+        const snap = parsed && (!parsed.updatedAt || Date.now() - parsed.updatedAt <= 86400000) ? parsed.pools : null;
+        if (snap && Array.isArray(contracts?.STAKING_POOLS)) {
+          for (const p of contracts.STAKING_POOLS) {
+            const c = p && snap[p.id];
+            if (c) Object.keys(c).forEach((k) => { if (p[k] == null && c[k] != null) p[k] = c[k]; });
+          }
+          st.staking.pools = contracts.STAKING_POOLS;
+        }
+      } catch (_) {}
+    }
+    if (Array.isArray(st.staking.pools) && st.staking.pools.length > 0 && st.staking.pools !== _lastEarnSwrRef) {
+      _lastEarnSwrRef = st.staking.pools;
+      if (typeof st.saveCachedStakingMetrics === 'function') {
+        try { st.saveCachedStakingMetrics(st.staking.pools); } catch (_) {}
+      } else if (typeof localStorage !== 'undefined' && typeof localStorage.setItem === 'function') {
+        try {
+          const map = {};
+          for (const p of st.staking.pools) if (p?.id) map[p.id] = { apy: p.apy ?? null, rate: p.rate ?? null, tvlText: p.tvlText || null, tvlUsd: p.tvlUsd ?? null };
+          localStorage.setItem('near_ca_earn_pools_swr_v1', JSON.stringify({ updatedAt: Date.now(), pools: map }));
+        } catch (_) {}
+      }
+    }
+  }
+
   function renderEarnView() {
     const st = getState();
     const tokens = getTokens();
     const contracts = getContracts();
     const wallet = st.getActiveWallet();
     if (!wallet) return;
+
+    syncEarnPoolsSwr(st, contracts);
 
     const allPools = st.staking.pools || contracts.STAKING_POOLS;
     const activeFilter = st.staking.filter || 'featured';
@@ -409,21 +444,16 @@
             isEn: st.lang === 'en',
             formatLockTierLabel
           });
-        } else if (tiers.length > 0) {
-          lockTiersEl.innerHTML = tiers.map((tier) => `
-            <button type="button" class="filter-pill ${Number(tier.days) === curDays ? 'active' : ''}" data-action="select-earn-lock" data-days="${Number(tier.days)}">${escapeHtml(formatLockTierLabel(tier))}</button>
-          `).join('');
         } else {
-          lockTiersEl.innerHTML = `<span style="font-size:11.5px;color:var(--text-muted);">--</span>`;
+          lockTiersEl.innerHTML = tiers.length > 0
+            ? tiers.map((tier) => `<button type="button" class="filter-pill ${Number(tier.days) === curDays ? 'active' : ''}" data-action="select-earn-lock" data-days="${Number(tier.days)}">${escapeHtml(formatLockTierLabel(tier))}</button>`).join('')
+            : `<span style="font-size:11.5px;color:var(--text-muted);">--</span>`;
         }
       } else {
         lockRow.classList.add('hidden');
         if (fw && typeof fw.mountEarnStakeSheetPanel === 'function') {
           fw.mountEarnStakeSheetPanel(lockTiersEl, { mode: 'lock-tiers', tiers: [], isEn: st.lang === 'en' });
         } else {
-          if (fw && typeof fw.render === 'function') {
-            try { fw.render(null, lockTiersEl); } catch (_) {}
-          }
           lockTiersEl.innerHTML = '';
         }
       }
@@ -523,9 +553,6 @@
       if (fw && typeof fw.mountEarnStakeSheetPanel === 'function') {
         fw.mountEarnStakeSheetPanel(rec, { mode: 'receipt', receipt: null, isEn: st.lang === 'en' });
       } else {
-        if (fw && typeof fw.render === 'function') {
-          try { fw.render(null, rec); } catch (_) {}
-        }
         rec.innerHTML = '';
       }
     }

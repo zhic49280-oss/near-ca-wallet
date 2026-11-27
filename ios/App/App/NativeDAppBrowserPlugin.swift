@@ -33,7 +33,6 @@ public class NativeDAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin, WKNavigationD
     private var urlLabel: UILabel?
     private var backBtn: UIButton?
     private var forwardBtn: UIButton?
-    private var injectedScriptSource: String = ""
 
     private func isAllowedDAppUrl(_ url: URL?) -> Bool {
         guard let url = url, let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased() else {
@@ -68,7 +67,6 @@ public class NativeDAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin, WKNavigationD
             return
         }
         let script = call.getString("injectedScript") ?? ""
-        self.injectedScriptSource = script
 
         DispatchQueue.main.async {
             self.teardownOverlayOnly()
@@ -291,9 +289,6 @@ public class NativeDAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin, WKNavigationD
     }
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if !injectedScriptSource.isEmpty {
-            webView.evaluateJavaScript(injectedScriptSource, completionHandler: nil)
-        }
         syncNavigationChrome(webView)
     }
 

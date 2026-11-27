@@ -22,6 +22,8 @@
   <string>21</string>
   <key>LSRequiresIPhoneOS</key>
   <true/>
+  <key>CADisableMinimumFrameDurationOnPhone</key>
+  <true/>
   <key>NSFaceIDUsageDescription</key>
   <string>需要使用 Face ID / Touch ID 验证交易签名与保护助记词安全</string>
   <key>NSCameraUsageDescription</key>

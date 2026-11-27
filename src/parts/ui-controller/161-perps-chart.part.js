@@ -84,15 +84,11 @@
       ? ((high - low) / open) * 100
       : null;
     const cls = diff !== null ? (diff >= 0 ? 'text-emerald' : 'text-rose') : '';
-    const diffStr = diff === null
-      ? '--'
-      : (diff === 0 ? '0.00' : `${diff > 0 ? '+' : '-'}${formatPerpPx(Math.abs(diff))}`);
+    const diffStr = diff === null ? '--' : (diff === 0 ? '0.00' : `${diff > 0 ? '+' : '-'}${formatPerpPx(Math.abs(diff))}`);
     const pctStr = pct === null ? '--' : `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
     const ampStr = amp === null ? '--' : `${amp.toFixed(2)}%`;
     const volQty = Number.isFinite(Number(c.v)) && Number(c.v) > 0 ? formatBal(c.v, 2) : '--';
-    const turnover = Number.isFinite(Number(c.v)) && Number(c.v) > 0 && Number.isFinite(close) && close > 0
-      ? formatCompactUsd(Number(c.v) * close)
-      : '--';
+    const turnover = Number.isFinite(Number(c.v)) && Number(c.v) > 0 && Number.isFinite(close) && close > 0 ? formatCompactUsd(Number(c.v) * close) : '--';
     const rows = [
       [t('时间', 'Time'), formatPerpCandleTime(c.t) || `#${selectedIdx + 1}`, ''],
       [t('开盘', 'Open'), formatPerpPx(c.o), ''],
@@ -107,12 +103,8 @@
     ];
     el.innerHTML = `<div class="perp-okx-hud-float is-dock-${dockSide}">` +
       rows.map(([lbl, val, rCls]) =>
-        `<div class="perp-okx-hud-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">` +
-        `<span class="perp-okx-hud-lbl">${escapeHtml(lbl)}</span>` +
-        `<span class="perp-okx-hud-val tabular-nums ${rCls}" style="font-variant-numeric:tabular-nums;text-align:right;">${escapeHtml(val)}</span>` +
-        `</div>`
-      ).join('') +
-      `</div>`;
+        `<div class="perp-okx-hud-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><span class="perp-okx-hud-lbl">${escapeHtml(lbl)}</span><span class="perp-okx-hud-val tabular-nums ${rCls}" style="font-variant-numeric:tabular-nums;text-align:right;">${escapeHtml(val)}</span></div>`
+      ).join('') + `</div>`;
   }
 
   let _perpMaCache = {
@@ -435,7 +427,27 @@
     const host = $('perp-chart-svg');
     if (!host || (host.dataset && host.dataset.gesturesBound === '1') || typeof host.addEventListener !== 'function') return;
     if (host.dataset) host.dataset.gesturesBound = '1';
-    if (host.style) host.style.cursor = 'grab';
+    if (host.style) {
+      host.style.cursor = 'grab';
+      if (!host.style.overflow) host.style.overflow = 'hidden';
+    }
+
+    let cachedRect = { width: 320, left: 0 };
+    const refreshHostRect = () => {
+      if (typeof host.getBoundingClientRect !== 'function') return cachedRect;
+      const r = host.getBoundingClientRect();
+      if (r && r.width > 0) {
+        cachedRect = { width: r.width, left: Number(r.left) || 0 };
+      }
+      return cachedRect;
+    };
+    refreshHostRect();
+    if (typeof ResizeObserver === 'function') {
+      try {
+        const ro = new ResizeObserver(() => { refreshHostRect(); });
+        ro.observe(host);
+      } catch (_) {}
+    }
 
     let mode = null; // 'pan' | 'scrub' | 'pinch' | 'scroll'
     let startX = 0;
@@ -446,29 +458,75 @@
     let longPressTimer = null;
     let rafId = 0;
     let scrubRafId = 0;
+    let panTransformRafId = 0;
+    let pendingPanPx = 0;
+    let panBoundaryCrossed = false;
     let mouseDown = false;
     let mouseDragged = false;
     let mouseStartX = 0;
     let mouseStartOffset = 0;
 
+    const setChartPanTransform = (px) => {
+      const target = (host.firstElementChild && host.firstElementChild.style) ? host.firstElementChild : host;
+      if (!target || !target.style) return;
+      if (px === 0) {
+        target.style.transform = '';
+        target.style.willChange = '';
+      } else {
+        target.style.willChange = 'transform';
+        target.style.transform = `translate3d(${px.toFixed(1)}px, 0, 0)`;
+      }
+    };
+
+    const schedulePanTransform = (px) => {
+      pendingPanPx = px;
+      if (typeof requestAnimationFrame !== 'function') {
+        setChartPanTransform(pendingPanPx);
+        return;
+      }
+      if (panTransformRafId) return;
+      panTransformRafId = requestAnimationFrame(() => {
+        panTransformRafId = 0;
+        setChartPanTransform(pendingPanPx);
+      });
+    };
+
+    const resetPanTransform = () => {
+      if (panTransformRafId && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(panTransformRafId);
+        panTransformRafId = 0;
+      }
+      pendingPanPx = 0;
+      setChartPanTransform(0);
+    };
+
     const applyPanDelta = (dx, baseOffset) => {
       const st = getState();
-      const rect = typeof host.getBoundingClientRect === 'function' ? host.getBoundingClientRect() : null;
-      const width = (rect && rect.width) || 320;
+      const width = cachedRect.width || 320;
       const visCount = Number(st.perp.chartVisibleCount || 48);
-      const candleDelta = Math.round((dx / width) * visCount);
+      const pxPerCandle = width / Math.max(1, visCount);
+      const candleDelta = Math.round(dx / pxPerCandle);
       const total = Array.isArray(st.perp.candles) ? st.perp.candles.length : 0;
       const maxOff = Math.max(0, total - Math.min(total, visCount));
       const nextOff = Math.max(0, Math.min(maxOff, baseOffset + candleDelta));
       if (nextOff !== st.perp.chartOffsetFromEnd) {
         st.perp.chartOffsetFromEnd = nextOff;
         st.perp.inspectedCandleIdx = null;
+        panBoundaryCrossed = true;
+        resetPanTransform();
         scheduleChartRedraw();
+      } else {
+        const appliedCandles = nextOff - baseOffset;
+        let residualPx = dx - appliedCandles * pxPerCandle;
+        if ((nextOff === 0 && residualPx < 0) || (nextOff === maxOff && residualPx > 0)) {
+          residualPx = 0;
+        }
+        schedulePanTransform(residualPx);
       }
     };
 
     const clientXToCandleIdx = (clientX) => {
-      const rect = typeof host.getBoundingClientRect === 'function' ? host.getBoundingClientRect() : null;
+      const rect = cachedRect.width > 0 ? cachedRect : refreshHostRect();
       const list = getVisiblePerpCandles(getState().perp && getState().perp.candles);
       if (!rect || !rect.width || list.length === 0) return null;
       const rel = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
@@ -515,6 +573,7 @@
 
     host.addEventListener('touchstart', (e) => {
       if (!e.touches) return;
+      refreshHostRect();
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
       const st = getState();
       if (e.touches.length === 2) {
@@ -528,6 +587,7 @@
       }
       if (e.touches.length === 1) {
         mode = null;
+        panBoundaryCrossed = false;
         startX = e.touches[0].clientX;
         startY = e.touches[0].clientY;
         startOffset = Number(st.perp.chartOffsetFromEnd || 0);
@@ -594,6 +654,11 @@
     const endTouch = () => {
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
       if (mode === 'scrub') _lastLongPressAt = Date.now();
+      if (mode === 'pan') {
+        resetPanTransform();
+        if (panBoundaryCrossed) scheduleChartRedraw();
+      }
+      panBoundaryCrossed = false;
       mode = null;
     };
     host.addEventListener('touchend', endTouch, { passive: true });
@@ -601,9 +666,11 @@
 
     host.addEventListener('mousedown', (e) => {
       if (!e || (e.button !== undefined && e.button !== 0)) return;
+      refreshHostRect();
       const st = getState();
       mouseDown = true;
       mouseDragged = false;
+      panBoundaryCrossed = false;
       mouseStartX = e.clientX;
       mouseStartOffset = Number((st.perp && st.perp.chartOffsetFromEnd) || 0);
       if (host.style) host.style.cursor = 'grabbing';
@@ -627,6 +694,9 @@
         if (mouseDragged) {
           _lastLongPressAt = Date.now();
           mouseDragged = false;
+          resetPanTransform();
+          if (panBoundaryCrossed) scheduleChartRedraw();
+          panBoundaryCrossed = false;
         }
       });
     }
