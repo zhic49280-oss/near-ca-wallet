@@ -215,6 +215,12 @@
       closeTxFlowModal();
     }
     if (typeof stopQrScannerStream === 'function') stopQrScannerStream();
+    const contactsSheet = $('sheet-contacts');
+    if (contactsSheet && contactsSheet.classList && contactsSheet.classList.contains('open') && _contactsPickerTarget === 'send') {
+      _contactsPickerTarget = null;
+      openSheet('sheet-send');
+      return;
+    }
     const st = getState();
     if (st && st.limit) st.limit.pickerSide = null;
     if (typeof _dappSession !== 'undefined' && _dappSession && _dappSession.pendingApproval && typeof _dappSession.pendingApproval.resolve === 'function') {
@@ -225,7 +231,6 @@
         _dappSession.pendingApproval = null;
         pendingDapp(false);
       }
-      return;
     }
     const dappApproveSheet = $('sheet-dapp-approve');
     if (dappApproveSheet && dappApproveSheet.classList && dappApproveSheet.classList.contains('open') && typeof rejectDAppApproval === 'function') {

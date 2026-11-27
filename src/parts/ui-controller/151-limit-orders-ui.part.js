@@ -199,7 +199,10 @@
         st.limit.targetRate = formatPlainDecimalRate(liveRate);
         st.limit.snappedPoint = null;
         const { inverted } = resolveLimitPriceOrientation(sellToken, buyToken);
-        if ($('limit-target-rate')) $('limit-target-rate').value = toLimitDisplayPrice(st.limit.targetRate, inverted);
+        const rateEl = $('limit-target-rate');
+        if (rateEl && (typeof document === 'undefined' || document.activeElement !== rateEl)) {
+          rateEl.value = toLimitDisplayPrice(st.limit.targetRate, inverted);
+        }
       }
     }
     renderLimitOrderCalculations();
@@ -264,10 +267,10 @@
         const wasLoading = Boolean(st.limit.ordersLoading);
         st.limit.ordersLoading = false;
         if (wasLoading) renderLimitOrdersList();
-      }
-      if (refreshBtn && showFeedback) {
-        refreshBtn.disabled = false;
-        refreshBtn.textContent = prevRefreshText || t('刷新', 'Refresh');
+        if (refreshBtn && showFeedback) {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = prevRefreshText || t('刷新', 'Refresh');
+        }
       }
     }
   }
@@ -675,14 +678,34 @@
       }
 
       const sellRaw = contracts.toBaseUnits(String(st.limit.amountIn), sellToken.decimals);
-      const computeExactBuyRaw = (amtStr, rateStr, outDecimals) => {
-        const cleanA = String(amtStr || '0').trim();
-        const cleanR = String(rateStr || '0').trim();
-        if (!/^\d+(\.\d+)?$/.test(cleanA) || !/^\d+(\.\d+)?$/.test(cleanR)) {
-          return contracts.toBaseUnits((Number(cleanA) * Number(cleanR)).toFixed(Math.min(18, outDecimals)), outDecimals);
+      const toPlainDec = (val) => {
+        const s = String(val ?? '').trim();
+        if (!s) return null;
+        if (/^\d+(\.\d+)?$/.test(s)) return s;
+        const m = s.match(/^(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/);
+        if (!m) {
+          const n = Number(s);
+          if (!Number.isFinite(n) || n < 0) return null;
+          return toPlainDec(n.toString());
         }
-        const [aInt, aFrac = ''] = cleanA.split('.');
-        const [rInt, rFrac = ''] = cleanR.split('.');
+        const intPart = m[1];
+        const fracPart = m[2] || '';
+        const exp = Number(m[3]);
+        if (!Number.isFinite(exp)) return null;
+        const digits = intPart + fracPart;
+        const dotPos = intPart.length + exp;
+        if (dotPos <= 0) return `0.${'0'.repeat(-dotPos)}${digits}`;
+        if (dotPos >= digits.length) return `${digits}${'0'.repeat(dotPos - digits.length)}`;
+        return `${digits.slice(0, dotPos)}.${digits.slice(dotPos)}`;
+      };
+      const computeExactBuyRaw = (amtStr, rateStr, outDecimals) => {
+        const plainA = toPlainDec(amtStr);
+        const plainR = toPlainDec(rateStr);
+        if (plainA === null || plainR === null) {
+          throw new Error(t('请输入有效的数量和目标价格', 'Enter a valid amount and target price'));
+        }
+        const [aInt, aFrac = ''] = plainA.split('.');
+        const [rInt, rFrac = ''] = plainR.split('.');
         const scale = BigInt(aFrac.length + rFrac.length);
         const prod = BigInt((aInt + aFrac).replace(/^0+/, '') || '0') * BigInt((rInt + rFrac).replace(/^0+/, '') || '0');
         const outDec = BigInt(outDecimals);

@@ -95,6 +95,17 @@
     }
   }
 
+  let _lastMidsEvalKey = '';
+  const unrefTimer = (tm) => {
+    if (tm && typeof tm.unref === 'function') tm.unref();
+    return tm;
+  };
+  const finishPerpStepper = (stepper, ok, msg, txHash = '') => {
+    if (!stepper) return;
+    stepper.setStep(0, ok ? 'done' : 'error', ok ? { txHash, chain: 'hype' } : { error: msg });
+    stepper.finish(ok, msg);
+  };
+
   function flushAllMidsRender() {
     const m = getSelectedPerpMarket();
     const nextPx = m && Number(m.markPx);
@@ -102,7 +113,13 @@
       const fmtPxStr = `$${formatPerpPx(nextPx)}`;
       if ($('perp-mark-px')) $('perp-mark-px').textContent = fmtPxStr;
       if ($('perp-ob-mid-badge')) $('perp-ob-mid-badge').textContent = fmtPxStr;
-      evaluatePerpOrderUI(false);
+      const p = (getState() && getState().perp) || {};
+      const hasInp = p.marginInput || p.limitPriceInput || p.tpInput || p.slInput;
+      const evalKey = [p.selectedCoin, p.side, p.orderType, p.inputUnit, p.leverage, p.marginInput, p.limitPriceInput, p.tpInput, p.slInput, p.reduceOnly ? 1 : 0, hasInp ? fmtPxStr : ''].join('|');
+      if (evalKey !== _lastMidsEvalKey) {
+        _lastMidsEvalKey = evalKey;
+        evaluatePerpOrderUI(false);
+      }
     }
   }
 
@@ -131,13 +148,10 @@
       return;
     }
     if (_perpMidsRenderTimer) return;
-    _perpMidsRenderTimer = setTimeout(() => {
+    _perpMidsRenderTimer = unrefTimer(setTimeout(() => {
       _perpMidsRenderTimer = null;
       runFrame();
-    }, Math.max(20, 150 - elapsed));
-    if (_perpMidsRenderTimer && typeof _perpMidsRenderTimer.unref === 'function') {
-      _perpMidsRenderTimer.unref();
-    }
+    }, Math.max(20, 150 - elapsed)));
   }
 
   function flushOrderbookRenderRaf() {
@@ -187,12 +201,11 @@
             }
           } catch (_) {}
           if (_perpWsPingTimer) clearInterval(_perpWsPingTimer);
-          _perpWsPingTimer = setInterval(() => {
+          _perpWsPingTimer = unrefTimer(setInterval(() => {
             if (_perpWs === ws && ws.readyState === 1) {
               try { ws.send(JSON.stringify({ method: 'ping' })); } catch (_) {}
             }
-          }, 25_000);
-          if (_perpWsPingTimer && typeof _perpWsPingTimer.unref === 'function') _perpWsPingTimer.unref();
+          }, 25_000));
         };
         ws.onmessage = (evt) => {
           const s = getState();
@@ -294,8 +307,7 @@
             const bg = (typeof document !== 'undefined' && document.hidden) || (typeof isAppInBackground === 'function' && isAppInBackground());
             if (s.activeTab === 'perp' && s.perp.subView === 'trade' && !bg) {
               const delay = Math.min(15_000, 1500 * Math.pow(2, Math.min(3, _perpWsAttempt++)));
-              _perpWsReconnectTimer = setTimeout(connectWs, delay);
-              if (_perpWsReconnectTimer && typeof _perpWsReconnectTimer.unref === 'function') _perpWsReconnectTimer.unref();
+              _perpWsReconnectTimer = unrefTimer(setTimeout(connectWs, delay));
             }
           }
         };
@@ -316,13 +328,12 @@
     };
 
     if (typeof updatePerpFundingCountdown === 'function') updatePerpFundingCountdown();
-    _perpFundingTickTimer = setInterval(() => {
+    _perpFundingTickTimer = unrefTimer(setInterval(() => {
       if (!isPerpTradeActive()) return;
       if (typeof updatePerpFundingCountdown === 'function') updatePerpFundingCountdown();
-    }, 1000);
-    if (_perpFundingTickTimer && typeof _perpFundingTickTimer.unref === 'function') _perpFundingTickTimer.unref();
+    }, 1000));
 
-    _perpObFallbackTimer = setInterval(async () => {
+    _perpObFallbackTimer = unrefTimer(setInterval(async () => {
       if (!isPerpTradeActive()) return;
       if (_perpWs && _perpWs.readyState === 1) return;
       if (_perpObFallbackInFlight) return;
@@ -340,18 +351,16 @@
       } finally {
         _perpObFallbackInFlight = false;
       }
-    }, 1500);
-    if (_perpObFallbackTimer && typeof _perpObFallbackTimer.unref === 'function') _perpObFallbackTimer.unref();
+    }, 1500));
 
-    _perpPollTimer = setInterval(() => {
+    _perpPollTimer = unrefTimer(setInterval(() => {
       if (!isPerpTradeActive()) return;
       if (typeof updatePerpFundingCountdown === 'function') updatePerpFundingCountdown();
       if (!_perpWs || _perpWs.readyState !== 1) {
         refreshPerpOrderbookAndCandlesAsync().catch(() => {});
         refreshPerpDataAsync(false).catch(() => {});
       }
-    }, 4500);
-    if (_perpPollTimer && typeof _perpPollTimer.unref === 'function') _perpPollTimer.unref();
+    }, 4500));
   }
 
   function pausePerpRealtime() {
@@ -445,10 +454,7 @@
         formatPerpPx
       });
     } else {
-      const html = filtered.slice(0, 120).map((m) => {
-        const pair = m.pairLabel || formatPerpDisplayPair(m.name);
-        return `<div class="perp-mkt-row" data-perp-coin="${escapeHtml(m.name)}">${escapeHtml(pair)}</div>`;
-      }).join('');
+      const html = filtered.slice(0, 120).map((m) => `<div class="perp-mkt-row" data-perp-coin="${escapeHtml(m.name)}">${escapeHtml(m.pairLabel || formatPerpDisplayPair(m.name))}</div>`).join('');
       setHtmlIfChanged(listEl, html);
     }
   }
@@ -526,8 +532,20 @@
     const oTypeVal = st.perp.orderType || 'market';
     const isLimitOrder = oTypeVal === 'limit' || oTypeVal === 'post_only';
     const refPx = isLimitOrder ? (Number(st.perp.limitPriceInput) || Number(market.markPx) || 0) : (Number(market.markPx) || 0);
-    const tpNum = st.perp.tpInput ? Number(st.perp.tpInput) : null;
-    const slNum = st.perp.slInput ? Number(st.perp.slInput) : null;
+    const tpStr = String(st.perp.tpInput || '').trim();
+    const slStr = String(st.perp.slInput || '').trim();
+    const tpParsed = tpStr ? Number(tpStr) : null;
+    const slParsed = slStr ? Number(slStr) : null;
+    if (tpStr && (!Number.isFinite(tpParsed) || tpParsed <= 0)) {
+      showToast(t('止盈价必须为大于 0 的有效数字', 'Take profit price must be a valid number greater than 0'));
+      return;
+    }
+    if (slStr && (!Number.isFinite(slParsed) || slParsed <= 0)) {
+      showToast(t('止损价必须为大于 0 的有效数字', 'Stop loss price must be a valid number greater than 0'));
+      return;
+    }
+    const tpNum = tpParsed;
+    const slNum = slParsed;
     if (!st.perp.reduceOnly && refPx > 0) {
       if (tpNum && ((isBuy && tpNum <= refPx) || (!isBuy && tpNum >= refPx))) {
         showToast(t('止盈价方向有误（多单需高于开仓价，空单需低于开仓价）', 'Invalid TP price direction for position side'));
@@ -604,18 +622,12 @@
           `主单已成交/挂单，但止盈止损设置失败 (${safeTpslErr})，请在下方持仓卡片重设 TP/SL`,
           `Main order submitted, but TP/SL failed (${safeTpslErr}). Please reset TP/SL on the position card below.`
         );
-        if (stepper) {
-          stepper.setStep(0, 'done', { txHash: (orderRes && orderRes.txHash) || '', chain: 'hype' });
-          stepper.finish(true, warnMsg);
-        }
+        finishPerpStepper(stepper, true, warnMsg, (orderRes && orderRes.txHash) || '');
         resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
         showToast(`⚠️ ${warnMsg}`);
         await refreshPerpDataAsync(false).catch(() => {});
       } else {
-        if (stepper) {
-          stepper.setStep(0, 'done', { txHash: (orderRes && orderRes.txHash) || '', chain: 'hype' });
-          stepper.finish(true, t('合约委托已提交', 'Perp order submitted'));
-        }
+        finishPerpStepper(stepper, true, t('合约委托已提交', 'Perp order submitted'), (orderRes && orderRes.txHash) || '');
         resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
         showToast(`✅ ${t('合约委托已提交', 'Perp order submitted')}`);
         await refreshPerpDataAsync(false).catch(() => {});
@@ -625,10 +637,7 @@
       st.perp.errorMsg = /does not exist/i.test(rawMsg)
         ? t('合约账户尚未激活，请先充值 USDC', 'Perp account not activated; please deposit USDC first')
         : formatPerpError(err, '下单失败，请稍后重试', 'Order failed. Please try again.');
-      if (stepper) {
-        stepper.setStep(0, 'error', { error: st.perp.errorMsg });
-        stepper.finish(false, st.perp.errorMsg);
-      }
+      finishPerpStepper(stepper, false, st.perp.errorMsg);
       showToast(st.perp.errorMsg);
     } finally {
       st.perp.submitting = false;
@@ -682,18 +691,12 @@
       }
       if (!market) throw new Error(t('未找到对应合约市场', 'Market metadata unavailable'));
       const closeRes = await hl.closeHlPositionMarket({ wallet, market, position: pos });
-      if (stepper) {
-        stepper.setStep(0, 'done', { txHash: (closeRes && closeRes.txHash) || '', chain: 'hype' });
-        stepper.finish(true, `${formatPerpDisplayPair(coin)} ${t('已市价平仓', 'position closed')}`);
-      }
+      finishPerpStepper(stepper, true, `${formatPerpDisplayPair(coin)} ${t('已市价平仓', 'position closed')}`, (closeRes && closeRes.txHash) || '');
       showToast(`✅ ${formatPerpDisplayPair(coin)} ${t('已市价平仓', 'position closed')}`);
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
       const msg = formatPerpError(err, '平仓失败，请稍后重试', 'Close failed. Please try again.');
-      if (stepper) {
-        stepper.setStep(0, 'error', { error: msg });
-        stepper.finish(false, msg);
-      }
+      finishPerpStepper(stepper, false, msg);
       showToast(msg);
     } finally {
       _perpTradeActionBusy = false;
@@ -960,18 +963,12 @@
       }
       if (!market) throw new Error(t('未找到对应合约市场', 'Market metadata unavailable'));
       const cancelRes = await hl.cancelHlOrder({ wallet, assetIndex: market.index, oid: Number(oid) });
-      if (stepper) {
-        stepper.setStep(0, 'done', { txHash: (cancelRes && cancelRes.txHash) || '', chain: 'hype' });
-        stepper.finish(true, t('已撤单', 'Order cancelled'));
-      }
+      finishPerpStepper(stepper, true, t('已撤单', 'Order cancelled'), (cancelRes && cancelRes.txHash) || '');
       showToast(t('已撤单', 'Order cancelled'));
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
       const errMsg = formatPerpError(err, '撤单失败，请稍后重试', 'Cancel failed. Please try again.');
-      if (stepper) {
-        stepper.setStep(0, 'error', { error: errMsg });
-        stepper.finish(false, errMsg);
-      }
+      finishPerpStepper(stepper, false, errMsg);
       showToast(errMsg);
     } finally {
       _perpTradeActionBusy = false;
@@ -1021,18 +1018,12 @@
       if (stepper) stepper.setStep(0, 'active');
       await ensureEthersLoaded();
       const txRes = await hl.transferHlUsdClass({ wallet, amount: amt, toPerp: true });
-      if (stepper) {
-        stepper.setStep(0, 'done', { txHash: (txRes && txRes.txHash) || '', chain: 'hype' });
-        stepper.finish(true, t('已划转至合约账户', 'Moved to Perp account'));
-      }
+      finishPerpStepper(stepper, true, t('已划转至合约账户', 'Moved to Perp account'), (txRes && txRes.txHash) || '');
       showToast(`✅ ${t('已划转至合约账户', 'Moved to Perp account')}`);
       await refreshPerpDataAsync(false).catch(() => {});
     } catch (err) {
       const errMsg = formatPerpError(err, '划转失败，请稍后重试', 'Transfer failed. Please try again.');
-      if (stepper) {
-        stepper.setStep(0, 'error', { error: errMsg });
-        stepper.finish(false, errMsg);
-      }
+      finishPerpStepper(stepper, false, errMsg);
       showToast(errMsg);
     } finally {
       _perpTradeActionBusy = false;

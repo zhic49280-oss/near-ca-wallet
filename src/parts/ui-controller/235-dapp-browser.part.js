@@ -121,26 +121,12 @@
         connected: connectedList,
         isEn: getState().lang === 'en'
       });
-      return;
+    } else {
+      sec.classList.toggle('hidden', connectedList.length === 0);
+      sec.innerHTML = connectedList
+        .map((item) => `<div class="dapp-connected-item" data-origin="${escapeHtml(item.origin)}"><span>${escapeHtml(item.host)}</span><span>${escapeHtml(item.badges)}</span></div>`)
+        .join('');
     }
-    if (byOrigin.size === 0) {
-      sec.classList.add('hidden');
-      if (fw && typeof fw.render === 'function') {
-        try { fw.render(null, sec); } catch (_) {}
-      }
-      sec.innerHTML = '';
-      return;
-    }
-    sec.classList.remove('hidden');
-    sec.innerHTML = connectedList.map(({ origin, host, badges }) => `
-      <div class="dapp-connected-row">
-        <div style="min-width:0;flex:1;">
-          <div class="mono truncate" style="font-size:12px;font-weight:700;color:#fff;">${escapeHtml(host)}</div>
-          <div style="font-size:10px;color:var(--near-emerald);">${escapeHtml(badges)}</div>
-        </div>
-        <button type="button" class="btn-danger" style="padding:4px 8px;font-size:10.5px;" data-action="disconnect-dapp-origin" data-origin="${escapeHtml(origin)}">${escapeHtml(t('断开', 'Disconnect'))}</button>
-      </div>
-    `).join('');
   }
 
   function renderDAppCatalog() {
@@ -225,8 +211,13 @@
         return;
       }
 
-      if (_dappSession.nativeOpen) {
+      const wasNativeOpen = Boolean(_dappSession.nativeOpen);
+      if (wasNativeOpen) {
         await setNativeBrowserOverlayVisible(false);
+        if (!_dappSession.nativeOpen) {
+          resolve(false);
+          return;
+        }
       }
 
       _dappSession.pendingApproval = {

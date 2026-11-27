@@ -154,8 +154,14 @@
     _sendTargetEvmChain = EVM_CHAIN_KEYS.includes(initialChain) ? initialChain : 'eth';
     $('send-evm-chain-row')?.classList.add('hidden');
 
-    if ($('send-recipient-input')) $('send-recipient-input').value = opts.recipient || '';
-    if ($('send-amount-input')) $('send-amount-input').value = '';
+    const recInp = $('send-recipient-input');
+    if (recInp && (typeof document === 'undefined' || document.activeElement !== recInp)) {
+      recInp.value = opts.recipient || '';
+    }
+    const amtInp = $('send-amount-input');
+    if (amtInp && (typeof document === 'undefined' || document.activeElement !== amtInp)) {
+      amtInp.value = '';
+    }
     if ($('send-detected-net')) $('send-detected-net').textContent = '';
     $('send-route-preview')?.classList.add('hidden');
     if (typeof resetSendTxReceipt === 'function') resetSendTxReceipt();
@@ -266,7 +272,7 @@
     const sym = ($('send-asset-select')?.value || '').toUpperCase();
     populateSendSourceSelect(sym);
     const amtInput = $('send-amount-input');
-    if (amtInput) amtInput.value = '';
+    if (amtInput && (typeof document === 'undefined' || document.activeElement !== amtInput)) amtInput.value = '';
     if (typeof resetSendTxReceipt === 'function') resetSendTxReceipt();
     updateSendAvailabilityUI();
     const asset = getSelectedSendAsset();
@@ -296,10 +302,13 @@
   }
 
   function updateSendAvailabilityUI() {
-    if (typeof resetFormFields === 'function') {
-      resetFormFields(['send-amount-input']);
-    } else if ($('send-amount-input')) {
-      $('send-amount-input').value = '';
+    const amtInpUi = $('send-amount-input');
+    if (!amtInpUi || typeof document === 'undefined' || document.activeElement !== amtInpUi) {
+      if (typeof resetFormFields === 'function') {
+        resetFormFields(['send-amount-input']);
+      } else if (amtInpUi) {
+        amtInpUi.value = '';
+      }
     }
     const asset = getSelectedSendAsset();
     const bal = getSendSourceAvailable();
@@ -377,7 +386,7 @@
   function applySendMaxSpendableFix() {
     const feePlan = handleSendAmountInput();
     const inp = $('send-amount-input');
-    if (inp && feePlan && feePlan.maxSpendableStr && feePlan.maxSpendableStr !== '0') {
+    if (inp && (typeof document === 'undefined' || document.activeElement !== inp) && feePlan && feePlan.maxSpendableStr && feePlan.maxSpendableStr !== '0') {
       inp.value = feePlan.maxSpendableStr;
       $('send-gas-fix-banner')?.classList.add('hidden');
       handleSendAmountInput();
@@ -400,7 +409,9 @@
 
     if (!isNativeSendAsset(asset)) {
       const rawUnits = getWalletTokenRawBaseUnits(wallet, asset.blockchain, asset.contractAddress);
-      inp.value = formatMaxDecimalString(bal, asset.decimals ?? 6, rawUnits);
+      if (typeof document === 'undefined' || document.activeElement !== inp) {
+        inp.value = formatMaxDecimalString(bal, asset.decimals ?? 6, rawUnits);
+      }
       handleSendAmountInput();
       return;
     }
@@ -431,7 +442,9 @@
         gasReserve: gasPlan.gasBuffer || 0,
         exactFeeBaseUnits: gasPlan.exactFeeBaseUnits
       });
-      inp.value = maxInfo.maxAmountStr || '0';
+      if (inp && (typeof document === 'undefined' || document.activeElement !== inp)) {
+        inp.value = maxInfo.maxAmountStr || '0';
+      }
       handleSendAmountInput();
     } finally {
       if (maxBtn) maxBtn.disabled = false;

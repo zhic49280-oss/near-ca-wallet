@@ -132,20 +132,7 @@
           const isFull = Boolean(k.access_key && k.access_key.permission === 'FullAccess');
           const isCurrent = pk === creds.publicKeyStr || (creds.publicKeyHandleStr && pk === creds.publicKeyHandleStr);
           const canDelete = !isCurrent && (!isFull || fullCount > 1);
-          return `
-            <div class="ios-glass-card flex items-center justify-between gap-2" style="padding:10px 12px;">
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-1" style="flex-wrap:wrap;">
-                  <span class="badge ${isFull ? 'badge-emerald' : 'badge-cyan'}">${isFull ? t('完全权限密钥', 'Full Key') : t('应用授权密钥', 'App Key')}</span>
-                  ${isCurrent ? `<span class="ca-badge">${t('当前使用', 'In Use')}</span>` : ''}
-                </div>
-                <div class="mono" style="font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;margin-top:4px;">${escapeHtml(shortenAddr(pk, 14, 8))}</div>
-              </div>
-              ${canDelete
-                ? `<button type="button" class="btn-danger" data-action="delete-near-key" data-pk="${escapeHtml(pk)}">${t('删除', 'Delete')}</button>`
-                : ''}
-            </div>
-          `;
+          return `<div class="ios-glass-card flex items-center justify-between gap-2" style="padding:10px 12px;"><div class="min-w-0 flex-1"><div class="flex items-center gap-1" style="flex-wrap:wrap;"><span class="badge ${isFull ? 'badge-emerald' : 'badge-cyan'}">${isFull ? t('完全权限密钥', 'Full Key') : t('应用授权密钥', 'App Key')}</span>${isCurrent ? `<span class="ca-badge">${t('当前使用', 'In Use')}</span>` : ''}</div><div class="mono" style="font-size:11px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;margin-top:4px;">${escapeHtml(shortenAddr(pk, 14, 8))}</div></div>${canDelete ? `<button type="button" class="btn-danger" data-action="delete-near-key" data-pk="${escapeHtml(pk)}">${t('删除', 'Delete')}</button>` : ''}</div>`;
         }).join('');
       }
     } catch (e) {
@@ -294,6 +281,7 @@
   }
 
   async function bindOrReplacePrlMnemonicUI() {
+    if (_nearKeyActionBusy) return;
     const st = getState();
     const crypto = getCrypto();
     const wallet = st.getActiveWallet();
@@ -305,6 +293,12 @@
       return;
     }
     const cleanPhrase = check.words.join(' ');
+    _nearKeyActionBusy = true;
+    const btn = typeof document !== 'undefined'
+      ? document.querySelector('#sheet-wallet-addresses button[onclick*="bindOrReplacePrlMnemonicUI"], #sheet-wallet-addresses button.btn-primary')
+      : null;
+    const prevBtnTxt = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = t('处理中...', 'Processing...'); }
     try {
       const derivedPrl = await crypto.derivePearlFromSeedAsync(cleanPhrase, "m/86'/808276'/0'/0/0", true);
       if (!derivedPrl || !derivedPrl.address) {
@@ -351,10 +345,14 @@
       refreshAllBalancesAsync(true);
     } catch (e) {
       showToast(toUserFriendlyError(e, 'PRL 账户绑定失败', 'Failed to bind PRL account'));
+    } finally {
+      _nearKeyActionBusy = false;
+      if (btn) { btn.disabled = false; btn.textContent = prevBtnTxt; }
     }
   }
 
   async function restoreDefaultPrlAccountUI() {
+    if (_nearKeyActionBusy) return;
     const st = getState();
     const crypto = getCrypto();
     const wallet = st.getActiveWallet();
@@ -368,6 +366,10 @@
       showToast(t('当前已是默认派生 PRL 账户', 'Already using default derived PRL account'));
       return;
     }
+    _nearKeyActionBusy = true;
+    const btn = $('btn-prl-restore-default');
+    const prevBtnTxt = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = t('处理中...', 'Processing...'); }
     try {
       const oldPrlBal = await checkWalletPrlBalanceBeforeOverwriteAsync(wallet);
       if (oldPrlBal === null || oldPrlBal > 0) {
@@ -404,6 +406,9 @@
       refreshAllBalancesAsync(true);
     } catch (e) {
       showToast(toUserFriendlyError(e, '恢复默认 PRL 账户失败', 'Failed to restore default PRL account'));
+    } finally {
+      _nearKeyActionBusy = false;
+      if (btn) { btn.disabled = false; btn.textContent = prevBtnTxt; }
     }
   }
 
@@ -639,15 +644,7 @@
           shortenAddr
         });
       } else {
-        addrList.innerHTML = items.map((x) => `
-          <div class="meta-row hub-addr-row">
-            <span class="meta-key">${escapeHtml(x.k)}</span>
-            <div class="flex items-center gap-2" style="flex-shrink:0;">
-              <span class="mono" style="font-size:11px;">${escapeHtml(shortenAddr(x.v, 8, 6))}</span>
-              <button type="button" class="btn-ghost-sm hub-addr-copy-btn" data-action="copy-text" data-val="${escapeHtml(x.v || '')}" data-label="${escapeHtml(x.k)}">${t('复制', 'Copy')}</button>
-            </div>
-          </div>
-        `).join('');
+        addrList.innerHTML = items.map((x) => `<div class="meta-row hub-addr-row"><span class="meta-key">${escapeHtml(x.k)}</span><div class="flex items-center gap-2" style="flex-shrink:0;"><span class="mono" style="font-size:11px;">${escapeHtml(shortenAddr(x.v, 8, 6))}</span><button type="button" class="btn-ghost-sm hub-addr-copy-btn" data-action="copy-text" data-val="${escapeHtml(x.v || '')}" data-label="${escapeHtml(x.k)}">${t('复制', 'Copy')}</button></div></div>`).join('');
       }
     }
     const isCustomPrl = Boolean(wallet.prlMnemonic && wallet.prlMnemonic !== wallet.mnemonic);

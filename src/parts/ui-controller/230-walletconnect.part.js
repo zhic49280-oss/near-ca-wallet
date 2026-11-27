@@ -58,7 +58,7 @@
       let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
         updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-        await loadScriptOnce('walletconnect.umd.min.js?v=6.88');
+        await loadScriptOnce('walletconnect.umd.min.js?v=6.89');
         sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       }
       if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -270,6 +270,11 @@
               } else {
                 preview = msgParam;
               }
+            } else if (req.method === 'eth_sign' && Array.isArray(req.params) && req.params.length > 0) {
+              const p0 = String(req.params[0] || '');
+              const p1 = String(req.params[1] || '');
+              const rawHex = (/^0x[0-9a-fA-F]{40}$/.test(p0) && p1) ? p1 : p0;
+              preview = `⚠️ ${t('危险：原始盲签 (eth_sign)', 'DANGER: Raw Blind Sign (eth_sign)')}\n${t('原始摘要', 'Raw Digest')}: ${rawHex}`;
             } else if (req.method === 'eth_sendTransaction' && Array.isArray(req.params) && req.params[0]) {
               const tx = req.params[0];
               const weiBig = parseHexBigInt(tx.value);
@@ -278,13 +283,28 @@
                 ? contractsMod.fromBaseUnits(weiBig.toString(), 18)
                 : ((typeof window !== 'undefined' && window.ethers && typeof window.ethers.formatEther === 'function')
                   ? window.ethers.formatEther(weiBig)
-                  : ((Number(weiBig) / 1e18).toFixed(6).replace(/\.?0+$/, '') || '0'));
+                  : '0');
               const cidNum = Number(String(chainIdLabel).split(':')[1] || 1);
               const chainEntry = contractsMod && contractsMod.EVM_CHAINS
                 ? Object.values(contractsMod.EVM_CHAINS).find((c) => c && c.chainId === cidNum)
                 : null;
               const nativeSym = (chainEntry && chainEntry.symbol) || 'ETH';
-              preview = `${t('收款地址', 'To')}: ${tx.to || '--'}\n${t('金额', 'Value')}: ${ethStr} ${nativeSym}\n${t('数据', 'Data')}: ${tx.data && tx.data !== '0x' ? `${String(tx.data).slice(0, 42)}...` : t('无', 'None')}`;
+              const dataHex = String(tx.data || '');
+              const dataLower = dataHex.toLowerCase();
+              let decodedApproval = '';
+              if (dataLower.startsWith('0x095ea7b3') && dataHex.length >= 138) {
+                const spender = `0x${dataHex.slice(34, 74)}`;
+                const amountBig = BigInt(`0x${dataHex.slice(74, 138)}`);
+                const allowanceLabel = amountBig >= (1n << 255n)
+                  ? t('无限授权 (Unlimited)', 'Unlimited Approval')
+                  : amountBig.toString();
+                decodedApproval = `\n⚠️ ${t('授权操作', 'Approval')}: ERC-20 approve\n${t('授权对象', 'Spender')}: ${spender}\n${t('授权额度', 'Allowance')}: ${allowanceLabel}`;
+              } else if (dataLower.startsWith('0xa22cb465') && dataHex.length >= 138) {
+                const operator = `0x${dataHex.slice(34, 74)}`;
+                const approved = BigInt(`0x${dataHex.slice(74, 138)}`) !== 0n;
+                decodedApproval = `\n⚠️ ${t('授权操作', 'Approval')}: NFT setApprovalForAll\n${t('授权对象', 'Operator')}: ${operator}\n${t('授权状态', 'Approved')}: ${approved ? t('开启 (全部资产)', 'Enabled (All)') : t('撤销', 'Revoked')}`;
+              }
+              preview = `${t('收款地址', 'To')}: ${tx.to || '--'}\n${t('金额', 'Value')}: ${ethStr} ${nativeSym}${decodedApproval}\n${t('数据', 'Data')}: ${tx.data && tx.data !== '0x' ? `${String(tx.data).slice(0, 42)}...` : t('无', 'None')}`;
             } else {
               preview = summarizeWcStructuredPayload(req.method, req.params);
             }
@@ -573,6 +593,25 @@
         let msgRaw = method === 'personal_sign' ? reqParams[0] : reqParams[1];
         if (method === 'personal_sign' && isEvmAddr(reqParams[0]) && reqParams[1] !== undefined && !isEvmAddr(reqParams[1])) {
           msgRaw = reqParams[1];
+        } else if (method === 'eth_sign' && isEvmAddr(reqParams[1]) && reqParams[0] !== undefined && !isEvmAddr(reqParams[0])) {
+          msgRaw = reqParams[0];
+        }
+        if (method === 'eth_sign') {
+          const confirmedBlind = await showConfirmDialogAsync(
+            t(
+              `此请求要求对原始十六进制摘要进行盲签（eth_sign），可能导致资产被盗：\n${String(msgRaw || '')}\n\n仅在完全信任该应用时继续。`,
+              `This request asks for raw blind signing (eth_sign), which can drain your assets:\n${String(msgRaw || '')}\n\nContinue only if you fully trust this DApp.`
+            ),
+            {
+              danger: true,
+              title: t('⚠️ 高危盲签确认', '⚠️ High-Risk Blind Sign'),
+              confirmText: t('确认盲签', 'Confirm Blind Sign'),
+              cancelText: t('拒绝', 'Reject')
+            }
+          );
+          if (!confirmedBlind) {
+            throw new Error(t('用户已取消盲签请求', 'User rejected blind signing request'));
+          }
         }
         const msgBytes = (typeof msgRaw === 'string' && msgRaw.startsWith('0x')) ? ethersLib.getBytes(msgRaw) : String(msgRaw);
         if (wallet.evmPrivateKey) {
@@ -606,7 +645,10 @@
         const cfg = Object.entries(contracts.EVM_CHAINS).find(([, c]) => c.chainId === cid);
         if (!cfg) throw new Error(t(`不支持的网络 chainId: ${cid}`, `Unsupported chainId: ${cid}`));
         const valWei = parseHexBigInt(txReq.value);
-        const valNative = Number(valWei) / 1e18;
+        const valNativeStr = (typeof contracts.fromBaseUnits === 'function')
+          ? contracts.fromBaseUnits(valWei.toString(), 18)
+          : '0';
+        const valNative = Number(valNativeStr);
         const gasRaw = txReq.gasLimit || txReq.gas;
         const gasBig = gasRaw ? parseHexBigInt(gasRaw) : 0n;
         const reqGasLimit = gasBig > 0n ? gasBig.toString() : null;
@@ -665,7 +707,7 @@
         }
         result = null;
       } else {
-        throw new Error(`Unsupported method: ${method}`);
+        throw new Error(t(`不支持的方法: ${method}`, `Unsupported method: ${method}`));
       }
 
       await client.respondSessionRequest({ topic, response: { id, jsonrpc: '2.0', result } });
@@ -803,7 +845,7 @@
     const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
     if (existing) return existing;
     if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
-      await loadScriptOnce('src/jsqr-lazy.js?v=6.88').catch(() => false);
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.89').catch(() => false);
       return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     }
     return null;

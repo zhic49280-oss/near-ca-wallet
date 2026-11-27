@@ -192,7 +192,7 @@
       networkPath,
       feeText,
       slippageText: `${(Number(slippageBps || st.swap.slippageBps || 100) / 100).toFixed(2)}%`,
-      recipientText: isThirdParty && recipient ? shortenAddr(recipient) : '',
+      recipientText: isThirdParty && recipient ? recipient : '',
       impactText,
       confirmLabel: t('确认兑换', 'Confirm Swap'),
       steps: steps.map((s) => ({ title: s.title, desc: s.desc || '' }))

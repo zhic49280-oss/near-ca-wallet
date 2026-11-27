@@ -148,7 +148,11 @@
     const tokens = getTokens();
     const wallet = st.getActiveWallet();
     const isDifferentWallet = Boolean(wallet && _refreshingWalletId && _refreshingWalletId !== wallet.id);
-    if (!wallet || (_isRefreshing && !isDifferentWallet && (!showFeedback || _feedbackRefreshing))) return;
+    if (!wallet) return;
+    if (_isRefreshing && !isDifferentWallet && (!showFeedback || _feedbackRefreshing)) {
+      if (!showFeedback) _pendingPostRefresh = true;
+      return;
+    }
 
     _isRefreshing = true;
     _refreshingWalletId = wallet.id;
@@ -175,8 +179,17 @@
     }
 
     try {
-      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-      if (isStaleRefresh()) return;
+      const hasExistingAddresses = Boolean(
+        (wallet.nearNamedAccount || wallet.nearAddress) &&
+        wallet.solAddress &&
+        wallet.evmAddress
+      );
+      if (hasExistingAddresses) {
+        contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+      } else {
+        await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+        if (isStaleRefresh()) return;
+      }
       const nearAccountId = wallet.nearNamedAccount || wallet.nearAddress;
       const initialSolAddr = String(wallet.solAddress || '');
       const initialEvmAddr = String(wallet.evmAddress || '');
@@ -560,11 +573,11 @@
     } catch (e) {
       if (showFeedback) showToast(toUserFriendlyError(e, '余额同步失败，请稍后重试', 'Sync failed, please try again'));
     } finally {
-      if (showFeedback && refreshBtn) {
-        refreshBtn.disabled = false;
-        if (prevRefreshText) refreshBtn.textContent = prevRefreshText;
-      }
       if (gen === _refreshGen) {
+        if (showFeedback && refreshBtn) {
+          refreshBtn.disabled = false;
+          if (prevRefreshText) refreshBtn.textContent = prevRefreshText;
+        }
         _isRefreshing = false;
         _feedbackRefreshing = false;
         _refreshingWalletId = null;
@@ -764,7 +777,7 @@
         startX = null;
         return;
       }
-      if (dy <= 2 || getScrollTop() > 2) {
+      if (dy <= 2 || (!pulling && getScrollTop() > 2)) {
         if (dy < -8 && !pulling) {
           startY = null;
           startX = null;

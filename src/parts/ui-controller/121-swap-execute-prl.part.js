@@ -53,7 +53,7 @@
           };
           if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
           renderSwapOrderCard();
-          throw new Error(bridgeQuote.error || t('获取 PRL 跨链桥路由失败，请点击订单卡片中的“继续执行下一步”重试', 'Failed to get PRL bridge route; tap Resume in the order card'));
+          throw new Error(toUserFriendlyError(bridgeQuote.error, '获取 PRL 跨链桥路由失败，请点击订单卡片中的“继续执行下一步”重试', 'Failed to get PRL bridge route; tap Resume in the order card'));
         }
         const prlHuman = intents.fromBaseUnits(prlOutRaw, 8);
         const prlBalMap = await intents.fetchNearNep141Balances(nearId, { [intents.PRL_NEAR_CONTRACT]: 8 }).catch(() => null);

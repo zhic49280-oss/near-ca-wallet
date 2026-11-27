@@ -213,8 +213,9 @@
     const { inverted } = resolveLimitPriceOrientation(sellToken, buyToken);
     const nextInverted = !inverted;
     st.limit.priceInverted = nextInverted;
-    if ($('limit-target-rate')) {
-      $('limit-target-rate').value = toLimitDisplayPrice(st.limit.targetRate, nextInverted);
+    const rateEl = $('limit-target-rate');
+    if (rateEl && (typeof document === 'undefined' || document.activeElement !== rateEl)) {
+      rateEl.value = toLimitDisplayPrice(st.limit.targetRate, nextInverted);
     }
     renderLimitOrderView();
   }

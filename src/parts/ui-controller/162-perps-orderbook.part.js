@@ -1,3 +1,61 @@
+  function setInputValIfIdle(el, val) {
+    if (!el) return;
+    if (typeof document !== 'undefined' && document.activeElement === el) return;
+    if (el.value !== val) el.value = val;
+  }
+
+  function updateOrderbookSidePool(containerEl, rows, side, maxSz, fmtObSz) {
+    if (!containerEl) return false;
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function' || typeof containerEl.appendChild !== 'function') {
+      return false;
+    }
+    let pool = containerEl._obPool;
+    if (!Array.isArray(pool) || pool.length !== 8 || pool[0].parentNode !== containerEl) {
+      containerEl.textContent = '';
+      pool = [];
+      for (let i = 0; i < 8; i++) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `perp-ob-row ${side}`;
+        btn.setAttribute('data-action', 'fill-perp-ob-px');
+        const depth = document.createElement('div');
+        depth.className = 'perp-ob-row-depth';
+        const pxSpan = document.createElement('span');
+        pxSpan.className = 'perp-ob-px';
+        const szSpan = document.createElement('span');
+        szSpan.className = 'perp-ob-sz';
+        btn.appendChild(depth);
+        btn.appendChild(pxSpan);
+        btn.appendChild(szSpan);
+        containerEl.appendChild(btn);
+        pool.push(btn);
+      }
+      containerEl._obPool = pool;
+    }
+    for (let i = 0; i < 8; i++) {
+      const btn = pool[i];
+      const r = rows[i];
+      if (!r) {
+        if (btn.style.display !== 'none') btn.style.display = 'none';
+        continue;
+      }
+      if (btn.style.display !== '') btn.style.display = '';
+      const pxRaw = String(r.px);
+      if (btn.getAttribute('data-px') !== pxRaw) btn.setAttribute('data-px', pxRaw);
+      const pct = maxSz > 0 ? Math.max(6, (r.sz / maxSz) * 100) : 0;
+      const scaleStr = `scaleX(${(pct / 100).toFixed(3)})`;
+      const depthEl = btn.firstChild;
+      if (depthEl && depthEl.style.transform !== scaleStr) depthEl.style.transform = scaleStr;
+      const pxText = formatPerpPx(r.px);
+      const pxEl = btn.childNodes[1];
+      if (pxEl && pxEl.textContent !== pxText) pxEl.textContent = pxText;
+      const szText = fmtObSz(r.sz);
+      const szEl = btn.childNodes[2];
+      if (szEl && szEl.textContent !== szText) szEl.textContent = szText;
+    }
+    return true;
+  }
+
   function renderPerpOrderbook() {
     const st = getState();
     const hl = getHyperliquid();
@@ -36,12 +94,13 @@
 
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (!ob || (!ob.bids.length && !ob.asks.length)) {
-      if (fw && typeof fw.mountPerpOrderbookSide === 'function') {
-        fw.mountPerpOrderbookSide(bidsEl, { rows: [], side: 'bid', maxSz: 0, fmtObSz: () => '--', formatPerpPx });
-        fw.mountPerpOrderbookSide(asksEl, { rows: [], side: 'ask', maxSz: 0, fmtObSz: () => '--', formatPerpPx });
-      } else {
-        bidsEl.innerHTML = `<div class="perp-ob-row"><span>--</span><span>--</span></div>`;
-        asksEl.innerHTML = `<div class="perp-ob-row"><span>--</span><span>--</span></div>`;
+      if (!updateOrderbookSidePool(bidsEl, [], 'bid', 0, () => '--')) {
+        if (fw && typeof fw.mountPerpOrderbookSide === 'function') fw.mountPerpOrderbookSide(bidsEl, { rows: [], side: 'bid', maxSz: 0, fmtObSz: () => '--', formatPerpPx });
+        else bidsEl.innerHTML = `<div class="perp-ob-row"><span>--</span><span>--</span></div>`;
+      }
+      if (!updateOrderbookSidePool(asksEl, [], 'ask', 0, () => '--')) {
+        if (fw && typeof fw.mountPerpOrderbookSide === 'function') fw.mountPerpOrderbookSide(asksEl, { rows: [], side: 'ask', maxSz: 0, fmtObSz: () => '--', formatPerpPx });
+        else asksEl.innerHTML = `<div class="perp-ob-row"><span>--</span><span>--</span></div>`;
       }
       if (bidSumEl) bidSumEl.textContent = '--';
       if (askSumEl) askSumEl.textContent = '--';
@@ -76,19 +135,23 @@
       const dec = Number.isFinite(szDec) ? Math.max(0, Math.min(5, szDec)) : 3;
       return Number(v || 0).toFixed(v >= 1000 ? Math.min(2, dec) : dec);
     };
-    if (fw && typeof fw.mountPerpOrderbookSide === 'function') {
-      fw.mountPerpOrderbookSide(bidsEl, { rows: bidRows, side: 'bid', maxSz: maxBidSz, fmtObSz, formatPerpPx });
-      fw.mountPerpOrderbookSide(asksEl, { rows: askRows, side: 'ask', maxSz: maxAskSz, fmtObSz, formatPerpPx });
-      return;
+    const canMountFw = fw && typeof fw.mountPerpOrderbookSide === 'function' && typeof document !== 'undefined' && typeof document.createElement === 'function';
+    const bidsUpdated = updateOrderbookSidePool(bidsEl, bidRows, 'bid', maxBidSz, fmtObSz);
+    const asksUpdated = updateOrderbookSidePool(asksEl, askRows, 'ask', maxAskSz, fmtObSz);
+    if (!bidsUpdated) {
+      if (canMountFw) fw.mountPerpOrderbookSide(bidsEl, { rows: bidRows, side: 'bid', maxSz: maxBidSz, fmtObSz, formatPerpPx });
+      else bidsEl.innerHTML = bidRows.map((r) => {
+        const pct = maxBidSz > 0 ? Math.max(6, (r.sz / maxBidSz) * 100) : 0;
+        return `<button type="button" class="perp-ob-row bid" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="transform:scaleX(${(pct / 100).toFixed(3)})"></div><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span><span>${escapeHtml(fmtObSz(r.sz))}</span></button>`;
+      }).join('');
     }
-    bidsEl.innerHTML = bidRows.map((r) => {
-      const pct = maxBidSz > 0 ? Math.max(6, (r.sz / maxBidSz) * 100) : 0;
-      return `<button type="button" class="perp-ob-row bid" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="transform:scaleX(${(pct / 100).toFixed(3)})"></div><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span><span>${escapeHtml(fmtObSz(r.sz))}</span></button>`;
-    }).join('');
-    asksEl.innerHTML = askRows.map((r) => {
-      const pct = maxAskSz > 0 ? Math.max(6, (r.sz / maxAskSz) * 100) : 0;
-      return `<button type="button" class="perp-ob-row ask" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="transform:scaleX(${(pct / 100).toFixed(3)})"></div><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span><span>${escapeHtml(fmtObSz(r.sz))}</span></button>`;
-    }).join('');
+    if (!asksUpdated) {
+      if (canMountFw) fw.mountPerpOrderbookSide(asksEl, { rows: askRows, side: 'ask', maxSz: maxAskSz, fmtObSz, formatPerpPx });
+      else asksEl.innerHTML = askRows.map((r) => {
+        const pct = maxAskSz > 0 ? Math.max(6, (r.sz / maxAskSz) * 100) : 0;
+        return `<button type="button" class="perp-ob-row ask" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="transform:scaleX(${(pct / 100).toFixed(3)})"></div><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span><span>${escapeHtml(fmtObSz(r.sz))}</span></button>`;
+      }).join('');
+    }
   }
 
   function renderPerpBottomList() {
@@ -487,7 +550,7 @@
     const priceInp = $('perp-limit-price-input');
     if (priceInp) {
       priceInp.disabled = isMarket;
-      if (isMarket) priceInp.value = '';
+      if (isMarket) setInputValIfIdle(priceInp, '');
       const phKey = isMarket ? 'perp.marketPricePlaceholder' : 'perp.limitPriceLabel';
       if (typeof priceInp.setAttribute === 'function') priceInp.setAttribute('data-i18n-placeholder', phKey);
       priceInp.placeholder = isMarket
@@ -499,7 +562,7 @@
     const slider = $('perp-leverage-slider');
     if (slider) {
       slider.max = String(maxLev);
-      slider.value = String(st.perp.leverage);
+      setInputValIfIdle(slider, String(st.perp.leverage));
     }
     const levValEl = $('perp-lev-val');
     if (levValEl) levValEl.textContent = `${st.perp.leverage}x`;
@@ -651,11 +714,10 @@
     const market = getSelectedPerpMarket();
     if (oType === 'market') {
       st.perp.limitPriceInput = '';
-      if ($('perp-limit-price-input')) $('perp-limit-price-input').value = '';
+      setInputValIfIdle($('perp-limit-price-input'), '');
     } else if ((oType === 'limit' || oType === 'post_only') && !st.perp.limitPriceInput && market && market.markPx) {
       st.perp.limitPriceInput = String(market.markPx);
-      const inp = $('perp-limit-price-input');
-      if (inp) inp.value = st.perp.limitPriceInput;
+      setInputValIfIdle($('perp-limit-price-input'), st.perp.limitPriceInput);
     }
     renderPerpView();
   }
@@ -795,8 +857,7 @@
       st.perp.tif = 'Gtc';
     }
     st.perp.limitPriceInput = String(bboPx);
-    const inp = $('perp-limit-price-input');
-    if (inp) inp.value = st.perp.limitPriceInput;
+    setInputValIfIdle($('perp-limit-price-input'), st.perp.limitPriceInput);
     renderPerpView();
   }
 
@@ -885,8 +946,7 @@
       amt = Math.max(0, avail * maxSafeRatio).toFixed(2);
     }
     st.perp.marginInput = amt;
-    const inp = $('perp-margin-input');
-    if (inp) inp.value = amt;
+    setInputValIfIdle($('perp-margin-input'), amt);
     st.perp.errorMsg = '';
     updatePctDots();
     evaluatePerpOrderUI();
@@ -899,8 +959,7 @@
       st.perp.tif = 'Gtc';
     }
     st.perp.limitPriceInput = String(px || '');
-    const inp = $('perp-limit-price-input');
-    if (inp) inp.value = st.perp.limitPriceInput;
+    setInputValIfIdle($('perp-limit-price-input'), st.perp.limitPriceInput);
     renderPerpView();
   }
 

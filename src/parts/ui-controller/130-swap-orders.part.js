@@ -131,7 +131,6 @@
         if (fw && typeof fw.render === 'function') {
           try { fw.render(null, qrWrap); } catch (_) {}
         }
-        qrWrap.innerHTML = '';
       } else {
         qrWrap.classList.remove('hidden');
         renderQrInto('swap-order-qr', order.depositAddress, 136);
@@ -243,10 +242,12 @@
   }
 
   let _orderPollInFlight = false;
+  let _manualOrderPollInFlight = false;
   let _orderPollSeq = 0;
 
   async function refreshActiveSwapOrderStatus(manual = false) {
     if (_orderPollInFlight && !manual) return;
+    if (manual && _manualOrderPollInFlight) return;
     const st = getState();
     const order = st.swap.activeOrder;
     const intents = getIntents();
@@ -257,6 +258,7 @@
     }
     const mySeq = ++_orderPollSeq;
     _orderPollInFlight = true;
+    if (manual) _manualOrderPollInFlight = true;
     const refreshBtn = manual ? $('btn-refresh-swap-order') : null;
     const prevBtnText = refreshBtn ? refreshBtn.textContent : '';
     if (refreshBtn) {
@@ -377,10 +379,11 @@
     } finally {
       if (mySeq === _orderPollSeq) {
         _orderPollInFlight = false;
-      }
-      if (refreshBtn) {
-        refreshBtn.disabled = false;
-        refreshBtn.textContent = prevBtnText || t('刷新状态', 'Refresh');
+        if (manual) _manualOrderPollInFlight = false;
+        if (refreshBtn) {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = prevBtnText || t('刷新状态', 'Refresh');
+        }
       }
     }
   }

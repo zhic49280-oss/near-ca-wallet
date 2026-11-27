@@ -177,7 +177,10 @@
     if (!isNative) {
       const rawUnits = getWalletTokenRawBaseUnits(wallet, fromToken.blockchain, fromToken.contractAddress);
       st.swap.amountIn = formatMaxDecimalString(bal, fromToken.decimals || 6, rawUnits);
-      if ($('swap-amount-in')) $('swap-amount-in').value = st.swap.amountIn;
+      const amtEl = $('swap-amount-in');
+      if (amtEl && (typeof document === 'undefined' || document.activeElement !== amtEl)) {
+        amtEl.value = st.swap.amountIn;
+      }
       handleSwapAmountInput();
       return;
     }
@@ -209,7 +212,10 @@
       exactFeeBaseUnits: effFeeBaseUnits
     });
     st.swap.amountIn = maxInfo.maxAmountStr || '0';
-    if ($('swap-amount-in')) $('swap-amount-in').value = st.swap.amountIn;
+    const amtEl = $('swap-amount-in');
+    if (amtEl && (typeof document === 'undefined' || document.activeElement !== amtEl)) {
+      amtEl.value = st.swap.amountIn;
+    }
     handleSwapAmountInput();
   }
 

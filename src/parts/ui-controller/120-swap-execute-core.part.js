@@ -207,6 +207,21 @@
         ? ` (⚠️ ${t('价差', 'Impact')} -${authImpact.pct.toFixed(1)}%)`
         : '';
       const isThirdParty = isCustomThirdPartySwapRecipient(wallet, toToken);
+      const sameChainDexPre = isSameChainContractSwap(fromToken, toToken);
+      const is1ClickBestPre = Boolean(
+        st.swap.quoteData?.routeSource === 'NEAR_INTENTS_1CLICK'
+        || (st.swap.quoteData?.bestSource === '1Click Solver' && !st.swap.quoteData?.compositeType)
+      );
+      if (isThirdParty && (
+        (sameChainDexPre && (fromToken.blockchain !== 'near' || (!st.swap.quoteData?.compositeType && !is1ClickBestPre)))
+        || doesSwapRouteRequireSelfRecipient(fromToken, toToken, st.swap.quoteData || null)
+      )) {
+        const msg = t('当前路由不支持发往第三方地址，请改回本人地址后重试', 'Current route cannot send to a third-party address; switch recipient to your own address');
+        setSwapError(msg);
+        showToast(msg);
+        _swapAbortedOrFailed = true;
+        return;
+      }
       const thirdPartySuffix = isThirdParty ? ` → ${shortenAddr(st.swap.recipientAddress)}` : '';
       const flowPlan = buildSwapTxFlowPlan({
         wallet,
@@ -223,6 +238,36 @@
       if (!(await openTxPreviewModalAsync(flowPlan.previewConfig))) {
         _swapAbortedOrFailed = true;
         return;
+      }
+      const isCriticalImpact = Boolean(authImpact && authImpact.level === 'critical');
+      const slippageBpsNum = Number(st.swap.slippageBps || 100);
+      const isHighSlippage = Number.isFinite(slippageBpsNum) && slippageBpsNum >= 300;
+      if (isCriticalImpact || isHighSlippage || isThirdParty) {
+        const riskLines = [];
+        if (isCriticalImpact) {
+          riskLines.push(t(`• 价格影响过高：-${authImpact.pct.toFixed(1)}%（>= 15%）`, `• Critical price impact: -${authImpact.pct.toFixed(1)}% (>= 15%)`));
+        }
+        if (isHighSlippage) {
+          riskLines.push(t(`• 滑点设置过高：${(slippageBpsNum / 100).toFixed(2)}%（>= 3%）`, `• High slippage tolerance: ${(slippageBpsNum / 100).toFixed(2)}% (>= 3%)`));
+        }
+        if (isThirdParty) {
+          const fullRecipient = st.swap.recipientAddress || getWalletDefaultRecipientForChain(wallet, toToken.blockchain);
+          riskLines.push(t(`• 第三方收款地址（非当前钱包）：\n${fullRecipient}`, `• Third-party recipient address:\n${fullRecipient}`));
+        }
+        const riskConfirmed = await showConfirmDialogAsync(
+          `${t('检测到以下高风险兑换参数，请核对后确认：', 'High-risk swap parameters detected. Please review carefully:')}\n\n${riskLines.join('\n')}`,
+          {
+            danger: isCriticalImpact || isHighSlippage,
+            title: t('⚠️ 高风险兑换二次确认', '⚠️ High-Risk Swap Confirmation'),
+            confirmText: t('我已知晓风险，继续', 'I Understand, Continue'),
+            cancelText: t('取消', 'Cancel')
+          }
+        );
+        if (!riskConfirmed) {
+          closeTxFlowModal();
+          _swapAbortedOrFailed = true;
+          return;
+        }
       }
       if (!(await verifySecurityAuthAsync(wallet, `${t('确认兑换', 'Confirm swap')} ${amtStr} ${fromToken.symbol} → ${toToken.symbol}${impactPromptSuffix}${thirdPartySuffix}`))) {
         closeTxFlowModal();

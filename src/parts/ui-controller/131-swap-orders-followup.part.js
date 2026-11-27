@@ -267,6 +267,10 @@
           const reserveLamports = BigInt(intents.toBaseUnits(String(reserveSolVal), 9));
           const maxSpendable = availLamports > reserveLamports ? availLamports - reserveLamports : 0n;
           const deltaLamports = availLamports > preLamports ? availLamports - preLamports : 0n;
+          const hasPreLamports = follow.preSolLamports !== undefined && follow.preSolLamports !== null && follow.preSolLamports !== '';
+          if (hasPreLamports && deltaLamports <= 0n) {
+            throw new Error(t('第一阶段 SOL 资金尚未到账，请稍后重试', 'Stage 1 SOL funds not yet arrived; please retry shortly'));
+          }
           if (deltaLamports <= 0n && expectedLamports <= 0n) {
             throw new Error(t('未检测到第二阶段到账余额且缺少预期金额，已停止自动兑换以保护账户资金', 'Stage 2 arrival not detected and expected amount missing; aborted to protect funds'));
           }
@@ -316,6 +320,10 @@
           const reserveWei = BigInt(intents.toBaseUnits(String(reserveHuman), 18));
           const maxSpendable = availWei > reserveWei ? availWei - reserveWei : 0n;
           const deltaWei = availWei > preWei ? availWei - preWei : 0n;
+          const hasPreWei = follow.preNativeWei !== undefined && follow.preNativeWei !== null && follow.preNativeWei !== '';
+          if (hasPreWei && deltaWei <= 0n) {
+            throw new Error(t('第一阶段资金尚未到账，请稍后重试', 'Stage 1 funds not yet arrived; please retry shortly'));
+          }
           if (deltaWei <= 0n && expectedWei <= 0n) {
             throw new Error(t('未检测到第二阶段到账余额且缺少预期金额，已停止自动兑换以保护账户资金', 'Stage 2 arrival not detected and expected amount missing; aborted to protect funds'));
           }
@@ -428,6 +436,10 @@
           const preRaw = BigInt(follow.preBaseRaw || '0');
           const expectedRaw = BigInt(follow.expectedBaseRaw || '0');
           const deltaRaw = availRaw > preRaw ? availRaw - preRaw : 0n;
+          const hasPreBase = follow.preBaseRaw !== undefined && follow.preBaseRaw !== null && follow.preBaseRaw !== '';
+          if (hasPreBase && deltaRaw <= 0n) {
+            throw new Error(t('第一阶段 Base USDC 资金尚未到账，请稍后重试', 'Stage 1 Base USDC funds not yet arrived; please retry shortly'));
+          }
           let bridgeInRaw = deltaRaw > 0n ? deltaRaw : expectedRaw;
           if (expectedRaw > 0n && bridgeInRaw > expectedRaw) bridgeInRaw = expectedRaw;
           if (bridgeInRaw > availRaw && availRaw > 0n) bridgeInRaw = availRaw;
@@ -551,6 +563,10 @@
           const preRaw = BigInt(follow.preBaseRaw || '0');
           const expectedRaw = BigInt(follow.expectedBaseRaw || '0');
           const deltaRaw = availRaw > preRaw ? availRaw - preRaw : 0n;
+          const hasPreBase = follow.preBaseRaw !== undefined && follow.preBaseRaw !== null && follow.preBaseRaw !== '';
+          if (hasPreBase && deltaRaw <= 0n) {
+            throw new Error(t('第一阶段 Base USDC 资金尚未到账，请稍后重试', 'Stage 1 Base USDC funds not yet arrived; please retry shortly'));
+          }
           let bridgeInRaw = deltaRaw > 0n ? deltaRaw : expectedRaw;
           if (expectedRaw > 0n && bridgeInRaw > expectedRaw) bridgeInRaw = expectedRaw;
           if (availRaw > 0n && bridgeInRaw > availRaw) bridgeInRaw = availRaw;
