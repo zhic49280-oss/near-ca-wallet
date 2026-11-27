@@ -225,7 +225,7 @@
       // Super-Aggregator Route 3: Cross-Chain (1Click -> EVM Hub) + Auto Stage 2 EVM Multi-Pool DEX (e.g. NEAR -> PONS / AERO / UNI)
       if (activeQuote?.compositeType === 'CROSS_CHAIN_TO_EVM_DEX') {
         const targetBc = String(toToken.blockchain || '').toLowerCase();
-        const evmRecip = wallet.mpcEvmAddress || wallet.evmAddress;
+        const evmRecip = resolveWalletEvmAddress(wallet);
         if (!evmRecip) throw new Error(t('缺少 EVM 收款地址', 'Missing EVM address'));
         const preEvmRes = await contracts.fetchEvmNativeAndErc20Balance(targetBc, evmRecip).catch(() => null);
         const liveQuote = await intents.quoteIntentSwapOrWithdraw({
@@ -297,7 +297,7 @@
       // Super-Aggregator Route 4: Direct EVM -> Arc Mainnet (5042) via Relay / LI.FI
       if (activeQuote?.compositeType === 'EVM_TO_ARC_MAINNET' && typeof contracts.executeEvmRawSteps === 'function') {
         await ensureEthersLoaded();
-        const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
+        const evmAddr = resolveWalletEvmAddress(wallet);
         if (!evmAddr) throw new Error(t('缺少 EVM 收款地址', 'Missing EVM address'));
         const origChain = String(fromToken.blockchain || '').toLowerCase();
         const cfgOrig = contracts.EVM_CHAINS && contracts.EVM_CHAINS[origChain];
@@ -385,7 +385,7 @@
 
       // Super-Aggregator Route 5: Cross-Chain (1Click -> Base USDC) + Relay (Base -> Arc 5042) + optional Arc KyberSwap
       if (activeQuote?.compositeType === 'CROSS_CHAIN_TO_ARC_MAINNET') {
-        const evmRecip = wallet.mpcEvmAddress || wallet.evmAddress;
+        const evmRecip = resolveWalletEvmAddress(wallet);
         if (!evmRecip) throw new Error(t('缺少 EVM 收款地址', 'Missing EVM address'));
         const preBaseRes = await contracts.fetchEvmNativeAndErc20Balance('base', evmRecip, intents.BASE_USDC_EVM, 6).catch(() => null);
         const liveQuote = await intents.quoteIntentSwapOrWithdraw({
@@ -465,7 +465,7 @@
       // Super-Aggregator Route 6: Arc Mainnet (5042) -> Base -> Target Chain
       if (activeQuote?.compositeType === 'ARC_MAINNET_TO_CROSS_CHAIN' && typeof contracts.executeEvmRawSteps === 'function') {
         await ensureEthersLoaded();
-        const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
+        const evmAddr = resolveWalletEvmAddress(wallet);
         if (!evmAddr) throw new Error(t('缺少 EVM 收款地址', 'Missing EVM address'));
         const srcContract = (fromToken.contractAddress || intents.ARC_USDC_CONTRACT).toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
           ? intents.ARC_USDC_CONTRACT
@@ -714,7 +714,7 @@
       const preRelaySolSnapshot = (isRelaySolDexPre && wallet.solAddress)
         ? await contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, []).catch(() => null)
         : null;
-      const preRelayEvmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
+      const preRelayEvmAddr = resolveWalletEvmAddress(wallet);
       const preRelayEvmSnapshot = (isRelayEvmDexPre && preRelayEvmAddr)
         ? await contracts.fetchEvmNativeAndErc20Balance(toToken.blockchain, preRelayEvmAddr).catch(() => null)
         : null;
@@ -767,7 +767,7 @@
         const outDestAsset = (isRelaySolDex || isRelayEvmDex) ? activeQuote.intermediaryAssetId : toToken.assetId;
         const outRecip = isRelaySolDex
           ? wallet.solAddress
-          : (isRelayEvmDex ? (wallet.mpcEvmAddress || wallet.evmAddress) : recipient);
+          : (isRelayEvmDex ? resolveWalletEvmAddress(wallet) : recipient);
         const targetReserve = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', activeQuote).selectedReserve;
         followUpRefSwap = {
           tokenIn: intents.PRL_NEAR_CONTRACT,

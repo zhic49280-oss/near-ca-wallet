@@ -482,7 +482,7 @@
           destDecimals: toToken.decimals,
           slippageBps: st.swap.slippageBps,
           feeBps: 0,
-          fromAddress: wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '',
+          fromAddress: resolveWalletEvmAddress(wallet),
           signal: reqSignal
         });
         if (isCancelledOrStale()) return;
@@ -521,7 +521,7 @@
         nearPublicKey: wallet.nearPublicKey,
         availNearBalance: Number(wallet.nativeBalances?.near ?? wallet.nearBalance ?? 0),
         solAddress: wallet.solAddress,
-        evmAddress: wallet.mpcEvmAddress || wallet.evmAddress,
+        evmAddress: resolveWalletEvmAddress(wallet),
         requireThirdPartyRecipient: isThirdParty,
         signal: reqSignal
       });

@@ -477,28 +477,86 @@
     } catch (_) {}
   }
 
-  function saveActiveSwapOrder(order) {
+  function getActiveSwapOrderStorageKey(walletId = state.activeWalletId) {
+    const wid = String(walletId || '').trim();
+    return wid ? `${ACTIVE_SWAP_ORDER_STORAGE_KEY}_${wid}` : ACTIVE_SWAP_ORDER_STORAGE_KEY;
+  }
+
+  function saveActiveSwapOrder(order, walletIdOverride = '') {
     try {
       if (!order || typeof order !== 'object') {
-        safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, '');
+        const clearKey = getActiveSwapOrderStorageKey(walletIdOverride || state.activeWalletId);
+        if (clearKey === ACTIVE_SWAP_ORDER_STORAGE_KEY) {
+          safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, '');
+        } else {
+          safeStorageRemove(clearKey);
+          emitStateTopic('swap');
+        }
         return;
       }
-      safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, JSON.stringify(order));
+      const targetWid = String(order.walletId || walletIdOverride || state.activeWalletId || '').trim();
+      const storageKey = getActiveSwapOrderStorageKey(targetWid);
+      const payload = targetWid && !order.walletId ? { ...order, walletId: targetWid } : order;
+      safeStorageSet(storageKey, JSON.stringify(payload));
+      if (storageKey !== ACTIVE_SWAP_ORDER_STORAGE_KEY) {
+        emitStateTopic('swap');
+      }
     } catch (_) {}
   }
 
-  function loadActiveSwapOrder() {
+  function loadActiveSwapOrder(walletIdOverride = null) {
     try {
+      const targetWid = String(
+        walletIdOverride !== null && walletIdOverride !== undefined ? walletIdOverride : (state.activeWalletId || '')
+      ).trim();
+      const isExpired = (o) => Boolean(o && o.createdAt && (Date.now() - Number(o.createdAt) > 24 * 3600_000));
+      if (targetWid) {
+        const perKey = getActiveSwapOrderStorageKey(targetWid);
+        const perRaw = safeStorageGet(perKey);
+        if (perRaw) {
+          try {
+            const parsed = JSON.parse(perRaw);
+            if (parsed && typeof parsed === 'object' && parsed.createdAt) {
+              if (isExpired(parsed)) {
+                safeStorageRemove(perKey);
+                emitStateTopic('swap');
+              } else if (!parsed.walletId || parsed.walletId === targetWid) {
+                const resolved = parsed.walletId ? parsed : { ...parsed, walletId: targetWid };
+                state.swap.activeOrder = resolved;
+                return resolved;
+              }
+            }
+          } catch (_) {}
+        }
+      }
       const raw = safeStorageGet(ACTIVE_SWAP_ORDER_STORAGE_KEY);
-      if (!raw) return null;
+      if (!raw) {
+        if (state.swap && state.swap.activeOrder && targetWid && state.swap.activeOrder.walletId && state.swap.activeOrder.walletId !== targetWid) {
+          state.swap.activeOrder = null;
+        }
+        return null;
+      }
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object' && parsed.createdAt) {
-        if (Date.now() - Number(parsed.createdAt) > 24 * 3600_000) {
+        if (isExpired(parsed)) {
           safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, '');
           return null;
         }
-        if (parsed.walletId && state.activeWalletId && parsed.walletId !== state.activeWalletId) {
+        if (parsed.walletId && targetWid && parsed.walletId !== targetWid) {
+          safeStorageSet(getActiveSwapOrderStorageKey(parsed.walletId), JSON.stringify(parsed));
+          safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, '');
+          if (state.swap && state.swap.activeOrder && state.swap.activeOrder.walletId !== targetWid) {
+            state.swap.activeOrder = null;
+          }
           return null;
+        }
+        if (targetWid) {
+          const migrated = parsed.walletId ? parsed : { ...parsed, walletId: targetWid };
+          safeStorageSet(getActiveSwapOrderStorageKey(targetWid), JSON.stringify(migrated));
+          safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, '');
+          emitStateTopic('swap');
+          state.swap.activeOrder = migrated;
+          return migrated;
         }
         state.swap.activeOrder = parsed;
         return parsed;
@@ -507,9 +565,29 @@
     return null;
   }
 
-  function clearSavedSwapOrder() {
+  function clearSavedSwapOrder(walletIdOverride = null) {
     try {
-      safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, '');
+      const targetWid = String(
+        walletIdOverride !== null && walletIdOverride !== undefined ? walletIdOverride : (state.activeWalletId || '')
+      ).trim();
+      const storageKey = getActiveSwapOrderStorageKey(targetWid);
+      if (storageKey === ACTIVE_SWAP_ORDER_STORAGE_KEY) {
+        safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, '');
+      } else {
+        safeStorageRemove(storageKey);
+        emitStateTopic('swap');
+      }
+      const rawLegacy = safeStorageGet(ACTIVE_SWAP_ORDER_STORAGE_KEY);
+      if (rawLegacy) {
+        try {
+          const legacy = JSON.parse(rawLegacy);
+          if (!targetWid || !legacy || !legacy.walletId || legacy.walletId === targetWid) {
+            safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, '');
+          }
+        } catch (_) {
+          safeStorageSet(ACTIVE_SWAP_ORDER_STORAGE_KEY, '');
+        }
+      }
     } catch (_) {}
   }
 
@@ -615,7 +693,13 @@
       }
 
       const activeW = getActiveWallet();
-      const targetAddr = String(walletAddr || (activeW && (activeW.mpcEvmAddress || activeW.evmAddress)) || '').trim().toLowerCase();
+      const contractsRef = (typeof globalThis !== 'undefined' && globalThis.NearCAContracts) || (typeof window !== 'undefined' && window.NearCAContracts);
+      const activeEvmAddr = activeW
+        ? (contractsRef && typeof contractsRef.resolveWalletEvmSender === 'function'
+            ? contractsRef.resolveWalletEvmSender(activeW)
+            : (activeW.evmPrivateKey ? (activeW.evmAddress || activeW.mpcEvmAddress) : (activeW.mpcEvmAddress || activeW.evmAddress)))
+        : '';
+      const targetAddr = String(walletAddr || activeEvmAddr || '').trim().toLowerCase();
       if (!state.perp.account && targetAddr && parsed.accountsByAddr && typeof parsed.accountsByAddr === 'object') {
         const entry = parsed.accountsByAddr[targetAddr];
         if (entry && entry.account && (!entry.updatedAt || (now - Number(entry.updatedAt) <= 24 * 3600_000))) {

@@ -364,7 +364,7 @@
         const step2DestAsset = (isRelaySolDex || isRelayEvmDex) ? activeQuote.intermediaryAssetId : toToken.assetId;
         const step2Recip = isRelaySolDex
           ? wallet.solAddress
-          : (isRelayEvmDex ? (wallet.mpcEvmAddress || wallet.evmAddress) : recipient);
+          : (isRelayEvmDex ? resolveWalletEvmAddress(wallet) : recipient);
         if (!step2Recip) throw new Error(t('缺少目标链接收地址', 'Missing destination address'));
 
         const preSolSnapshot = isRelaySolDex

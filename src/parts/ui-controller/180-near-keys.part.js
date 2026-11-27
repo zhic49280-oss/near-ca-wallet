@@ -437,14 +437,21 @@
       const oldMnemonic = String(wallet.mnemonic || '').trim();
       const hasCustomPrl = Boolean(wallet.prlMnemonic && wallet.prlMnemonic !== oldMnemonic);
       const hasCustomBtc = Boolean(wallet.btcMnemonic && wallet.btcMnemonic !== oldMnemonic);
+      const hasLocalEvmKey = Boolean(wallet.evmPrivateKey || wallet.legacyEvmMnemonic);
+      const hasLocalSolKey = Boolean(wallet.solPrivateSeedHex || wallet.legacySolMnemonic);
       const [prlBal, btcBal] = await Promise.all([
         hasCustomPrl ? Promise.resolve(0) : checkWalletPrlBalanceBeforeOverwriteAsync(wallet),
         hasCustomBtc ? Promise.resolve(0) : checkWalletBtcBalanceBeforeOverwriteAsync(wallet)
       ]);
-      const hasLegacyEvmOrSol = Boolean(oldMnemonic && (
-        (wallet.nativeBalances && (Number(wallet.nativeBalances.eth) > 0 || Number(wallet.nativeBalances.sol) > 0 || Number(wallet.nativeBalances.base) > 0 || Number(wallet.nativeBalances.arb) > 0 || Number(wallet.nativeBalances.bsc) > 0)) ||
-        (wallet.erc20Balances && Object.keys(wallet.erc20Balances).length > 0) ||
-        (wallet.splBalances && Object.keys(wallet.splBalances).length > 0)
+      const hasLegacyEvmOrSol = Boolean(oldMnemonic && (hasLocalEvmKey || hasLocalSolKey) && (
+        (hasLocalEvmKey && (
+          (wallet.nativeBalances && (Number(wallet.nativeBalances.eth) > 0 || Number(wallet.nativeBalances.base) > 0 || Number(wallet.nativeBalances.arb) > 0 || Number(wallet.nativeBalances.bsc) > 0)) ||
+          (wallet.erc20Balances && Object.keys(wallet.erc20Balances).length > 0)
+        )) ||
+        (hasLocalSolKey && (
+          (wallet.nativeBalances && Number(wallet.nativeBalances.sol) > 0) ||
+          (wallet.splBalances && Object.keys(wallet.splBalances).length > 0)
+        ))
       ));
       if ((prlBal === null || prlBal > 0 || btcBal === null || btcBal > 0 || hasLegacyEvmOrSol) && oldMnemonic) {
         const assetNotes = [];
@@ -480,8 +487,8 @@
         deleteOldKey: true
       });
       if (oldMnemonic && oldMnemonic !== newPhrase) {
-        if (!wallet.legacyEvmMnemonic && (wallet.evmPrivateKey || wallet.evmAddress)) wallet.legacyEvmMnemonic = oldMnemonic;
-        if (!wallet.legacySolMnemonic && (wallet.solPrivateSeedHex || wallet.solAddress)) wallet.legacySolMnemonic = oldMnemonic;
+        if (!wallet.legacyEvmMnemonic && hasLocalEvmKey) wallet.legacyEvmMnemonic = oldMnemonic;
+        if (!wallet.legacySolMnemonic && hasLocalSolKey) wallet.legacySolMnemonic = oldMnemonic;
       }
       wallet.mnemonic = res.newDerived.mnemonic || newPhrase;
       wallet.accountType = 'standard';
@@ -631,7 +638,7 @@
     if (addrList) {
       const items = [
         { k: t('NEAR 主账户', 'NEAR Master Account'), v: wallet.nearNamedAccount || wallet.nearAddress },
-        { k: 'EVM (ETH / Base / ARB / OP / POL / BSC / Arc)', v: wallet.mpcEvmAddress || wallet.evmAddress },
+        { k: 'EVM (ETH / Base / ARB / OP / POL / BSC / Arc)', v: resolveWalletEvmAddress(wallet) },
         { k: 'Solana (SOL)', v: wallet.solAddress },
         { k: t('Bitcoin (BTC 主网)', 'Bitcoin (BTC Mainnet)'), v: wallet.btcAddress },
         { k: t('Pearl (PRL 主网)', 'Pearl (PRL Mainnet)'), v: wallet.address }
@@ -694,6 +701,70 @@
     showToast(toUserFriendlyError(res && res.error, '当前环境不支持系统生物识别，建议开启系统锁屏保护', 'System biometrics unavailable; enable device screen lock in system settings'));
   }
 
+  function clearWalletSnapshotsIfMpcChanged(wallet, { prevNearId = '', prevMpcEvm = '', prevEvm = '', prevSol = '' } = {}) {
+    if (!wallet || typeof wallet !== 'object') return false;
+    const st = getState();
+    const nextNearId = String(wallet.nearNamedAccount || wallet.nearAddress || '').trim().toLowerCase();
+    const nextMpcEvm = String(wallet.mpcEvmAddress || '').trim().toLowerCase();
+    const nextEvm = String(wallet.evmAddress || '').trim().toLowerCase();
+    const nextSol = String(wallet.solAddress || '').trim();
+
+    const mpcEvmChanged = Boolean(nextMpcEvm && prevMpcEvm !== nextMpcEvm);
+    const evmActiveChanged = Boolean(!wallet.evmPrivateKey && nextEvm && prevEvm !== nextEvm);
+    const solChanged = Boolean(!wallet.solPrivateSeedHex && ((nextSol && prevSol !== nextSol) || (nextNearId && prevNearId !== nextNearId)));
+    const nearChanged = Boolean(nextNearId && prevNearId !== nextNearId);
+
+    if (!mpcEvmChanged && !evmActiveChanged && !solChanged && !nearChanged) return false;
+
+    if (st && st.perp) {
+      st.perp.account = null;
+      st.perp.lastAccountSyncTs = 0;
+    }
+    wallet.qtcDepositAddress = '';
+    wallet.qtcDepositAddressAt = 0;
+
+    if (!wallet.nativeBalances || typeof wallet.nativeBalances !== 'object') {
+      wallet.nativeBalances = (st && typeof st.createEmptyNativeBalances === 'function') ? st.createEmptyNativeBalances() : {};
+    }
+    if (nearChanged) {
+      wallet.nativeBalances.near = null;
+      wallet.nearNep141Balances = {};
+      wallet.intentsBalances = {};
+      wallet.nearStakingPositions = [];
+    }
+    if (!wallet.evmPrivateKey && (mpcEvmChanged || evmActiveChanged || nearChanged)) {
+      for (const ck of ['eth', 'base', 'arb', 'bsc', 'op', 'pol', 'avax', 'hype', 'hood', 'arc']) {
+        wallet.nativeBalances[ck] = null;
+      }
+      wallet.erc20Balances = {};
+      wallet.evmStakingPositions = [];
+    }
+    if (solChanged) {
+      wallet.nativeBalances.sol = null;
+      wallet.splBalances = {};
+      wallet.solAtaMints = null;
+      wallet.solStakingPositions = [];
+    }
+    if (st && typeof st.syncWalletCompatBalances === 'function') {
+      st.syncWalletCompatBalances(wallet);
+    }
+    return true;
+  }
+
+  async function recomputeMpcAddressesForNamedAccount(wallet, accountId) {
+    const st = getState();
+    const contracts = getContracts();
+    if (typeof st.recomputeWalletMpcAddresses === 'function') {
+      st.recomputeWalletMpcAddresses(wallet);
+    }
+    const targetLower = String(accountId || '').trim().toLowerCase();
+    if (wallet._mpcDerivedForNearId !== targetLower && contracts && typeof contracts.deriveMpcEvmAddressAsync === 'function') {
+      wallet.mpcEvmAddress = await contracts.deriveMpcEvmAddressAsync(accountId, 'ethereum-1');
+      if (!wallet.evmPrivateKey) wallet.evmAddress = wallet.mpcEvmAddress;
+      else wallet.evmAddress = wallet.evmAddress || wallet.mpcEvmAddress;
+    }
+  }
+
   async function registerNearDomainFromHub() {
     if (_nearKeyActionBusy) return;
     const st = getState();
@@ -719,17 +790,17 @@
     }
     try {
       if (!(await verifySecurityAuthAsync(wallet, `${t('注册域名', 'Register domain')} ${domain}`))) return;
+      const prevNearId = String(wallet.nearNamedAccount || wallet.nearAddress || '').trim().toLowerCase();
+      const prevMpcEvm = String(wallet.mpcEvmAddress || '').trim().toLowerCase();
+      const prevEvm = String(wallet.evmAddress || '').trim().toLowerCase();
+      const prevSol = String(wallet.solAddress || '').trim();
       const res = await contracts.registerNearNamedAccountOnChain({
         wallet,
         newAccountId: domain
       });
       wallet.nearNamedAccount = res.accountId;
-      if (typeof st.recomputeWalletMpcAddresses === 'function') {
-        st.recomputeWalletMpcAddresses(wallet);
-      } else {
-        wallet.mpcEvmAddress = await contracts.deriveMpcEvmAddressAsync(res.accountId, 'ethereum-1');
-        wallet.evmAddress = wallet.mpcEvmAddress;
-      }
+      await recomputeMpcAddressesForNamedAccount(wallet, res.accountId);
+      clearWalletSnapshotsIfMpcChanged(wallet, { prevNearId, prevMpcEvm, prevEvm, prevSol });
       st.saveWallets();
       renderAll();
       if (res.sweptMode === 'delete_account_full_sweep') {
@@ -837,13 +908,13 @@
         });
       }
 
+      const prevNearId = String(wallet.nearNamedAccount || wallet.nearAddress || '').trim().toLowerCase();
+      const prevMpcEvm = String(wallet.mpcEvmAddress || '').trim().toLowerCase();
+      const prevEvm = String(wallet.evmAddress || '').trim().toLowerCase();
+      const prevSol = String(wallet.solAddress || '').trim();
       wallet.nearNamedAccount = domain;
-      if (typeof st.recomputeWalletMpcAddresses === 'function') {
-        st.recomputeWalletMpcAddresses(wallet);
-      } else {
-        wallet.mpcEvmAddress = await contracts.deriveMpcEvmAddressAsync(domain, 'ethereum-1');
-        wallet.evmAddress = wallet.mpcEvmAddress;
-      }
+      await recomputeMpcAddressesForNamedAccount(wallet, domain);
+      clearWalletSnapshotsIfMpcChanged(wallet, { prevNearId, prevMpcEvm, prevEvm, prevSol });
       if ($('hub-near-bind-auth-input')) $('hub-near-bind-auth-input').value = '';
       $('near-bind-drawer')?.classList.add('hidden');
       st.saveWallets();

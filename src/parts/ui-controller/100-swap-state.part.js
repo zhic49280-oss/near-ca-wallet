@@ -158,6 +158,18 @@
     return { ok: true, requiredNear, availNearForGas, needsNearHub, needsMpcSign };
   }
 
+  function resolveWalletEvmAddress(wallet) {
+    if (!wallet) return '';
+    const contracts = getContracts();
+    if (contracts && typeof contracts.resolveWalletEvmSender === 'function') {
+      return contracts.resolveWalletEvmSender(wallet) || '';
+    }
+    if (wallet.evmPrivateKey) {
+      return wallet.evmAddress || wallet.mpcEvmAddress || '';
+    }
+    return wallet.mpcEvmAddress || wallet.evmAddress || '';
+  }
+
   function getWalletDefaultRecipientForChain(wallet, blockchain) {
     if (!wallet) return '';
     const bc = String(blockchain || '').toLowerCase();
@@ -165,7 +177,7 @@
     if (bc === 'sol') return wallet.solAddress || '';
     if (bc === 'btc' || bc === 'bitcoin') return wallet.btcAddress || '';
     if (bc === 'prl') return wallet.address || '';
-    if (['eth', 'base', 'arb', 'bsc', 'hype', 'hood', 'arc', 'op', 'pol', 'avax'].includes(bc)) return wallet.mpcEvmAddress || wallet.evmAddress || '';
+    if (['eth', 'base', 'arb', 'bsc', 'hype', 'hood', 'arc', 'op', 'pol', 'avax'].includes(bc)) return resolveWalletEvmAddress(wallet);
     return '';
   }
 

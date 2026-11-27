@@ -6,8 +6,24 @@
     const hasFollowUp = hasPendingSwapFollowUp(order);
     if (!hasFollowUp) return;
 
-    const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
+    const wallet = order.walletId
+      ? (Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null)
+      : st.getActiveWallet();
     if (!wallet) return;
+    const ownerId = order.walletId || wallet.id;
+    if (ownerId && !order.walletId) order.walletId = ownerId;
+    const isOwnerWalletActive = () => {
+      const activeW = st.getActiveWallet();
+      return Boolean(activeW && activeW.id === wallet.id && (!ownerId || activeW.id === ownerId));
+    };
+    const persistFollowUpOrder = ({ startPolling = false, toastMsg = '' } = {}) => {
+      if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order, ownerId);
+      if (!isOwnerWalletActive()) return;
+      if (st.swap.activeOrder !== order) st.swap.activeOrder = order;
+      renderSwapOrderCard();
+      if (startPolling) startOrderStatusPolling();
+      if (toastMsg) showToast(toastMsg);
+    };
 
     order._followUpInFlight = true;
     order.followUpFailed = false;
@@ -31,7 +47,7 @@
             conf.swapDepositAddress = swapDepositAddress;
             conf.swapIntentHash = swapIntentHash;
             conf.settledOutRaw = settledOutRaw;
-            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order, ownerId);
           }
         });
         order.status = 'COMPLETED';
@@ -39,9 +55,7 @@
         order.followUpFailed = false;
         order.confidentialSwapIntentHash = confRes.swapIntentHash || null;
         order.confidentialWithdrawIntentHash = confRes.withdrawIntentHash || null;
-        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-        renderSwapOrderCard();
-        showToast(`✅ ${t('机密兑换与提现已自动完成', 'Confidential swap & withdraw completed')}`);
+        persistFollowUpOrder({ toastMsg: `✅ ${t('机密兑换与提现已自动完成', 'Confidential swap & withdraw completed')}` });
         return;
       }
       if (order.followUpRefSwap) {
@@ -109,7 +123,7 @@
               // Promote nested DCL step before executing so retries never re-run Ref Finance
               order.followUpRefSwap = null;
               order.followUpDclSwap = { ...dclFollow, amountRaw: dclInRaw };
-              if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+              if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order, ownerId);
               const dclQ = await contracts.quoteNearDclPoolSwap({
                 tokenIn: dclFollow.tokenIn,
                 tokenOut: dclFollow.tokenOut,
@@ -133,9 +147,7 @@
               });
               order.followUpExecuted = true;
               order.followUpFailed = false;
-              if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-              renderSwapOrderCard();
-              showToast(`✅ ${t('第二阶段已自动完成兑换', 'Stage 2 auto-swap completed')}: ${shortenAddr(dclRes.txHash)}`);
+              persistFollowUpOrder({ toastMsg: `✅ ${t('第二阶段已自动完成兑换', 'Stage 2 auto-swap completed')}: ${shortenAddr(dclRes.txHash)}` });
               return;
             }
 
@@ -157,15 +169,13 @@
               // Promote nested BridgeOut step before executing so retries never re-run Ref Finance
               order.followUpRefSwap = null;
               order.followUpBridgeOut = { ...outFollow, expectedInRaw: bridgeInRaw };
-              if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+              if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order, ownerId);
               await executeFollowUpBridgeOut(wallet, order, outFollow, bridgeInRaw, follow.tokenOut);
               return;
             }
             order.followUpExecuted = true;
             order.followUpFailed = false;
-            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-            renderSwapOrderCard();
-            showToast(`✅ ${t('第二阶段 Ref Finance 已自动兑换', 'Step 2 auto-swapped on Ref')}: ${shortenAddr(swapRes.txHash)}`);
+            persistFollowUpOrder({ toastMsg: `✅ ${t('第二阶段 Ref Finance 已自动兑换', 'Step 2 auto-swapped on Ref')}: ${shortenAddr(swapRes.txHash)}` });
             return;
           }
         }
@@ -203,9 +213,7 @@
         });
         order.followUpExecuted = true;
         order.followUpFailed = false;
-        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-        renderSwapOrderCard();
-        showToast(`✅ ${t('第二阶段已自动完成兑换', 'Stage 2 auto-swap completed')}: ${shortenAddr(dclRes.txHash)}`);
+        persistFollowUpOrder({ toastMsg: `✅ ${t('第二阶段已自动完成兑换', 'Stage 2 auto-swap completed')}: ${shortenAddr(dclRes.txHash)}` });
         return;
       }
 
@@ -246,10 +254,10 @@
           order.originTxHash = sendSolTx.txHash;
           order.followUpSolBridgeOut = null;
           order.followUpFailed = false;
-          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-          renderSwapOrderCard();
-          startOrderStatusPolling();
-          showToast(`✅ ${t('第二阶段 SOL 跨链已发出', 'Stage 2 SOL bridge sent')}: ${shortenAddr(sendSolTx.txHash)}`);
+          persistFollowUpOrder({
+            startPolling: true,
+            toastMsg: `✅ ${t('第二阶段 SOL 跨链已发出', 'Stage 2 SOL bridge sent')}: ${shortenAddr(sendSolTx.txHash)}`
+          });
           return;
         }
       }
@@ -311,9 +319,7 @@
           });
           order.followUpExecuted = true;
           order.followUpFailed = false;
-          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-          renderSwapOrderCard();
-          showToast(`✅ ${t('第二阶段已自动买入', 'Stage 2 bought')} ${follow.toSymbol}: ${shortenAddr(jRes.txHash)}`);
+          persistFollowUpOrder({ toastMsg: `✅ ${t('第二阶段已自动买入', 'Stage 2 bought')} ${follow.toSymbol}: ${shortenAddr(jRes.txHash)}` });
           return;
         }
       }
@@ -321,7 +327,7 @@
       if (order.followUpEvmDexSwap) {
         const follow = order.followUpEvmDexSwap;
         await ensureEthersLoaded();
-        const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
+        const evmAddr = resolveWalletEvmAddress(wallet);
         if (evmAddr && contracts && typeof contracts.executeEvmDexSwap === 'function') {
           await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
           const balRes = await contracts.fetchEvmNativeAndErc20Balance(follow.chainKey, evmAddr).catch(() => null);
@@ -375,9 +381,7 @@
           });
           order.followUpExecuted = true;
           order.followUpFailed = false;
-          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-          renderSwapOrderCard();
-          showToast(`✅ ${t('第二阶段已自动兑换为', 'Stage 2 swapped to')} ${follow.toSymbol}: ${shortenAddr(evmRes.txHash)}`);
+          persistFollowUpOrder({ toastMsg: `✅ ${t('第二阶段已自动兑换为', 'Stage 2 swapped to')} ${follow.toSymbol}: ${shortenAddr(evmRes.txHash)}` });
           return;
         }
       }
@@ -385,7 +389,7 @@
       if (order.followUpArcRelay) {
         const follow = order.followUpArcRelay;
         await ensureEthersLoaded();
-        const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
+        const evmAddr = resolveWalletEvmAddress(wallet);
         if (follow.direction === 'arc_to_base') {
           if (evmAddr && contracts && typeof contracts.executeEvmRawSteps === 'function') {
             await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
@@ -429,17 +433,15 @@
                 preBaseRaw: String(preBaseRes?.tokenRaw || '0'),
                 slippageBps: follow.slippageBps || 100
               };
-              if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-              renderSwapOrderCard();
-              startOrderStatusPolling();
-              showToast(`✅ ${t('Arc -> Base 跨链已发送，到账后自动兑换目标资产', 'Arc -> Base bridge sent; will auto-swap on arrival')}: ${shortenAddr(relayTx.txHash)}`);
+              persistFollowUpOrder({
+                startPolling: true,
+                toastMsg: `✅ ${t('Arc -> Base 跨链已发送，到账后自动兑换目标资产', 'Arc -> Base bridge sent; will auto-swap on arrival')}: ${shortenAddr(relayTx.txHash)}`
+              });
               return;
             }
             order.followUpExecuted = true;
             order.followUpFailed = false;
-            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-            renderSwapOrderCard();
-            showToast(`✅ ${t('Arc -> Base 跨链已发送', 'Arc -> Base bridge sent')}: ${shortenAddr(relayTx.txHash)}`);
+            persistFollowUpOrder({ toastMsg: `✅ ${t('Arc -> Base 跨链已发送', 'Arc -> Base bridge sent')}: ${shortenAddr(relayTx.txHash)}` });
             return;
           }
         }
@@ -494,17 +496,15 @@
               preArcUsdcRaw: String(preArcRes.nativeRaw),
               slippageBps: follow.slippageBps || 100
             };
-            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-            renderSwapOrderCard();
-            startOrderStatusPolling();
-            showToast(`✅ ${t('第二阶段 Relay 已发送至 Arc 主网，到账后将自动兑换', 'Stage 2 Relay sent to Arc; will auto-swap on arrival')}: ${shortenAddr(relayTx.txHash)}`);
+            persistFollowUpOrder({
+              startPolling: true,
+              toastMsg: `✅ ${t('第二阶段 Relay 已发送至 Arc 主网，到账后将自动兑换', 'Stage 2 Relay sent to Arc; will auto-swap on arrival')}: ${shortenAddr(relayTx.txHash)}`
+            });
             return;
           }
           order.followUpExecuted = true;
           order.followUpFailed = false;
-          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-          renderSwapOrderCard();
-          showToast(`✅ ${t('第二阶段 Relay 已发送至 Arc 主网', 'Stage 2 Relay sent to Arc Mainnet')}: ${shortenAddr(relayTx.txHash)}`);
+          persistFollowUpOrder({ toastMsg: `✅ ${t('第二阶段 Relay 已发送至 Arc 主网', 'Stage 2 Relay sent to Arc Mainnet')}: ${shortenAddr(relayTx.txHash)}` });
           return;
         }
       }
@@ -512,7 +512,7 @@
       if (order.followUpArcDexSwap) {
         const follow = order.followUpArcDexSwap;
         await ensureEthersLoaded();
-        const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
+        const evmAddr = resolveWalletEvmAddress(wallet);
         if (evmAddr && contracts && typeof contracts.executeEvmDexSwap === 'function') {
           await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
           const arcBalRes = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
@@ -567,9 +567,7 @@
           order.status = 'COMPLETED';
           order.followUpExecuted = true;
           order.followUpFailed = false;
-          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-          renderSwapOrderCard();
-          showToast(`✅ ${t('Arc 主网已自动兑换为', 'Arc Mainnet swapped to')} ${follow.toSymbol}: ${shortenAddr(arcRes.txHash)}`);
+          persistFollowUpOrder({ toastMsg: `✅ ${t('Arc 主网已自动兑换为', 'Arc Mainnet swapped to')} ${follow.toSymbol}: ${shortenAddr(arcRes.txHash)}` });
           return;
         }
       }
@@ -577,7 +575,7 @@
       if (order.followUpBaseOneClick && order.followUpBaseOneClick.destinationAsset) {
         const follow = order.followUpBaseOneClick;
         await ensureEthersLoaded();
-        const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
+        const evmAddr = resolveWalletEvmAddress(wallet);
         const nearId = wallet.nearNamedAccount || wallet.nearAddress;
         if (evmAddr && contracts && typeof contracts.executeEvmTransfer === 'function') {
           await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
@@ -632,10 +630,10 @@
           order.originTxHash = sendS3.txHash;
           order.followUpExecuted = false;
           order.followUpFailed = false;
-          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-          renderSwapOrderCard();
-          startOrderStatusPolling();
-          showToast(`✅ ${t('第三阶段 Base USDC -> 目标链跨链已发起', 'Stage 3 Base USDC bridge sent')}: ${shortenAddr(sendS3.txHash)}`);
+          persistFollowUpOrder({
+            startPolling: true,
+            toastMsg: `✅ ${t('第三阶段 Base USDC -> 目标链跨链已发起', 'Stage 3 Base USDC bridge sent')}: ${shortenAddr(sendS3.txHash)}`
+          });
           return;
         }
       }
@@ -647,9 +645,7 @@
       order.followUpExecuted = false;
       order.followUpFailed = true;
       order.followUpError = toUserFriendlyError(err, '后续自动兑换执行失败，请稍后重试', 'Follow-up swap execution failed. Please try again.');
-      if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
-      renderSwapOrderCard();
-      showToast(order.followUpError);
+      persistFollowUpOrder({ toastMsg: order.followUpError });
     } finally {
       delete order._followUpInFlight;
     }

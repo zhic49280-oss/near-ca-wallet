@@ -396,7 +396,7 @@
                 srcDecimals: fromToken.decimals,
                 destDecimals: toToken.decimals,
                 slippageBps: st.swap.slippageBps,
-                fromAddress: wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : ''
+                fromAddress: resolveWalletEvmAddress(wallet)
               });
           if (!q.ok || !q.routeData) throw new Error(q.error || t('获取 EVM 路由失败', 'EVM route unavailable'));
 
@@ -453,7 +453,7 @@
           nearPublicKey: wallet.nearPublicKey,
           availNearBalance: Number(wallet.nativeBalances?.near ?? wallet.nearBalance ?? 0),
           solAddress: wallet.solAddress,
-          evmAddress: wallet.mpcEvmAddress || wallet.evmAddress,
+          evmAddress: resolveWalletEvmAddress(wallet),
           requireThirdPartyRecipient: isThirdParty
         }).catch(() => null);
       }
@@ -600,7 +600,7 @@
             smartStep += 1;
           } else {
             await ensureEthersLoaded();
-            const evmAddr = wallet.mpcEvmAddress || wallet.evmAddress;
+            const evmAddr = resolveWalletEvmAddress(wallet);
             const preEvm = await contracts.fetchEvmNativeAndErc20Balance(origStage.chain, evmAddr).catch(() => null);
             const preWei = preEvm?.nativeRaw != null ? BigInt(preEvm.nativeRaw) : null;
             const s0Q = origStage.quote || await contracts.quoteEvmDexSwap({
@@ -676,7 +676,7 @@
           if (destDexLeg) {
             return destDexLeg.chain === 'sol'
               ? (wallet.solAddress || recipient)
-              : (wallet.mpcEvmAddress || wallet.evmAddress || recipient);
+              : (resolveWalletEvmAddress(wallet) || recipient);
           }
           return (leg && leg.recipient) || recipient;
         };
@@ -696,7 +696,7 @@
               }
             };
           }
-          const evmRecip = wallet.mpcEvmAddress || wallet.evmAddress;
+          const evmRecip = resolveWalletEvmAddress(wallet);
           const preEvm = await contracts.fetchEvmNativeAndErc20Balance(destDexLeg.chain, evmRecip).catch(() => null);
           return {
             followUpEvmDexSwap: {
@@ -710,6 +710,56 @@
               slippageBps: st.swap.slippageBps
             }
           };
+        };
+        const commitSmartHubBridgeOrder = async ({
+          depositAddress,
+          memo = null,
+          originTxHash,
+          extraOrderFields = null,
+          stepIdx = smartStep,
+          stepChain = fromToken.blockchain,
+          activateNext = true
+        }) => {
+          advanceStep(stepIdx, 'done', { txHash: originTxHash, chain: stepChain });
+          if (activateNext && stepIdx + 1 < flowPlan.steps.length) advanceStep(stepIdx + 1, 'active');
+          stepper.finish(true, {
+            text: t('已从源链转出，目标链预计 1–3 分钟到账，可在下方查看进度', 'Sent from origin chain. Arriving in ~1–3 min — track progress below.'),
+            inTransit: true,
+            doneTitle: t('已转出，等待到账', 'Sent · Waiting for Arrival')
+          });
+          const orderObj = {
+            walletId: wallet.id,
+            depositAddress,
+            memo: memo || null,
+            status: 'PENDING_DEPOSIT',
+            fromSymbol: fromToken.symbol,
+            toSymbol: toToken.symbol,
+            originTxHash,
+            autoBroadcasted: true,
+            createdAt: Date.now(),
+            ...(extraOrderFields || {})
+          };
+          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(orderObj, wallet.id);
+          recordWalletActivity(wallet, {
+            type: 'swap',
+            symbol: fromToken.symbol,
+            toSymbol: toToken.symbol,
+            chain: fromToken.blockchain,
+            amount: amt,
+            txHash: originTxHash,
+            title: `${fromToken.symbol} ➔ ${toToken.symbol}`
+          });
+          await intents.submitExternalDepositTxHash({
+            depositAddress,
+            txHash: originTxHash,
+            nearSenderAccount: nearId
+          }).catch(() => {});
+          if (st.getActiveWallet()?.id === wallet.id) {
+            st.swap.activeOrder = orderObj;
+            renderSwapOrderCard();
+            startOrderStatusPolling();
+            showToast(`✅ ${t('已从源链转出，目标链预计 1–3 分钟到账', 'Sent from origin chain. Arriving in ~1–3 min')}`);
+          }
         };
         if (first.type === 'BRIDGE_IN') {
           const swapLeg = stages.find((s) => s.type === 'NEAR_SWAP') || null;
@@ -764,22 +814,9 @@
           if (!inTx || !inTx.txHash) {
             throw new Error(t('转出失败，请检查余额与网络后重试', 'Transfer failed. Please check balance and network.'));
           }
-          advanceStep(smartStep, 'done', { txHash: inTx.txHash, chain: fromToken.blockchain });
-          if (smartStep + 1 < flowPlan.steps.length) advanceStep(smartStep + 1, 'active');
-          stepper.finish(true, { text: t('已从源链转出，目标链预计 1–3 分钟到账，可在下方查看进度', 'Sent from origin chain. Arriving in ~1–3 min — track progress below.'), inTransit: true, doneTitle: t('已转出，等待到账', 'Sent · Waiting for Arrival') });
-          const bridgeOrder = {
-            walletId: wallet.id,
-            depositAddress: liveIn.depositAddress,
-            memo: liveIn.memo || null,
-            status: 'PENDING_DEPOSIT',
-            fromSymbol: fromToken.symbol,
-            toSymbol: toToken.symbol,
-            originTxHash: inTx.txHash,
-            autoBroadcasted: true,
-            createdAt: Date.now()
-          };
+          const extraFields = {};
           if (swapLeg) {
-            bridgeOrder.followUpRefSwap = {
+            extraFields.followUpRefSwap = {
               tokenIn: swapLeg.tokenIn,
               tokenOut: swapLeg.tokenOut,
               isDcl: Boolean(swapLeg.isDcl),
@@ -800,7 +837,7 @@
               } : null
             };
           } else if (outLeg) {
-            bridgeOrder.followUpBridgeOut = {
+            extraFields.followUpBridgeOut = {
               originAsset: outLeg.originAsset,
               destinationAsset: outLeg.destinationAsset,
               hubContract: outLeg.hubContract,
@@ -811,25 +848,63 @@
               ...destFollow
             };
           }
-          st.swap.activeOrder = bridgeOrder;
-          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
-          recordWalletActivity(wallet, {
-            type: 'swap',
-            symbol: fromToken.symbol,
-            toSymbol: toToken.symbol,
-            chain: fromToken.blockchain,
-            amount: amt,
-            txHash: inTx.txHash,
-            title: `${fromToken.symbol} ➔ ${toToken.symbol}`
-          });
-          await intents.submitExternalDepositTxHash({
+          await commitSmartHubBridgeOrder({
             depositAddress: liveIn.depositAddress,
-            txHash: inTx.txHash,
-            nearSenderAccount: nearId
-          }).catch(() => {});
-          renderSwapOrderCard();
-          startOrderStatusPolling();
-          showToast(`✅ ${t('已从源链转出，目标链预计 1–3 分钟到账', 'Sent from origin chain. Arriving in ~1–3 min')}`);
+            memo: liveIn.memo || null,
+            originTxHash: inTx.txHash,
+            extraOrderFields: extraFields,
+            stepIdx: smartStep,
+            stepChain: fromToken.blockchain,
+            activateNext: true
+          });
+          return;
+        }
+
+        if (first.type === 'BRIDGE_OUT') {
+          const isPostOriginDex = stages.length < activeQuote.stages.length;
+          const bridgeRecip = resolveBridgeOutRecipient(first);
+          const liveOut = await intents.quoteIntentSwapOrWithdraw({
+            originAsset: first.originAsset || fromToken.assetId,
+            destinationAsset: first.destinationAsset,
+            amountRaw: stageAmtRaw,
+            slippageBps: st.swap.slippageBps,
+            recipient: bridgeRecip,
+            refundTo: refundTo || nearId,
+            nearAccountId: nearId,
+            depositType: 'ORIGIN_CHAIN',
+            recipientType: 'DESTINATION_CHAIN',
+            dry: false
+          });
+          if (!liveOut.ok || !liveOut.depositAddress) {
+            throw new Error(liveOut.error || t('创建第一阶段跨链订单失败', 'Failed to create Stage 1 cross-chain order'));
+          }
+          const destFollow = await buildDestDexFollowUp(liveOut.amountOut || first.expectedOut);
+          const bridgeToken = (!fromToken.contractAddress && first.hubContract && fromToken.symbol !== 'NEAR')
+            ? { ...fromToken, contractAddress: first.hubContract, decimals: first.hubDecimals || fromToken.decimals, symbol: first.hubSymbol || fromToken.symbol }
+            : fromToken;
+          const bridgeAmtStr = isPostOriginDex ? intents.fromBaseUnits(stageAmtRaw, bridgeToken.decimals || 24) : amtStr;
+          const bridgeAvail = isPostOriginDex ? Number(bridgeAmtStr) : avail;
+          advanceStep(smartStep, 'active');
+          const inTx = await broadcastOriginDepositTx({
+            wallet,
+            fromToken: bridgeToken,
+            amt: bridgeAmtStr,
+            avail: bridgeAvail,
+            depositAddress: liveOut.depositAddress,
+            gasOverride: isPostOriginDex ? null : originGasOverride
+          });
+          if (!inTx || !inTx.txHash) {
+            throw new Error(t('转出失败，请检查余额与网络后重试', 'Transfer failed. Please check balance and network.'));
+          }
+          await commitSmartHubBridgeOrder({
+            depositAddress: liveOut.depositAddress,
+            memo: liveOut.memo || null,
+            originTxHash: inTx.txHash,
+            extraOrderFields: destFollow,
+            stepIdx: smartStep,
+            stepChain: fromToken.blockchain,
+            activateNext: true
+          });
           return;
         }
 
@@ -918,29 +993,17 @@
               : (wallet.nearNep141Balances && wallet.nearNep141Balances[targetContract]
                   ? Number(wallet.nearNep141Balances[targetContract].formatted)
                   : null);
-            if (outLeg.hubContract === 'wrap.near') {
-              sendBridge = await contracts.executeNearNep141Transfer({
-                wallet,
-                tokenContract: 'wrap.near',
-                receiverId: liveOut.depositAddress,
-                amount: bridgeHuman,
-                decimals: 24,
-                tokenSymbol: 'wNEAR',
-                tokenBalance: realHubBal
-              });
-            } else {
-              sendBridge = await contracts.executeNearNep141Transfer({
-                wallet,
-                tokenContract: outLeg.hubContract,
-                receiverId: liveOut.depositAddress,
-                amount: bridgeHuman,
-                decimals: bridgeDec,
-                tokenSymbol: bridgeSym,
-                tokenBalance: realHubBal
-              });
-            }
+            sendBridge = await contracts.executeNearNep141Transfer({
+              wallet,
+              tokenContract: targetContract,
+              receiverId: liveOut.depositAddress,
+              amount: bridgeHuman,
+              decimals: targetContract === 'wrap.near' ? 24 : bridgeDec,
+              tokenSymbol: targetContract === 'wrap.near' ? 'wNEAR' : bridgeSym,
+              tokenBalance: realHubBal
+            });
           } catch (s2Err) {
-            st.swap.activeOrder = {
+            const failedOrder = {
               walletId: wallet.id,
               depositAddress: swapRes.txHash || `near_hub_bridge_${Date.now()}`,
               status: 'SUCCESS',
@@ -964,43 +1027,24 @@
                 ...destFollow
               }
             };
-            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
-            renderSwapOrderCard();
+            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(failedOrder, wallet.id);
+            if (st.getActiveWallet()?.id === wallet.id) {
+              st.swap.activeOrder = failedOrder;
+              renderSwapOrderCard();
+            }
             throw s2Err;
           }
-          await intents.submitExternalDepositTxHash({
-            depositAddress: liveOut.depositAddress,
-            txHash: sendBridge.txHash,
-            nearSenderAccount: nearId
-          }).catch(() => {});
-          st.swap.activeOrder = {
-            walletId: wallet.id,
+          await commitSmartHubBridgeOrder({
             depositAddress: liveOut.depositAddress,
             memo: liveOut.memo || null,
-            status: 'PENDING_DEPOSIT',
-            fromSymbol: fromToken.symbol,
-            toSymbol: toToken.symbol,
             originTxHash: sendBridge.txHash,
-            autoBroadcasted: true,
-            createdAt: Date.now(),
-            ...destFollow
-          };
-          if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
-          recordWalletActivity(wallet, {
-            type: 'swap',
-            symbol: fromToken.symbol,
-            toSymbol: toToken.symbol,
-            chain: fromToken.blockchain,
-            amount: amt,
-            txHash: sendBridge.txHash,
-            title: `${fromToken.symbol} ➔ ${toToken.symbol}`
+            extraOrderFields: destFollow,
+            stepIdx: smartStep + 1 < flowPlan.steps.length ? smartStep + 1 : smartStep,
+            stepChain: 'near',
+            activateNext: false
           });
-          renderSwapOrderCard();
-          startOrderStatusPolling();
-          if (smartStep + 1 < flowPlan.steps.length) advanceStep(smartStep + 1, 'done', { txHash: sendBridge.txHash, chain: 'near' });
-          stepper.finish(true, { text: t('已从源链转出，目标链预计 1–3 分钟到账，可在下方查看进度', 'Sent from origin chain. Arriving in ~1–3 min — track progress below.'), inTransit: true, doneTitle: t('已转出，等待到账', 'Sent · Waiting for Arrival') });
-          showToast(`✅ ${t('已从源链转出，目标链预计 1–3 分钟到账', 'Sent from origin chain. Arriving in ~1–3 min')}`);
           return;
         }
+        throw new Error(t('暂不支持该智能路由阶段', 'Unsupported smart route stage'));
       }
 

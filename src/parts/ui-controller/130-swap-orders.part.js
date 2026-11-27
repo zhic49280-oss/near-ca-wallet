@@ -199,8 +199,9 @@
       txHash: sendB.txHash,
       nearSenderAccount: nearId
     }).catch(() => {});
-    st.swap.activeOrder = {
-      walletId: wallet.id,
+    const ownerId = order.walletId || wallet.id;
+    const nextOrder = {
+      walletId: ownerId,
       depositAddress: liveOut.depositAddress,
       memo: liveOut.memo || null,
       status: 'PENDING_DEPOSIT',
@@ -212,10 +213,14 @@
       followUpSolDexSwap: outFollow.followUpSolDexSwap || null,
       followUpEvmDexSwap: outFollow.followUpEvmDexSwap || null
     };
-    if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
-    renderSwapOrderCard();
-    startOrderStatusPolling();
-    showToast(`✅ ${t('后续跨链交付已发起', 'Follow-up bridge sent')}`);
+    if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(nextOrder, ownerId);
+    const activeWallet = st.getActiveWallet();
+    if (activeWallet && activeWallet.id === wallet.id && (!ownerId || activeWallet.id === ownerId)) {
+      st.swap.activeOrder = nextOrder;
+      renderSwapOrderCard();
+      startOrderStatusPolling();
+      showToast(`✅ ${t('后续跨链交付已发起', 'Follow-up bridge sent')}`);
+    }
   }
 
   function hasPendingSwapFollowUp(order) {
@@ -237,11 +242,15 @@
   async function resumeActiveSwapFollowUp() {
     const st = getState();
     const order = st.swap.activeOrder;
+    const activeWallet = st.getActiveWallet();
     if (!order || order.followUpExecuted) return;
+    if (order.walletId && activeWallet && order.walletId !== activeWallet.id) return;
     order.followUpFailed = false;
     renderSwapOrderCard();
     await runActiveSwapFollowUp(order);
-    refreshAllBalancesAsync(false);
+    if (!order.walletId || st.getActiveWallet()?.id === order.walletId) {
+      refreshAllBalancesAsync(false);
+    }
   }
 
   let _orderPollInFlight = false;
@@ -253,9 +262,10 @@
     if (manual && _manualOrderPollInFlight) return;
     const st = getState();
     const order = st.swap.activeOrder;
+    const activeWallet = st.getActiveWallet();
     const intents = getIntents();
     const contracts = getContracts();
-    if (!order || !order.depositAddress) {
+    if (!order || !order.depositAddress || (order.walletId && activeWallet && order.walletId !== activeWallet.id)) {
       if (manual) showToast(t('当前没有进行中的跨链订单', 'No active cross-chain order'));
       return;
     }
@@ -268,17 +278,22 @@
       refreshBtn.disabled = true;
       refreshBtn.textContent = t('刷新中...', 'Refreshing...');
     }
-    const isStalePoll = () => mySeq !== _orderPollSeq || st.swap.activeOrder !== order;
+    const isStalePoll = () => mySeq !== _orderPollSeq || st.swap.activeOrder !== order || Boolean(order.walletId && st.getActiveWallet()?.id !== order.walletId);
+    const resolveOrderOwnerWallet = () => (
+      order.walletId
+        ? (Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null)
+        : st.getActiveWallet()
+    );
     try {
       if (order.followUpBaseOneClick && !order.followUpExecuted && !order.followUpFailed && ['PENDING_BASE_BRIDGE', 'SUCCESS'].includes(order.status)) {
         if (order.status === 'SUCCESS') {
           if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
           await runActiveSwapFollowUp(order);
-          refreshAllBalancesAsync(false);
+          if (!isStalePoll()) refreshAllBalancesAsync(false);
           return;
         }
-        const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
-        const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
+        const wallet = resolveOrderOwnerWallet();
+        const evmAddr = resolveWalletEvmAddress(wallet);
         if (evmAddr && contracts) {
           const baseBalRes = await contracts.fetchEvmNativeAndErc20Balance('base', evmAddr, intents.BASE_USDC_EVM, 6).catch(() => null);
           if (isStalePoll()) return;
@@ -288,11 +303,11 @@
             if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
             order.status = 'SUCCESS';
             order.pollTimedOut = false;
-            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order, order.walletId || '');
             renderSwapOrderCard();
             await runActiveSwapFollowUp(order);
-            refreshAllBalancesAsync(false);
-            if (manual) showToast(`✅ ${t('Base 跨链已到账', 'Base bridge arrived')}`);
+            if (!isStalePoll()) refreshAllBalancesAsync(false);
+            if (manual && !isStalePoll()) showToast(`✅ ${t('Base 跨链已到账', 'Base bridge arrived')}`);
             return;
           }
         }
@@ -303,11 +318,11 @@
         if (order.status === 'SUCCESS') {
           if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
           await runActiveSwapFollowUp(order);
-          refreshAllBalancesAsync(false);
+          if (!isStalePoll()) refreshAllBalancesAsync(false);
           return;
         }
-        const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
-        const evmAddr = wallet ? (wallet.mpcEvmAddress || wallet.evmAddress) : '';
+        const wallet = resolveOrderOwnerWallet();
+        const evmAddr = resolveWalletEvmAddress(wallet);
         if (evmAddr && contracts) {
           const arcBalRes = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
           if (isStalePoll()) return;
@@ -318,11 +333,11 @@
             if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
             order.status = 'SUCCESS';
             order.pollTimedOut = false;
-            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+            if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order, order.walletId || '');
             renderSwapOrderCard();
             await runActiveSwapFollowUp(order);
-            refreshAllBalancesAsync(false);
-            if (manual) showToast(`✅ ${t('Arc 跨链已到账', 'Arc bridge arrived')}`);
+            if (!isStalePoll()) refreshAllBalancesAsync(false);
+            if (manual && !isStalePoll()) showToast(`✅ ${t('Arc 跨链已到账', 'Arc bridge arrived')}`);
             return;
           }
         }
@@ -335,14 +350,14 @@
           return;
         }
         if (typeof intents.fetchNearcomConfidentialDepositStatus === 'function') {
-          const wallet = (order.walletId && Array.isArray(st.wallets) ? st.wallets.find((w) => w.id === order.walletId) : null) || st.getActiveWallet();
+          const wallet = resolveOrderOwnerWallet();
           if (wallet) {
             const depRes = await intents.fetchNearcomConfidentialDepositStatus({ wallet, proof: order.followUpConfidentialSwap.depositProof }).catch((e) => ({ ok: false, error: e }));
             if (isStalePoll()) return;
             if (depRes && depRes.ok && depRes.status) {
               order.status = depRes.status;
               order.pollTimedOut = false;
-              if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+              if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order, order.walletId || '');
               renderSwapOrderCard();
               const upper = String(depRes.status).toUpperCase();
               if (['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED', 'FAILED_EXECUTION'].includes(upper)) {
@@ -350,9 +365,9 @@
                 if (['SUCCESS', 'COMPLETED'].includes(upper)) {
                   await runActiveSwapFollowUp(order);
                 }
-                refreshAllBalancesAsync(false);
+                if (!isStalePoll()) refreshAllBalancesAsync(false);
               }
-              if (manual) showToast(`${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
+              if (manual && !isStalePoll()) showToast(`${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
               return;
             }
             if (manual) {
@@ -369,7 +384,7 @@
       if (res && res.ok && res.status) {
         order.status = res.status;
         order.pollTimedOut = false;
-        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
+        if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order, order.walletId || '');
         renderSwapOrderCard();
         const upper = String(res.status).toUpperCase();
         if (['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper)) {
@@ -377,9 +392,9 @@
           if (['SUCCESS', 'COMPLETED'].includes(upper) && !order.followUpExecuted && !order.followUpFailed) {
             await runActiveSwapFollowUp(order);
           }
-          refreshAllBalancesAsync(false);
+          if (!isStalePoll()) refreshAllBalancesAsync(false);
         }
-        if (manual) showToast(`${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
+        if (manual && !isStalePoll()) showToast(`${t('当前状态', 'Status')}: ${getSwapOrderStatusLabel(order.status)}`);
       } else if (manual) {
         showToast((res && res.error) ? toUserFriendlyError(res.error, '暂未获取到新状态，请稍后重试', 'No update yet. Please try again.') : `${t('暂未获取到新状态，当前', 'No update yet; status')}: ${getSwapOrderStatusLabel(order.status)}`);
       }
@@ -423,9 +438,10 @@
         stopOrderStatusPolling();
         const curSt = getState();
         const activeOrder = curSt && curSt.swap && curSt.swap.activeOrder;
-        if (activeOrder) {
+        const curWid = curSt.getActiveWallet()?.id || '';
+        if (activeOrder && (!activeOrder.walletId || !curWid || activeOrder.walletId === curWid)) {
           activeOrder.pollTimedOut = true;
-          if (typeof curSt.saveActiveSwapOrder === 'function') curSt.saveActiveSwapOrder(activeOrder);
+          if (typeof curSt.saveActiveSwapOrder === 'function') curSt.saveActiveSwapOrder(activeOrder, activeOrder.walletId || '');
         }
         renderSwapOrderCard();
         if (curSt && typeof curSt.notifyStateChanged === 'function') curSt.notifyStateChanged(['swap']);
@@ -496,7 +512,7 @@
     _clearOrderWarnedAt = 0;
     if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
     st.swap.activeOrder = null;
-    if (typeof st.clearSavedSwapOrder === 'function') st.clearSavedSwapOrder();
+    if (typeof st.clearSavedSwapOrder === 'function') st.clearSavedSwapOrder(order ? order.walletId : null);
     renderSwapOrderCard();
   }
   let _clearOrderWarnedAt = 0;
