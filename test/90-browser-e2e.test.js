@@ -247,8 +247,9 @@ function createCdpClient(wsUrl) {
 
 const browserBin = findBrowserBin();
 const hasDist = fs.existsSync(path.join(DIST_DIR, 'index.html'));
+const hasWebSocket = typeof WebSocket !== 'undefined';
 
-test.describe('Real-Browser 375px Preact E2E Suite (10 Real-Click Journeys)', { skip: !browserBin || !hasDist }, () => {
+test.describe('Real-Browser 375px Preact E2E Suite (10 Real-Click Journeys)', { skip: !browserBin || !hasDist || !hasWebSocket }, () => {
   let server;
   let baseUrl;
   let browser;
