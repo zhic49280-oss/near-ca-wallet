@@ -17,13 +17,13 @@
    - **Bitcoin (`btc`)**：BIP-86 Taproot (`m/86'/0'/0'/0/0`) 派生 `bc1p...` 地址。
 
 ### 1.2 单根 Preact 应用架构 (`src/app/` -> `src/framework-ui.js`)
-- **设计定位**：全应用采用单根 Preact 外壳架构，`index.html` 仅保留 `<div id="app-root"></div>` 挂载点；`src/app/App.jsx` 通过 `memo` 稳定组合全部主视图（`views/AppShellViews.jsx`、`views/TradingViews.jsx`）与底部弹窗（`sheets/CoreSheets.jsx`、`sheets/ToolsAndChainSheets.jsx`），并在视图与弹窗中注册 44 个 `PanelSlot`；`src/app/main.jsx` 在 `src/ui-controller.js` 启动前同步调用 `mountAppRoot(document.getElementById('app-root'))` 完成外壳 DOM 挂载；同时通过 `NearCAFramework.mount*` 入口提供命令式桥接兼容，并在 Node 单测无 DOM 环境下平滑降级。
+- **设计定位**：全应用采用单根 Preact 外壳架构，`index.html` 仅保留 `<div id="app-root"></div>` 挂载点；`src/app/App.jsx` 通过 `memo` 稳定组合全部主视图（`views/AppShellViews.jsx`、`views/TradingViews.jsx`）与底部弹窗（`sheets/CoreSheets.jsx`、`sheets/ToolsAndChainSheets.jsx`），并在视图与弹窗中注册 42 个 `PanelSlot`；`src/app/main.jsx` 在 `src/ui-controller.js` 启动前同步调用 `mountAppRoot(document.getElementById('app-root'))` 完成外壳 DOM 挂载；同时通过 `NearCAFramework.mount*` 入口提供命令式桥接兼容，并在 Node 单测无 DOM 环境下平滑降级。
 - **挂载点与组件职责（严禁在同一容器上混用 `Preact.render` 与 `innerHTML`）**：
   1. `mountAssetList` (`#home-unified-asset-list`)：渲染首页聚合资产卡片与小额资产 (`< $0.05`) 折叠抽屉；
   2. `mountTokenPicker` (`#token-picker-list`)：**统一**渲染闪兑选币与限价单选币列表；
   3. `mountSwapHistory` (`#swap-history-list`)：响应式订阅 `['swap', 'lang']`，渲染近期闪兑记录；
   4. `mountPerpOverview` (`#perp-overview-list`)：渲染永续合约行情列表；
-  5. `mountPerpOrderbookSide` (`#perp-ob-bids` / `#perp-ob-asks`)：300ms 节流渲染买卖盘 8 档深度；
+  5. `#perp-ob-bids` / `#perp-ob-asks` (`updateOrderbookSidePool` / `mountPerpOrderbookSide`)：保留 120Hz 原生 DOM 节点池复用（无 `PanelSlot` 包裹）渲染买卖盘 8 档深度；
   6. `mountPerpBottomList` (`#perp-bottom-list`)：渲染永续合约底部 6 宫格持仓、当前委托（含止盈止损触发单）与历史成交（含方向、盈亏与手续费）；
   7. `mountLimitOrdersPanel` (`#limit-orders-list`)：响应式订阅 `['limit', 'lang']`，渲染限价单活跃挂单与历史记录；
   8. `mountEarnPoolsPanel` (`#staking-pools-list`)：响应式订阅 `['earn', 'lang']`，渲染质押池卡片与实时 APY（未返回时显示 `--`）；
@@ -50,7 +50,7 @@
    - 显示总资产 USD 估值（所有已加载链上资产实时汇总，未返回价格时显示 `--`）、当前 NEAR 账户 ID（一键复制，未注册 `.near` 时显示注册入口）；
    - 四个快捷金刚区按钮：**发送** (`openSendSheet`)、**收款** (`openReceiveSheet`)、**闪兑** (`switchTab('swap')`)、**赚币** (`switchTab('earn')`)。
 2. **下拉刷新 (`initHomePullToRefresh`)**：
-   - 8px 方向死区 + 指数阻尼 (`computePtrPullDistance`)，下拉超过阈值释放触发 `refreshAllBalancesAsync(true)` 并发同步 14 条链原生币、NEP-141、SPL、ERC-20 及质押仓位。
+   - 8px 横向判向死区 + 6px 向下触发死区 + 指数阻尼 (`computePtrPullDistance`)，下拉超过阈值释放触发 `refreshAllBalancesAsync(true)` 并发同步 14 条链原生币、NEP-141、SPL、ERC-20 及质押仓位。
 3. **聚合资产列表 (`buildAggregatedAssetGroups`)**：
    - 按币种 Symbol 聚合多链余额（如 `USDC` 聚合 NEAR、Solana、Ethereum、Arbitrum、Base、Arc 等链上余额）；
    - 默认核心币种 (`NEAR`, `PRL`, `QTC`, `SOL`, `ETH`, `BNB`, `BTC`) 常驻展示，其余非核心代币在余额 `> 0` 时自动展示；
@@ -77,7 +77,7 @@
      - 底部主操作按钮：**`↗ 在区块浏览器中查看`**（覆盖全部 14 条链的官方浏览器链接）。
 
 ### 2.3 发送 / 跨链直转弹窗 (`sheet-send`)
-1. **选币与源链选择**：支持选择任意币种及具体持仓源链，自动计算并预留原生 Gas（当输入金额导致剩余原生币不足 Gas 时弹出黄色智能修正条，一键填入最大可转金额）。
+1. **选币与源链选择**：支持选择任意币种及具体持仓源链，通过实时精准 Gas 估算 (`estimateLiveNativeGasAsync`，15s TTL) 按链动态预留原生 Gas（当输入金额导致剩余原生币不足 Gas 时弹出黄色智能修正条，一键填入最大可转金额；`Max` 模式下临签若遇 Gas 小幅上涨会自动微调重算，大幅暴涨则拦截提示）。
 2. **智能地址识别与跨链直转预询价**：
    - 输入或扫码粘贴收款地址后，自动识别目标网络（`NEAR` / `Solana` / `EVM 10 链选择胶囊` / `Pearl` / `Bitcoin`）并校验 Checksum；
    - **同链转账**：直接构建对应链原生或代币转账交易签名广播；
@@ -86,7 +86,11 @@
 ### 2.4 闪兑 (`view-swap` - Market Mode)
 1. **超级聚合询价 (`fetchLiveSwapQuoteAsync`)**：
    - 同链 DEX：NEAR (Ref V2 + Rhea DCL 多池比价)、Solana (Jupiter V1)、EVM/Arc (链上 V2/V3 路由 + ParaSwap/0x 聚合)；
-   - 跨链与组合路由：1Click 跨链意图、PRL/QTC 组合桥接、以及 `源链 -> NEAR/Base/Solana 中转 -> 目标链 DEX` 的两阶段/三阶段超级聚合路由。
+   - 跨链与组合路由：1Click 跨链意图、PRL/QTC 组合桥接、以及 `源链 -> NEAR/Base/Solana 中转 -> 目标链 DEX` 的两阶段/三阶段超级聚合路由；
+   - **实时精准 Gas 与近零残留预留**：
+     - 源链 Gas 采用 15s TTL 实时预估 (`estimateLiveNativeGasAsync`)，与 Max 计算及执行前校验完全同源：NEAR 按路由查询 `view_account(storage_usage)` 与合约 `storage_balance_of`（未注册才计入 `storage_balance_bounds.min`），Solana 结合 `getRecentPrioritizationFees` 实时优先费及新 SPL ATA 租金 (`0.00203928 SOL`)；
+     - 跨链二段 `DEST_DEX` 支持 **Auto（实时动态扣留，实现近零残留）** 与 **Extra（额外预留）** 两档模式 (`estimateDestDexGasAsync`)；
+     - 执行预览与生物识别前后 (`reconcileSwapLiveGasBeforeSignAsync`) 若 15s Gas 缓存过期会自动复核，Max 模式下小幅涨价自动微调金额并刷新报价，暴涨则中断提示。
 2. **多阶段跨链订单追踪与续签 (`renderSwapOrderCard`)**：
    - 订单卡片实时轮询状态；
    - 对包含第二/第三阶段自动跟单 (`hasPendingSwapFollowUp`) 的跨链订单，醒目提示当前所处阶段（如 `阶段 1/2：跨链桥接中，到账后自动执行阶段 2 兑换`）；

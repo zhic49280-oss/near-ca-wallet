@@ -94,23 +94,10 @@ test('v6.24 UI & UX Fixes: kPEPE/kBONK/kSHIB perp icon normalization preserves k
   assert.notEqual(khypeIcon.primaryUrl, tokenRegistry.resolveTokenIcon({ symbol: 'HYPE', blockchain: 'hype' }).primaryUrl, 'kHYPE must retain its dedicated icon');
 
   const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'views', 'PerpsView.jsx'), 'utf8');
-  assert.ok(perpHtml.includes('id="perp-tpsl-drawer"'), 'Perp TP/SL must be collapsible');
+  assert.ok(perpHtml.includes('id="perp-tpsl-drawer"'), 'Perp TP/SL container must exist in PerpsView');
+  assert.ok(perpHtml.includes('id="perp-tp-input"') && perpHtml.includes('id="perp-sl-input"'), 'Perp TP/SL inputs must be rendered inline');
   assert.ok(perpHtml.includes('perp-okx-stats-strip'), 'Perp metadata must use compact OKX stats strip');
-
-  const prevDoc = globalThis.document;
-  const drawer = createMockDomElement('perp-tpsl-drawer', { classes: ['hidden'] });
-  const toggleBtn = createMockDomElement('btn-perp-tpsl-toggle');
-  globalThis.document = {
-    getElementById: (id) => (id === 'perp-tpsl-drawer' ? drawer : (id === 'btn-perp-tpsl-toggle' ? toggleBtn : null))
-  };
-  try {
-    uiController.togglePerpTpSl();
-    assert.equal(drawer.classList.contains('hidden'), false);
-    uiController.togglePerpTpSl();
-    assert.equal(drawer.classList.contains('hidden'), true);
-  } finally {
-    globalThis.document = prevDoc;
-  }
+  assert.equal(uiController.togglePerpTpSl, undefined, 'Dead togglePerpTpSl function must remain removed');
 });
 
 test('v6.24 UI & UX Fixes: Token Picker pinned bar [All,NEAR,SOL,ETH,HOOD,ARC] + single temporary active chain + More Networks', async () => {
@@ -1081,8 +1068,40 @@ test('v6.29 Full-Precision MAX, Live Gas Estimator, Auto-Fix Banners & Home Dust
   assert.equal(solTransferGas.exactFeeBaseUnits, '5000');
 
   const solDexGas = await chainContracts.estimateLiveNativeGasAsync({ wallet: testWallet, chain: 'sol', kind: 'dex_swap' });
-  assert.equal(solDexGas.isLive, true);
-  assert.equal(solDexGas.gasReserve, 0.0015);
+  if (solDexGas.isLive) {
+    assert.ok(solDexGas.gasReserve >= 0.0001 && solDexGas.gasReserve <= 0.003, `Live SOL dex_swap reserve out of bounds: ${solDexGas.gasReserve}`);
+    assert.ok(Number(solDexGas.exactFeeBaseUnits) >= 100000 && Number(solDexGas.exactFeeBaseUnits) <= 3000000);
+  } else {
+    assert.equal(solDexGas.gasReserve, 0.0015);
+  }
+
+  await withMockedFetch(async (url, opts) => {
+    const bodyStr = opts && opts.body ? String(opts.body) : '';
+    if (bodyStr.includes('getRecentPrioritizationFees')) {
+      return jsonResponse({ jsonrpc: '2.0', id: 1, result: [{ prioritizationFee: 100000 }, { prioritizationFee: 200000 }, { prioritizationFee: 300000 }] });
+    }
+    if (bodyStr.includes('getTokenAccountsByOwner')) {
+      return jsonResponse({ jsonrpc: '2.0', id: 2, result: { value: [{ pubkey: 'ExistingAta1111111111111111111111111111111' }] } });
+    }
+    throw new Error('Unexpected URL in SOL mock: ' + url);
+  }, async () => {
+    const solDexLive = await chainContracts.estimateLiveNativeGasAsync({
+      wallet: testWallet,
+      chain: 'sol',
+      kind: 'dex_swap',
+      toToken: { blockchain: 'sol', contractAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }
+    });
+    assert.equal(solDexLive.isLive, true);
+    assert.ok(solDexLive.gasReserve >= 0.0001 && solDexLive.gasReserve <= 0.003);
+    assert.equal(solDexLive.meta.medianPriorityFee, 200000);
+    assert.equal(solDexLive.meta.isNewSolAta, false);
+  });
+
+  await withMockedFetch(async () => { throw new Error('sol rpc down'); }, async () => {
+    const solDexOffline = await chainContracts.estimateLiveNativeGasAsync({ wallet: testWallet, chain: 'sol', kind: 'dex_swap' });
+    assert.equal(solDexOffline.isLive, false);
+    assert.equal(solDexOffline.gasReserve, 0.0015);
+  });
 
   await withMockedFetch(async (url, opts) => {
     const bodyStr = opts && opts.body ? String(opts.body) : '';

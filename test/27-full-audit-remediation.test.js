@@ -198,7 +198,8 @@ test('Wave 4: 100% single-tree reactive Preact PanelSlot architecture', () => {
     'earn-my-positions-list',
     'home-unified-asset-list',
     'swap-history-list',
-    'perp-ob-asks',
+    'perp-overview-list',
+    'perp-bottom-list',
     'sol-rent-list',
     'sheet-tx-flow',
     'toast-host'
@@ -208,4 +209,14 @@ test('Wave 4: 100% single-tree reactive Preact PanelSlot architecture', () => {
       `PanelSlot for "${slotId}" must be wired in src/app/`
     );
   }
+  const perpsViewSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/PerpsView.jsx'), 'utf8');
+  assert.ok(
+    perpsViewSrc.includes('id="perp-ob-asks"') && perpsViewSrc.includes('id="perp-ob-bids"'),
+    'PerpsView must retain 120Hz #perp-ob-asks and #perp-ob-bids containers'
+  );
+  assert.equal(
+    perpsViewSrc.includes('slotId="perp-ob-asks"') || perpsViewSrc.includes('slotId="perp-ob-bids"'),
+    false,
+    'Dead PanelSlot wrappers inside #perp-ob-asks / #perp-ob-bids must stay removed'
+  );
 });

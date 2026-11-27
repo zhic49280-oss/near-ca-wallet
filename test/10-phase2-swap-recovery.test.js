@@ -1,6 +1,6 @@
 'use strict';
 
-const {
+  const {
   test,
   assert,
   fs,
@@ -9,6 +9,8 @@ const {
   state,
   uiController,
   TEST_MNEMONIC,
+  jsonResponse,
+  withMockedFetch,
   withMockedStorage
 } = require('./helpers.js');
 
@@ -71,7 +73,7 @@ test('Phase 2.2: PRL recovery, followUpDclSwap, and Arc->Base->PRL Stage 3 param
   assert.ok(ordersPart.includes('function startOrderStatusPolling(immediate = true)'));
 });
 
-test('Phase 2.3: Quote TTL, race guard, Stage 2 recovery cards, and framework activity notification', () => {
+test('Phase 2.3: Quote TTL, race guard, Stage 2 recovery cards, and framework activity notification', async () => {
   const quotePart = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/110-swap-quote.part.js'), 'utf8');
   assert.ok(quotePart.includes('_quoteReqSeq'));
   assert.ok(quotePart.includes('quotedAt: Date.now()'));
@@ -89,5 +91,41 @@ test('Phase 2.3: Quote TTL, race guard, Stage 2 recovery cards, and framework ac
   assert.ok(detailCore.includes('notifyFrameworkState'), 'recordWalletActivity must notify Preact SwapHistoryPanel');
 
   const secPart = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/010-security.part.js'), 'utf8');
-  assert.ok(secPart.includes('startOrderStatusPolling(false)'), 'Visibility restore must avoid duplicate poll request');
+  const lifecyclePart = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/240-lifecycle.part.js'), 'utf8');
+  assert.ok(secPart.includes('handleForegroundResume('), 'Visibility restore in security lifecycle must delegate to handleForegroundResume');
+  assert.ok(lifecyclePart.includes('startOrderStatusPolling(false)'), 'Foreground resume must call startOrderStatusPolling(false) to avoid duplicate poll request');
+
+  await withMockedStorage({}, async () => {
+    state.initState();
+    const w = state.normalizeWalletRecord({
+      id: 'w_vis_poll',
+      mnemonic: TEST_MNEMONIC,
+      nearAddress: '1'.repeat(64)
+    });
+    state.wallets = [w];
+    state.activeWalletId = w.id;
+    state.swap.activeOrder = {
+      walletId: w.id,
+      depositAddress: 'dep_vis_poll_1',
+      status: 'PENDING_DEPOSIT',
+      createdAt: Date.now()
+    };
+
+    let statusFetchCount = 0;
+    await withMockedFetch(async (url) => {
+      if (String(url).includes('/v0/status')) {
+        statusFetchCount += 1;
+        return jsonResponse({ status: 'PENDING_DEPOSIT' });
+      }
+      return jsonResponse({}, 404);
+    }, async () => {
+      uiController.handleAppVisibilityChange(true, 1000);
+      uiController.handleAppVisibilityChange(false, 2000);
+      // Duplicate focus/resume event while already foregrounded must not poll again
+      uiController.handleAppVisibilityChange(false, 2050);
+      await new Promise((r) => setTimeout(r, 30));
+      uiController.clearActiveSwapOrder(true);
+    });
+    assert.equal(statusFetchCount, 1, 'Visibility restore must issue exactly 1 order status request without duplicate poll');
+  });
 });
