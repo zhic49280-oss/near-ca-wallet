@@ -1,12 +1,11 @@
 import { h } from 'preact';
-import { useLang, useI18n } from '../store/useWalletStore.js';
+import { useI18n } from '../store/useWalletStore.js';
 import { PanelSlot } from '../components/PanelSlot.jsx';
 import { SwapRouteInfoPanel, SwapActiveOrderPanel } from '../components/SwapQuoteStatusPanel.jsx';
 import { SwapHistoryPanel } from '../components/SwapHistoryPanel.jsx';
 import { LimitOrdersPanel } from '../components/LimitOrdersPanel.jsx';
 
 export function SwapLimitView() {
-  useLang();
   const { tr } = useI18n();
   return (
     <section id="view-swap" className="view-section hidden">

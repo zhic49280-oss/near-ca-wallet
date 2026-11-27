@@ -1,16 +1,17 @@
 import { h } from 'preact';
-import { useLang, useI18n, useWalletState } from '../store/useWalletStore.js';
+import { useI18n, useWalletState } from '../store/useWalletStore.js';
 import { PanelSlot } from '../components/PanelSlot.jsx';
 import { PerpOverviewPanel } from '../components/PerpOverviewPanel.jsx';
 import { PerpOrderbookSidePanel, PerpBottomListPanel, PerpOverviewPositionsPanel } from '../components/PerpOrderbookAndPositions.jsx';
 import { PerpChartHudPanel } from '../components/PerpDetailPanels.jsx';
 
 export function PerpView() {
-  useLang();
-  const st = useWalletState(['perp', 'lang']);
+  const st = useWalletState(['perp']);
   const { tr, lang } = useI18n();
   const isCoinUnit = Boolean(st && st.perp && st.perp.inputUnit === 'coin');
   const orderType = (st && st.perp && st.perp.orderType) || 'market';
+  const chartInterval = (st && st.perp && st.perp.chartInterval) || '15m';
+  const marginMode = (st && st.perp && st.perp.marginMode) || 'isolated';
   const isMarketOrder = orderType !== 'limit' && orderType !== 'post_only';
   const rawPerpCoin = String((st && st.perp && st.perp.selectedCoin) || 'BTC').trim();
   const perpBaseCoin = (rawPerpCoin.includes(':') ? rawPerpCoin.split(':').slice(1).join(':') : rawPerpCoin) || 'BTC';
@@ -211,11 +212,24 @@ export function PerpView() {
           <div id="perp-chart-wrap" className="perp-chart-wrap">
             <div className="flex items-center justify-between gap-1" style={{ marginBottom: '4px' }}>
               <div id="perp-interval-pills" className="flex gap-1">
-                <button type="button" className="filter-pill" data-iv="5m" data-i18n="perp.iv5m" onClick={() => window.setPerpChartInterval && window.setPerpChartInterval('5m')}>{tr('perp.iv5m', '5分')}</button>
-                <button type="button" className="filter-pill active" data-iv="15m" data-i18n="perp.iv15m" onClick={() => window.setPerpChartInterval && window.setPerpChartInterval('15m')}>{tr('perp.iv15m', '15分')}</button>
-                <button type="button" className="filter-pill" data-iv="1h" data-i18n="perp.iv1h" onClick={() => window.setPerpChartInterval && window.setPerpChartInterval('1h')}>{tr('perp.iv1h', '1时')}</button>
-                <button type="button" className="filter-pill" data-iv="4h" data-i18n="perp.iv4h" onClick={() => window.setPerpChartInterval && window.setPerpChartInterval('4h')}>{tr('perp.iv4h', '4时')}</button>
-                <button type="button" className="filter-pill" data-iv="1d" data-i18n="perp.iv1d" onClick={() => window.setPerpChartInterval && window.setPerpChartInterval('1d')}>{tr('perp.iv1d', '1日')}</button>
+                {[
+                  ['5m', 'perp.iv5m', '5分'],
+                  ['15m', 'perp.iv15m', '15分'],
+                  ['1h', 'perp.iv1h', '1时'],
+                  ['4h', 'perp.iv4h', '4时'],
+                  ['1d', 'perp.iv1d', '1日'],
+                ].map(([iv, key, zh]) => (
+                  <button
+                    key={iv}
+                    type="button"
+                    className={`filter-pill${chartInterval === iv ? ' active' : ''}`}
+                    data-iv={iv}
+                    data-i18n={key}
+                    onClick={() => window.setPerpChartInterval && window.setPerpChartInterval(iv)}
+                  >
+                    {tr(key, zh)}
+                  </button>
+                ))}
               </div>
               <span id="perp-chart-hl" className="mono" style={{ fontSize: '10px', color: 'var(--text-muted)' }}>--</span>
             </div>
@@ -238,7 +252,7 @@ export function PerpView() {
                   <button
                     type="button"
                     id="perp-mode-isolated"
-                    className="mode-pill-btn active"
+                    className={`mode-pill-btn${marginMode !== 'cross' ? ' active' : ''}`}
                     onClick={() => window.setPerpMarginMode && window.setPerpMarginMode('isolated')}
                     data-i18n="perp.isolatedBtn"
                   >
@@ -247,7 +261,7 @@ export function PerpView() {
                   <button
                     type="button"
                     id="perp-mode-cross"
-                    className="mode-pill-btn"
+                    className={`mode-pill-btn${marginMode === 'cross' ? ' active' : ''}`}
                     onClick={() => window.setPerpMarginMode && window.setPerpMarginMode('cross')}
                     data-i18n="perp.crossBtn"
                   >

@@ -1,5 +1,5 @@
 import { h, Fragment } from 'preact';
-import { useLang, useI18n, useActiveWallet, useWalletState } from '../store/useWalletStore.js';
+import { useI18n, useActiveWallet, useWalletState } from '../store/useWalletStore.js';
 import { PanelSlot } from '../components/PanelSlot.jsx';
 import { ToastBanner } from '../components/ui/ToastBanner.jsx';
 import { AssetListPanel } from '../components/AssetListPanel.jsx';
@@ -17,13 +17,13 @@ export function AppShellOverlays() {
     <Fragment>
       <div id="app-privacy-shield" className="app-privacy-shield" aria-hidden="true">
         <div className="app-lock-card">
-          <img src="assets/nexus-logo-192.png?v=6.88" alt="Nexus Wallet" className="app-lock-logo" />
+          <img src="assets/nexus-logo-192.png?v=6.89" alt="Nexus Wallet" className="app-lock-logo" />
           <div className="app-lock-brand">Nexus Wallet</div>
         </div>
       </div>
       <div id="app-lock-overlay" className="app-lock-overlay" role="dialog" aria-modal="true" aria-hidden="true">
         <div className="app-lock-card">
-          <img src="assets/nexus-logo-192.png?v=6.88" alt="Nexus Wallet" className="app-lock-logo" />
+          <img src="assets/nexus-logo-192.png?v=6.89" alt="Nexus Wallet" className="app-lock-logo" />
           <div className="app-lock-brand">Nexus Wallet</div>
           <div id="app-lock-title" className="app-lock-title" data-i18n="lock.title">{tr('lock.title', '安全锁定')}</div>
           <div id="app-lock-status" className="app-lock-status" data-i18n="lock.hint">{tr('lock.hint', '请通过生物识别或锁屏密码解锁')}</div>
@@ -48,7 +48,6 @@ export function AppShellOverlays() {
 }
 
 export function AppHeader() {
-  useLang();
   const { tr } = useI18n();
   const activeWallet = useActiveWallet();
   const accountLabel = activeWallet
@@ -97,7 +96,7 @@ export function OnboardingAndWalletViews() {
       <section id="view-onboarding" className="view-section hidden">
         <div className="ios-glass-card hero-card" style={{ padding: '24px 18px', textAlign: 'center' }}>
           <img
-            src="assets/nexus-logo-512.png?v=6.88"
+            src="assets/nexus-logo-512.png?v=6.89"
             alt="Nexus Wallet"
             style={{
               width: '64px',
@@ -303,7 +302,6 @@ export function OnboardingAndWalletViews() {
 }
 
 export function BottomNav() {
-  useLang();
   const { tr } = useI18n();
   const st = useWalletState(['wallet', 'nav']);
   const hasWallet = Boolean(st && Array.isArray(st.wallets) && st.wallets.length > 0);

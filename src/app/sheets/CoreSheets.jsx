@@ -1,6 +1,6 @@
 import { h, Fragment } from 'preact';
 import { PanelSlot } from '../components/PanelSlot.jsx';
-import { useLang, useI18n } from '../store/useWalletStore.js';
+import { useI18n } from '../store/useWalletStore.js';
 import { SendFeeSummaryPanel, ReceiveAddressListPanel } from '../components/SendReceivePanels.jsx';
 import { TokenBreakdownPanel } from '../components/TokenDetailPanels.jsx';
 import { TokenHistoryPanel } from '../components/TokenHistoryPanel.jsx';
@@ -14,7 +14,6 @@ const callWin = (fn, ...args) => {
 };
 
 export function CoreSheets() {
-  useLang();
   const { tr } = useI18n();
   return (
     <Fragment>

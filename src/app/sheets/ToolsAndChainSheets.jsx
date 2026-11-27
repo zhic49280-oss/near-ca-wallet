@@ -1,6 +1,6 @@
 import { h, Fragment } from 'preact';
 import { PanelSlot } from '../components/PanelSlot.jsx';
-import { useLang, useI18n } from '../store/useWalletStore.js';
+import { useI18n } from '../store/useWalletStore.js';
 import { MiningTelemetryPanel, MiningWorkersPanel } from '../components/MiningProPanel.jsx';
 import { TxHistorySheetPanel, TxDetailPanel } from '../components/TokenDetailPanels.jsx';
 import { WcProposalPanel, WcSessionsPanel } from '../components/WalletConnectPanel.jsx';
@@ -18,7 +18,6 @@ const callWin = (fn, ...args) => {
 };
 
 export function ToolsAndChainSheets() {
-  useLang();
   const { tr } = useI18n();
   return (
     <Fragment>

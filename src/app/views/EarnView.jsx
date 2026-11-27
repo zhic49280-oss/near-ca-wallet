@@ -6,7 +6,7 @@ import { EarnValidatorsPanel } from '../components/EarnStakeSheetPanel.jsx';
 
 export function EarnView() {
   const { tr } = useI18n();
-  const st = useWalletState(['earn', 'wallet', 'lang']);
+  const st = useWalletState(['earn', 'wallet']);
   const posPanelProps = usePanelProps('earn-my-positions-list');
   const activeWallet = st && typeof st.getActiveWallet === 'function' ? st.getActiveWallet() : null;
   const fallbackCount = (st && st.earn && typeof st.earn.positionsCount === 'number')

@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useLang, useI18n, useActiveWallet } from '../store/useWalletStore.js';
+import { useI18n, useWalletState } from '../store/useWalletStore.js';
 
 function shortenAddr(addr, head = 10, tail = 8) {
   const s = String(addr || '');
@@ -9,9 +9,9 @@ function shortenAddr(addr, head = 10, tail = 8) {
 }
 
 export function HubView() {
-  useLang();
   const { t, tr } = useI18n();
-  const activeWallet = useActiveWallet();
+  const st = useWalletState(['wallet']);
+  const activeWallet = st && typeof st.getActiveWallet === 'function' ? st.getActiveWallet() : null;
   const identityName = (activeWallet && activeWallet.name) || 'Nexus Wallet';
   const nearDisplay = activeWallet
     ? (activeWallet.nearNamedAccount || shortenAddr(activeWallet.nearAddress, 10, 8) || '--')
