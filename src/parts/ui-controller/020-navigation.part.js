@@ -347,7 +347,6 @@
       st.perp.subView = 'overview';
       renderPerpView();
       refreshPerpDataAsync(false).catch(() => {});
-      refreshPerpLongShortAsync(st.perp.selectedCoin || 'BTC', false).catch(() => {});
     } else if (st.activeTab === 'earn') {
       if (!st.staking.filter) st.staking.filter = 'featured';
       renderEarnView();

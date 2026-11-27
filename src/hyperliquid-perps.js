@@ -1477,69 +1477,6 @@
     return { ...quote, hlRecipient, refundTo: resolvedRefund, amountRaw };
   }
 
-  const LS_SUCCESS_TTL_MS = 90_000;
-  const LS_ERROR_TTL_MS = 120_000;
-  const _lsRatioCache = new Map();
-
-  function resolveBinanceFuturesSymbol(coin) {
-    const raw = String(coin || '').trim();
-    if (!raw || raw.includes(':')) return '';
-    if (/^k[A-Z0-9]+$/.test(raw)) {
-      return `1000${raw.slice(1).toUpperCase()}USDT`;
-    }
-    return `${raw.toUpperCase()}USDT`;
-  }
-
-  /**
-   * Fetch Binance Futures global long/short account ratio asynchronously with
-   * 90s success cache / 120s error backoff so UI scrolling stays zero-lag.
-   */
-  async function fetchGlobalLongShortAccountRatio(coin, { timeoutMs = 2500, force = false } = {}) {
-    const sym = resolveBinanceFuturesSymbol(coin);
-    if (!sym) return null;
-    const now = Date.now();
-    const cached = _lsRatioCache.get(sym);
-    if (!force && cached) {
-      const ttl = cached.ok ? LS_SUCCESS_TTL_MS : LS_ERROR_TTL_MS;
-      if (now - cached.ts < ttl) {
-        return cached.data;
-      }
-    }
-    try {
-      const url = `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${encodeURIComponent(sym)}&period=15m&limit=1`;
-      const res = await fetchJsonWithTimeout(url, { method: 'GET' }, timeoutMs);
-      const item = res && res.ok && Array.isArray(res.data) ? res.data[0] : null;
-      const longAcc = Number(item?.longAccount);
-      const shortAcc = Number(item?.shortAccount);
-      const ratio = Number(item?.longShortRatio);
-      if (
-        !item ||
-        !Number.isFinite(longAcc) ||
-        !Number.isFinite(shortAcc) ||
-        longAcc < 0 ||
-        shortAcc < 0 ||
-        longAcc + shortAcc <= 0
-      ) {
-        _lsRatioCache.set(sym, { ts: Date.now(), data: null, ok: false });
-        return null;
-      }
-      const data = {
-        coin: String(coin || ''),
-        symbol: sym,
-        longPct: longAcc * 100,
-        shortPct: shortAcc * 100,
-        ratio: Number.isFinite(ratio) && ratio > 0 ? ratio : longAcc / Math.max(shortAcc, 0.0001),
-        timestamp: Number(item.timestamp || Date.now()),
-        source: 'Binance Futures'
-      };
-      _lsRatioCache.set(sym, { ts: Date.now(), data, ok: true });
-      return data;
-    } catch (_) {
-      _lsRatioCache.set(sym, { ts: Date.now(), data: null, ok: false });
-      return null;
-    }
-  }
-
   const api = {
     HL_API_URL,
     HL_MIN_ORDER_USD,
@@ -1576,8 +1513,6 @@
     fetchHlAccountState,
     fetchHlOrderbook,
     fetchHlCandles,
-    fetchGlobalLongShortAccountRatio,
-    resolveBinanceFuturesSymbol,
     updateHlLeverage,
     placeHlPerpOrder,
     cancelHlOrder,
