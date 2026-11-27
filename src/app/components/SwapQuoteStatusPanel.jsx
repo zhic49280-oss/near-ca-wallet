@@ -38,16 +38,21 @@ export function SwapActiveOrderPanel({
   isStage1Done = false,
   followUpFailed = false,
   followUpError = '',
+  pollTimedOut = false,
   isEn: isEnProp
 }) {
   const st = useWalletState(['swap', 'lang']);
   const isEn = typeof isEnProp === 'boolean' ? isEnProp : Boolean(st && st.lang === 'en');
+  const activeOrder = st && st.swap && st.swap.activeOrder;
+  const isTimedOut = Boolean(pollTimedOut || (activeOrder && activeOrder.pollTimedOut));
   const tone = getStatusTone(status, followUpFailed, pendingFollow && isStage1Done);
   const friendly = statusLabel || status || '--';
 
   let message = friendly;
   if (followUpFailed && followUpError) {
     message = `${friendly} · ${followUpError} (${isEn ? 'Tap Resume below to complete stage 2' : '请点击下方按钮继续完成第二阶段兑换'})`;
+  } else if (isTimedOut) {
+    message = isEn ? 'Still confirming · Tap Refresh' : '仍在确认中 · 点击刷新';
   } else if (pendingFollow && isStage1Done) {
     message = isEn
       ? 'Stage 1 arrived · Executing stage 2 swap...'

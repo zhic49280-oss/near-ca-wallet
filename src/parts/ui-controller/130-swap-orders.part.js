@@ -96,8 +96,11 @@
           isStage1Done: Boolean(isStage1Done),
           followUpFailed: Boolean(order.followUpFailed),
           followUpError: order.followUpError || '',
+          pollTimedOut: Boolean(order.pollTimedOut),
           isEn: st.lang === 'en'
         });
+      } else if (order.pollTimedOut) {
+        statusEl.textContent = t('仍在确认中 · 点击刷新', 'Still confirming · Tap Refresh');
       } else if (order.followUpFailed && order.followUpError) {
         statusEl.textContent = `${friendlyStatus} · ⚠️ ${order.followUpError} (${t('请点击下方按钮继续完成第二阶段兑换', 'Tap Resume below to complete stage 2')})`;
       } else if (pendingFollow && isStage1Done) {
@@ -284,6 +287,7 @@
           if (availRaw > preRaw) {
             if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
             order.status = 'SUCCESS';
+            order.pollTimedOut = false;
             if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
             renderSwapOrderCard();
             await runActiveSwapFollowUp(order);
@@ -313,6 +317,7 @@
           if (availWei > preWei && availWei > reserveWei) {
             if (_orderPollTimer) { clearInterval(_orderPollTimer); _orderPollTimer = null; }
             order.status = 'SUCCESS';
+            order.pollTimedOut = false;
             if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
             renderSwapOrderCard();
             await runActiveSwapFollowUp(order);
@@ -336,6 +341,7 @@
             if (isStalePoll()) return;
             if (depRes && depRes.ok && depRes.status) {
               order.status = depRes.status;
+              order.pollTimedOut = false;
               if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
               renderSwapOrderCard();
               const upper = String(depRes.status).toUpperCase();
@@ -362,6 +368,7 @@
       if (isStalePoll()) return;
       if (res && res.ok && res.status) {
         order.status = res.status;
+        order.pollTimedOut = false;
         if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
         renderSwapOrderCard();
         const upper = String(res.status).toUpperCase();
@@ -398,6 +405,12 @@
   function startOrderStatusPolling(immediate = true) {
     stopOrderStatusPolling();
     if (typeof isAppInBackground === 'function' ? isAppInBackground() : (typeof document !== 'undefined' && document.hidden)) return;
+    const st = getState();
+    if (st && st.swap && st.swap.activeOrder && st.swap.activeOrder.pollTimedOut) {
+      st.swap.activeOrder.pollTimedOut = false;
+      if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(st.swap.activeOrder);
+      renderSwapOrderCard();
+    }
     _orderPollCount = 0;
     if (immediate) refreshActiveSwapOrderStatus();
     _orderPollTimer = setInterval(() => {
@@ -408,7 +421,16 @@
       _orderPollCount += 1;
       if (_orderPollCount > 240) {
         stopOrderStatusPolling();
-        if ($('swap-order-status')) {
+        const curSt = getState();
+        const activeOrder = curSt && curSt.swap && curSt.swap.activeOrder;
+        if (activeOrder) {
+          activeOrder.pollTimedOut = true;
+          if (typeof curSt.saveActiveSwapOrder === 'function') curSt.saveActiveSwapOrder(activeOrder);
+        }
+        renderSwapOrderCard();
+        if (curSt && typeof curSt.notifyStateChanged === 'function') curSt.notifyStateChanged(['swap']);
+        const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+        if ((!fw || typeof fw.mountSwapActiveOrderPanel !== 'function') && $('swap-order-status')) {
           $('swap-order-status').textContent = t('仍在确认中 · 点击刷新', 'Still confirming · Tap Refresh');
         }
         return;

@@ -450,7 +450,12 @@
           const relayRecipient = (!needsArcSwap && follow.recipient && /^0x[0-9a-fA-F]{40}$/.test(follow.recipient))
             ? follow.recipient
             : evmAddr;
-          const preArcRes = await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null);
+          const preArcRes = needsArcSwap
+            ? await contracts.fetchEvmNativeAndErc20Balance('arc', evmAddr).catch(() => null)
+            : null;
+          if (needsArcSwap && (!preArcRes || preArcRes.nativeRaw == null)) {
+            throw new Error(t('无法读取 Arc 主网余额，请稍后重试', 'Failed to read Arc Mainnet balance, please retry'));
+          }
           const relayLive = await intents.quoteRelayBridge({
             user: evmAddr,
             recipient: relayRecipient,
@@ -472,7 +477,7 @@
               destDecimals: follow.destDecimals || 18,
               toSymbol: follow.toSymbol,
               expectedArcUsdcRaw: String(relayLive.amountOut || bridgeInRaw.toString()),
-              preArcUsdcRaw: String(preArcRes?.nativeRaw || '0'),
+              preArcUsdcRaw: String(preArcRes.nativeRaw),
               slippageBps: follow.slippageBps || 100
             };
             if (typeof st.saveActiveSwapOrder === 'function') st.saveActiveSwapOrder(order);
@@ -504,7 +509,11 @@
           const reserveWei = BigInt(intents.toBaseUnits('0.02', 18));
           const maxSpendableWei = availWei > reserveWei ? availWei - reserveWei : 0n;
           const deltaWei = availWei > preWei ? availWei - preWei : 0n;
-          let swapInWei = deltaWei > 0n ? deltaWei : expectedWei;
+          const hasPreArc = follow.preArcUsdcRaw !== undefined && follow.preArcUsdcRaw !== null && follow.preArcUsdcRaw !== '';
+          if (hasPreArc && deltaWei <= 0n) {
+            throw new Error(t('Arc 主网 USDC 尚未到账，请稍后重试', 'Arc Mainnet USDC has not arrived yet, please retry shortly'));
+          }
+          let swapInWei = hasPreArc ? deltaWei : (deltaWei > 0n ? deltaWei : expectedWei);
           if (expectedWei > 0n && swapInWei > expectedWei) swapInWei = expectedWei;
           if (swapInWei > maxSpendableWei) swapInWei = maxSpendableWei;
           const swapIn6 = swapInWei / 1000000000000n;

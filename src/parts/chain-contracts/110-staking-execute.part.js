@@ -198,7 +198,9 @@
         if (nearGasAvail < minNearGas) {
           throw new Error(t(`NEAR 余额不足以支付合约 Gas (当前: ${nearGasAvail.toFixed(4)} NEAR)`, `Insufficient NEAR for contract gas (Available: ${nearGasAvail.toFixed(4)} NEAR)`));
         }
-        if (pool.isBurrowSupply || pool.id === 'rhea_xrhea') {
+        if (pool.id === 'rhea_xrhea') {
+          await ensureNearStorageIfExplicitlyNull(accountId, pool.contract, '1250000000000000000000');
+        } else if (pool.isBurrowSupply) {
           await ensureNearStorageIfExplicitlyNull(accountId, pool.contract, '100000000000000000000000');
         } else if (pool.isLockConvert) {
           await ensureNearStorageIfExplicitlyNull(accountId, pool.contract, '3000000000000000000000');
