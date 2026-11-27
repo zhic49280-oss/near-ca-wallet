@@ -236,3 +236,35 @@ test('Wave-3: useI18n reactive tr() and RemainingIslandsPanels mount helpers are
     assert.ok(mainSrc.includes(helper), `NearCAFramework must expose ${helper}`);
   }
 });
+
+test('Wave-4 OKX Perps: zero L/S ratio dead code, 10-field floating HUD, Price-left OB & P2 polishes', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const root = path.resolve(__dirname, '..');
+
+  const dictSrc = fs.readFileSync(path.join(root, 'src/parts/state/010-i18n-dict.part.js'), 'utf8');
+  assert.equal(dictSrc.includes('perp.lsRatioLabel'), false, 'Dead i18n key perp.lsRatioLabel must be removed');
+
+  const hlSrc = fs.readFileSync(path.join(root, 'src/hyperliquid-perps.js'), 'utf8');
+  assert.equal(hlSrc.includes('fetchGlobalLongShortAccountRatio'), false, 'Deprecated L/S fetch must be removed');
+  assert.equal(hlSrc.includes('resolveBinanceFuturesSymbol'), false, 'Deprecated Binance symbol helper must be removed');
+
+  const hudSrc = fs.readFileSync(path.join(root, 'src/app/components/PerpDetailPanels.jsx'), 'utf8');
+  const expectedKeys = ['time', 'open', 'high', 'low', 'close', 'chg', 'chgPct', 'amp', 'vol', 'turnover'];
+  for (const k of expectedKeys) {
+    assert.ok(hudSrc.includes(`k: '${k}'`), `PerpChartHudPanel must include 10-field key ${k}`);
+  }
+
+  const obSrc = fs.readFileSync(path.join(root, 'src/app/components/PerpOrderbookAndPositions.jsx'), 'utf8');
+  assert.ok(
+    obSrc.indexOf('formatPerpPx(r.px)') < obSrc.indexOf('fmtObSz(r.sz)'),
+    'OKX orderbook row must render Price on the left and Size on the right'
+  );
+
+  const cssSrc = fs.readFileSync(path.join(root, 'style.css'), 'utf8');
+  assert.match(cssSrc, /\.perp-ob-funding-row\s*\{[^}]*flex-direction:\s*column/s, '.perp-ob-funding-row must stack vertically');
+  assert.match(cssSrc, /\.perp-okx-dual-actions\s*\{[^}]*flex-direction:\s*column/s, '.perp-okx-dual-actions must stack vertically');
+
+  const obPartSrc = fs.readFileSync(path.join(root, 'src/parts/ui-controller/162-perps-orderbook.part.js'), 'utf8');
+  assert.ok(obPartSrc.includes('clearPerpPctDots()'), '162-perps-orderbook must clear .active on pct dots on manual input/reset');
+});

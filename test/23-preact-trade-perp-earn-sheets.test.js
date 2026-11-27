@@ -34,7 +34,10 @@ test('P2B-2: PerpDetailPanels.jsx exports PerpMarketsSheetPanel, PerpFundingInfo
   assert.ok(src.includes('perp-market-item'));
   assert.ok(src.includes('data-action="select-perp-market"'));
   assert.ok(src.includes('data-action="toggle-perp-fav"'));
-  assert.ok(src.includes('Drag or tap chart to inspect') && src.includes('滑动或点按 K 线查看详情'));
+  assert.ok(src.includes('if (!Number.isInteger(selectedIdx) || selectedIdx < 0 || selectedIdx >= list.length)'), 'PerpChartHudPanel must guard invalid selectedIdx');
+  assert.ok(src.includes('return null;'), 'PerpChartHudPanel must return null when idle');
+  assert.ok(src.includes('perp-okx-hud-float is-dock-'), 'PerpChartHudPanel must render floating OKX HUD');
+  assert.ok(src.includes("isEn ? 'Time' : '时间'") && src.includes("isEn ? 'Turnover' : '成交额'"), 'PerpChartHudPanel must render 10 bilingual fields');
 
   for (const jargon of ['Bridge2', '1Click', 'HTTP', 'RPC']) {
     assert.equal(src.includes(jargon), false, `PerpDetailPanels must not expose developer jargon: ${jargon}`);

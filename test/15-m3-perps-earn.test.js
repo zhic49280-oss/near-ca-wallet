@@ -174,36 +174,12 @@ test('M3.3: Perps 1Click deposit background polling tracks status and stops on S
   assert.equal(typeof nearIntents.fetchSwapOrderStatus, 'function');
 });
 
-test('M3.4: #perp-ls-ratio-wrap has Zero CLS fixed-height placeholder and stays visible when lsRatio is null', () => {
+test('M3.4: OKX Perps removes #perp-ls-ratio-wrap and renders #perp-ob-funding-countdown in orderbook header', () => {
   const html = fs.readFileSync(path.join(ROOT_DIR, 'src/app/views/PerpsView.jsx'), 'utf8');
-  assert.match(html, /id="perp-ls-ratio-wrap" className="perp-ob-power-wrap" style=\{\{ minHeight: '22px'/);
-  assert.doesNotMatch(html, /id="perp-ls-ratio-wrap"[^>]*\bhidden\b/);
-
-  const prevDoc = globalThis.document;
-  const wrap = createMockDomElement('perp-ls-ratio-wrap', { className: 'perp-ob-power-wrap' });
-  const longLbl = createMockDomElement('perp-ls-long-label');
-  const shortLbl = createMockDomElement('perp-ls-short-label');
-  const longBar = createMockDomElement('perp-ls-long-bar');
-  const shortBar = createMockDomElement('perp-ls-short-bar');
-  const domMap = new Map([
-    ['perp-ls-ratio-wrap', wrap],
-    ['perp-ls-long-label', longLbl],
-    ['perp-ls-short-label', shortLbl],
-    ['perp-ls-long-bar', longBar],
-    ['perp-ls-short-bar', shortBar]
-  ]);
-  globalThis.document = { documentElement: {}, getElementById: (id) => domMap.get(id) || null, querySelectorAll: () => [] };
-  try {
-    state.initState();
-    state.perp.selectedCoin = 'BTC';
-    state.perp.lsRatio = null;
-    uiController.renderPerpLongShortBar();
-    assert.equal(wrap.classList.contains('hidden'), false);
-    assert.match(longLbl.textContent, /--/);
-    assert.equal(longBar.style.transform, 'scaleX(0.5)');
-  } finally {
-    globalThis.document = prevDoc;
-  }
+  assert.equal(html.includes('perp-ls-ratio-wrap'), false, '#perp-ls-ratio-wrap must be removed');
+  assert.equal(uiController.renderPerpLongShortBar, undefined, 'renderPerpLongShortBar must be removed');
+  assert.match(html, /className="perp-ob-funding-row"/);
+  assert.match(html, /id="perp-ob-funding-countdown"/);
 });
 
 test('M3.5 & M3.6: Perps error sanitization strips Bridge2/HTTP/EIP-712/Hyperliquid API and form resets cleanly', async () => {

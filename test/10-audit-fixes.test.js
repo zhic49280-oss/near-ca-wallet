@@ -101,9 +101,8 @@ test('v6.36 Audit Fixes: Solana RPC getTokenAccountsByOwner failure sets splFetc
   });
 });
 
-test('v6.36 Audit Fixes: Hyperliquid TP/SL market triggers include protective slippage and HIP-3 skips Binance L/S', async () => {
-  assert.equal(hlPerps.resolveBinanceFuturesSymbol('xyz:NVDA'), '');
-  assert.equal(hlPerps.resolveBinanceFuturesSymbol('BTC'), 'BTCUSDT');
+test('v6.36 Audit Fixes: Hyperliquid TP/SL market triggers include protective slippage and Binance L/S helper removed', async () => {
+  assert.equal(hlPerps.resolveBinanceFuturesSymbol, undefined, 'Deprecated resolveBinanceFuturesSymbol must be removed');
 
   const src = fs.readFileSync(path.join(ROOT_DIR, 'src/hyperliquid-perps.js'), 'utf8');
   assert.ok(src.includes('slNum * 1.08') && src.includes('slNum * 0.92'), 'SL market trigger must apply 8% protective slippage');

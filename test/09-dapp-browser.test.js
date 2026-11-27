@@ -95,7 +95,7 @@ test('v6.24 UI & UX Fixes: kPEPE/kBONK/kSHIB perp icon normalization preserves k
 
   const perpHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'views', 'PerpsView.jsx'), 'utf8');
   assert.ok(perpHtml.includes('id="perp-tpsl-drawer"'), 'Perp TP/SL must be collapsible');
-  assert.ok(perpHtml.includes('perp-meta-grid'), 'Perp metadata must use compact 2-column grid');
+  assert.ok(perpHtml.includes('perp-okx-stats-strip'), 'Perp metadata must use compact OKX stats strip');
 
   const prevDoc = globalThis.document;
   const drawer = createMockDomElement('perp-tpsl-drawer', { classes: ['hidden'] });

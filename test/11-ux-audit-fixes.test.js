@@ -248,7 +248,7 @@ test('v6.40 UX Audit Fixes: Always-on K-line bar, full-width chart without right
     { t: 1795400900000, o: 5.1, h: 5.4, l: 5.0, c: 5.25, v: 950 }
   ];
   const svg = uiController.renderPerpCandleSvg(series, { markPx: 5.25 });
-  assert.ok(svg.includes('viewBox="0 0 360 268"'), 'K-line SVG must use expanded 268px height');
+  assert.ok(svg.includes('viewBox="0 0 360 216"'), 'K-line SVG must use compact OKX 216px height');
   assert.ok(svg.includes('x2="354"'), 'K-line plot must expand to full width (354) without right price axis column');
   assert.ok(state.i18nDict?.zh?.['perp.obBidPx'] !== '买价', 'Orderbook header must not be mislabeled as Bid');
 

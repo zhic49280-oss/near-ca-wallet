@@ -94,10 +94,10 @@ test('v6.11 Orderbook 10-Level Alignment, Coin Units on Depth Bar & Zero Wallet/
 
       const bidHtml = domMap.get('perp-ob-bids').innerHTML;
       const askHtml = domMap.get('perp-ob-asks').innerHTML;
-      assert.equal((bidHtml.match(/class="perp-ob-row bid"/g) || []).length, 10);
-      assert.equal((askHtml.match(/class="perp-ob-row ask"/g) || []).length, 10);
+      assert.equal((bidHtml.match(/class="perp-ob-row bid"/g) || []).length, 6);
+      assert.equal((askHtml.match(/class="perp-ob-row ask"/g) || []).length, 6);
       assert.ok(bidHtml.includes('<div class="perp-ob-row-depth"'), 'Depth overlay must use <div class="perp-ob-row-depth"> so CSS > span rule does not displace text');
-      assert.ok(domMap.get('perp-ob-bid-summary').textContent.includes('40.39 BTC'));
+      assert.ok(domMap.get('perp-ob-bid-summary').textContent.includes('B 20%'));
       assert.ok(domMap.get('perp-ob-bid-sz-hdr').textContent.includes('BTC'));
     } finally {
       globalThis.document = prevDoc;
@@ -389,40 +389,10 @@ test('v6.14 Swap/Limit Live USD Prices, Smart Price Orientation & Zero-Lag Perp 
       assert.equal(getOrMake('limit-rate-prefix').textContent, '1 USDC =');
       assert.equal(pill2.textContent, '+5%');
 
-      // 3. Binance Global Account L/S Ratio fetch, 90s cache, error backoff & Perp UI hide/show
-      let binanceCalls = 0;
-      await withMockedFetch(async (url) => {
-        binanceCalls++;
-        if (url.includes('symbol=BTCUSDT')) {
-          return jsonResponse([{ symbol: 'BTCUSDT', longAccount: '0.6120', shortAccount: '0.3880', longShortRatio: '1.5773', timestamp: 1795185000000 }]);
-        }
-        if (url.includes('symbol=1000PEPEUSDT')) {
-          return jsonResponse([{ symbol: '1000PEPEUSDT', longAccount: '0.4510', shortAccount: '0.5490', longShortRatio: '0.8215', timestamp: 1795185000000 }]);
-        }
-        return jsonResponse({ code: -1121, msg: 'Invalid symbol.' }, 400);
-      }, async () => {
-        const btcLs = await hlPerps.fetchGlobalLongShortAccountRatio('BTC', { force: true });
-        assert.ok(btcLs && Math.abs(btcLs.longPct - 61.2) < 0.01);
-        const btcLsCached = await hlPerps.fetchGlobalLongShortAccountRatio('BTC');
-        assert.equal(btcLsCached.symbol, 'BTCUSDT');
-        assert.equal(binanceCalls, 1, 'Second BTC L/S lookup within 90s must hit cache');
-
-        const pepeLs = await hlPerps.fetchGlobalLongShortAccountRatio('kPEPE', { force: true });
-        assert.equal(pepeLs.symbol, '1000PEPEUSDT');
-
-        state.perp.selectedCoin = 'BTC';
-        await uiController.refreshPerpLongShortAsync('BTC');
-        assert.equal(getOrMake('perp-ls-ratio-wrap').classList.contains('hidden'), false);
-        assert.ok(getOrMake('perp-ls-long-label').textContent.includes('61.2%'));
-        assert.ok(getOrMake('perp-ls-short-label').textContent.includes('38.8%'));
-
-        // Failure keeps Zero-CLS bar visible with -- placeholder and caches failure backoff
-        state.perp.selectedCoin = 'UNKNOWNCOIN';
-        const missingLs = await uiController.refreshPerpLongShortAsync('UNKNOWNCOIN');
-        assert.equal(missingLs, null);
-        assert.equal(getOrMake('perp-ls-ratio-wrap').classList.contains('hidden'), false);
-        assert.ok(getOrMake('perp-ls-long-label').textContent.includes('--'));
-      });
+      // 3. Deprecated Binance Global Account L/S Ratio removed in OKX Perps overhaul
+      assert.equal(hlPerps.fetchGlobalLongShortAccountRatio, undefined, 'fetchGlobalLongShortAccountRatio must be removed');
+      assert.equal(uiController.refreshPerpLongShortAsync, undefined, 'refreshPerpLongShortAsync must be removed');
+      assert.equal(uiController.renderPerpLongShortBar, undefined, 'renderPerpLongShortBar must be removed');
     } finally {
       globalThis.document = prevDoc;
     }
@@ -1229,7 +1199,7 @@ test('v6.30 Perps Search Clear & K-Line Inspect, wNEAR Auto-Unwrap/Rollback, and
       assert.ok(getOrMake('perp-chart-svg').innerHTML.includes('data-action="inspect-perp-candle"'));
       uiController.inspectPerpCandle(0);
       assert.equal(state.perp.inspectedCandleIdx, null);
-      assert.equal(getOrMake('perp-candle-detail').classList.contains('hidden'), false, 'Always-on candle detail bar must remain visible in summary mode');
+      assert.equal(getOrMake('perp-candle-detail').classList.contains('hidden'), true, 'Floating K-line HUD must hide when not inspecting');
       assert.equal(getOrMake('perp-candle-detail').classList.contains('is-inspecting'), false);
 
       // 2. NEAR Ref Swap: Buying NEAR auto-unwraps wNEAR -> NEAR
