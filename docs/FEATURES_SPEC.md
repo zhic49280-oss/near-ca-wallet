@@ -23,7 +23,7 @@
   2. `mountTokenPicker` (`#token-picker-list`)：**统一**渲染闪兑选币与限价单选币列表；
   3. `mountSwapHistory` (`#swap-history-list`)：响应式订阅 `['swap', 'lang']`，渲染近期闪兑记录；
   4. `mountPerpOverview` (`#perp-overview-list`)：渲染永续合约行情列表；
-  5. `mountPerpOrderbookSide` (`#perp-ob-bids` / `#perp-ob-asks`)：300ms 节流渲染买卖盘 10 档深度；
+  5. `mountPerpOrderbookSide` (`#perp-ob-bids` / `#perp-ob-asks`)：300ms 节流渲染买卖盘 8 档深度；
   6. `mountPerpBottomList` (`#perp-bottom-list`)：渲染永续合约底部 6 宫格持仓、当前委托（含止盈止损触发单）与历史成交（含方向、盈亏与手续费）；
   7. `mountLimitOrdersPanel` (`#limit-orders-list`)：响应式订阅 `['limit', 'lang']`，渲染限价单活跃挂单与历史记录；
   8. `mountEarnPoolsPanel` (`#staking-pools-list`)：响应式订阅 `['earn', 'lang']`，渲染质押池卡片与实时 APY（未返回时显示 `--`）；
@@ -107,8 +107,8 @@
 2. **OKX 风格专业交易页 (`#perp-trade-panel`，3 卡片极简布局)**：
    - **卡片 1：头部行情条 + 常驻 SVG K 线图 (`161-perps-chart.part.js`)**：支持 `5m / 15m / 1h / 4h / 1d` 周期、MA5/10/20 均线、最高最低价标注、单指平移/点按十字线查价/双指缩放（`touch-action: pan-y` 保障页面纵向滑动），点按/长按 K 线时自动避让当前柱体左右停靠 **10 项浮窗 HUD**（时间/开盘/最高/最低/收盘/涨跌额/涨跌幅/振幅/成交量/成交额），常态自动隐藏；
    - **卡片 2：左 57% 下单区 + 右 43% 实时盘口 (`PerpOrderbookSidePanel`)**：
-     - 盘口顶部展示 1h 资金费率与结算倒计时，WebSocket `l2Book` 实时驱动买卖 6 档深度（左价格 / 右数量）与底部 `B xx% / S xx%` 买卖力量比例条，点击档位价格自动填入限价框；
-     - 下单面板支持逐仓/全仓切换、折叠杠杆抽屉 (`1x ~ Max`)、市价/限价/只做Maker (Post-Only)、0%/25%/50%/75%/100% 保证金快捷圆点、只减仓 (`Reduce-Only`)、附带止盈/止损 (`TP/SL`) 及垂直堆叠双色操作按钮（`买入(做多)` / `卖出(做空)`）；
+     - 盘口顶部展示 1h 资金费率与结算倒计时，WebSocket `l2Book` 实时驱动买卖 8 档深度（左价格 / 右数量）与底部 `B xx% / S xx%` 买卖力量比例条，点击档位价格自动填入限价框；
+     - 下单面板支持逐仓/全仓切换、内联杠杆滑块 (`#perp-leverage-slider`，`1x ~ Max`)、市价/限价/只做Maker (Post-Only)、0%/25%/50%/75%/100% 保证金快捷圆点、只减仓 (`Reduce-Only`)、附带止盈/止损 (`TP/SL`) 及垂直堆叠双色操作按钮（`买入(做多)` / `卖出(做空)`）；
    - **底部仓位与委托管理 (`PerpBottomListPanel`)**：
      - **当前持仓**：完整 6 宫格展示持仓数量、保证金、预估强平价、开仓均价、实时标记价、收益率 ROE% 与已设止盈止损价，支持【反手】、【止盈/止损设置弹窗】（完整中英双语标签与留空清除提示）、【市价平仓】及【一键全平】；
      - **当前委托**：区分普通限价单与条件止盈止损单（显示触发价 `Trigger` 并支持点击【修改】），支持单笔撤单与【全部撤单】；
@@ -132,5 +132,5 @@
    - **NEAR 存储押金回收 (`sheet-near-storage`)**：扫描 0 余额且无 DCL 挂单的 NEP-141 合约，一键注销退回存储 NEAR。
 3. **矿机遥测 (`sheet-mining-pro`)、DApp 浏览器 (`sheet-dapp-browser`)、联系人地址簿 (`sheet-contacts`) 与设备原生生物识别安全锁 (`010-security.part.js`)**：
    - **设备原生安全验证**：统一调用设备原生能力（iOS `LocalAuthentication` / Android `BiometricPrompt` + 系统锁屏凭据 / 浏览器 WebAuthn 平台验证器）进行敏感操作校验与锁屏解锁；当设备不支持或未开启任何系统锁屏/生物识别时，提示建议开启系统锁屏并优雅放行，不阻断用户使用；
-   - **内置 DApp 浏览器安全边界**：内置生态白名单 (`DAPP_CATALOG`) 支持免弹窗快速连接；手动输入的外部未知域名必须经过 `sheet-dapp-approve` 明确授权后方可获取钱包地址；NEAR `signAndSendTransaction` 多 Action 请求通过 `signAndSendNearActionsBatch` 原子打包进单笔链上交易签名广播；EVM `personal_sign` 通过 NEAR MPC 签名后自动执行 `yParity` 地址恢复校验；
+   - **内置 DApp 浏览器安全边界**：内置生态白名单 (`DAPP_CATALOG`) 支持免弹窗快速连接；手动输入的外部未知域名必须经过 `sheet-dapp-approve` 明确授权后方可获取钱包地址；NEAR `signAndSendTransaction` 多 Action 请求通过 `signAndSendNearActionsBatch` 原子打包进单笔链上交易签名广播；EVM `personal_sign` 通过 NEAR MPC 签名后自动执行 `yParity` 地址恢复校验；交易审批自动解码 ERC-20 `approve` 与 NFT `setApprovalForAll` 授权对象及额度，并对 `eth_sign` 原始高危盲签触发强制二次确认；
    - **全局错误清洗与终端用户文案规范**：所有链上/网络异常均通过 `toUserFriendlyError` 转换为自然友好的中英文提示，剔除底层 HTTP 状态码、RPC、WebView、CORS、合约协议名等开发者术语。

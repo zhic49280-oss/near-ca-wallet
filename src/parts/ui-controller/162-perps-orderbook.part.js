@@ -73,7 +73,6 @@
     const askBarEl = $('perp-ob-ask-bar');
     const szLabel = `${t('数量', 'Size')} (${coin})`;
     if ($('perp-ob-bid-sz-hdr')) $('perp-ob-bid-sz-hdr').textContent = szLabel;
-    if ($('perp-ob-ask-sz-hdr')) $('perp-ob-ask-sz-hdr').textContent = szLabel;
     if (!bidsEl || !asksEl) return;
 
     const market = getSelectedPerpMarket();
@@ -529,8 +528,6 @@
 
     renderPerpOrderbook();
 
-    $('perp-side-long')?.classList.toggle('active', st.perp.side === 'long');
-    $('perp-side-short')?.classList.toggle('active', st.perp.side === 'short');
     $('perp-mode-isolated')?.classList.toggle('active', st.perp.marginMode !== 'cross');
     const crossBtn = $('perp-mode-cross');
     if (crossBtn) {
@@ -574,11 +571,9 @@
 
   function togglePerpTpSl() {
     const drawer = $('perp-tpsl-drawer');
-    const btn = $('btn-perp-tpsl-toggle');
     if (!drawer) return;
     const willOpen = drawer.classList.contains('hidden');
     drawer.classList.toggle('hidden', !willOpen);
-    if (btn) btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   }
 
   function updatePerpFundingCountdown() {
@@ -766,9 +761,9 @@
       if (typeof document !== 'undefined') {
         if (document.documentElement) document.documentElement.scrollTop = targetY;
         if (document.body) document.body.scrollTop = targetY;
-        const viewEl = $('view-perps');
+        const viewEl = $('view-perp');
         if (viewEl && typeof viewEl.scrollTop === 'number') viewEl.scrollTop = targetY;
-        const mainEl = typeof document.querySelector === 'function' ? document.querySelector('.app-main') : null;
+        const mainEl = typeof document.querySelector === 'function' ? document.querySelector('.main-content') : null;
         if (mainEl && typeof mainEl.scrollTop === 'number') mainEl.scrollTop = targetY;
       }
     };

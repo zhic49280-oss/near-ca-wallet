@@ -294,7 +294,14 @@
     const sendPreviewEl = $('send-route-preview');
     if (sendPreviewEl) {
       sendPreviewEl.classList.add('hidden');
-      sendPreviewEl.textContent = '';
+      const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
+      if (fw && typeof fw.clearPanelProps === 'function') {
+        fw.clearPanelProps('send-route-preview');
+      } else if (fw && typeof fw.mountSendFeeSummaryPanel === 'function') {
+        fw.mountSendFeeSummaryPanel(sendPreviewEl, null);
+      } else {
+        sendPreviewEl.textContent = '';
+      }
     }
     $('send-gas-fix-banner')?.classList.add('hidden');
     $('send-evm-chain-row')?.classList.add('hidden');

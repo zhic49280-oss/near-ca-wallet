@@ -343,6 +343,7 @@ test.describe('Real-Browser 375px Preact E2E Suite (10 Real-Click Journeys)', { 
       } else if (url.includes('1click.chaindefuser.com/v0/tokens')) {
         bodyObj = [
           { assetId: 'nep141:wrap.near', symbol: 'NEAR', decimals: 24, price: 5.2, blockchain: 'near' },
+          { assetId: '1cs_v1:eth:erc20:0x85f17cf997934a597031b2e18a9ab6ebd4b9f6a4', symbol: 'NEAR', decimals: 24, price: 5.2, blockchain: 'eth' },
           { assetId: 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', symbol: 'USDC', decimals: 6, price: 1.0, blockchain: 'near' }
         ];
       } else if (request.postData && request.postData.includes('"jsonrpc"')) {
@@ -700,7 +701,160 @@ test.describe('Real-Browser 375px Preact E2E Suite (10 Real-Click Journeys)', { 
     assert.equal(/\b(HTTP 500|HTTP 429|TypeError|ECONNREFUSED)\b/i.test(recovery.toastTxt), false, `Fault toast must be sanitized: ${recovery.toastTxt}`);
   });
 
-  test('E2E 10: All tabs (wallet, swap, perp, earn, hub) fit 375px viewport with zero uncaught page or console errors', async () => {
+  test('E2E 10: SendFeeSummaryPanel VDOM survives closeAllSheets() and re-renders fee preview on reopen', async () => {
+    await cdp.clickReal('.bottom-nav .nav-item[data-tab="wallet"]');
+    await cdp.waitFor(`!document.getElementById('view-wallet')?.classList.contains('hidden')`, 2000, 'home view visible for P1-4');
+
+    const crossAddr = '0x2222222222222222222222222222222222222222';
+    await cdp.clickReal('#view-wallet .quick-action-btn:nth-child(1)');
+    await cdp.waitFor(`document.getElementById('sheet-send')?.classList.contains('open')`, 2000, 'send sheet open 1st time');
+    await cdp.typeReal('#send-recipient-input', crossAddr);
+    await cdp.typeReal('#send-amount-input', '1');
+    await cdp.waitFor(`(() => {
+      const el = document.getElementById('send-route-preview');
+      return Boolean(el && !el.classList.contains('hidden') && (el.textContent || '').trim().length > 0);
+    })()`, 3000, '#send-route-preview rendered 1st time');
+    const firstPreview = await cdp.evalJs(`(document.getElementById('send-route-preview')?.textContent || '').trim()`);
+    assert.match(firstPreview, /NEAR.*➔/i, `1st preview must render route label, got "${firstPreview}"`);
+    assert.match(firstPreview, /0\.25%/, `1st preview must render fee %, got "${firstPreview}"`);
+
+    await cdp.clickReal('#sheet-backdrop');
+    await cdp.waitFor(`!document.getElementById('sheet-send')?.classList.contains('open')`, 2000, 'send sheet closed after 1st preview');
+
+    await cdp.clickReal('#view-wallet .quick-action-btn:nth-child(1)');
+    await cdp.waitFor(`document.getElementById('sheet-send')?.classList.contains('open')`, 2000, 'send sheet reopened');
+    // Populate both recipient and amount before dispatching a single input event so
+    // SendFeeSummaryPanel diffs directly with visible=true instead of resetting via visible=false.
+    await cdp.evalJs(`(() => {
+      const recipientEl = document.getElementById('send-recipient-input');
+      const amountEl = document.getElementById('send-amount-input');
+      if (!recipientEl || !amountEl) throw new Error('Missing send inputs on reopen');
+      recipientEl.focus();
+      recipientEl.value = ${JSON.stringify(crossAddr)};
+      amountEl.value = '1';
+      recipientEl.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await cdp.waitFor(`(() => {
+      const el = document.getElementById('send-route-preview');
+      return Boolean(el && !el.classList.contains('hidden') && (el.textContent || '').trim().length > 0);
+    })()`, 3000, '#send-route-preview rendered after closeAllSheets');
+    const secondPreview = await cdp.evalJs(`(document.getElementById('send-route-preview')?.textContent || '').trim()`);
+    assert.match(secondPreview, /NEAR.*➔/i, `Reopened preview must still render route label, got "${secondPreview}"`);
+    assert.match(secondPreview, /0\.25%/, `Reopened preview must still render fee %, got "${secondPreview}"`);
+
+    await cdp.clickReal('#sheet-backdrop');
+    await cdp.waitFor(`!document.getElementById('sheet-send')?.classList.contains('open')`, 2000, 'send sheet closed after P1-4');
+  });
+
+  test('E2E 11: DApp browser ERC-20 unlimited approval risk banner & eth_sign blind-sign second confirm', async () => {
+    await cdp.clickReal('.bottom-nav .nav-item[data-tab="hub"]');
+    await cdp.waitFor(`!document.getElementById('view-hub')?.classList.contains('hidden')`, 2000, 'hub view visible for DApp test');
+
+    await cdp.evalJs(`(() => {
+      const listeners = {};
+      window.__e2eDAppResponses = [];
+      window.__e2eEmitDAppBridge = (ev) => {
+        (listeners.bridgeMessage || []).forEach((fn) => fn(ev));
+      };
+      window.Capacitor = window.Capacitor || {};
+      window.Capacitor.Plugins = window.Capacitor.Plugins || {};
+      window.Capacitor.Plugins.NativeDAppBrowser = {
+        addListener: (name, fn) => {
+          listeners[name] = listeners[name] || [];
+          listeners[name].push(fn);
+          return { remove: () => {} };
+        },
+        openUrl: async () => {},
+        setOverlayVisible: async () => {},
+        emitProviderEvent: async () => {},
+        sendResponse: async (res) => { window.__e2eDAppResponses.push(res); }
+      };
+    })()`);
+
+    await cdp.evalJs(`document.querySelector('#hub-dapp-browser-btn')?.closest('button')?.click()`);
+    await cdp.waitFor(`document.getElementById('sheet-dapp-browser')?.classList.contains('open')`, 2000, 'dapp browser sheet open');
+    await cdp.typeReal('#dapp-url-input', 'https://near.com');
+    await cdp.clickReal('#btn-dapp-open');
+    await cdp.waitFor(`!document.getElementById('sheet-dapp-browser')?.classList.contains('open')`, 2000, 'dapp browser sheet closed on launch');
+
+    const spender = '0x2222222222222222222222222222222222222222';
+    const approveCalldata = '0x095ea7b3' + '2222222222222222222222222222222222222222'.padStart(64, '0') + 'f'.repeat(64);
+    await cdp.evalJs(`(() => {
+      const w = window.NearCAState.getActiveWallet();
+      w.nativeBalances = w.nativeBalances || {};
+      window.__e2ePrevEthBal = w.nativeBalances.eth;
+      w.nativeBalances.eth = 1.0;
+      window.__e2eEmitDAppBridge({
+        id: 'e2e-approve-1',
+        namespace: 'evm',
+        method: 'eth_sendTransaction',
+        origin: 'https://near.com',
+        params: [{
+          from: w.mpcEvmAddress || w.evmAddress,
+          to: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+          value: '0x0',
+          data: ${JSON.stringify(approveCalldata)}
+        }]
+      });
+    })()`);
+
+    await cdp.waitFor(`document.getElementById('sheet-dapp-approve')?.classList.contains('open')`, 3000, 'dapp approve sheet open for ERC-20 approve');
+    const approveUi = await cdp.evalJs(`(() => {
+      const banner = document.getElementById('dapp-approve-risk-banner');
+      const detail = document.getElementById('dapp-approve-detail');
+      const rect = banner ? banner.getBoundingClientRect() : null;
+      return {
+        bannerVisible: Boolean(banner && rect && rect.width > 0 && rect.height > 0),
+        bannerText: (banner?.textContent || '').trim(),
+        detailText: (detail?.textContent || '').trim()
+      };
+    })()`);
+    assert.equal(approveUi.bannerVisible, true, '#dapp-approve-risk-banner must be visible for unlimited ERC-20 approve');
+    assert.ok(approveUi.bannerText.length > 0, 'Risk banner must have non-empty warning text');
+    assert.ok(approveUi.detailText.includes(spender), `Detail must include decoded spender ${spender}, got "${approveUi.detailText}"`);
+    assert.match(approveUi.detailText, /Unlimited Approval|无限授权/i, `Detail must indicate unlimited approval, got "${approveUi.detailText}"`);
+
+    await cdp.clickReal('#btn-dapp-reject');
+    await cdp.waitFor(`!document.getElementById('sheet-dapp-approve')?.classList.contains('open')`, 2000, 'dapp approve sheet closed after reject');
+    await cdp.waitFor(`window.__e2eDAppResponses.some((r) => r.id === 'e2e-approve-1')`, 2000, 'approve reject response sent');
+    const approveResp = await cdp.evalJs(`window.__e2eDAppResponses.find((r) => r.id === 'e2e-approve-1')`);
+    assert.ok(approveResp && approveResp.errorJson && !approveResp.resultJson, 'Rejected ERC-20 approve must return errorJson and no resultJson');
+
+    const digest = '0x' + 'ab'.repeat(32);
+    await cdp.evalJs(`(() => {
+      const w = window.NearCAState.getActiveWallet();
+      window.__e2eEmitDAppBridge({
+        id: 'e2e-eth-sign-1',
+        namespace: 'evm',
+        method: 'eth_sign',
+        origin: 'https://near.com',
+        params: [w.mpcEvmAddress || w.evmAddress, ${JSON.stringify(digest)}]
+      });
+    })()`);
+
+    await cdp.waitFor(`document.getElementById('sheet-dapp-approve')?.classList.contains('open')`, 3000, 'dapp approve sheet open for eth_sign');
+    const blindBannerVisible = await cdp.evalJs(`(() => {
+      const banner = document.getElementById('dapp-approve-risk-banner');
+      const rect = banner ? banner.getBoundingClientRect() : null;
+      return Boolean(banner && rect && rect.width > 0 && rect.height > 0 && (banner.textContent || '').trim().length > 0);
+    })()`);
+    assert.equal(blindBannerVisible, true, '#dapp-approve-risk-banner must be visible for eth_sign');
+
+    await cdp.clickReal('#btn-dapp-confirm');
+    await cdp.waitFor(`document.getElementById('sheet-confirm-dialog')?.classList.contains('open')`, 2000, 'second confirm danger dialog open for eth_sign');
+    await cdp.clickReal('#btn-confirm-dialog-cancel');
+    await cdp.waitFor(`!document.getElementById('sheet-confirm-dialog')?.classList.contains('open')`, 2000, 'second confirm dialog closed after cancel');
+    await cdp.waitFor(`!document.getElementById('sheet-dapp-approve')?.classList.contains('open')`, 2000, 'dapp approve sheet closed after blind sign cancel');
+    await cdp.waitFor(`window.__e2eDAppResponses.some((r) => r.id === 'e2e-eth-sign-1')`, 2000, 'eth_sign reject response sent');
+    const blindResp = await cdp.evalJs(`window.__e2eDAppResponses.find((r) => r.id === 'e2e-eth-sign-1')`);
+    assert.ok(blindResp && blindResp.errorJson && !blindResp.resultJson, 'Cancelled eth_sign must reject with errorJson and never sign');
+    await cdp.evalJs(`(() => {
+      const w = window.NearCAState.getActiveWallet();
+      if (w && w.nativeBalances) w.nativeBalances.eth = window.__e2ePrevEthBal;
+    })()`);
+  });
+
+  test('E2E 12: All tabs (wallet, swap, perp, earn, hub) fit 375px viewport with zero uncaught page or console errors', async () => {
     for (const tab of ['wallet', 'swap', 'perp', 'hub']) {
       await cdp.clickReal(`.bottom-nav .nav-item[data-tab="${tab}"]`);
       await new Promise((r) => setTimeout(r, 100));
