@@ -58,7 +58,7 @@
       let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
         updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-        await loadScriptOnce('walletconnect.umd.min.js?v=6.95');
+        await loadScriptOnce('walletconnect.umd.min.js?v=6.96');
         sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       }
       if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -241,6 +241,28 @@
     return `${t('请求类型', 'Method')}: ${formatWcMethodLabel(m)}`;
   }
 
+  function syncWcRiskBanner(rCard, methodEl, riskText) {
+    let el = $('wc-request-risk-banner');
+    if (!el && riskText && typeof document !== 'undefined' && typeof document.createElement === 'function' && typeof rCard.insertBefore === 'function') {
+      el = document.createElement('div');
+      el.id = 'wc-request-risk-banner';
+      el.className = 'wc-risk-banner hidden';
+      el.setAttribute('role', 'alert');
+      const pEl = $('wc-request-payload');
+      if (pEl && pEl.parentNode === rCard) rCard.insertBefore(el, pEl);
+      else if (typeof rCard.appendChild === 'function') rCard.appendChild(el);
+    }
+    if (el) {
+      el.textContent = riskText || '';
+      el.classList.toggle('hidden', !riskText);
+    }
+    rCard.classList.toggle('is-high-risk', Boolean(riskText));
+    if (methodEl) {
+      methodEl.classList.toggle('text-rose', Boolean(riskText));
+      methodEl.classList.toggle('text-emerald', !riskText);
+    }
+  }
+
   function renderWcCards() {
     const st = getState();
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
@@ -267,8 +289,10 @@
     const rCard = $('wc-request-card');
     const ev = st.wc.pendingRequest;
     if (rCard) {
+      const methodEl = $('wc-request-method');
       if (!ev) {
         rCard.classList.add('hidden');
+        syncWcRiskBanner(rCard, methodEl, '');
       } else {
         const req = (ev.params && ev.params.request) || {};
         const sess = ev.topic && st.wc.client && typeof st.wc.client.session?.get === 'function'
@@ -277,65 +301,85 @@
         const peerMeta = sess && sess.peer && sess.peer.metadata ? sess.peer.metadata : null;
         const chainIdLabel = ev.params?.chainId || 'eip155:1';
         const dappLabel = peerMeta ? `${peerMeta.name || 'DApp'} (${chainIdLabel})` : chainIdLabel;
-        if ($('wc-request-method')) $('wc-request-method').textContent = formatWcMethodLabel(req.method);
+        if (methodEl) methodEl.textContent = formatWcMethodLabel(req.method);
         if ($('wc-request-dapp')) $('wc-request-dapp').textContent = dappLabel;
-        if ($('wc-request-payload')) {
-          let preview = '';
-          try {
-            if (req.method === 'personal_sign' && Array.isArray(req.params) && req.params.length > 0) {
-              const p0 = String(req.params[0] || '');
-              const p1 = String(req.params[1] || '');
-              const msgParam = (/^0x[0-9a-fA-F]{40}$/.test(p0) && p1) ? p1 : p0;
-              if (/^0x[0-9a-fA-F]+$/.test(msgParam) && msgParam.length > 2) {
-                const pairs = msgParam.slice(2).match(/.{2}/g) || [];
-                const bytes = new Uint8Array(pairs.map((h) => parseInt(h, 16)));
-                preview = new TextDecoder().decode(bytes);
-              } else {
-                preview = msgParam;
-              }
-            } else if (req.method === 'eth_sign' && Array.isArray(req.params) && req.params.length > 0) {
-              const p0 = String(req.params[0] || '');
-              const p1 = String(req.params[1] || '');
-              const rawHex = (/^0x[0-9a-fA-F]{40}$/.test(p0) && p1) ? p1 : p0;
-              preview = `⚠️ ${t('危险：原始盲签 (eth_sign)', 'DANGER: Raw Blind Sign (eth_sign)')}\n${t('原始摘要', 'Raw Digest')}: ${rawHex}`;
-            } else if (req.method === 'eth_sendTransaction' && Array.isArray(req.params) && req.params[0]) {
-              const tx = req.params[0];
-              const weiBig = parseHexBigInt(tx.value);
-              const contractsMod = getContracts();
-              const ethStr = (contractsMod && typeof contractsMod.fromBaseUnits === 'function')
-                ? contractsMod.fromBaseUnits(weiBig.toString(), 18)
-                : ((typeof window !== 'undefined' && window.ethers && typeof window.ethers.formatEther === 'function')
-                  ? window.ethers.formatEther(weiBig)
-                  : '0');
-              const cidNum = Number(String(chainIdLabel).split(':')[1] || 1);
-              const chainEntry = contractsMod && contractsMod.EVM_CHAINS
-                ? Object.values(contractsMod.EVM_CHAINS).find((c) => c && c.chainId === cidNum)
-                : null;
-              const nativeSym = (chainEntry && chainEntry.symbol) || 'ETH';
-              const dataHex = String(tx.data || '');
-              const dataLower = dataHex.toLowerCase();
-              let decodedApproval = '';
-              if (dataLower.startsWith('0x095ea7b3') && dataHex.length >= 138) {
-                const spender = `0x${dataHex.slice(34, 74)}`;
-                const amountBig = BigInt(`0x${dataHex.slice(74, 138)}`);
-                const allowanceLabel = amountBig >= (1n << 255n)
-                  ? t('无限授权 (Unlimited)', 'Unlimited Approval')
-                  : amountBig.toString();
-                decodedApproval = `\n⚠️ ${t('授权操作', 'Approval')}: ERC-20 approve\n${t('授权对象', 'Spender')}: ${spender}\n${t('授权额度', 'Allowance')}: ${allowanceLabel}`;
-              } else if (dataLower.startsWith('0xa22cb465') && dataHex.length >= 138) {
-                const operator = `0x${dataHex.slice(34, 74)}`;
-                const approved = BigInt(`0x${dataHex.slice(74, 138)}`) !== 0n;
-                decodedApproval = `\n⚠️ ${t('授权操作', 'Approval')}: NFT setApprovalForAll\n${t('授权对象', 'Operator')}: ${operator}\n${t('授权状态', 'Approved')}: ${approved ? t('开启 (全部资产)', 'Enabled (All)') : t('撤销', 'Revoked')}`;
-              }
-              preview = `${t('收款地址', 'To')}: ${tx.to || '--'}\n${t('金额', 'Value')}: ${ethStr} ${nativeSym}${decodedApproval}\n${t('数据', 'Data')}: ${tx.data && tx.data !== '0x' ? `${String(tx.data).slice(0, 42)}...` : t('无', 'None')}`;
+
+        let riskBannerText = '';
+        let preview = '';
+        try {
+          if (req.method === 'personal_sign' && Array.isArray(req.params) && req.params.length > 0) {
+            const p0 = String(req.params[0] || '');
+            const p1 = String(req.params[1] || '');
+            const msgParam = (/^0x[0-9a-fA-F]{40}$/.test(p0) && p1) ? p1 : p0;
+            if (/^0x[0-9a-fA-F]+$/.test(msgParam) && msgParam.length > 2) {
+              const pairs = msgParam.slice(2).match(/.{2}/g) || [];
+              preview = new TextDecoder().decode(new Uint8Array(pairs.map((h) => parseInt(h, 16))));
             } else {
-              preview = summarizeWcStructuredPayload(req.method, req.params);
+              preview = msgParam;
             }
-          } catch (_) {
-            preview = formatWcMethodLabel(req.method);
+          } else if (req.method === 'eth_sign') {
+            riskBannerText = t(
+              '⚠️ 高危盲签 (eth_sign)：签名原始摘要可能盗取您的全部资产，仅在完全信任该应用时继续。',
+              '⚠️ High-risk blind sign (eth_sign): signing raw digests can drain your assets. Continue only if you fully trust this DApp.'
+            );
+            const p0 = Array.isArray(req.params) ? String(req.params[0] || '') : '';
+            const p1 = Array.isArray(req.params) ? String(req.params[1] || '') : '';
+            const rawHex = (/^0x[0-9a-fA-F]{40}$/.test(p0) && p1) ? p1 : p0;
+            preview = `${t('原始摘要', 'Raw Digest')}: ${rawHex || '--'}`;
+          } else if (req.method === 'eth_sendTransaction' && Array.isArray(req.params) && req.params[0]) {
+            const tx = req.params[0];
+            const weiBig = parseHexBigInt(tx.value);
+            const contractsMod = getContracts();
+            const ethStr = (contractsMod && typeof contractsMod.fromBaseUnits === 'function')
+              ? contractsMod.fromBaseUnits(weiBig.toString(), 18)
+              : ((typeof window !== 'undefined' && window.ethers && typeof window.ethers.formatEther === 'function')
+                ? window.ethers.formatEther(weiBig)
+                : '0');
+            const cidNum = Number(String(chainIdLabel).split(':')[1] || 1);
+            const chainEntry = contractsMod && contractsMod.EVM_CHAINS
+              ? Object.values(contractsMod.EVM_CHAINS).find((c) => c && c.chainId === cidNum)
+              : null;
+            const nativeSym = (chainEntry && chainEntry.symbol) || 'ETH';
+            const dataHex = String(tx.data || '');
+            const dataLower = dataHex.toLowerCase();
+            let decodedApproval = '';
+            if (dataLower.startsWith('0x095ea7b3') && dataHex.length >= 138) {
+              const spender = `0x${dataHex.slice(34, 74)}`;
+              const amountBig = BigInt(`0x${dataHex.slice(74, 138)}`);
+              if (amountBig >= (1n << 255n)) {
+                riskBannerText = t(
+                  '⚠️ 高危无限代币授权：授权对象可转走您钱包中的全部该代币。',
+                  '⚠️ High-risk unlimited token approval: spender can transfer all of this token from your wallet.'
+                );
+                decodedApproval = `\n⚠️ ${t('授权操作', 'Approval')}: ERC-20 approve\n${t('授权对象', 'Spender')}: ${spender}\n${t('授权额度', 'Allowance')}: ${t('无限授权 (Unlimited)', 'Unlimited Approval')}`;
+              } else if (amountBig === 0n) {
+                decodedApproval = `\n${t('撤权操作', 'Revoke Approval')}: ERC-20 approve (0)\n${t('撤权对象', 'Spender')}: ${spender}`;
+              } else {
+                decodedApproval = `\n${t('授权操作', 'Approval')}: ERC-20 approve\n${t('授权对象', 'Spender')}: ${spender}\n${t('授权额度', 'Allowance')}: ${amountBig.toString()}`;
+              }
+            } else if (dataLower.startsWith('0xa22cb465') && dataHex.length >= 138) {
+              const operator = `0x${dataHex.slice(34, 74)}`;
+              const approved = BigInt(`0x${dataHex.slice(74, 138)}`) !== 0n;
+              if (approved) {
+                riskBannerText = t(
+                  '⚠️ 高危 NFT 全部资产授权：授权对象可转移该合集下的全部 NFT。',
+                  '⚠️ High-risk NFT full approval: operator can transfer all NFTs in this collection.'
+                );
+                decodedApproval = `\n⚠️ ${t('授权操作', 'Approval')}: NFT setApprovalForAll\n${t('授权对象', 'Operator')}: ${operator}\n${t('授权状态', 'Approved')}: ${t('开启 (全部资产)', 'Enabled (All)')}`;
+              } else {
+                decodedApproval = `\n${t('撤权操作', 'Revoke Approval')}: NFT setApprovalForAll\n${t('撤权对象', 'Operator')}: ${operator}\n${t('授权状态', 'Approved')}: ${t('已撤销 (安全)', 'Revoked')}`;
+              }
+            }
+            preview = `${t('收款地址', 'To')}: ${tx.to || '--'}\n${t('金额', 'Value')}: ${ethStr} ${nativeSym}${decodedApproval}\n${t('数据', 'Data')}: ${tx.data && tx.data !== '0x' ? `${String(tx.data).slice(0, 42)}...` : t('无', 'None')}`;
+          } else {
+            preview = summarizeWcStructuredPayload(req.method, req.params);
           }
-          $('wc-request-payload').textContent = preview;
+        } catch (_) {
+          preview = formatWcMethodLabel(req.method);
         }
+
+        if ($('wc-request-payload')) $('wc-request-payload').textContent = preview;
+        syncWcRiskBanner(rCard, methodEl, riskBannerText);
         if (typeof document !== 'undefined') {
           const rejectBtnEl = $('btn-wc-request-reject') || document.querySelector('#wc-request-card .btn-secondary');
           const approveBtnEl = $('btn-wc-request-approve') || document.querySelector('#wc-request-card .btn-primary');
@@ -1034,7 +1078,7 @@
     const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
     if (existing) return existing;
     if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
-      await loadScriptOnce('src/jsqr-lazy.js?v=6.95').catch(() => false);
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.96').catch(() => false);
       return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     }
     return null;

@@ -1281,6 +1281,39 @@
     }
   }
 
+  function pruneEip712Types(rawTypes, primaryType) {
+    if (!rawTypes || typeof rawTypes !== 'object' || Array.isArray(rawTypes)) {
+      return {};
+    }
+    const sourceTypes = {};
+    for (const [k, v] of Object.entries(rawTypes)) {
+      if (k !== 'EIP712Domain') sourceTypes[k] = v;
+    }
+    const rootType = typeof primaryType === 'string' ? primaryType.trim() : '';
+    if (!rootType || rootType === 'EIP712Domain' || !Object.prototype.hasOwnProperty.call(sourceTypes, rootType)) {
+      return sourceTypes;
+    }
+    const pruned = {};
+    const visited = new Set();
+    const queue = [rootType];
+    while (queue.length > 0) {
+      const typeName = queue.shift();
+      if (visited.has(typeName)) continue;
+      const fields = sourceTypes[typeName];
+      if (!Array.isArray(fields)) continue;
+      visited.add(typeName);
+      pruned[typeName] = fields;
+      for (const field of fields) {
+        const rawFieldType = field && typeof field.type === 'string' ? field.type.trim() : '';
+        const baseType = rawFieldType.replace(/(\s*\[\s*\d*\s*\])+$/, '');
+        if (baseType && baseType !== 'EIP712Domain' && Object.prototype.hasOwnProperty.call(sourceTypes, baseType) && !visited.has(baseType)) {
+          queue.push(baseType);
+        }
+      }
+    }
+    return pruned;
+  }
+
   async function handleEvmRequest(req, ctx) {
     const contracts = (ctx && ctx.contracts) || getContractsLib();
     const crypto = (ctx && ctx.crypto) || getCryptoLib();
@@ -1446,8 +1479,7 @@
       } catch (_) {
         throw buildRpcError(-32602, 'Invalid typed data');
       }
-      const cleanTypes = { ...(rawTyped.types || {}) };
-      delete cleanTypes.EIP712Domain;
+      const cleanTypes = pruneEip712Types(rawTyped.types, rawTyped.primaryType);
       const addr = contracts.resolveWalletEvmSender ? contracts.resolveWalletEvmSender(wallet) : wallet.evmAddress;
 
       await ensureApproval(req, ctx, {
@@ -1991,6 +2023,7 @@
     sanitizeDAppUrl,
     buildInjectedProviderScript,
     decodeEvmApprovalCalldata,
+    pruneEip712Types,
     handleDAppRpcRequest,
     serializeRpcError,
     resolveEvmChainByIdOrKey

@@ -569,13 +569,6 @@
     renderPerpBottomList();
   }
 
-  function togglePerpTpSl() {
-    const drawer = $('perp-tpsl-drawer');
-    if (!drawer) return;
-    const willOpen = drawer.classList.contains('hidden');
-    drawer.classList.toggle('hidden', !willOpen);
-  }
-
   function updatePerpFundingCountdown() {
     const el = $('perp-ob-funding-countdown');
     if (!el) return;

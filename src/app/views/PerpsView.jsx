@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useI18n, useWalletState } from '../store/useWalletStore.js';
 import { PanelSlot } from '../components/PanelSlot.jsx';
 import { PerpOverviewPanel } from '../components/PerpOverviewPanel.jsx';
-import { PerpOrderbookSidePanel, PerpBottomListPanel, PerpOverviewPositionsPanel } from '../components/PerpOrderbookAndPositions.jsx';
+import { PerpBottomListPanel, PerpOverviewPositionsPanel } from '../components/PerpOrderbookAndPositions.jsx';
 import { PerpChartHudPanel } from '../components/PerpDetailPanels.jsx';
 
 export function PerpView() {
@@ -509,16 +509,12 @@ export function PerpView() {
               </div>
 
               <div className="perp-ob-grid perp-ob-stacked">
-                <div className="perp-ob-col" id="perp-ob-asks">
-                  <PanelSlot slotId="perp-ob-asks" component={PerpOrderbookSidePanel} />
-                </div>
+                <div className="perp-ob-col" id="perp-ob-asks" />
                 <div className="perp-ob-mid-wrap">
                   <div id="perp-ob-mid-badge" className="perp-ob-mid-badge mono">--</div>
                   <div id="perp-ob-mid-sub" className="perp-ob-mid-sub mono">--</div>
                 </div>
-                <div className="perp-ob-col" id="perp-ob-bids">
-                  <PanelSlot slotId="perp-ob-bids" component={PerpOrderbookSidePanel} />
-                </div>
+                <div className="perp-ob-col" id="perp-ob-bids" />
               </div>
 
               <div id="perp-ob-power-wrap" className="perp-ob-power-wrap">

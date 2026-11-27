@@ -65,12 +65,14 @@
   }
 
   function generateNearcomUuidV4() {
-    if (typeof globalThis !== 'undefined' && globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
-      return globalThis.crypto.randomUUID();
+    const webCrypto = (typeof globalThis !== 'undefined' && globalThis.crypto) ? globalThis.crypto : null;
+    if (webCrypto && typeof webCrypto.randomUUID === 'function') {
+      return webCrypto.randomUUID();
     }
-    const rnd = (typeof globalThis !== 'undefined' && globalThis.crypto && typeof globalThis.crypto.getRandomValues === 'function')
-      ? globalThis.crypto.getRandomValues(new Uint8Array(16))
-      : Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
+    if (!webCrypto || typeof webCrypto.getRandomValues !== 'function') {
+      throw new Error('Secure CSPRNG unavailable (crypto.randomUUID / crypto.getRandomValues required)');
+    }
+    const rnd = webCrypto.getRandomValues(new Uint8Array(16));
     rnd[6] = (rnd[6] & 0x0f) | 0x40;
     rnd[8] = (rnd[8] & 0x3f) | 0x80;
     const hex = Array.from(rnd, (b) => b.toString(16).padStart(2, '0')).join('');
