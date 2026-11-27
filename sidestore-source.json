@@ -17,18 +17,18 @@
       "iconURL": "https://raw.githubusercontent.com/zhic49280-oss/near-ca-wallet/main/assets/nexus-logo-512.png",
       "tintColor": "#10B981",
       "category": "utilities",
-      "version": "2.7.26",
-      "versionDate": "2026-11-26T16:05:37Z",
-      "versionDescription": "Auto-built from commit 7abee42",
-      "downloadURL": "https://github.com/zhic49280-oss/near-ca-wallet/releases/download/v2.7.26/NEAR-CA-Wallet-unsigned.ipa",
-      "size": 6263096,
+      "version": "2.7.27",
+      "versionDate": "2026-11-27T03:00:12Z",
+      "versionDescription": "Auto-built from commit 66e9c38",
+      "downloadURL": "https://github.com/zhic49280-oss/near-ca-wallet/releases/download/v2.7.27/NEAR-CA-Wallet-unsigned.ipa",
+      "size": 6266715,
       "versions": [
         {
-          "version": "2.7.26",
-          "date": "2026-11-26T16:05:37Z",
-          "localizedDescription": "Auto-built from commit 7abee42",
-          "downloadURL": "https://github.com/zhic49280-oss/near-ca-wallet/releases/download/v2.7.26/NEAR-CA-Wallet-unsigned.ipa",
-          "size": 6263096,
+          "version": "2.7.27",
+          "date": "2026-11-27T03:00:12Z",
+          "localizedDescription": "Auto-built from commit 66e9c38",
+          "downloadURL": "https://github.com/zhic49280-oss/near-ca-wallet/releases/download/v2.7.27/NEAR-CA-Wallet-unsigned.ipa",
+          "size": 6266715,
           "minOSVersion": "14.0"
         }
       ],
