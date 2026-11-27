@@ -943,7 +943,15 @@
     },
     signMessage: function (msgParams) {
       var payload = Object.assign({}, msgParams || {});
-      if (payload.nonce instanceof Uint8Array) payload.nonce = u8ToB64(payload.nonce);
+      if (payload.nonce instanceof Uint8Array) {
+        payload.nonce = u8ToB64(payload.nonce);
+      } else if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(payload.nonce)) {
+        payload.nonce = u8ToB64(new Uint8Array(payload.nonce.buffer, payload.nonce.byteOffset, payload.nonce.byteLength));
+      } else if (Array.isArray(payload.nonce)) {
+        payload.nonce = u8ToB64(new Uint8Array(payload.nonce));
+      } else if (payload.nonce && typeof payload.nonce === 'object' && Array.isArray(payload.nonce.data)) {
+        payload.nonce = u8ToB64(new Uint8Array(payload.nonce.data));
+      }
       return sendBridgeRequest('near', 'signMessage', [payload]);
     },
     signAndSendTransaction: function (tx) {
@@ -1584,9 +1592,20 @@
     if (method === 'signMessage') {
       const message = String(arg0.message || '');
       const recipient = String(arg0.recipient || normalizeOriginLabel(req, ctx));
-      const nonceBytes = typeof arg0.nonce === 'string'
-        ? crypto.base64ToBytes(arg0.nonce)
-        : (arg0.nonce instanceof Uint8Array ? arg0.nonce : new Uint8Array(32));
+      let nonceBytes;
+      if (typeof arg0.nonce === 'string') {
+        nonceBytes = crypto.base64ToBytes(arg0.nonce);
+      } else if (arg0.nonce instanceof Uint8Array) {
+        nonceBytes = arg0.nonce;
+      } else if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(arg0.nonce)) {
+        nonceBytes = new Uint8Array(arg0.nonce.buffer, arg0.nonce.byteOffset, arg0.nonce.byteLength);
+      } else if (Array.isArray(arg0.nonce)) {
+        nonceBytes = Uint8Array.from(arg0.nonce, (b) => Number(b) & 0xff);
+      } else if (arg0.nonce && typeof arg0.nonce === 'object' && Array.isArray(arg0.nonce.data)) {
+        nonceBytes = Uint8Array.from(arg0.nonce.data, (b) => Number(b) & 0xff);
+      } else {
+        nonceBytes = new Uint8Array(32);
+      }
       await ensureApproval(req, ctx, {
         kind: 'signMessage',
         chainLabel: 'NEAR',
@@ -1594,7 +1613,7 @@
         summary: `Recipient: ${recipient}\nMessage: ${message.slice(0, 500)}`
       });
       await ensureBiometricAuth(req, ctx);
-      return crypto.signNep413IntentMessageAsync({
+      const sigRes = await crypto.signNep413IntentMessageAsync({
         message,
         recipient,
         nonceBytes,
@@ -1602,6 +1621,23 @@
         nearPrivateSeedHex: wallet.nearPrivateSeedHex || wallet.nearPrivateKeyHex,
         nearPublicKey: creds.publicKeyStr
       });
+      let signatureBase64 = sigRes.signature || '';
+      if (typeof signatureBase64 === 'string' && signatureBase64.startsWith('ed25519:') && typeof crypto.base58Decode === 'function' && typeof crypto.bytesToBase64 === 'function') {
+        try {
+          const rawSigBytes = crypto.base58Decode(signatureBase64.slice('ed25519:'.length));
+          if (rawSigBytes && rawSigBytes.length === 64) {
+            signatureBase64 = crypto.bytesToBase64(rawSigBytes);
+          }
+        } catch (_) {}
+      }
+      return {
+        ...sigRes,
+        accountId: creds.accountId || '',
+        publicKey: sigRes.publicKey || creds.publicKeyStr || '',
+        signature: signatureBase64,
+        signatureBase58: sigRes.signature,
+        ...(arg0.state !== undefined ? { state: arg0.state } : {})
+      };
     }
 
     if (method === 'signAndSendTransaction') {

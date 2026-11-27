@@ -447,7 +447,8 @@ test('v6.24 DApp Browser: injected provider script idempotency, EIP-6963 discove
   assert.equal(solSigRes.publicKey, wallet.solAddress);
   assert.equal(cryptoEngine.base64ToBytes(solSigRes.signatureBase64).length, 64);
 
-  // NEAR NEP-413 signMessage
+  // NEAR NEP-413 signMessage (must return NEP-413 accountId + 64-byte base64 signature)
+  const namedWallet = { ...wallet, nearNamedAccount: 'zhic49280.near' };
   const nearSigRes = await dappBrowser.handleDAppRpcRequest(
     {
       id: '7',
@@ -455,9 +456,25 @@ test('v6.24 DApp Browser: injected provider script idempotency, EIP-6963 discove
       method: 'signMessage',
       params: [{ message: 'Sign in NEAR', recipient: 'app.rhea.finance', nonce: cryptoEngine.bytesToBase64(new Uint8Array(32).fill(7)) }]
     },
-    { wallet, contracts: mockContracts, crypto: cryptoEngine, requestApprovalAsync: async () => true }
+    { wallet: namedWallet, contracts: mockContracts, crypto: cryptoEngine, requestApprovalAsync: async () => true }
   );
-  assert.ok(nearSigRes.signature && nearSigRes.signature.startsWith('ed25519:'));
+  assert.equal(nearSigRes.accountId, 'zhic49280.near');
+  assert.equal(nearSigRes.publicKey, wallet.nearPublicKey);
+  assert.equal(cryptoEngine.base64ToBytes(nearSigRes.signature).length, 64);
+  assert.ok(nearSigRes.signatureBase58 && nearSigRes.signatureBase58.startsWith('ed25519:'));
+
+  const nearSigArrayNonceRes = await dappBrowser.handleDAppRpcRequest(
+    {
+      id: '8',
+      namespace: 'near',
+      method: 'signMessage',
+      params: [{ message: 'Sign in near.com', recipient: 'near.com', nonce: Array.from({ length: 32 }, (_, i) => i + 1), state: 'login-state-1' }]
+    },
+    { wallet: namedWallet, contracts: mockContracts, crypto: cryptoEngine, requestApprovalAsync: async () => true }
+  );
+  assert.equal(nearSigArrayNonceRes.accountId, 'zhic49280.near');
+  assert.equal(nearSigArrayNonceRes.state, 'login-state-1');
+  assert.equal(cryptoEngine.base64ToBytes(nearSigArrayNonceRes.signature).length, 64);
 });
 
 test('v6.24 DApp Browser: Native iOS/Android plugin registration, CI workflows, and zero inline HTML events in ui-controller', () => {

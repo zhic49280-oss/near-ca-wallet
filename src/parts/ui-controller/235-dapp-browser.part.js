@@ -442,6 +442,20 @@
     if (wallet && contracts && typeof contracts.ensureWalletSigningKeysAsync === 'function') {
       await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
     }
+    if (wallet && !wallet.nearNamedAccount && wallet.nearPublicKey && !wallet._nearAccountChecked && contracts && typeof contracts.discoverNearAccountsByPublicKeyAsync === 'function') {
+      try {
+        wallet._nearAccountChecked = true;
+        const discovered = await Promise.race([
+          contracts.discoverNearAccountsByPublicKeyAsync(wallet.nearPublicKey).catch(() => []),
+          new Promise((resolve) => setTimeout(() => resolve([]), 1800))
+        ]);
+        if (Array.isArray(discovered) && discovered.length > 0) {
+          wallet.nearNamedAccount = discovered[0];
+          wallet.discoveredNearAccounts = discovered;
+          if (st && typeof st.saveWalletsDebounced === 'function') st.saveWalletsDebounced();
+        }
+      } catch (_) {}
+    }
 
     const evmCfg = (contracts && contracts.EVM_CHAINS && contracts.EVM_CHAINS[_dappSession.activeEvmChainKey]) || { chainId: 1 };
     const evmAddress = wallet && contracts && contracts.resolveWalletEvmSender
