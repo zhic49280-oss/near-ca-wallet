@@ -798,7 +798,10 @@
             var arr = Array.isArray(inputs) ? inputs : [inputs];
             return Promise.all(arr.map(function (inp) {
               return solProvider.signTransaction(inp.transaction).then(function (signed) {
-                return { signedTransaction: signed && typeof signed.serialize === 'function' ? signed.serialize() : new Uint8Array(0) };
+                var out = signed instanceof Uint8Array
+                  ? signed
+                  : (signed && typeof signed.serialize === 'function' ? signed.serialize() : new Uint8Array(0));
+                return { signedTransaction: out };
               });
             }));
           }
@@ -817,6 +820,18 @@
       }
     };
 
+    function syncNearStandardAccounts(accountId, publicKey) {
+      var acct = String(accountId || '').trim();
+      var pk = String(publicKey || '').trim();
+      nearWalletStandardObj.accounts = acct ? [{
+        address: acct,
+        publicKey: pk ? decodeB58(pk.replace(/^ed25519:/i, '')) : new Uint8Array(32),
+        chains: ['near:mainnet'],
+        features: ['near:signIn', 'near:signOut', 'near:signMessage', 'near:signAndSendTransaction', 'near:signAndSendTransactions']
+      }] : [];
+      return nearWalletStandardObj.accounts;
+    }
+
     var nearWalletStandardObj = {
       version: '1.0.0',
       name: CFG.walletName,
@@ -828,20 +843,16 @@
           version: '1.0.0',
           connect: function () {
             return nearProvider.requestSignIn({}).then(function () {
-              nearWalletStandardObj.accounts = nearProvider.accountId ? [{
-                address: nearProvider.accountId,
-                publicKey: nearProvider.publicKey ? decodeB58(nearProvider.publicKey.replace(/^ed25519:/i, '')) : new Uint8Array(32),
-                chains: ['near:mainnet'],
-                features: ['near:signIn', 'near:signOut', 'near:signMessage', 'near:signAndSendTransaction', 'near:signAndSendTransactions']
-              }] : [];
-              return { accounts: nearWalletStandardObj.accounts };
+              return { accounts: syncNearStandardAccounts(nearProvider.accountId, nearProvider.publicKey) };
             });
           }
         },
         'standard:disconnect': {
           version: '1.0.0',
           disconnect: function () {
-            return nearProvider.signOut();
+            return nearProvider.signOut().then(function () {
+              syncNearStandardAccounts('', '');
+            });
           }
         },
         'standard:events': {
@@ -855,13 +866,20 @@
           version: '1.0.0',
           signIn: function (inp) {
             return nearProvider.requestSignIn(inp || {}).then(function (res) {
-              return [{ accountId: (res && res.accountId) || nearProvider.accountId, publicKey: (res && res.publicKey) || nearProvider.publicKey }];
+              var acct = (res && res.accountId) || nearProvider.accountId;
+              var pk = (res && res.publicKey) || nearProvider.publicKey;
+              syncNearStandardAccounts(acct, pk);
+              return [{ accountId: acct, publicKey: pk }];
             });
           }
         },
         'near:signOut': {
           version: '1.0.0',
-          signOut: function () { return nearProvider.signOut(); }
+          signOut: function () {
+            return nearProvider.signOut().then(function () {
+              syncNearStandardAccounts('', '');
+            });
+          }
         },
         'near:signMessage': {
           version: '1.0.0',
@@ -1553,6 +1571,9 @@
     if (typeof contracts.ensureWalletSigningKeysAsync === 'function') {
       await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
     }
+    if (!wallet.nearNamedAccount && ctx && typeof ctx.hydrateNearNamedAccountAsync === 'function') {
+      await ctx.hydrateNearNamedAccountAsync(wallet).catch(() => {});
+    }
 
     const creds = contracts.getWalletNearSignerCredentials(wallet);
     const method = String(req.method || '').trim();
@@ -1568,11 +1589,12 @@
       const alreadyConnected = Boolean(ctx && typeof ctx.isOriginConnected === 'function' && ctx.isOriginConnected(origin, 'near'));
       const isDisconnected = Boolean(ctx && typeof ctx.isOriginDisconnected === 'function' && ctx.isOriginDisconnected(origin, 'near'));
       if (!alreadyConnected && (!(ctx && ctx.autoConnectOrigin) || isDisconnected)) {
+        const isImplicit = /^[0-9a-f]{64}$/i.test(String(creds.accountId || ''));
         await ensureApproval(req, ctx, {
           kind: 'connect',
           chainLabel: 'NEAR',
           account: creds.accountId || '',
-          summary: `Connect NEAR account (${creds.accountId || '--'})`
+          summary: `Connect NEAR account (${creds.accountId || '--'}${isImplicit ? ' · Implicit' : ''})`
         });
       }
       if (ctx && typeof ctx.markOriginConnected === 'function') {

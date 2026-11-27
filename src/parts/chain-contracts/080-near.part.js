@@ -14,7 +14,10 @@
     if (!wallet) {
       return { accountId: '', publicKeyStr: '', privateKeyStr: '' };
     }
-    const accountId = String(wallet.nearNamedAccount || wallet.nearAddress || '').trim();
+    const discoveredNamed = Array.isArray(wallet.discoveredNearAccounts)
+      ? wallet.discoveredNearAccounts.find((a) => a && !/^[0-9a-f]{64}$/i.test(String(a).trim()))
+      : '';
+    const accountId = String(wallet.nearNamedAccount || discoveredNamed || wallet.nearAddress || '').trim();
     return {
       accountId,
       publicKeyStr: String(wallet.nearPublicKey || '').trim(),

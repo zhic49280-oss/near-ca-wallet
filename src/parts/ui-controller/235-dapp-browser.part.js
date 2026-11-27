@@ -2,13 +2,40 @@
 
   const DAPP_CONN_STORAGE_KEY = 'near_ca_dapp_connections_v1';
 
+  function getActiveDAppWalletId() {
+    try {
+      const st = typeof getState === 'function' ? getState() : null;
+      const w = st && typeof st.getActiveWallet === 'function' ? st.getActiveWallet() : null;
+      if (w && w.id) return String(w.id);
+      if (st && st.activeWalletId) return String(st.activeWalletId);
+    } catch (_) {}
+    return '';
+  }
+
+  function parseDAppConnKey(entry) {
+    const str = String(entry || '').trim();
+    const m = str.match(/^([^:]+):(evm|solana|near):(.+)$/);
+    if (!m) return null;
+    return { walletId: m[1], namespace: m[2], origin: m[3] };
+  }
+
+  function makeDAppConnKey(walletId, namespace, origin) {
+    const wid = String(walletId || '').trim();
+    const ns = String(namespace || '').trim();
+    const orig = String(origin || '').trim();
+    if (!wid || !ns || !orig) return '';
+    return `${wid}:${ns}:${orig}`;
+  }
+
   function loadPersistedDAppConnections() {
     try {
       if (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function') {
         const raw = localStorage.getItem(DAPP_CONN_STORAGE_KEY);
         if (raw) {
           const arr = JSON.parse(raw);
-          if (Array.isArray(arr)) return new Set(arr.map((x) => String(x)));
+          if (Array.isArray(arr)) {
+            return new Set(arr.map((x) => String(x)).filter((x) => Boolean(parseDAppConnKey(x))));
+          }
         }
       }
     } catch (_) {}
@@ -18,7 +45,8 @@
   function savePersistedDAppConnections(setObj) {
     try {
       if (typeof localStorage !== 'undefined' && typeof localStorage.setItem === 'function') {
-        localStorage.setItem(DAPP_CONN_STORAGE_KEY, JSON.stringify(Array.from(setObj || [])));
+        const clean = Array.from(setObj || []).filter((x) => Boolean(parseDAppConnKey(x)));
+        localStorage.setItem(DAPP_CONN_STORAGE_KEY, JSON.stringify(clean));
       }
     } catch (_) {}
   }
@@ -49,25 +77,31 @@
     } catch (_) {}
   }
 
-  function isDAppOriginConnected(origin, namespace) {
-    return _dappSession.connectedOrigins.has(`${namespace}:${origin}`);
+  function isDAppOriginConnected(origin, namespace, walletIdOverride) {
+    const wid = walletIdOverride !== undefined ? String(walletIdOverride || '') : getActiveDAppWalletId();
+    const key = makeDAppConnKey(wid, namespace, origin);
+    return key ? _dappSession.connectedOrigins.has(key) : false;
   }
 
-  function isDAppOriginDisconnected(origin, namespace) {
-    return _dappSession.disconnectedOrigins.has(`${namespace}:${origin}`);
+  function isDAppOriginDisconnected(origin, namespace, walletIdOverride) {
+    const wid = walletIdOverride !== undefined ? String(walletIdOverride || '') : getActiveDAppWalletId();
+    const key = makeDAppConnKey(wid, namespace, origin);
+    return key ? _dappSession.disconnectedOrigins.has(key) : false;
   }
 
-  function markDAppOriginConnected(origin, namespace) {
-    if (!origin) return;
-    const key = `${namespace}:${origin}`;
+  function markDAppOriginConnected(origin, namespace, walletIdOverride) {
+    const wid = walletIdOverride !== undefined ? String(walletIdOverride || '') : getActiveDAppWalletId();
+    const key = makeDAppConnKey(wid, namespace, origin);
+    if (!key) return;
     _dappSession.disconnectedOrigins.delete(key);
     _dappSession.connectedOrigins.add(key);
     savePersistedDAppConnections(_dappSession.connectedOrigins);
   }
 
-  function markDAppOriginDisconnected(origin, namespace) {
-    if (!origin) return;
-    const key = `${namespace}:${origin}`;
+  function markDAppOriginDisconnected(origin, namespace, walletIdOverride) {
+    const wid = walletIdOverride !== undefined ? String(walletIdOverride || '') : getActiveDAppWalletId();
+    const key = makeDAppConnKey(wid, namespace, origin);
+    if (!key) return;
     _dappSession.connectedOrigins.delete(key);
     _dappSession.disconnectedOrigins.add(key);
     savePersistedDAppConnections(_dappSession.connectedOrigins);
@@ -75,9 +109,11 @@
 
   function disconnectDAppOrigin(origin) {
     const clean = String(origin || '').trim();
-    if (!clean) return;
+    const wid = getActiveDAppWalletId();
+    if (!clean || !wid) return;
     ['evm', 'solana', 'near'].forEach((ns) => {
-      const key = `${ns}:${clean}`;
+      const key = makeDAppConnKey(wid, ns, clean);
+      if (!key) return;
       _dappSession.connectedOrigins.delete(key);
       _dappSession.disconnectedOrigins.add(key);
     });
@@ -87,26 +123,63 @@
   }
 
   function disconnectAllDAppOrigins() {
-    for (const key of _dappSession.connectedOrigins) {
-      _dappSession.disconnectedOrigins.add(key);
+    const wid = getActiveDAppWalletId();
+    if (!wid) return;
+    const prefix = `${wid}:`;
+    for (const key of Array.from(_dappSession.connectedOrigins)) {
+      if (key.startsWith(prefix)) {
+        _dappSession.connectedOrigins.delete(key);
+        _dappSession.disconnectedOrigins.add(key);
+      }
     }
-    _dappSession.connectedOrigins.clear();
     savePersistedDAppConnections(_dappSession.connectedOrigins);
     renderDAppCatalog();
     showToast(t('已断开全部 DApp 授权', 'All DApps disconnected'));
   }
 
+  function clearDAppWalletConnections(walletId) {
+    const wid = String(walletId || '').trim();
+    if (!wid) return;
+    const prefix = `${wid}:`;
+    for (const key of Array.from(_dappSession.connectedOrigins)) {
+      if (key.startsWith(prefix)) _dappSession.connectedOrigins.delete(key);
+    }
+    for (const key of Array.from(_dappSession.disconnectedOrigins)) {
+      if (key.startsWith(prefix)) _dappSession.disconnectedOrigins.delete(key);
+    }
+    savePersistedDAppConnections(_dappSession.connectedOrigins);
+    if (_dappSession.pendingApproval && typeof _dappSession.pendingApproval.resolve === 'function') {
+      const resolvePending = _dappSession.pendingApproval.resolve;
+      _dappSession.pendingApproval = null;
+      resolvePending(false);
+    }
+    renderDAppConnectedSection();
+  }
+
+  function syncDAppSessionForWallet(_nextWallet) {
+    if (_dappSession.pendingApproval && typeof _dappSession.pendingApproval.resolve === 'function') {
+      const resolvePending = _dappSession.pendingApproval.resolve;
+      _dappSession.pendingApproval = null;
+      resolvePending(false);
+    }
+    _dappSession.activeEvmChainKey = 'eth';
+    _dappSession.connectedOrigins = loadPersistedDAppConnections();
+    renderDAppConnectedSection();
+  }
+
   function renderDAppConnectedSection() {
     const sec = $('dapp-connected-section');
     if (!sec) return;
+    const wid = getActiveDAppWalletId();
     const byOrigin = new Map();
-    for (const entry of _dappSession.connectedOrigins) {
-      const idx = entry.indexOf(':');
-      if (idx <= 0) continue;
-      const ns = entry.slice(0, idx).toUpperCase();
-      const origin = entry.slice(idx + 1);
-      if (!byOrigin.has(origin)) byOrigin.set(origin, new Set());
-      byOrigin.get(origin).add(ns === 'SOLANA' ? 'SOL' : ns);
+    if (wid) {
+      for (const entry of _dappSession.connectedOrigins) {
+        const parsed = parseDAppConnKey(entry);
+        if (!parsed || parsed.walletId !== wid) continue;
+        const ns = parsed.namespace.toUpperCase();
+        if (!byOrigin.has(parsed.origin)) byOrigin.set(parsed.origin, new Set());
+        byOrigin.get(parsed.origin).add(ns === 'SOLANA' ? 'SOL' : ns);
+      }
     }
     const connectedList = Array.from(byOrigin.entries()).map(([origin, nsSet]) => {
       let host = origin;
@@ -343,6 +416,7 @@
     }
     if (!msg || !msg.id) return;
 
+    const walletId = wallet && wallet.id ? String(wallet.id) : '';
     try {
       const ethersLib = await ensureEthersLoaded().catch(() => null);
       const result = await browserMod.handleDAppRpcRequest(msg, {
@@ -355,10 +429,10 @@
         title: msg.title || '',
         activeEvmChainKey: _dappSession.activeEvmChainKey,
         autoConnectOrigin: false,
-        isOriginConnected: isDAppOriginConnected,
-        isOriginDisconnected: isDAppOriginDisconnected,
-        markOriginConnected: markDAppOriginConnected,
-        markOriginDisconnected: markDAppOriginDisconnected,
+        isOriginConnected: (origin, ns) => isDAppOriginConnected(origin, ns, walletId),
+        isOriginDisconnected: (origin, ns) => isDAppOriginDisconnected(origin, ns, walletId),
+        markOriginConnected: (origin, ns) => markDAppOriginConnected(origin, ns, walletId),
+        markOriginDisconnected: (origin, ns) => markDAppOriginDisconnected(origin, ns, walletId),
         setEvmChain: (key) => { _dappSession.activeEvmChainKey = key || 'eth'; },
         onSessionChainChanged: (chainHex) => {
           if (plugin && typeof plugin.emitProviderEvent === 'function') {
@@ -366,7 +440,8 @@
           }
         },
         requestApprovalAsync: requestDAppApprovalAsync,
-        verifyAuthAsync: verifyDAppSecurityAuthAsync
+        verifyAuthAsync: verifyDAppSecurityAuthAsync,
+        hydrateNearNamedAccountAsync: (w) => hydrateNearNamedAccountForDAppAsync(w, contracts, st, 3500)
       });
 
       if (plugin && typeof plugin.sendResponse === 'function') {
@@ -411,6 +486,82 @@
     });
   }
 
+  const _dappNearCheckCooldown = new Map();
+
+  async function hydrateNearNamedAccountForDAppAsync(wallet, contracts, st, timeoutMs = 3500) {
+    if (!wallet) return '';
+    const existing = String(wallet.nearNamedAccount || '').trim().toLowerCase();
+    if (existing) return existing;
+
+    const filterNamed = (arr) => (Array.isArray(arr) ? arr : [])
+      .map((a) => String(a || '').trim().toLowerCase())
+      .filter((a) => a && !/^[0-9a-f]{64}$/.test(a) && (a.endsWith('.near') || a.endsWith('.tg') || a.includes('.')))
+      .sort((a, b) => (b.endsWith('.near') ? 1 : 0) - (a.endsWith('.near') ? 1 : 0));
+
+    const cachedList = filterNamed(wallet.discoveredNearAccounts);
+    if (cachedList.length > 0) {
+      wallet.nearNamedAccount = cachedList[0];
+      wallet.discoveredNearAccounts = cachedList;
+      if (st && typeof st.saveWalletsDebounced === 'function') st.saveWalletsDebounced();
+      return cachedList[0];
+    }
+
+    const rawPk = String(wallet.nearPublicKey || '').trim();
+    if (!rawPk) return '';
+    const pk = rawPk.startsWith('ed25519:') ? rawPk : `ed25519:${rawPk}`;
+    const wid = String(wallet.id || pk);
+    const lastEmptyTs = _dappNearCheckCooldown.get(wid) || 0;
+    if (Date.now() - lastEmptyTs < 15000) return '';
+
+    const fetchJsonQuick = async (url) => {
+      if (typeof fetch !== 'function') return null;
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = setTimeout(() => { try { ctrl && ctrl.abort(); } catch (_) {} }, timeoutMs);
+      try {
+        const res = await fetch(url, ctrl ? { signal: ctrl.signal } : {});
+        if (!res || !res.ok) return null;
+        return await res.json();
+      } catch (_) {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    try {
+      const queries = [
+        fetchJsonQuick(`https://api.fastnear.com/v1/public_key/${encodeURIComponent(pk)}/all`)
+          .then((d) => filterNamed(d && d.account_ids))
+      ];
+      if (contracts && typeof contracts.discoverNearAccountsByPublicKeyAsync === 'function') {
+        queries.push(
+          Promise.race([
+            contracts.discoverNearAccountsByPublicKeyAsync(pk).catch(() => []),
+            new Promise((resolve) => setTimeout(() => resolve([]), timeoutMs))
+          ]).then((d) => filterNamed(d))
+        );
+      }
+      const settled = await Promise.allSettled(queries);
+      const merged = new Set();
+      settled.forEach((r) => {
+        if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+          r.value.forEach((a) => merged.add(a));
+        }
+      });
+      const discovered = Array.from(merged).sort((a, b) => (b.endsWith('.near') ? 1 : 0) - (a.endsWith('.near') ? 1 : 0));
+      if (discovered.length > 0) {
+        wallet.nearNamedAccount = discovered[0];
+        wallet.discoveredNearAccounts = discovered;
+        wallet._nearAccountChecked = true;
+        _dappNearCheckCooldown.delete(wid);
+        if (st && typeof st.saveWalletsDebounced === 'function') st.saveWalletsDebounced();
+        return discovered[0];
+      }
+      _dappNearCheckCooldown.set(wid, Date.now());
+    } catch (_) {}
+    return '';
+  }
+
   async function launchDAppUrl(rawUrl) {
     const browserMod = getDAppBrowser();
     const contracts = getContracts();
@@ -424,38 +575,28 @@
       return;
     }
 
+    ensureDAppBridgeListeners();
+    if (wallet && contracts && typeof contracts.ensureWalletSigningKeysAsync === 'function') {
+      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+    }
+    if (wallet && !wallet.nearNamedAccount) {
+      await hydrateNearNamedAccountForDAppAsync(wallet, contracts, st, 3500).catch(() => {});
+    }
+
     try {
       const originUrl = new URL(safeUrl).origin;
       const isCatalogOrigin = Array.isArray(browserMod.DAPP_CATALOG) && browserMod.DAPP_CATALOG.some((d) => {
         try { return new URL(d.url).origin === originUrl; } catch (_) { return false; }
       });
       if (originUrl && isCatalogOrigin) {
-        ['evm', 'solana', 'near'].forEach((ns) => {
+        const autoNamespaces = wallet && wallet.nearNamedAccount ? ['evm', 'solana', 'near'] : ['evm', 'solana'];
+        autoNamespaces.forEach((ns) => {
           if (!isDAppOriginDisconnected(originUrl, ns)) {
             markDAppOriginConnected(originUrl, ns);
           }
         });
       }
     } catch (_) {}
-
-    ensureDAppBridgeListeners();
-    if (wallet && contracts && typeof contracts.ensureWalletSigningKeysAsync === 'function') {
-      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-    }
-    if (wallet && !wallet.nearNamedAccount && wallet.nearPublicKey && !wallet._nearAccountChecked && contracts && typeof contracts.discoverNearAccountsByPublicKeyAsync === 'function') {
-      try {
-        wallet._nearAccountChecked = true;
-        const discovered = await Promise.race([
-          contracts.discoverNearAccountsByPublicKeyAsync(wallet.nearPublicKey).catch(() => []),
-          new Promise((resolve) => setTimeout(() => resolve([]), 1800))
-        ]);
-        if (Array.isArray(discovered) && discovered.length > 0) {
-          wallet.nearNamedAccount = discovered[0];
-          wallet.discoveredNearAccounts = discovered;
-          if (st && typeof st.saveWalletsDebounced === 'function') st.saveWalletsDebounced();
-        }
-      } catch (_) {}
-    }
 
     const evmCfg = (contracts && contracts.EVM_CHAINS && contracts.EVM_CHAINS[_dappSession.activeEvmChainKey]) || { chainId: 1 };
     const evmAddress = wallet && contracts && contracts.resolveWalletEvmSender

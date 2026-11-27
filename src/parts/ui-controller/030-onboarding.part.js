@@ -413,6 +413,9 @@
       _tokenDetailState.mergedItems = [];
       _tokenDetailState.fetchSeq = (_tokenDetailState.fetchSeq || 0) + 1;
     }
+    if (typeof syncDAppSessionForWallet === 'function') {
+      syncDAppSessionForWallet(nextWallet);
+    }
   }
 
   function switchActiveWallet(walletId) {
@@ -464,6 +467,9 @@
       else if (typeof globalThis !== 'undefined' && typeof globalThis.__clearPbkdf2Cache === 'function') globalThis.__clearPbkdf2Cache();
       const deletedActive = st.activeWalletId === walletId;
       st.wallets = st.wallets.filter((w) => w.id !== walletId);
+      if (typeof clearDAppWalletConnections === 'function') {
+        clearDAppWalletConnections(walletId);
+      }
       if (deletedActive) {
         st.activeWalletId = st.wallets[0] ? st.wallets[0].id : null;
         resetPerWalletTransientState(st.wallets[0] || null);

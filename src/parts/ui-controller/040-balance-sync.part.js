@@ -129,7 +129,9 @@
   let _feedbackRefreshing = false;
   let _refreshGen = 0;
   let _refreshingWalletId = null;
+  let _homeRefreshBaseText = '';
   let _lastStakingPositionsSyncAt = 0;
+  const _nearDiscoverCooldown = new Map();
 
   function ensureStakingMetricsFresh(maxAgeMs = 300_000) {
     const st = getState();
@@ -162,10 +164,17 @@
     const isStaleRefresh = () => gen !== _refreshGen || st.activeWalletId !== targetWalletId;
 
     const refreshBtn = $('btn-home-refresh');
-    const prevRefreshText = refreshBtn ? refreshBtn.textContent : '';
+    const syncingTextZh = '同步中...';
+    const syncingTextEn = 'Syncing...';
+    if (refreshBtn && !refreshBtn.disabled) {
+      const rawText = String(refreshBtn.textContent || '').trim();
+      if (rawText && rawText !== syncingTextZh && rawText !== syncingTextEn) {
+        _homeRefreshBaseText = rawText;
+      }
+    }
     if (showFeedback && refreshBtn) {
       refreshBtn.disabled = true;
-      refreshBtn.textContent = t('同步中...', 'Syncing...');
+      refreshBtn.textContent = t(syncingTextZh, syncingTextEn);
     }
 
     const ptrInd = $('home-ptr-indicator');
@@ -194,15 +203,23 @@
       const initialSolAddr = String(wallet.solAddress || '');
       const initialEvmAddr = String(wallet.evmAddress || '');
 
-      // Non-blocking .near named-account discovery in parallel
+      // Non-blocking .near named-account discovery in parallel (never permanently lock when empty/failed)
       let discoveredNamedAccount = null;
-      if (!wallet.nearNamedAccount && wallet.nearPublicKey && !wallet._nearAccountChecked && typeof contracts.discoverNearAccountsByPublicKeyAsync === 'function') {
-        wallet._nearAccountChecked = true;
+      const nearCheckKey = String(wallet.id || wallet.nearPublicKey || '');
+      const lastNearEmptyTs = _nearDiscoverCooldown.get(nearCheckKey) || 0;
+      if (!wallet.nearNamedAccount && wallet.nearPublicKey && (Date.now() - lastNearEmptyTs >= 15000) && typeof contracts.discoverNearAccountsByPublicKeyAsync === 'function') {
+        _nearDiscoverCooldown.set(nearCheckKey, Date.now());
         contracts.discoverNearAccountsByPublicKeyAsync(wallet.nearPublicKey).then((discovered) => {
-          if (isStaleRefresh() || !Array.isArray(discovered) || discovered.length === 0) return;
+          if (!Array.isArray(discovered) || discovered.length === 0) {
+            _nearDiscoverCooldown.set(nearCheckKey, Date.now());
+            return;
+          }
+          _nearDiscoverCooldown.delete(nearCheckKey);
+          if (isStaleRefresh()) return;
           discoveredNamedAccount = discovered[0];
           wallet.nearNamedAccount = discovered[0];
           wallet.discoveredNearAccounts = discovered;
+          wallet._nearAccountChecked = true;
           contracts.ensureWalletSigningKeysAsync(wallet).then(() => {
             if (!isStaleRefresh() && (String(wallet.solAddress || '') !== initialSolAddr || String(wallet.evmAddress || '') !== initialEvmAddr)) {
               if ($('sheet-receive')?.classList?.contains('open') && typeof renderReceiveSheet === 'function') renderReceiveSheet();
@@ -241,7 +258,7 @@
             }).catch(() => {});
           }
         }).catch(() => {
-          wallet._nearAccountChecked = false;
+          _nearDiscoverCooldown.set(nearCheckKey, Date.now());
         });
       }
 
@@ -574,9 +591,10 @@
       if (showFeedback) showToast(toUserFriendlyError(e, '余额同步失败，请稍后重试', 'Sync failed, please try again'));
     } finally {
       if (gen === _refreshGen) {
-        if (showFeedback && refreshBtn) {
-          refreshBtn.disabled = false;
-          if (prevRefreshText) refreshBtn.textContent = prevRefreshText;
+        const curRefreshBtn = $('btn-home-refresh') || refreshBtn;
+        if (curRefreshBtn && (showFeedback || curRefreshBtn.disabled || curRefreshBtn.textContent === syncingTextZh || curRefreshBtn.textContent === syncingTextEn)) {
+          curRefreshBtn.disabled = false;
+          curRefreshBtn.textContent = _homeRefreshBaseText || t('刷新', 'Refresh');
         }
         _isRefreshing = false;
         _feedbackRefreshing = false;
