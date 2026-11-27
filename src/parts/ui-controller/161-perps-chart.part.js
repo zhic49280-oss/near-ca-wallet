@@ -841,7 +841,7 @@
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY
         );
-        startVisibleCount = Number(st.perp.chartVisibleCount || 48);
+        startVisibleCount = Math.max(20, Math.min(140, Math.round(Number(st.perp.chartVisibleCount || 48))));
         return;
       }
       if (e.touches.length === 1) {
@@ -881,8 +881,12 @@
           e.touches[0].clientY - e.touches[1].clientY
         );
         const scale = startPinchDist / Math.max(10, dist);
-        st.perp.chartVisibleCount = Math.max(20, Math.min(140, Math.round(startVisibleCount * scale)));
-        scheduleChartRedraw(false);
+        const prevVisibleCount = Math.max(20, Math.min(140, Math.round(Number(st.perp.chartVisibleCount || 48))));
+        const nextVisibleCount = Math.max(20, Math.min(140, Math.round(startVisibleCount * scale)));
+        if (nextVisibleCount !== prevVisibleCount) {
+          st.perp.chartVisibleCount = nextVisibleCount;
+          scheduleChartRedraw(false);
+        }
         return;
       }
       if (mode === 'pinch-end') return;

@@ -361,6 +361,7 @@
     locked: false,
     authenticating: false,
     backgroundedAt: 0,
+    inBackground: false,
     lifecycleBound: false
   };
 
@@ -386,6 +387,7 @@
   }
 
   function clearAppLock() {
+    const wasLocked = Boolean(_appLockState.locked);
     _appLockState.locked = false;
     _appLockState.backgroundedAt = 0;
     setRootClass('nexus-locked', false);
@@ -398,6 +400,13 @@
         if (typeof refreshAllBalancesAsync === 'function') refreshAllBalancesAsync(false).catch(() => {});
         if (typeof refreshPerpDataAsync === 'function') refreshPerpDataAsync(false).catch(() => {});
         if (typeof ensureStakingMetricsFresh === 'function') ensureStakingMetricsFresh(300_000);
+        if (typeof handleForegroundResume === 'function') {
+          handleForegroundResume({ immediateBalanceSync: false, skipPerpAccountRefresh: true });
+        }
+      }
+    } else if (wasLocked && st && st.getActiveWallet()) {
+      if (typeof handleForegroundResume === 'function') {
+        handleForegroundResume({ immediateBalanceSync: true });
       }
     }
   }
@@ -490,13 +499,21 @@
     const st = getState();
     const wallet = st.getActiveWallet();
     if (!wallet) {
+      _appLockState.inBackground = Boolean(isHidden);
       setBackgroundPrivacyBlur(false);
       clearAppLock();
       return;
     }
     if (isHidden) {
-      if (typeof stopPerpLiveFeed === 'function') stopPerpLiveFeed();
-      if (typeof stopOrderStatusPolling === 'function') stopOrderStatusPolling();
+      const wasInBackground = Boolean(_appLockState.inBackground);
+      _appLockState.inBackground = true;
+      if (!wasInBackground) {
+        if (typeof pausePerpRealtime === 'function') pausePerpRealtime();
+        else if (typeof stopPerpLiveFeed === 'function') stopPerpLiveFeed();
+        if (typeof stopOrderStatusPolling === 'function') stopOrderStatusPolling();
+        if (typeof stopAutoPriceAndBalanceSync === 'function') stopAutoPriceAndBalanceSync({ fromBackground: true });
+        if (typeof pausePerpOneClickDepositPolling === 'function') pausePerpOneClickDepositPolling();
+      }
       if (_appLockState.authenticating) return;
       if (!_appLockState.backgroundedAt) {
         _appLockState.backgroundedAt = Number(nowMs) || Date.now();
@@ -504,6 +521,9 @@
       setBackgroundPrivacyBlur(true);
       return;
     }
+    if (typeof isAppInBackground === 'function' && isAppInBackground()) return;
+    const wasInBackground = Boolean(_appLockState.inBackground || _appLockState.backgroundedAt > 0);
+    _appLockState.inBackground = false;
     setBackgroundPrivacyBlur(false);
     if (_appLockState.authenticating) {
       _appLockState.backgroundedAt = 0;
@@ -511,28 +531,13 @@
     }
     const leftAt = _appLockState.backgroundedAt;
     _appLockState.backgroundedAt = 0;
+    if (!wasInBackground) return;
     if (leftAt > 0 && (Number(nowMs) - leftAt) >= APP_LOCK_TIMEOUT_MS && shouldEnableAppLockForWallet(wallet, overrides)) {
       engageAppLock(true, overrides);
-    } else if (!isAppLocked() && st) {
-      if (st.activeTab === 'perp') {
-        if (st.perp && st.perp.subView === 'trade' && typeof startPerpLiveFeed === 'function') {
-          startPerpLiveFeed();
-        }
-        if (typeof refreshPerpDataAsync === 'function') {
-          refreshPerpDataAsync(false).catch(() => {});
-        }
-      } else if (st.activeTab === 'swap' && st.swap && st.swap.panelMode === 'limit' && typeof refreshLimitOrdersAsync === 'function') {
-        refreshLimitOrdersAsync(false).catch(() => {});
-      }
+      return;
     }
-    if (st && st.swap && st.swap.activeOrder && st.swap.activeOrder.depositAddress) {
-      const ord = st.swap.activeOrder;
-      const upper = String(ord.status || '').toUpperCase();
-      const pendingFollow = typeof hasPendingSwapFollowUp === 'function' && hasPendingSwapFollowUp(ord) && !ord.followUpFailed;
-      if (!['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper) || pendingFollow) {
-        if (typeof refreshActiveSwapOrderStatus === 'function') refreshActiveSwapOrderStatus(false).catch(() => {});
-        if (typeof startOrderStatusPolling === 'function') startOrderStatusPolling(false);
-      }
+    if (!isAppLocked() && st && typeof handleForegroundResume === 'function') {
+      handleForegroundResume({ immediateBalanceSync: true });
     }
   }
 
@@ -552,7 +557,9 @@
       if (capApp && typeof capApp.addListener === 'function') {
         try {
           capApp.addListener('appStateChange', (stateInfo) => {
-            handleAppVisibilityChange(!Boolean(stateInfo && stateInfo.isActive), Date.now());
+            const isActive = Boolean(stateInfo && stateInfo.isActive);
+            if (typeof setCapAppBackgrounded === 'function') setCapAppBackgrounded(!isActive);
+            handleAppVisibilityChange(!isActive, Date.now());
           });
         } catch (_) {}
       }

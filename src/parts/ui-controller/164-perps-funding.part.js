@@ -342,7 +342,16 @@
 
   let _perpOneClickPollTimer = null;
   let _perpOneClickPollSeq = 0;
+  let _perpOneClickPollActive = null;
+  let _perpOneClickVisBoundDoc = null;
   let _perpQuoteSeq = 0;
+
+  function isPerpOneClickPollBackgrounded() {
+    return Boolean(
+      (typeof document !== 'undefined' && document.hidden)
+      || (typeof isAppInBackground === 'function' && isAppInBackground())
+    );
+  }
 
   function openPerpFundingSheet(modeOrTab = 'deposit') {
     const st = getState();
@@ -367,9 +376,40 @@
 
   function stopPerpOneClickDepositPolling() {
     _perpOneClickPollSeq += 1;
+    _perpOneClickPollActive = null;
     if (_perpOneClickPollTimer) {
       clearTimeout(_perpOneClickPollTimer);
       _perpOneClickPollTimer = null;
+    }
+  }
+
+  function pausePerpOneClickDepositPolling() {
+    if (!_perpOneClickPollActive) return;
+    if (_perpOneClickPollTimer) {
+      clearTimeout(_perpOneClickPollTimer);
+      _perpOneClickPollTimer = null;
+    }
+    _perpOneClickPollActive.paused = true;
+  }
+
+  function resumePerpOneClickDepositPolling() {
+    const active = _perpOneClickPollActive;
+    if (!active) return;
+    if (isPerpOneClickPollBackgrounded()) return;
+    if (typeof isAppLocked === 'function' && isAppLocked()) return;
+    if (typeof active.isPollInvalid === 'function' && active.isPollInvalid()) {
+      stopPerpOneClickDepositPolling();
+      return;
+    }
+    if (active.inFlight || _perpOneClickPollTimer) return;
+    if (active.attempts >= active.maxAttempts) {
+      if (_perpOneClickPollActive === active) _perpOneClickPollActive = null;
+      return;
+    }
+    active.paused = false;
+    _perpOneClickPollTimer = setTimeout(active.tick, 150);
+    if (_perpOneClickPollTimer && typeof _perpOneClickPollTimer.unref === 'function') {
+      _perpOneClickPollTimer.unref();
     }
   }
 
@@ -382,8 +422,15 @@
     const startWallet = st && typeof st.getActiveWallet === 'function' ? st.getActiveWallet() : null;
     const startWalletId = startWallet ? startWallet.id : (st ? st.activeWalletId : null);
     st.perp.oneClickDepositStatus = { depositAddress: addr, status: 'PENDING_DEPOSIT', updatedAt: Date.now() };
-    let attempts = 0;
     let lastNotifiedStatus = '';
+
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function' && _perpOneClickVisBoundDoc !== document) {
+      _perpOneClickVisBoundDoc = document;
+      document.addEventListener('visibilitychange', () => {
+        if (isPerpOneClickPollBackgrounded()) pausePerpOneClickDepositPolling();
+        else resumePerpOneClickDepositPolling();
+      });
+    }
 
     const isPollInvalid = () => {
       if (seq !== _perpOneClickPollSeq) return true;
@@ -392,12 +439,33 @@
       return Boolean(startWalletId && curWalletId !== startWalletId);
     };
 
+    const pollState = {
+      seq,
+      addr,
+      intervalMs,
+      maxAttempts,
+      attempts: 0,
+      paused: false,
+      inFlight: false,
+      isPollInvalid,
+      tick: null
+    };
+    _perpOneClickPollActive = pollState;
+
     const tick = async () => {
+      _perpOneClickPollTimer = null;
       if (isPollInvalid()) {
         stopPerpOneClickDepositPolling();
         return;
       }
-      attempts += 1;
+      if (isPerpOneClickPollBackgrounded() || (typeof isAppLocked === 'function' && isAppLocked())) {
+        pollState.paused = true;
+        return;
+      }
+      if (pollState.inFlight) return;
+      pollState.paused = false;
+      pollState.inFlight = true;
+      pollState.attempts += 1;
       try {
         const intents = getIntents();
         if (!intents || typeof intents.fetchSwapOrderStatus !== 'function') return;
@@ -426,15 +494,31 @@
             showToast(`⏳ ${t('跨链充值处理中，正在等待到账...', 'Cross-chain deposit processing...')}`);
           }
         }
-      } catch (_) {}
-      if (!isPollInvalid() && attempts < maxAttempts) {
-        _perpOneClickPollTimer = setTimeout(tick, intervalMs);
-        if (_perpOneClickPollTimer && typeof _perpOneClickPollTimer.unref === 'function') {
-          _perpOneClickPollTimer.unref();
+      } catch (_) {
+      } finally {
+        pollState.inFlight = false;
+      }
+      if (!isPollInvalid()) {
+        if (pollState.attempts < maxAttempts) {
+          if (isPerpOneClickPollBackgrounded() || (typeof isAppLocked === 'function' && isAppLocked())) {
+            pollState.paused = true;
+          } else {
+            _perpOneClickPollTimer = setTimeout(tick, intervalMs);
+            if (_perpOneClickPollTimer && typeof _perpOneClickPollTimer.unref === 'function') {
+              _perpOneClickPollTimer.unref();
+            }
+          }
+        } else if (_perpOneClickPollActive === pollState) {
+          _perpOneClickPollActive = null;
         }
       }
     };
 
+    pollState.tick = tick;
+    if (isPerpOneClickPollBackgrounded() || (typeof isAppLocked === 'function' && isAppLocked())) {
+      pollState.paused = true;
+      return;
+    }
     _perpOneClickPollTimer = setTimeout(tick, Math.min(intervalMs, 150));
     if (_perpOneClickPollTimer && typeof _perpOneClickPollTimer.unref === 'function') {
       _perpOneClickPollTimer.unref();

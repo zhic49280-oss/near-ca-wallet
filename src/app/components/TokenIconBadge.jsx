@@ -68,6 +68,18 @@ const FALLBACK_BG_MAP = {
   USDE: '#1E293B'
 };
 
+const CHAIN_BADGE_URI_CACHE = new Map();
+
+function getCachedChainBadgeUri(meta) {
+  if (!meta || !meta.badgeSvg) return '';
+  const cacheKey = String(meta.key || meta.shortName || meta.badgeSvg);
+  const hit = CHAIN_BADGE_URI_CACHE.get(cacheKey);
+  if (hit && hit.svg === meta.badgeSvg) return hit.uri;
+  const uri = `data:image/svg+xml;utf8,${encodeURIComponent(meta.badgeSvg)}`;
+  CHAIN_BADGE_URI_CACHE.set(cacheKey, { svg: meta.badgeSvg, uri });
+  return uri;
+}
+
 export function TokenIconBadge({ symbol = '?', blockchain = '', logoURI = '', contractAddress = '', size = 36, showChainBadge = true }) {
   const tokens = getTokensMod();
   const s = Number(size) || 36;
@@ -84,9 +96,8 @@ export function TokenIconBadge({ symbol = '?', blockchain = '', logoURI = '', co
   const candidates = [resolved.primaryUrl, resolved.fallbackUrl, resolved.secondFallbackUrl].filter(Boolean);
   const activeUrl = resolved.isPearlSvg ? '' : (candidates[srcStage] || '');
   const meta = blockchain && typeof tokens.getChainMeta === 'function' ? tokens.getChainMeta(blockchain) : null;
-  const badgeSvgDataUri = meta && meta.badgeSvg
-    ? `data:image/svg+xml;utf8,${encodeURIComponent(meta.badgeSvg)}`
-    : '';
+  const shouldRenderBadge = Boolean(showChainBadge && meta && meta.key !== 'unknown');
+  const badgeSvgDataUri = shouldRenderBadge ? getCachedChainBadgeUri(meta) : '';
   const bg = FALLBACK_BG_MAP[cleanSym] || (meta && meta.color) || '#334155';
   const textColor = (cleanSym === 'NEAR' || cleanSym === 'WNEAR' || cleanSym === 'BNB')
     ? '#000000'
@@ -105,6 +116,8 @@ export function TokenIconBadge({ symbol = '?', blockchain = '', logoURI = '', co
             alt={cleanSym}
             width={s}
             height={s}
+            loading="lazy"
+            decoding="async"
             style={{ width: `${s}px`, height: `${s}px` }}
             className="rounded-full object-cover flex-shrink-0"
             onError={() => setSrcStage((n) => n + 1)}
@@ -118,13 +131,13 @@ export function TokenIconBadge({ symbol = '?', blockchain = '', logoURI = '', co
           </svg>
         )}
       </span>
-      {showChainBadge && meta && meta.key !== 'unknown' && (
+      {shouldRenderBadge && (
         badgeSvgDataUri ? (
           <span
             title={meta.name}
             className="absolute -bottom-0.5 -right-0.5 w-[14px] h-[14px] rounded-full overflow-hidden ring-2 ring-[#0B0F19] bg-[#0B0F19] flex items-center justify-center shadow-sm"
           >
-            <img src={badgeSvgDataUri} alt={meta.shortName || meta.key} width={14} height={14} style={{ width: '14px', height: '14px' }} />
+            <img src={badgeSvgDataUri} alt={meta.shortName || meta.key} width={14} height={14} loading="lazy" decoding="async" style={{ width: '14px', height: '14px' }} />
           </span>
         ) : (
           <span

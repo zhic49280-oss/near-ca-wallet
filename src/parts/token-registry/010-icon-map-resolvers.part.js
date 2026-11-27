@@ -306,11 +306,25 @@
   function persistDynamicTokenIconsToStorage() {
     try {
       if (typeof localStorage === 'undefined' || !localStorage || typeof localStorage.setItem !== 'function') return;
-      const pickCapped = (src) => {
+      const localMap = typeof LOCAL_TOKEN_ICON_MAP !== 'undefined' ? LOCAL_TOKEN_ICON_MAP : null;
+      const pickCapped = (src, prioritizeUnbundled = false) => {
         const out = {};
         let count = 0;
-        for (const [k, v] of Object.entries(src)) {
+        const entries = Object.entries(src);
+        if (prioritizeUnbundled) {
+          for (const [k, v] of entries) {
+            if (count >= 120) break;
+            if (TOKEN_ICON_MAP[k] || (localMap && localMap[k])) continue;
+            if (typeof v === 'string' && v.length <= 32768) {
+              out[k] = v;
+              count += 1;
+            }
+          }
+        }
+        for (const [k, v] of entries) {
           if (count >= 120) break;
+          if (out[k] !== undefined) continue;
+          if (prioritizeUnbundled && typeof TOKEN_ICON_MAP[k] === 'string' && TOKEN_ICON_MAP[k].startsWith('data:image/')) continue;
           if (typeof v === 'string' && v.length <= 32768) {
             out[k] = v;
             count += 1;
@@ -319,8 +333,8 @@
         return out;
       };
       localStorage.setItem(DYNAMIC_ICON_STORAGE_KEY, JSON.stringify({
-        bySymbol: pickCapped(DYNAMIC_ICON_BY_SYMBOL),
-        byContract: pickCapped(DYNAMIC_ICON_BY_CONTRACT)
+        bySymbol: pickCapped(DYNAMIC_ICON_BY_SYMBOL, true),
+        byContract: pickCapped(DYNAMIC_ICON_BY_CONTRACT, false)
       }));
     } catch (_) {}
   }
@@ -332,6 +346,8 @@
     if (symbolMap && typeof symbolMap === 'object') {
       for (const [sym, url] of Object.entries(symbolMap)) {
         const cleanSym = String(sym || '').trim().replace(/^\$/, '').toUpperCase();
+        const staticUrl = TOKEN_ICON_MAP[cleanSym];
+        if (typeof staticUrl === 'string' && staticUrl.startsWith('data:image/')) continue;
         const safe = sanitizeImageUrl(url);
         if (cleanSym && safe && DYNAMIC_ICON_BY_SYMBOL[cleanSym] !== safe) {
           DYNAMIC_ICON_BY_SYMBOL[cleanSym] = safe;

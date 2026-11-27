@@ -5,8 +5,49 @@
   let _langRenderBound = false;
   let _capAppBackgrounded = false;
 
+  function setCapAppBackgrounded(bg) {
+    _capAppBackgrounded = Boolean(bg);
+  }
+
   function isAppInBackground() {
     return Boolean((typeof document !== 'undefined' && document.hidden) || _capAppBackgrounded);
+  }
+
+  function handleForegroundResume({ immediateBalanceSync = true, skipPerpAccountRefresh = false } = {}) {
+    if (isAppInBackground()) return;
+    if (typeof isAppLocked === 'function' && isAppLocked()) return;
+    const st = getState();
+    if (!st || !st.getActiveWallet()) return;
+    if (st.activeTab === 'perp') {
+      if (st.perp && st.perp.subView === 'trade') {
+        if (typeof startPerpLiveFeed === 'function') startPerpLiveFeed();
+        if (typeof refreshPerpOrderbookAndCandlesAsync === 'function') {
+          refreshPerpOrderbookAndCandlesAsync().catch(() => {});
+        }
+        if (!skipPerpAccountRefresh && typeof refreshPerpDataAsync === 'function') {
+          refreshPerpDataAsync(false).catch(() => {});
+        }
+      } else if (!skipPerpAccountRefresh && typeof refreshPerpDataAsync === 'function') {
+        refreshPerpDataAsync(false).catch(() => {});
+      }
+    } else if (st.activeTab === 'swap' && st.swap && st.swap.panelMode === 'limit' && typeof refreshLimitOrdersAsync === 'function') {
+      refreshLimitOrdersAsync(false).catch(() => {});
+    }
+    if (st.swap && st.swap.activeOrder && st.swap.activeOrder.depositAddress) {
+      const ord = st.swap.activeOrder;
+      const upper = String(ord.status || '').toUpperCase();
+      const pendingFollow = typeof hasPendingSwapFollowUp === 'function' && hasPendingSwapFollowUp(ord) && !ord.followUpFailed;
+      if (!['SUCCESS', 'COMPLETED', 'REFUNDED', 'FAILED'].includes(upper) || pendingFollow) {
+        if (typeof refreshActiveSwapOrderStatus === 'function') refreshActiveSwapOrderStatus(false).catch(() => {});
+        if (typeof startOrderStatusPolling === 'function') startOrderStatusPolling(false);
+      }
+    }
+    if (typeof resumePerpOneClickDepositPolling === 'function') {
+      resumePerpOneClickDepositPolling();
+    }
+    if (immediateBalanceSync && typeof resumeAutoPriceAndBalanceSyncOnActive === 'function') {
+      resumeAutoPriceAndBalanceSyncOnActive();
+    }
   }
 
   function initForegroundResumeSync() {
@@ -14,13 +55,12 @@
     _foregroundResumeBound = true;
     const onResume = () => {
       if (isAppInBackground()) return;
-      if (typeof resumePerpRealtime === 'function') resumePerpRealtime();
-      const st = getState();
-      if (!st || !st.getActiveWallet()) return;
-      if (st.activeTab === 'swap' && st.swap && st.swap.panelMode === 'limit' && typeof refreshLimitOrdersAsync === 'function') {
-        refreshLimitOrdersAsync(false).catch(() => {});
-      }
+      if (typeof isAppLocked === 'function' && isAppLocked()) return;
+      handleForegroundResume({ immediateBalanceSync: true });
     };
+    if (typeof _appLockState !== 'undefined' && _appLockState && _appLockState.lifecycleBound) {
+      return;
+    }
     const onVisibilityChange = () => {
       if (typeof document !== 'undefined' && document.hidden) {
         if (typeof pausePerpRealtime === 'function') pausePerpRealtime();
@@ -92,7 +132,6 @@
         case 'claim-limit-order': claimLimitOrderUI(ds.orderId || '', ds.buyToken || ''); break;
         case 'cancel-limit-order': cancelLimitOrderUI(ds.chain || 'near', ds.orderId || '', ds.remain || '', ds.sellToken || '', ds.buyToken || ''); break;
         case 'select-perp-market': selectPerpMarket(ds.coin || 'BTC'); break;
-        case 'toggle-perp-tpsl': togglePerpTpSl(); break;
         case 'fill-perp-ob-px': fillPerpLimitPrice(ds.px || ''); break;
         case 'close-perp-pos': closePerpPositionUI(ds.coin || ''); break;
         case 'cancel-perp-order': cancelPerpOrderUI(ds.coin || '', ds.oid || ''); break;
@@ -356,6 +395,7 @@
     getExplorerAddressUrl,
     getExplorerTxUrl,
     startAutoPriceAndBalanceSync,
+    stopAutoPriceAndBalanceSync,
     buildAllOnChainAssetGroups,
     buildAggregatedAssetGroups,
     partitionDustAssetGroups,
@@ -488,6 +528,9 @@
     setPerpWithdrawMax,
     jumpFromPerpToSwap,
     schedulePerpOneClickQuote,
+    startPerpOneClickDepositPolling,
+    pausePerpOneClickDepositPolling,
+    resumePerpOneClickDepositPolling,
     stopPerpOneClickDepositPolling,
     executePerpOneClickDepositUI,
     executePerpArbBridgeDepositUI,
@@ -537,7 +580,6 @@
     addNearMnemonicKeyOnlyFromSheet,
     confirmRotateNearAccountKey,
     toggleTokenPickerMoreChains,
-    togglePerpTpSl,
     openDAppBrowserSheet,
     openDAppFromInput,
     launchDAppUrl,
@@ -600,6 +642,7 @@
     getExplorerAddressUrl,
     getExplorerTxUrl,
     startAutoPriceAndBalanceSync,
+    stopAutoPriceAndBalanceSync,
     openTokenDetailSheet,
     setTokenDetailChain,
     openAllTokenHistorySheet,
@@ -740,6 +783,9 @@
     setPerpWithdrawMax,
     jumpFromPerpToSwap,
     schedulePerpOneClickQuote,
+    startPerpOneClickDepositPolling,
+    pausePerpOneClickDepositPolling,
+    resumePerpOneClickDepositPolling,
     stopPerpOneClickDepositPolling,
     executePerpOneClickDepositUI,
     executePerpArbBridgeDepositUI,
@@ -790,7 +836,6 @@
     rejectWcRequest,
     disconnectWcSession,
     toggleTokenPickerMoreChains,
-    togglePerpTpSl,
     openDAppBrowserSheet,
     openDAppFromInput,
     launchDAppUrl,

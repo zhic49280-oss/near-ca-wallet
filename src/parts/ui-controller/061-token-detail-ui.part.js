@@ -728,43 +728,99 @@
   }
 
   let _autoSyncTimer = null;
-  let _autoSyncVisibilityBound = false;
+  let _autoSyncBoundDoc = null;
+  let _autoSyncBoundCapApp = null;
+  let _autoSyncEnabled = false;
+  let _autoSyncPausedByBg = false;
+  let _autoSyncLastImmediateAt = 0;
 
-  function stopAutoPriceAndBalanceSync() {
+  function runAutoPriceAndBalanceSyncTick() {
+    if (typeof isAppInBackground === 'function' ? isAppInBackground() : (typeof document !== 'undefined' && document.hidden)) return false;
+    if (typeof document !== 'undefined') {
+      if (typeof document.querySelector === 'function' && document.querySelector('.bottom-sheet.open')) return false;
+    }
+    if (typeof isAppLocked === 'function' && isAppLocked()) return false;
+    const st = getState();
+    if (!st || !st.getActiveWallet() || _isRefreshing) return false;
+    if (st.activeTab === 'hub') return false;
+    if (st.activeTab === 'perp' && st.perp && st.perp.subView === 'trade') return false;
+    refreshAllBalancesAsync(false);
+    return true;
+  }
+
+  function stopAutoPriceAndBalanceSync(opts = {}) {
     if (_autoSyncTimer) {
       clearInterval(_autoSyncTimer);
       _autoSyncTimer = null;
     }
+    if (opts && opts.fromBackground) {
+      _autoSyncPausedByBg = true;
+    } else {
+      _autoSyncEnabled = false;
+      _autoSyncPausedByBg = false;
+    }
   }
 
-  function startAutoPriceAndBalanceSync() {
-    stopAutoPriceAndBalanceSync();
-    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function' && !_autoSyncVisibilityBound) {
-      _autoSyncVisibilityBound = true;
+  function resumeAutoPriceAndBalanceSyncOnActive() {
+    if (!_autoSyncEnabled) return null;
+    if (typeof isAppInBackground === 'function' ? isAppInBackground() : (typeof document !== 'undefined' && document.hidden)) return null;
+    if (typeof isAppLocked === 'function' && isAppLocked()) return null;
+    const shouldImmediate = _autoSyncPausedByBg || !_autoSyncTimer;
+    if (!shouldImmediate && _autoSyncTimer) return _autoSyncTimer;
+    _autoSyncPausedByBg = false;
+    return startAutoPriceAndBalanceSync({ immediate: shouldImmediate });
+  }
+
+  function startAutoPriceAndBalanceSync(opts = {}) {
+    if (_autoSyncTimer) {
+      clearInterval(_autoSyncTimer);
+      _autoSyncTimer = null;
+    }
+    _autoSyncEnabled = true;
+    _autoSyncPausedByBg = false;
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function' && _autoSyncBoundDoc !== document) {
+      _autoSyncBoundDoc = document;
       document.addEventListener('visibilitychange', () => {
         const bg = (typeof isAppInBackground === 'function' && isAppInBackground()) || Boolean(document.hidden);
         if (bg) {
-          stopAutoPriceAndBalanceSync();
+          stopAutoPriceAndBalanceSync({ fromBackground: true });
         } else {
-          startAutoPriceAndBalanceSync();
+          resumeAutoPriceAndBalanceSyncOnActive();
         }
       });
     }
+    const win = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis.window : null);
+    const capApp = win && win.Capacitor && win.Capacitor.Plugins && win.Capacitor.Plugins.App ? win.Capacitor.Plugins.App : null;
+    if (capApp && typeof capApp.addListener === 'function' && _autoSyncBoundCapApp !== capApp) {
+      _autoSyncBoundCapApp = capApp;
+      try {
+        capApp.addListener('appStateChange', (stateInfo) => {
+          const isActive = Boolean(stateInfo && stateInfo.isActive);
+          if (typeof setCapAppBackgrounded === 'function') setCapAppBackgrounded(!isActive);
+          if (!isActive) {
+            stopAutoPriceAndBalanceSync({ fromBackground: true });
+          } else {
+            resumeAutoPriceAndBalanceSyncOnActive();
+          }
+        });
+      } catch (_) {}
+    }
     if (typeof isAppInBackground === 'function' ? isAppInBackground() : (typeof document !== 'undefined' && document.hidden)) {
+      _autoSyncPausedByBg = true;
       return null;
     }
-    _autoSyncTimer = setInterval(() => {
-      if (typeof isAppInBackground === 'function' ? isAppInBackground() : (typeof document !== 'undefined' && document.hidden)) return;
-      if (typeof document !== 'undefined') {
-        if (typeof document.querySelector === 'function' && document.querySelector('.bottom-sheet.open')) return;
+    if (opts && opts.immediate && !(typeof isAppLocked === 'function' && isAppLocked())) {
+      const now = Date.now();
+      if (now - _autoSyncLastImmediateAt >= 1500) {
+        if (runAutoPriceAndBalanceSyncTick()) {
+          _autoSyncLastImmediateAt = now;
+        }
       }
-      if (typeof isAppLocked === 'function' && isAppLocked()) return;
-      const st = getState();
-      if (!st || !st.getActiveWallet() || _isRefreshing) return;
-      if (st.activeTab === 'hub') return;
-      if (st.activeTab === 'perp' && st.perp && st.perp.subView === 'trade') return;
-      refreshAllBalancesAsync(false);
-    }, 30000);
+    }
+    _autoSyncTimer = setInterval(runAutoPriceAndBalanceSyncTick, 30000);
+    if (_autoSyncTimer && typeof _autoSyncTimer.unref === 'function') {
+      _autoSyncTimer.unref();
+    }
     return _autoSyncTimer;
   }
 

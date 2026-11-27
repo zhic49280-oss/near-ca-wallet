@@ -5,6 +5,33 @@
     'TON', 'APT', 'AVAX', 'POL', 'ARB', 'OP'
   ]);
 
+  function resolveLocalBundledLogo(tok, registry) {
+    const localMap = registry && registry.LOCAL_TOKEN_ICON_MAP;
+    if (!tok || !localMap) return '';
+    const rawTrim = String(tok.symbol || '').trim().replace(/^\$/, '');
+    const symUpper = rawTrim.toUpperCase();
+    if (!symUpper) return '';
+    const colonIdx = rawTrim.indexOf(':');
+    const dexPrefix = colonIdx > 0 ? rawTrim.slice(0, colonIdx).toUpperCase() : '';
+    let symBase = colonIdx >= 0 ? rawTrim.slice(colonIdx + 1).toUpperCase() : symUpper;
+    symBase = symBase.replace(/-(USDC|PERP|USD)$/, '');
+    if (symBase === 'PEARL') symBase = 'PRL';
+    else if (/^1000000[A-Z0-9]{2,}$/.test(symBase)) symBase = symBase.slice(7);
+    else if (/^1000[A-Z0-9]{2,}$/.test(symBase)) symBase = symBase.slice(4);
+    else if (/^K[A-Z0-9]{3,}$/.test(symBase)) symBase = symBase.slice(1);
+    const exactMap = registry.TOKEN_ICON_MAP && registry.TOKEN_ICON_MAP[symUpper];
+    const hasExactInline = Boolean(typeof exactMap === 'string' && exactMap.startsWith('data:image/'));
+    if (hasExactInline) return exactMap;
+    const dexSymKey = dexPrefix && symBase ? `${dexPrefix}:${symBase}` : '';
+    return (
+      localMap[symUpper]
+      || (dexSymKey ? localMap[dexSymKey] : '')
+      || (symBase ? (localMap[symBase] || localMap[`${symBase}X`]) : '')
+      || localMap[`${symUpper}X`]
+      || ''
+    );
+  }
+
   function seedLivePricesCache(cachedData, maybeTs = null) {
     if (!cachedData) return;
     const list = Array.isArray(cachedData) ? cachedData : (Array.isArray(cachedData.list) ? cachedData.list : null);
@@ -13,9 +40,18 @@
       ? Number(maybeTs)
       : ((!Array.isArray(cachedData) && Number(cachedData.ts) > 0) ? Number(cachedData.ts) : Date.now());
     const curFetch = (typeof globalThis !== 'undefined' && globalThis.fetch) || null;
+    const registry = getTokenRegistry();
+    if (registry && registry.LOCAL_TOKEN_ICON_MAP) {
+      for (const item of list) {
+        if (!item) continue;
+        const curLogo = typeof item.logoURI === 'string' ? item.logoURI.trim() : '';
+        if (!curLogo || !/^https?:\/\//i.test(curLogo)) continue;
+        const localLogo = resolveLocalBundledLogo(item, registry);
+        if (localLogo) item.logoURI = localLogo;
+      }
+    }
     _livePricesCache = { ts, list, fetchRef: curFetch };
     _cachedDefuseTokens = list;
-    const registry = getTokenRegistry();
     if (registry) {
       if (typeof registry.setLiveDefuseTokens === 'function') {
         try { registry.setLiveDefuseTokens(list); } catch (_) {}
@@ -380,14 +416,18 @@
 
       const resolveTokenLogo = (tok) => {
         if (!tok) return '';
+        const symRaw = String(tok.symbol || '').trim().toUpperCase();
+        const symClean = symRaw.replace(/^\$/, '');
+        const iconMapUrl = registry && registry.TOKEN_ICON_MAP
+          ? sanitizeImg(registry.TOKEN_ICON_MAP[symClean] || registry.TOKEN_ICON_MAP[symRaw])
+          : '';
+        if (iconMapUrl && iconMapUrl.startsWith('data:image/')) return iconMapUrl;
+        const localBundled = resolveLocalBundledLogo(tok, registry);
+        if (localBundled) return localBundled;
         const existing = sanitizeImg(tok.logoURI);
         if (existing) return existing;
-        const symClean = String(tok.symbol || '').trim().replace(/^\$/, '').toUpperCase();
         const contractLower = String(tok.contractAddress || '').trim().toLowerCase();
         const cgIdLower = String(tok.coingeckoId || '').trim().toLowerCase();
-        const iconMapUrl = registry && registry.TOKEN_ICON_MAP
-          ? sanitizeImg(registry.TOKEN_ICON_MAP[symClean] || registry.TOKEN_ICON_MAP[String(tok.symbol || '').trim().toUpperCase()])
-          : '';
         return (
           iconMapUrl ||
           (contractLower ? nearFtMetaIcons.byContract[contractLower] : '') ||
@@ -482,7 +522,7 @@
               price: liveRef && liveRef.price > 0 ? liveRef.price : null,
               priceUpdatedAt: liveRef ? liveRef.priceUpdatedAt : null,
               networkName: bc === 'arc' ? 'Arc Network' : (NETWORK_LABELS[bc] || bc.toUpperCase()),
-              logoURI: safeLogo || ''
+              logoURI: resolveLocalBundledLogo({ symbol: rawSym }, registry) || safeLogo || ''
             });
           }
         }
@@ -521,7 +561,7 @@
             price: Number.isFinite(usdNum) && usdNum > 0 ? usdNum : null,
             priceUpdatedAt: null,
             networkName: 'Arc Network',
-            logoURI: safeLogo || ''
+            logoURI: resolveLocalBundledLogo({ symbol: rawSym }, registry) || safeLogo || ''
           });
         }
       }

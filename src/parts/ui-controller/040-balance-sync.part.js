@@ -809,7 +809,7 @@
         }
         return;
       }
-      if (dist <= 4 && !pulling) return;
+      if (dist <= 6 && !pulling) return;
       pulling = true;
       latestDy = dy;
       viewWallet.classList.add('ptr-pulling');
