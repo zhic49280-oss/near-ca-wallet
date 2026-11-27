@@ -746,15 +746,53 @@
     if (typeof syncPerpInputUnitUI === 'function') syncPerpInputUnitUI();
   }
 
+  let _perpOverviewScrollY = 0;
+
+  function readPerpViewportScrollY() {
+    if (typeof window === 'undefined') return 0;
+    const winY = Number(window.scrollY ?? window.pageYOffset ?? 0);
+    if (Number.isFinite(winY) && winY > 0) return winY;
+    const docEl = typeof document !== 'undefined' ? document.documentElement : null;
+    const bodyEl = typeof document !== 'undefined' ? document.body : null;
+    return Number((docEl && docEl.scrollTop) || (bodyEl && bodyEl.scrollTop) || 0) || 0;
+  }
+
+  function scrollPerpViewportTo(y) {
+    const targetY = Math.max(0, Number(y) || 0);
+    const applyScroll = () => {
+      if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+        try { window.scrollTo(0, targetY); } catch (_) {}
+      }
+      if (typeof document !== 'undefined') {
+        if (document.documentElement) document.documentElement.scrollTop = targetY;
+        if (document.body) document.body.scrollTop = targetY;
+        const viewEl = $('view-perps');
+        if (viewEl && typeof viewEl.scrollTop === 'number') viewEl.scrollTop = targetY;
+        const mainEl = typeof document.querySelector === 'function' ? document.querySelector('.app-main') : null;
+        if (mainEl && typeof mainEl.scrollTop === 'number') mainEl.scrollTop = targetY;
+      }
+    };
+    applyScroll();
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(applyScroll);
+    }
+  }
+
   function backToPerpOverview() {
     const st = getState();
     st.perp.subView = 'overview';
     stopPerpLiveFeed();
     renderPerpView();
+    if (_perpOverviewScrollY > 0) {
+      scrollPerpViewportTo(_perpOverviewScrollY);
+    }
   }
 
   function openPerpTradeScreen(coin) {
     const st = getState();
+    if (st.perp.subView !== 'trade') {
+      _perpOverviewScrollY = readPerpViewportScrollY();
+    }
     const nextCoin = coin ? String(coin) : (st.perp.selectedCoin || 'BTC');
     const changedCoin = nextCoin !== st.perp.selectedCoin;
     st.perp.selectedCoin = nextCoin;
@@ -784,6 +822,7 @@
       st.loadCachedPerpSnapshot();
     }
     renderPerpView();
+    scrollPerpViewportTo(0);
     refreshPerpOrderbookAndCandlesAsync().catch(() => {});
     startPerpLiveFeed();
   }
