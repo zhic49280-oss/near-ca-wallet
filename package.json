@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "test:e2e": "node scripts/e2e-browser.mjs",
+    "test:e2e": "node --test test/90-browser-e2e.test.js",
     "probe:mainnet": "node scripts/probe-mainnet.mjs",
     "start": "node server.js",
     "build": "node scripts/build-parts.js && node scripts/build-jsqr.js && npx vite build && node scripts/sync-assets.js",

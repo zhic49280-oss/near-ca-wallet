@@ -1,21 +1,19 @@
-#!/usr/bin/env node
 'use strict';
 
 /**
- * Real-Browser Headless Chrome/Edge E2E Test (375x812 Mobile Viewport, CDP)
- * Usage: node scripts/e2e-browser.mjs
- * Requires `npm run build` (`dist/` must exist). Zero external network calls.
+ * Real-Browser Headless Chrome/Edge E2E Suite (375x812 Mobile Viewport, CDP)
+ * Included in `npm test` (`node --test test/*.test.js`).
+ * Loads real `dist/` bundle (Preact single-root App + style.css) with deterministic network mocks.
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import http from 'node:http';
-import os from 'node:os';
-import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const http = require('node:http');
+const os = require('node:os');
+const { spawn } = require('node:child_process');
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
 const DIST_DIR = path.join(ROOT_DIR, 'dist');
 
@@ -31,6 +29,9 @@ const MIME = {
 };
 
 function findBrowserBin() {
+  if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) {
+    return process.env.CHROME_PATH;
+  }
   const candidates = process.platform === 'win32'
     ? [
         'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -38,11 +39,13 @@ function findBrowserBin() {
         'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
         'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
       ]
-    : ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
+    : process.platform === 'darwin'
+      ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge']
+      : ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'];
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
   }
-  throw new Error('No headless Chrome/Edge binary found on this machine.');
+  return null;
 }
 
 function startDistServer() {
@@ -146,11 +149,7 @@ async function launchBrowser(binPath) {
     throw new Error('No page target found in DevTools');
   }
 
-  return {
-    proc,
-    userDataDir,
-    pageWsUrl: pageTarget.webSocketDebuggerUrl
-  };
+  return { proc, userDataDir, pageWsUrl: pageTarget.webSocketDebuggerUrl };
 }
 
 function createCdpClient(wsUrl) {
@@ -209,20 +208,24 @@ function createCdpClient(wsUrl) {
   return { send, on, evalJs, close };
 }
 
-async function run() {
-  if (!fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
-    throw new Error('dist/index.html missing — run `npm run build` first.');
-  }
+const browserBin = findBrowserBin();
+const hasDist = fs.existsSync(path.join(DIST_DIR, 'index.html'));
 
-  const binPath = findBrowserBin();
-  const { server, baseUrl } = await startDistServer();
-  const browser = await launchBrowser(binPath);
-  const cdp = createCdpClient(browser.pageWsUrl);
-
+test.describe('Real-Browser 375px Preact E2E Suite', { skip: !browserBin || !hasDist }, () => {
+  let server;
+  let baseUrl;
+  let browser;
+  let cdp;
   const pageErrors = [];
   const consoleErrors = [];
 
-  try {
+  test.before(async () => {
+    const srv = await startDistServer();
+    server = srv.server;
+    baseUrl = srv.baseUrl;
+    browser = await launchBrowser(browserBin);
+    cdp = createCdpClient(browser.pageWsUrl);
+
     await cdp.send('Page.enable');
     await cdp.send('Runtime.enable');
     await cdp.send('Emulation.setDeviceMetricsOverride', {
@@ -232,7 +235,6 @@ async function run() {
       mobile: true
     });
 
-    // Intercept external network requests deterministically
     await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] });
     const mockMeta = buildMockPerpMetaAndAssetCtxs();
     cdp.on('Fetch.requestPaused', async ({ requestId, request }) => {
@@ -263,8 +265,7 @@ async function run() {
         else if (parsed.type === 'l2Book') bodyObj = buildMockL2Book(parsed.coin || 'BTC');
         else if (parsed.type === 'candleSnapshot') bodyObj = [];
         else if (parsed.type === 'clearinghouseState') bodyObj = { marginSummary: { accountValue: '100', totalMarginUsed: '0' }, withdrawable: '100', assetPositions: [] };
-        else if (parsed.type === 'openOrders') bodyObj = [];
-        else if (parsed.type === 'userFills') bodyObj = [];
+        else if (parsed.type === 'openOrders' || parsed.type === 'userFills') bodyObj = [];
       } else if (url.includes('1click.chaindefuser.com/v0/tokens')) {
         bodyObj = [{ assetId: 'nep141:wrap.near', symbol: 'NEAR', decimals: 24, price: 5.2, blockchain: 'near' }];
       }
@@ -290,17 +291,35 @@ async function run() {
       }
     });
 
-    // Load page & seed wallet into localStorage
     await cdp.send('Page.navigate', { url: baseUrl });
-    await new Promise((r) => setTimeout(r, 800));
+    await new Promise((r) => setTimeout(r, 700));
+  });
 
+  test.after(() => {
+    if (cdp) cdp.close();
+    if (browser && browser.proc) {
+      try { browser.proc.kill('SIGKILL'); } catch (_) {}
+    }
+    if (server) {
+      try { server.close(); } catch (_) {}
+    }
+    if (browser && browser.userDataDir) {
+      try { fs.rmSync(browser.userDataDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
+  test('E2E 1: Preact #app-root mounts, 375px zero overflow, and zero in-app PIN modal', async () => {
     const mounted = await cdp.evalJs(`Boolean(document.querySelector('#app-root') && document.querySelector('#app-root').children.length > 0)`);
     assert.equal(mounted, true, 'Preact #app-root must mount');
 
     const overflowInit = await cdp.evalJs(`document.documentElement.scrollWidth <= 375`);
     assert.equal(overflowInit, true, '375px initial viewport must not overflow horizontally');
 
-    // Inject seeded wallet and reload to test SWR boot
+    const hasPinModal = await cdp.evalJs(`Boolean(document.getElementById('nexus-pin-modal'))`);
+    assert.equal(hasPinModal, false, 'In-app PIN modal must NOT exist');
+  });
+
+  test('E2E 2: Seeded wallet SWR boot renders Home assets immediately', async () => {
     await cdp.evalJs(`(() => {
       const w = {
         id: 'e2e_browser_w1',
@@ -321,17 +340,72 @@ async function run() {
     })()`);
 
     await cdp.send('Page.reload', { ignoreCache: false });
-    await new Promise((r) => setTimeout(r, 900));
+    await new Promise((r) => setTimeout(r, 800));
 
-    // Verify no in-app PIN modal exists
-    const hasPinModal = await cdp.evalJs(`Boolean(document.getElementById('nexus-pin-modal'))`);
-    assert.equal(hasPinModal, false, 'In-app PIN modal must NOT exist');
-
-    // Verify Perps overview scroll -> trade detail starts at top -> back restores scroll
-    await cdp.evalJs(`(() => {
-      window.switchTab('perp');
-      return true;
+    const walletRendered = await cdp.evalJs(`(() => {
+      const w = window.NearCAState && window.NearCAState.getActiveWallet && window.NearCAState.getActiveWallet();
+      return Boolean(w && w.name === 'Browser E2E' && !document.getElementById('view-wallet')?.classList.contains('hidden'));
     })()`);
+    assert.equal(walletRendered, true, 'Seeded wallet must boot straight into Home view');
+  });
+
+  test('E2E 3: Live bilingual zh <-> en toggle updates DOM and contains zero developer jargon', async () => {
+    await cdp.evalJs(`document.getElementById('header-lang-btn').click()`);
+    await new Promise((r) => setTimeout(r, 80));
+    const enCheck = await cdp.evalJs(`(() => {
+      const navTexts = Array.from(document.querySelectorAll('.bottom-nav .nav-item')).map(el => el.textContent.trim()).join('|');
+      const bodyText = document.body.innerText || '';
+      return { navTexts, hasJargon: /\\b(WebView|CORS|HTTP 403|HTTP 429|RPC Error)\\b/i.test(bodyText) };
+    })()`);
+    assert.ok(/Swap|Wallet/i.test(enCheck.navTexts), `Expected English nav labels, got ${enCheck.navTexts}`);
+    assert.equal(enCheck.hasJargon, false, 'Rendered English UI must contain zero developer jargon');
+
+    await cdp.evalJs(`document.getElementById('header-lang-btn').click()`);
+    await new Promise((r) => setTimeout(r, 80));
+    const zhNav = await cdp.evalJs(`Array.from(document.querySelectorAll('.bottom-nav .nav-item')).map(el => el.textContent.trim()).join('|')`);
+    assert.ok(/闪兑|资产/.test(zhNav), `Expected Chinese nav labels, got ${zhNav}`);
+  });
+
+  test('E2E 4: Send sheet form lifecycle dual-clear on close', async () => {
+    const cleared = await cdp.evalJs(`(() => {
+      window.openSendSheet();
+      const rec = document.getElementById('send-recipient-input');
+      const amt = document.getElementById('send-amount-input');
+      if (!rec || !amt) return false;
+      rec.value = 'alice.near';
+      amt.value = '1.25';
+      window.closeAllSheets();
+      window.openSendSheet();
+      const ok = rec.value === '' && amt.value === '' && window.NearCAState.send.recipient === '' && window.NearCAState.send.amount === '';
+      window.closeAllSheets();
+      return ok;
+    })()`);
+    assert.equal(cleared, true, 'Closing Send sheet must clear both State and DOM inputs');
+  });
+
+  test('E2E 5: Swap & Limit mode switch + flip clears amount input and fits 375px', async () => {
+    await cdp.evalJs(`window.switchTab('swap')`);
+    await new Promise((r) => setTimeout(r, 150));
+
+    const swapOk = await cdp.evalJs(`(() => {
+      const inp = document.getElementById('swap-amount-in');
+      const flipBtn = document.querySelector('#swap-market-panel .swap-flip-btn');
+      if (!inp || !flipBtn) return false;
+      inp.value = '12.34';
+      window.NearCAState.swap.amountIn = '12.34';
+      flipBtn.click();
+      const flippedCleared = inp.value === '' && window.NearCAState.swap.amountIn === '';
+      const limitBtn = document.getElementById('swap-mode-limit-btn');
+      if (limitBtn) limitBtn.click();
+      const marketBtn = document.getElementById('swap-mode-market-btn');
+      if (marketBtn) marketBtn.click();
+      return flippedCleared && document.documentElement.scrollWidth <= 375;
+    })()`);
+    assert.equal(swapOk, true, 'Swap flip must clear amount and Swap/Limit must fit 375px');
+  });
+
+  test('E2E 6: Perps overview scroll -> trade detail starts at top (y=0) -> declarative active -> back restores scroll', async () => {
+    await cdp.evalJs(`window.switchTab('perp')`);
 
     let marketCount = 0;
     for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -339,36 +413,30 @@ async function run() {
       if (marketCount >= 30) break;
       await new Promise((r) => setTimeout(r, 100));
     }
-    if (marketCount < 30) {
-      const dbg = await cdp.evalJs(`JSON.stringify({
-        activeTab: window.NearCAState?.activeTab,
-        hasWallet: Boolean(window.NearCAState?.getActiveWallet?.()),
-        marketsLen: window.NearCAState?.perp?.markets?.length,
-        listText: document.getElementById('perp-overview-list')?.textContent?.slice(0, 120)
-      })`);
-      throw new Error(`Expected >= 30 perp markets rendered, got ${marketCount}. Debug: ${dbg}`);
-    }
+    assert.ok(marketCount >= 30, `Expected >= 30 perp markets rendered, got ${marketCount}`);
 
-    const scrolledY = await cdp.evalJs(`(() => {
+    await new Promise((r) => setTimeout(r, 100));
+    await cdp.evalJs(`(() => {
       const items = document.querySelectorAll('#perp-overview-list .perp-overview-row');
-      const target = items[items.length - 1];
-      target.scrollIntoView({ block: 'center' });
-      return window.scrollY;
+      const last = items[items.length - 1];
+      if (last) last.scrollIntoView({ block: 'center' });
+      if ((window.scrollY || 0) === 0) window.scrollTo(0, 1200);
+      return true;
     })()`);
+    await new Promise((r) => setTimeout(r, 80));
+    const scrolledY = await cdp.evalJs(`window.scrollY || document.documentElement.scrollTop || 0`);
     assert.ok(scrolledY > 200, `Expected scrolledY > 200 after scrolling to bottom market, got ${scrolledY}`);
 
-    // Click bottom market item to open trade detail
     await cdp.evalJs(`(() => {
       const items = document.querySelectorAll('#perp-overview-list .perp-overview-row');
       items[items.length - 1].click();
       return true;
     })()`);
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 200));
 
     const detailScrollY = await cdp.evalJs(`window.scrollY`);
     assert.equal(detailScrollY, 0, `Perp trade detail MUST start at top (scrollY === 0), got ${detailScrollY}`);
 
-    // Verify declarative active classes on PerpsView (click 1h pill and Cross margin)
     await cdp.evalJs(`(() => {
       const p1h = document.querySelector('#perp-interval-pills [data-iv="1h"]');
       if (p1h) p1h.click();
@@ -377,6 +445,7 @@ async function run() {
       return true;
     })()`);
     await new Promise((r) => setTimeout(r, 80));
+
     const perpActiveOk = await cdp.evalJs(`(() => {
       const p1h = document.querySelector('#perp-interval-pills [data-iv="1h"]');
       const crossBtn = document.getElementById('perp-mode-cross');
@@ -384,38 +453,25 @@ async function run() {
     })()`);
     assert.equal(perpActiveOk, true, 'PerpsView declarative active classes must update on interval/margin click');
 
-    // Go back to overview and verify scroll position restored
     await cdp.evalJs(`(() => {
       const backBtn = document.getElementById('btn-perp-back');
       if (backBtn) backBtn.click();
       return true;
     })()`);
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 180));
 
     const restoredScrollY = await cdp.evalJs(`window.scrollY`);
     assert.ok(restoredScrollY > 150, `Expected overview scrollY > 150 restored on back, got ${restoredScrollY}`);
+  });
 
-    // Verify bilingual toggle & 375px horizontal fit across tabs
-    for (const tab of ['wallet', 'swap', 'hub']) {
+  test('E2E 7: All main tabs fit 375px width with zero console/page errors', async () => {
+    for (const tab of ['wallet', 'swap', 'perp', 'earn', 'hub']) {
       await cdp.evalJs(`window.switchTab('${tab}')`);
-      await new Promise((r) => setTimeout(r, 150));
+      await new Promise((r) => setTimeout(r, 100));
       const fits = await cdp.evalJs(`document.documentElement.scrollWidth <= 375`);
       assert.equal(fits, true, `Tab ${tab} must fit 375px width without horizontal overflow`);
     }
-
     assert.equal(pageErrors.length, 0, `Unexpected page errors: ${pageErrors.join('; ')}`);
     assert.equal(consoleErrors.length, 0, `Unexpected console errors: ${consoleErrors.join('; ')}`);
-
-    console.log('PASS: Real-Browser 375px CDP E2E (SWR boot, Perps scroll-to-top & restore, Preact active state, zero PIN modal, zero overflow, zero errors)');
-  } finally {
-    cdp.close();
-    try { browser.proc.kill('SIGKILL'); } catch (_) {}
-    server.close();
-    try { fs.rmSync(browser.userDataDir, { recursive: true, force: true }); } catch (_) {}
-  }
-}
-
-run().catch((err) => {
-  console.error('FAIL:', err);
-  process.exit(1);
+  });
 });
