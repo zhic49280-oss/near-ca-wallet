@@ -1,15 +1,3 @@
-  async function refreshPerpLongShortAsync(coin, force = false) {
-    const st = getState();
-    const hl = getHyperliquid();
-    if (!hl || typeof hl.fetchGlobalLongShortAccountRatio !== 'function') return null;
-    const targetCoin = String(coin || (st.perp && st.perp.selectedCoin) || 'BTC');
-    const res = await hl.fetchGlobalLongShortAccountRatio(targetCoin, { timeoutMs: 2500, force }).catch(() => null);
-    if (st.perp.selectedCoin !== targetCoin) return null;
-    st.perp.lsRatio = res || null;
-    renderPerpLongShortBar();
-    return res || null;
-  }
-
   async function refreshPerpOrderbookAndCandlesAsync() {
     const st = getState();
     const hl = getHyperliquid();
@@ -322,6 +310,7 @@
       }
       if (typeof document !== 'undefined' && document.hidden) return;
       if (typeof isAppInBackground === 'function' && isAppInBackground()) return;
+      if (typeof updatePerpFundingCountdown === 'function') updatePerpFundingCountdown();
       if (!_perpWs || _perpWs.readyState !== 1) {
         refreshPerpOrderbookAndCandlesAsync().catch(() => {});
         refreshPerpDataAsync(false).catch(() => {});
@@ -446,7 +435,6 @@
     st.perp.selectedCoin = nextCoin;
     st.perp.subView = 'trade';
     resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
-    st.perp.lsRatio = null;
     st.perp.inspectedCandleIdx = null;
     st.perp.chartOffsetFromEnd = 0;
     st.perp.chartVisibleCount = 48;
@@ -477,7 +465,13 @@
     renderPerpView();
     startPerpLiveFeed();
     refreshPerpOrderbookAndCandlesAsync().catch(() => {});
-    refreshPerpLongShortAsync(st.perp.selectedCoin, false).catch(() => {});
+  }
+
+  async function submitPerpOrderWithSide(side) {
+    const st = getState();
+    st.perp.side = side === 'short' ? 'short' : 'long';
+    evaluatePerpOrderUI(true);
+    return executePerpOrderUI();
   }
 
   async function executePerpOrderUI() {

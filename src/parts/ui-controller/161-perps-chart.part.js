@@ -25,18 +25,41 @@
     return `${mm}/${dd} ${hh}:${mi}`;
   }
 
+  function formatPerpCandleCountdown(interval, nowMs = Date.now()) {
+    const map = {
+      '1m': 60000,
+      '5m': 300000,
+      '15m': 900000,
+      '30m': 1800000,
+      '1h': 3600000,
+      '4h': 14400000,
+      '1d': 86400000
+    };
+    const ivMs = map[String(interval || '15m')] || 900000;
+    const remSec = Math.max(0, Math.floor((ivMs - (nowMs % ivMs)) / 1000));
+    const hh = Math.floor(remSec / 3600);
+    const mm = Math.floor((remSec % 3600) / 60);
+    const ss = remSec % 60;
+    if (hh > 0) {
+      return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+    }
+    return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+  }
+
   function renderPerpCandleDetailBar(candles, selectedIdx = null) {
     const el = $('perp-candle-detail');
     if (!el) return;
-    el.classList.remove('hidden');
     const list = getVisiblePerpCandles(candles);
     const isInspecting = Number.isInteger(selectedIdx) && selectedIdx >= 0 && selectedIdx < list.length;
+    const dockSide = isInspecting && selectedIdx < list.length / 2 ? 'right' : 'left';
+    el.classList.toggle('hidden', !isInspecting);
     el.classList.toggle('is-inspecting', isInspecting);
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (fw && typeof fw.mountPerpChartHudPanel === 'function') {
       fw.mountPerpChartHudPanel(el, {
         candles: list,
         selectedIdx: isInspecting ? selectedIdx : null,
+        dockSide,
         isEn: getState().lang === 'en',
         formatPerpPx,
         formatBal,
@@ -45,45 +68,51 @@
       });
       return;
     }
-    if (isInspecting) {
-      const c = list[selectedIdx];
-      const open = Number(c.o || 0);
-      const close = Number(c.c || 0);
-      const pct = open > 0 ? ((close - open) / open) * 100 : 0;
-      const cls = close >= open ? 'text-emerald' : 'text-rose';
-      const timeStr = formatPerpCandleTime(c.t) || `#${selectedIdx + 1}`;
-      const volUsd = Number.isFinite(c.v) && c.v > 0 ? formatCompactUsd(c.v * (close || 1)) : '--';
-      const volQty = Number.isFinite(c.v) && c.v > 0 ? formatBal(c.v, 2) : '--';
-      el.classList.add('is-inspecting');
-      el.innerHTML =
-        `<span style="color:#fff;font-weight:700;">${escapeHtml(timeStr)}</span>` +
-        `<span>O:${escapeHtml(formatPerpPx(c.o))} H:${escapeHtml(formatPerpPx(c.h))} L:${escapeHtml(formatPerpPx(c.l))} C:${escapeHtml(formatPerpPx(c.c))}</span>` +
-        `<span class="${cls}" style="font-weight:700;">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span>` +
-        `<span>${escapeHtml(t('量', 'Vol'))}:${escapeHtml(volQty)} (${escapeHtml(volUsd)})</span>`;
+    if (!isInspecting) {
+      el.innerHTML = '';
       return;
     }
-    el.classList.remove('is-inspecting');
-    if (list.length === 0) {
-      el.innerHTML = `<span>${escapeHtml(t('滑动或点按 K 线查看详情', 'Drag or tap chart to inspect'))}</span>`;
-      return;
-    }
-    let lo = Infinity;
-    let hi = -Infinity;
-    let totalVol = 0;
-    for (const c of list) {
-      if (Number(c.l) < lo) lo = Number(c.l);
-      if (Number(c.h) > hi) hi = Number(c.h);
-      if (Number.isFinite(c.v) && c.v > 0) totalVol += Number(c.v);
-    }
-    const firstOpen = Number(list[0].o || 0);
-    const lastClose = Number(list[list.length - 1].c || 0);
-    const pct = firstOpen > 0 ? ((lastClose - firstOpen) / firstOpen) * 100 : 0;
-    const cls = pct >= 0 ? 'text-emerald' : 'text-rose';
-    el.innerHTML =
-      `<span>${escapeHtml(t('区间高', 'High'))}: <strong style="color:#f8fafc;">$${escapeHtml(formatPerpPx(hi))}</strong></span>` +
-      `<span>${escapeHtml(t('区间低', 'Low'))}: <strong style="color:#f8fafc;">$${escapeHtml(formatPerpPx(lo))}</strong></span>` +
-      `<span>${escapeHtml(t('最新', 'Last'))}: <strong style="color:#f8fafc;">$${escapeHtml(formatPerpPx(lastClose))}</strong> <span class="${cls}" style="font-weight:700;">(${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)</span></span>` +
-      `<span>${escapeHtml(t('总量', 'Vol'))}: ${escapeHtml(totalVol > 0 ? formatBal(totalVol, 1) : '--')}</span>`;
+    const c = list[selectedIdx];
+    const open = Number(c.o);
+    const high = Number(c.h);
+    const low = Number(c.l);
+    const close = Number(c.c);
+    const hasOC = Number.isFinite(open) && Number.isFinite(close);
+    const diff = hasOC ? close - open : null;
+    const pct = hasOC && open > 0 ? (diff / open) * 100 : null;
+    const amp = Number.isFinite(high) && Number.isFinite(low) && Number.isFinite(open) && open > 0
+      ? ((high - low) / open) * 100
+      : null;
+    const cls = diff !== null ? (diff >= 0 ? 'text-emerald' : 'text-rose') : '';
+    const diffStr = diff === null
+      ? '--'
+      : (diff === 0 ? '0.00' : `${diff > 0 ? '+' : '-'}${formatPerpPx(Math.abs(diff))}`);
+    const pctStr = pct === null ? '--' : `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+    const ampStr = amp === null ? '--' : `${amp.toFixed(2)}%`;
+    const volQty = Number.isFinite(Number(c.v)) && Number(c.v) > 0 ? formatBal(c.v, 2) : '--';
+    const turnover = Number.isFinite(Number(c.v)) && Number(c.v) > 0 && Number.isFinite(close) && close > 0
+      ? formatCompactUsd(Number(c.v) * close)
+      : '--';
+    const rows = [
+      [t('时间', 'Time'), formatPerpCandleTime(c.t) || `#${selectedIdx + 1}`, ''],
+      [t('开盘', 'Open'), formatPerpPx(c.o), ''],
+      [t('最高', 'High'), formatPerpPx(c.h), ''],
+      [t('最低', 'Low'), formatPerpPx(c.l), ''],
+      [t('收盘', 'Close'), formatPerpPx(c.c), ''],
+      [t('涨跌额', 'Change'), diffStr, cls],
+      [t('涨跌幅', 'Change %'), pctStr, cls],
+      [t('振幅', 'Amplitude'), ampStr, ''],
+      [t('成交量', 'Volume'), volQty, ''],
+      [t('成交额', 'Turnover'), turnover, '']
+    ];
+    el.innerHTML = `<div class="perp-okx-hud-float is-dock-${dockSide}">` +
+      rows.map(([lbl, val, rCls]) =>
+        `<div class="perp-okx-hud-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">` +
+        `<span class="perp-okx-hud-lbl">${escapeHtml(lbl)}</span>` +
+        `<span class="perp-okx-hud-val tabular-nums ${rCls}" style="font-variant-numeric:tabular-nums;text-align:right;">${escapeHtml(val)}</span>` +
+        `</div>`
+      ).join('') +
+      `</div>`;
   }
 
   let _perpMaCache = {
@@ -155,9 +184,9 @@
     const plotL = 6;
     const plotR = 354;
     const plotW = plotR - plotL;
-    const candleTop = 22;
-    const candleBottom = 186;
-    const volBottom = 244;
+    const candleTop = 18;
+    const candleBottom = 152;
+    const volBottom = 196;
     let minLow = Infinity;
     let maxHigh = -Infinity;
     for (let i = 0; i < list.length; i++) {
@@ -169,13 +198,19 @@
     const step = plotW / list.length;
     const yOf = (p) => Math.max(candleTop, Math.min(candleBottom, candleBottom - ((p - minLow) / span) * (candleBottom - candleTop)));
     const selC = list[selectedIdx];
-    const cx = (plotL + selectedIdx * step + step / 2).toFixed(1);
-    const cy = yOf(selC.c).toFixed(1);
+    const cxNum = plotL + selectedIdx * step + step / 2;
+    const cyNum = yOf(selC.c);
+    const cx = cxNum.toFixed(1);
+    const cy = cyNum.toFixed(1);
 
     const vLine = chGroup.querySelector('[data-ch="v"]');
     const hLine = chGroup.querySelector('[data-ch="h"]');
     const dot = chGroup.querySelector('[data-ch="dot"]');
-    if (!vLine || !hLine || !dot) return false;
+    const xPillBg = chGroup.querySelector('[data-ch="xpill-bg"]');
+    const xPillTxt = chGroup.querySelector('[data-ch="xpill-txt"]');
+    const yPillBg = chGroup.querySelector('[data-ch="ypill-bg"]');
+    const yPillTxt = chGroup.querySelector('[data-ch="ypill-txt"]');
+    if (!vLine || !hLine || !dot || !xPillBg || !xPillTxt || !yPillBg || !yPillTxt) return false;
 
     vLine.setAttribute('x1', cx);
     vLine.setAttribute('x2', cx);
@@ -187,6 +222,20 @@
     hLine.setAttribute('y2', cy);
     dot.setAttribute('cx', cx);
     dot.setAttribute('cy', cy);
+
+    const xPillW = 58;
+    const xPillX = Math.max(plotL, Math.min(plotR - xPillW, cxNum - xPillW / 2));
+    xPillBg.setAttribute('x', xPillX.toFixed(1));
+    xPillBg.setAttribute('y', String(volBottom + 2));
+    xPillTxt.setAttribute('x', (xPillX + xPillW / 2).toFixed(1));
+    xPillTxt.setAttribute('y', String(volBottom + 12));
+    xPillTxt.textContent = formatPerpCandleTime(selC.t) || `#${selectedIdx + 1}`;
+
+    const yPillY = Math.max(candleTop, Math.min(candleBottom - 14, cyNum - 7));
+    yPillBg.setAttribute('y', yPillY.toFixed(1));
+    yPillTxt.setAttribute('y', (yPillY + 10).toFixed(1));
+    yPillTxt.textContent = formatPerpPx(selC.c);
+
     if (chGroup.style) chGroup.style.display = '';
     if (typeof chGroup.setAttribute === 'function') chGroup.setAttribute('display', 'inline');
     return true;
@@ -231,14 +280,14 @@
     const ma20Vis = ma20All.slice(start, end);
 
     const W = 360;
-    const H = 268;
+    const H = 216;
     const plotL = 6;
     const plotR = 354;
     const plotW = plotR - plotL;
-    const candleTop = 22;
-    const candleBottom = 186;
-    const volTop = 198;
-    const volBottom = 244;
+    const candleTop = 18;
+    const candleBottom = 152;
+    const volTop = 160;
+    const volBottom = 196;
 
     let minLow = Infinity;
     let maxHigh = -Infinity;
@@ -263,9 +312,9 @@
     const lastMa10 = ma10Vis[ma10Vis.length - 1];
     const lastMa20 = ma20Vis[ma20Vis.length - 1];
     const legendSvg =
-      `<text x="6" y="12" fill="#f59e0b" font-size="8.5" font-weight="600" font-family="ui-monospace, monospace">MA5:${escapeHtml(formatPerpPx(lastMa5))}</text>` +
-      `<text x="118" y="12" fill="#38bdf8" font-size="8.5" font-weight="600" font-family="ui-monospace, monospace">MA10:${escapeHtml(formatPerpPx(lastMa10))}</text>` +
-      `<text x="232" y="12" fill="#c084fc" font-size="8.5" font-weight="600" font-family="ui-monospace, monospace">MA20:${escapeHtml(formatPerpPx(lastMa20))}</text>`;
+      `<text x="6" y="11" fill="#f59e0b" font-size="8.2" font-weight="600" font-family="ui-monospace, monospace">MA5:${escapeHtml(formatPerpPx(lastMa5))}</text>` +
+      `<text x="118" y="11" fill="#38bdf8" font-size="8.2" font-weight="600" font-family="ui-monospace, monospace">MA10:${escapeHtml(formatPerpPx(lastMa10))}</text>` +
+      `<text x="232" y="11" fill="#c084fc" font-size="8.2" font-weight="600" font-family="ui-monospace, monospace">MA20:${escapeHtml(formatPerpPx(lastMa20))}</text>`;
 
     // 4 Horizontal Price Grid Lines (full width, no right price axis)
     const gridSvg = [0, 1 / 3, 2 / 3, 1].map((frac) => {
@@ -283,7 +332,7 @@
       const lbl = formatPerpCandleTime(list[idx].t);
       const anchor = idx >= list.length - 2 ? 'end' : (idx <= 2 ? 'start' : 'middle');
       const labelEl = lbl
-        ? `<text x="${x.toFixed(1)}" y="260" text-anchor="${anchor}" fill="rgba(148,163,184,0.75)" font-size="8.2" font-family="ui-monospace, monospace">${escapeHtml(lbl)}</text>`
+        ? `<text x="${x.toFixed(1)}" y="209" text-anchor="${anchor}" fill="rgba(148,163,184,0.75)" font-size="8.0" font-family="ui-monospace, monospace">${escapeHtml(lbl)}</text>`
         : '';
       return `<line x1="${x.toFixed(1)}" y1="${candleTop}" x2="${x.toFixed(1)}" y2="${volBottom}" stroke="rgba(255,255,255,0.05)" stroke-dasharray="2 3" stroke-width="0.7" />` + labelEl;
     }).join('');
@@ -334,15 +383,19 @@
       ? `<text x="${(loX - 4).toFixed(1)}" y="${Math.min(candleBottom - 2, loY + 3).toFixed(1)}" text-anchor="end" fill="#e2e8f0" font-size="8.5" font-weight="600" font-family="ui-monospace, monospace">${escapeHtml(formatPerpPx(minLow))} →</text>`
       : `<text x="${(loX + 4).toFixed(1)}" y="${Math.min(candleBottom - 2, loY + 3).toFixed(1)}" text-anchor="start" fill="#e2e8f0" font-size="8.5" font-weight="600" font-family="ui-monospace, monospace">← ${escapeHtml(formatPerpPx(minLow))}</text>`;
 
-    // Separator between candle and volume zones + Live Mark Price indicator overlay
-    let markSvg = `<line x1="${plotL}" y1="${volTop - 5}" x2="${plotR}" y2="${volTop - 5}" stroke="rgba(255,255,255,0.06)" stroke-width="0.8" />`;
+    // Separator between candle and volume zones + Live Mark Price & Countdown Pill
+    let markSvg = `<line x1="${plotL}" y1="${volTop - 4}" x2="${plotR}" y2="${volTop - 4}" stroke="rgba(255,255,255,0.06)" stroke-width="0.8" />`;
     const livePx = (market && Number(market.markPx)) || list[list.length - 1].c;
     if (Number.isFinite(livePx) && livePx > 0) {
       const ym = yOf(livePx);
-      const pillY = Math.max(candleTop, Math.min(candleBottom - 14, ym - 7));
+      const pillH = 22;
+      const pillY = Math.max(candleTop, Math.min(candleBottom - pillH, ym - pillH / 2));
+      const stChart = getState();
+      const countdownStr = formatPerpCandleCountdown(stChart && stChart.perp && stChart.perp.chartInterval, Date.now());
       markSvg += `<line x1="${plotL}" y1="${ym.toFixed(1)}" x2="${plotR}" y2="${ym.toFixed(1)}" stroke="#00ec97" stroke-dasharray="3 2" stroke-width="0.95" stroke-opacity="0.85" />` +
-        `<rect x="292" y="${pillY.toFixed(1)}" width="60" height="14" rx="3" fill="rgba(6,10,20,0.88)" stroke="rgba(0,236,151,0.75)" stroke-width="0.75" />` +
-        `<text x="322" y="${(pillY + 10).toFixed(1)}" text-anchor="middle" fill="#00ec97" font-size="8.2" font-weight="700" font-family="ui-monospace, monospace">${escapeHtml(formatPerpPx(livePx))}</text>`;
+        `<rect x="290" y="${pillY.toFixed(1)}" width="64" height="${pillH}" rx="3" fill="rgba(6,10,20,0.92)" stroke="rgba(0,236,151,0.78)" stroke-width="0.75" />` +
+        `<text x="322" y="${(pillY + 9.5).toFixed(1)}" text-anchor="middle" fill="#00ec97" font-size="8.0" font-weight="700" font-family="ui-monospace, monospace">${escapeHtml(formatPerpPx(livePx))}</text>` +
+        `<text x="322" y="${(pillY + 18.5).toFixed(1)}" text-anchor="middle" fill="rgba(226,232,240,0.85)" font-size="7.1" font-weight="600" font-family="ui-monospace, monospace">${escapeHtml(countdownStr)}</text>`;
     }
 
     // Active Crosshair Overlay (always present so scrub updates coordinates without rebuilding SVG)
@@ -352,11 +405,20 @@
     const cx = plotL + chIdx * step + step / 2;
     const cy = yOf(selC.c);
     const chDisplay = hasSel ? 'inline' : 'none';
+    const xPillW = 58;
+    const xPillX = Math.max(plotL, Math.min(plotR - xPillW, cx - xPillW / 2));
+    const yPillY = Math.max(candleTop, Math.min(candleBottom - 14, cy - 7));
+    const chTimeStr = formatPerpCandleTime(selC.t) || `#${chIdx + 1}`;
+    const chPxStr = formatPerpPx(selC.c);
     const crosshairSvg =
       `<g id="perp-chart-crosshair" class="perp-chart-crosshair" display="${chDisplay}" style="display:${chDisplay};">` +
       `<line data-ch="v" x1="${cx.toFixed(1)}" y1="${candleTop}" x2="${cx.toFixed(1)}" y2="${volBottom}" stroke="#38bdf8" stroke-dasharray="2.5 2.5" stroke-width="1" stroke-opacity="0.9" />` +
       `<line data-ch="h" x1="${plotL}" y1="${cy.toFixed(1)}" x2="${plotR}" y2="${cy.toFixed(1)}" stroke="#38bdf8" stroke-dasharray="2.5 2.5" stroke-width="0.85" stroke-opacity="0.75" />` +
       `<circle data-ch="dot" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3" fill="#38bdf8" stroke="#06080f" stroke-width="1" />` +
+      `<rect data-ch="xpill-bg" x="${xPillX.toFixed(1)}" y="${volBottom + 2}" width="${xPillW}" height="14" rx="3" fill="#0f172a" stroke="#38bdf8" stroke-width="0.75" />` +
+      `<text data-ch="xpill-txt" x="${(xPillX + xPillW / 2).toFixed(1)}" y="${volBottom + 12}" text-anchor="middle" fill="#f8fafc" font-size="7.8" font-weight="600" font-family="ui-monospace, monospace">${escapeHtml(chTimeStr)}</text>` +
+      `<rect data-ch="ypill-bg" x="292" y="${yPillY.toFixed(1)}" width="62" height="14" rx="3" fill="#0f172a" stroke="#38bdf8" stroke-width="0.75" />` +
+      `<text data-ch="ypill-txt" x="323" y="${(yPillY + 10).toFixed(1)}" text-anchor="middle" fill="#f8fafc" font-size="8.0" font-weight="700" font-family="ui-monospace, monospace">${escapeHtml(chPxStr)}</text>` +
       `</g>`;
 
     // Transparent Interactive Hit Targets per Candle

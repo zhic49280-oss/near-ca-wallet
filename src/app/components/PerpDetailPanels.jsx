@@ -141,6 +141,7 @@ export function PerpFundingInfoPanel({
 export function PerpChartHudPanel({
   candles = [],
   selectedIdx = null,
+  dockSide: dockSideProp,
   isEn: isEnProp,
   formatPerpPx = defaultFormatPerpPx,
   formatBal = defaultFormatBal,
@@ -151,48 +152,67 @@ export function PerpChartHudPanel({
   const isEn = typeof isEnProp === 'boolean' ? isEnProp : Boolean(st && st.lang === 'en');
   const list = Array.isArray(candles) ? candles : [];
 
-  if (Number.isInteger(selectedIdx) && selectedIdx >= 0 && selectedIdx < list.length) {
-    const c = list[selectedIdx];
-    const open = Number(c.o || 0);
-    const close = Number(c.c || 0);
-    const pct = open > 0 ? ((close - open) / open) * 100 : 0;
-    const cls = close >= open ? 'text-emerald' : 'text-rose';
-    const timeStr = formatPerpCandleTime(c.t) || `#${selectedIdx + 1}`;
-    const volUsd = Number.isFinite(c.v) && c.v > 0 ? formatCompactUsd(c.v * (close || 1)) : '--';
-    const volQty = Number.isFinite(c.v) && c.v > 0 ? formatBal(c.v, 2) : '--';
-
-    return [
-      <span key="t" style={{ color: '#fff', fontWeight: 700 }}>{timeStr}</span>,
-      <span key="ohlc">{`O:${formatPerpPx(c.o)} H:${formatPerpPx(c.h)} L:${formatPerpPx(c.l)} C:${formatPerpPx(c.c)}`}</span>,
-      <span key="pct" class={cls} style={{ fontWeight: 700 }}>{`${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`}</span>,
-      <span key="vol">{`${isEn ? 'Vol' : '量'}:${volQty} (${volUsd})`}</span>
-    ];
+  if (!Number.isInteger(selectedIdx) || selectedIdx < 0 || selectedIdx >= list.length) {
+    return null;
   }
 
-  if (list.length === 0) {
-    return <span>{isEn ? 'Drag or tap chart to inspect' : '滑动或点按 K 线查看详情'}</span>;
-  }
+  const c = list[selectedIdx];
+  const dockSide = dockSideProp === 'left' || dockSideProp === 'right'
+    ? dockSideProp
+    : (selectedIdx < list.length / 2 ? 'right' : 'left');
 
-  let lo = Infinity;
-  let hi = -Infinity;
-  let totalVol = 0;
-  for (const c of list) {
-    if (Number(c.l) < lo) lo = Number(c.l);
-    if (Number(c.h) > hi) hi = Number(c.h);
-    if (Number.isFinite(c.v) && c.v > 0) totalVol += Number(c.v);
-  }
-  const firstOpen = Number(list[0].o || 0);
-  const lastClose = Number(list[list.length - 1].c || 0);
-  const pct = firstOpen > 0 ? ((lastClose - firstOpen) / firstOpen) * 100 : 0;
-  const cls = pct >= 0 ? 'text-emerald' : 'text-rose';
+  const open = Number(c.o);
+  const high = Number(c.h);
+  const low = Number(c.l);
+  const close = Number(c.c);
+  const hasOC = Number.isFinite(open) && Number.isFinite(close);
+  const diff = hasOC ? close - open : null;
+  const pct = hasOC && open > 0 ? (diff / open) * 100 : null;
+  const amp = Number.isFinite(high) && Number.isFinite(low) && Number.isFinite(open) && open > 0
+    ? ((high - low) / open) * 100
+    : null;
+  const dirCls = diff !== null ? (diff >= 0 ? 'text-emerald' : 'text-rose') : '';
 
-  return [
-    <span key="hi">{isEn ? 'High' : '区间高'}: <strong style={{ color: '#f8fafc' }}>{`$${formatPerpPx(hi)}`}</strong></span>,
-    <span key="lo">{isEn ? 'Low' : '区间低'}: <strong style={{ color: '#f8fafc' }}>{`$${formatPerpPx(lo)}`}</strong></span>,
-    <span key="last">
-      {isEn ? 'Last' : '最新'}: <strong style={{ color: '#f8fafc' }}>{`$${formatPerpPx(lastClose)}`}</strong>{' '}
-      <span class={cls} style={{ fontWeight: 700 }}>{`(${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`}</span>
-    </span>,
-    <span key="vol">{`${isEn ? 'Vol' : '总量'}: ${totalVol > 0 ? formatBal(totalVol, 1) : '--'}`}</span>
+  const diffStr = diff === null
+    ? '--'
+    : (diff === 0 ? '0.00' : `${diff > 0 ? '+' : '-'}${formatPerpPx(Math.abs(diff))}`);
+  const pctStr = pct === null ? '--' : `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+  const ampStr = amp === null ? '--' : `${amp.toFixed(2)}%`;
+  const volQty = Number.isFinite(Number(c.v)) && Number(c.v) > 0 ? formatBal(c.v, 2) : '--';
+  const turnover = Number.isFinite(Number(c.v)) && Number(c.v) > 0 && Number.isFinite(close) && close > 0
+    ? formatCompactUsd(Number(c.v) * close)
+    : '--';
+
+  const rows = [
+    { k: 'time', label: isEn ? 'Time' : '时间', val: formatPerpCandleTime(c.t) || `#${selectedIdx + 1}` },
+    { k: 'open', label: isEn ? 'Open' : '开盘', val: formatPerpPx(c.o) },
+    { k: 'high', label: isEn ? 'High' : '最高', val: formatPerpPx(c.h) },
+    { k: 'low', label: isEn ? 'Low' : '最低', val: formatPerpPx(c.l) },
+    { k: 'close', label: isEn ? 'Close' : '收盘', val: formatPerpPx(c.c) },
+    { k: 'chg', label: isEn ? 'Change' : '涨跌额', val: diffStr, cls: dirCls },
+    { k: 'chgPct', label: isEn ? 'Change %' : '涨跌幅', val: pctStr, cls: dirCls },
+    { k: 'amp', label: isEn ? 'Amplitude' : '振幅', val: ampStr },
+    { k: 'vol', label: isEn ? 'Volume' : '成交量', val: volQty },
+    { k: 'turnover', label: isEn ? 'Turnover' : '成交额', val: turnover }
   ];
+
+  return (
+    <div class={`perp-okx-hud-float is-dock-${dockSide}`}>
+      {rows.map((r) => (
+        <div
+          key={r.k}
+          class="perp-okx-hud-row"
+          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}
+        >
+          <span class="perp-okx-hud-lbl">{r.label}</span>
+          <span
+            class={`perp-okx-hud-val tabular-nums ${r.cls || ''}`}
+            style={{ fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}
+          >
+            {r.val}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }

@@ -15,8 +15,8 @@ export function PerpOrderbookSidePanel({ rows = [], side = 'bid', maxSz = 0, fmt
             data-px={String(r.px)}
           >
             <div className="perp-ob-row-depth" style={{ width: `${pct.toFixed(0)}%` }} />
-            <span>{typeof fmtObSz === 'function' ? fmtObSz(r.sz) : String(r.sz)}</span>
             <span className="perp-ob-px">{typeof formatPerpPx === 'function' ? formatPerpPx(r.px) : String(r.px)}</span>
+            <span className="perp-ob-sz">{typeof fmtObSz === 'function' ? fmtObSz(r.sz) : String(r.sz)}</span>
           </button>
         );
       })}

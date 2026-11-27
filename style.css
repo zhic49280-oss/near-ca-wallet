@@ -2210,17 +2210,20 @@ html.nexus-locked #app-lock-overlay {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 24px;
-  padding: 3px 6px;
-  border-radius: 5px;
-  font-size: 10.5px;
-  line-height: 1.25;
+  gap: 4px;
+  height: 19px;
+  min-height: 19px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.2;
   font-variant-numeric: tabular-nums;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(255, 255, 255, 0.02);
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
   overflow: hidden;
+  white-space: nowrap;
   text-align: left;
 }
 
@@ -2640,17 +2643,359 @@ html.nexus-locked #app-lock-overlay {
   color: #fb7185;
 }
 
+.perp-okx-trade-card {
+  padding: 10px;
+}
+
 .perp-okx-split-grid {
   display: grid;
-  grid-template-columns: 1.24fr 0.92fr;
-  gap: 8px;
-  align-items: stretch;
+  grid-template-columns: 57fr 43fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.perp-okx-ticket-col {
+  min-width: 0;
+}
+
+.perp-okx-ob-col {
+  min-width: 0;
+  padding-left: 9px;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.perp-okx-perp-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.perp-okx-chg-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.perp-okx-stats-strip {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 5px 7px;
+}
+
+.perp-chart-canvas-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.perp-okx-hud-float {
+  position: absolute;
+  top: 6px;
+  z-index: 8;
+  width: 158px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: rgba(10, 15, 28, 0.92);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.perp-okx-hud-float.is-dock-left {
+  left: 6px;
+}
+
+.perp-okx-hud-float.is-dock-right {
+  right: 6px;
+}
+
+.perp-okx-hud-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.perp-okx-lev-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(0, 236, 151, 0.12);
+  border: 1px solid rgba(0, 236, 151, 0.28);
+  color: var(--near-emerald);
+  font-size: 11.5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.perp-okx-lev-drawer {
+  padding: 2px 2px 4px;
+}
+
+.perp-okx-ordtype-switch {
+  background: rgba(0, 0, 0, 0.28);
+  border: none;
+}
+
+.perp-okx-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 9px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.perp-okx-input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #ffffff;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.perp-okx-unit-tag {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.perp-okx-bbo-btn {
+  padding: 3px 7px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(0, 236, 151, 0.16);
+  color: var(--near-emerald);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.perp-okx-pct-dots {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 2px 2px 0;
+}
+
+.perp-okx-pct-track {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 7px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  z-index: 0;
+}
+
+.perp-okx-pct-node {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.perp-okx-pct-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #1e293b;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  transition: all 0.15s ease;
+}
+
+.perp-okx-pct-node.active .perp-okx-pct-dot {
+  background: var(--near-emerald);
+  border-color: #ffffff;
+  transform: scale(1.15);
+}
+
+.perp-okx-pct-lbl {
+  font-size: 9px;
+  color: var(--text-muted);
+}
+
+.perp-okx-pct-node.active .perp-okx-pct-lbl {
+  color: var(--near-emerald);
+  font-weight: 700;
+}
+
+.perp-okx-avail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.perp-okx-deposit-plus {
+  background: none;
+  border: none;
+  color: var(--near-emerald);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.perp-okx-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 8px;
+  padding: 2px 0;
+}
+
+.perp-okx-meta-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-size: 10px;
+}
+
+.perp-okx-dual-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.perp-okx-btn-long,
+.perp-okx-btn-short {
+  width: 100%;
+  height: 38px;
+  border-radius: 999px;
+  border: none;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 0 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.perp-okx-btn-long {
+  background: #00C076;
+  color: #04130d;
+}
+
+.perp-okx-btn-short {
+  background: #F6465D;
+  color: #ffffff;
+}
+
+.perp-okx-btn-long:disabled,
+.perp-okx-btn-short:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.perp-ob-funding-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  font-size: 9.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.perp-ob-mid-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 3px 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.perp-ob-mid-sub {
+  font-size: 9.5px;
+  color: var(--text-muted);
+  line-height: 1.1;
+}
+
+.perp-ob-px,
+.perp-ob-sz {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.perp-okx-tabs-bar {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  padding-bottom: 4px;
+}
+
+.perp-okx-tabs {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.perp-okx-tab {
+  position: relative;
+  background: transparent;
+  border: none;
+  padding: 5px 2px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.perp-okx-tab.active {
+  color: #ffffff;
+}
+
+.perp-okx-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -5px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--near-emerald);
 }
 
 .perp-ob-stacked {
   display: flex !important;
   flex-direction: column;
-  gap: 3px !important;
+  gap: 2px !important;
 }
 
 .perp-ob-mid-badge {
@@ -2658,9 +3003,7 @@ html.nexus-locked #app-lock-overlay {
   font-size: 12px;
   font-weight: 800;
   color: #fff;
-  padding: 3px 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  line-height: 1.2;
 }
 
 .perp-pos-metrics-grid {
@@ -2812,26 +3155,16 @@ html.nexus-locked #app-lock-overlay {
   white-space: nowrap;
 }
 
-/* Interactive K-Line Candle Inspector Bar (Always-On Zero-Jitter) */
+/* Interactive K-Line Candle Inspector Bar (Floating Overlay Wrapper) */
 .perp-candle-inspect-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 2px 8px;
-  min-height: 36px;
-  padding: 5px 8px;
-  margin-bottom: 5px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  font-size: 10.5px;
-  color: var(--text-secondary);
-}
-
-.perp-candle-inspect-bar.is-inspecting {
-  background: rgba(56, 189, 248, 0.09);
-  border-color: rgba(56, 189, 248, 0.28);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  min-height: 0;
 }
 
 .perp-ob-power-wrap > .flex {
@@ -2864,39 +3197,21 @@ html.nexus-locked #app-lock-overlay {
   background: rgba(255, 255, 255, 0.035);
 }
 
-/* 480px Mobile Top-Bar Two-Row Layout */
+/* 480px Mobile Perps Layout Compression */
 @media (max-width: 480px) {
-  .perp-trade-top-bar {
-    flex-wrap: wrap;
-    gap: 6px;
+  #view-perp {
+    padding-left: 8px;
+    padding-right: 8px;
+    gap: 8px;
   }
-  .perp-trade-top-left {
-    order: 1;
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-  .perp-trade-top-right {
-    order: 2;
-    flex-shrink: 0;
-  }
-  .perp-top-px-wrap {
-    order: 3;
-    flex: 0 0 100%;
-    width: 100%;
-    margin-left: 0;
-    display: flex;
-    flex-direction: row;
-    align-items: baseline;
-    justify-content: space-between;
-    text-align: left;
-    padding-top: 5px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  #view-perp .ios-glass-card {
+    padding: 10px;
   }
   #perp-mark-px {
-    font-size: 16px !important;
+    font-size: 11px !important;
   }
   #perp-change-24h {
-    font-size: 11.5px !important;
+    font-size: 10.5px !important;
     font-weight: 700;
   }
 }
@@ -2909,7 +3224,7 @@ html.nexus-locked #app-lock-overlay {
     white-space: nowrap;
   }
   .perp-trade-top-bar {
-    gap: 5px;
+    gap: 4px;
   }
   .perp-trade-top-left {
     gap: 4px;
@@ -2922,9 +3237,9 @@ html.nexus-locked #app-lock-overlay {
     font-size: 10.5px;
   }
   #perp-coin-btn {
-    padding: 4px 7px 4px 5px;
-    font-size: 12px;
-    gap: 4px;
+    padding: 4px 6px 4px 5px;
+    font-size: 11.5px;
+    gap: 3px;
   }
   .perp-top-icon-btn,
   .perp-top-act-btn {
@@ -2932,33 +3247,27 @@ html.nexus-locked #app-lock-overlay {
     font-size: 10.5px;
   }
   .perp-okx-split-grid {
-    grid-template-columns: 1.16fr 0.94fr;
-    gap: 6px;
+    grid-template-columns: 57fr 43fr;
+    gap: 8px;
   }
-  .perp-okx-split-grid > .ios-glass-card {
-    min-width: 0;
-    padding: 8px !important;
+  .perp-okx-ob-col {
+    padding-left: 7px;
   }
   .perp-okx-split-grid .mode-pill-btn {
-    font-size: 11px;
+    font-size: 10.5px;
     line-height: 1.2;
-    padding: 4px 4px;
+    padding: 4px 3px;
     white-space: nowrap;
   }
   .perp-ob-power-wrap > .flex {
-    gap: 4px;
+    gap: 3px;
     min-width: 0;
   }
   #perp-ob-bid-summary,
-  #perp-ob-ask-summary,
-  #perp-ls-long-label,
-  #perp-ls-short-label {
+  #perp-ob-ask-summary {
     font-size: 9px;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex: 0 1 auto;
-    min-width: 0;
+    flex: 0 0 auto;
   }
 }
 

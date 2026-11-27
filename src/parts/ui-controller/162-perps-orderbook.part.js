@@ -22,6 +22,17 @@
     if (midEl) {
       midEl.textContent = market && market.markPx ? `$${formatPerpPx(market.markPx)}` : '--';
     }
+    const midSubEl = $('perp-ob-mid-sub');
+    if (midSubEl) {
+      if (market && typeof market.change24hPct === 'number') {
+        const pos = market.change24hPct >= 0;
+        midSubEl.textContent = `${pos ? '+' : ''}${market.change24hPct.toFixed(2)}%`;
+        midSubEl.style.color = pos ? '#34d399' : '#fb7185';
+      } else {
+        midSubEl.textContent = '--';
+        midSubEl.style.color = 'var(--text-muted)';
+      }
+    }
 
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (!ob || (!ob.bids.length && !ob.asks.length)) {
@@ -39,22 +50,22 @@
       return;
     }
 
-    const bidTot = Number(ob.bidTotalSz || 0);
-    const askTot = Number(ob.askTotalSz || 0);
     const ratio = Number.isFinite(ob.bidRatioPct) ? ob.bidRatioPct : 50;
+    const bidPct = Math.max(0, Math.min(100, Math.round(ratio)));
+    const askPct = 100 - bidPct;
     if (bidSumEl) {
-      bidSumEl.textContent = `${t('买', 'Bid')} ${formatBal(bidTot, 2)} ${coin}`;
+      bidSumEl.textContent = `B ${bidPct}%`;
     }
     if (askSumEl) {
-      askSumEl.textContent = `${t('卖', 'Ask')} ${formatBal(askTot, 2)} ${coin}`;
+      askSumEl.textContent = `${askPct}% S`;
     }
     const bidFrac = Math.max(0.05, Math.min(0.95, ratio / 100));
     const askFrac = Math.max(0.05, Math.min(0.95, 1 - bidFrac));
     if (bidBarEl) bidBarEl.style.transform = `scaleX(${bidFrac.toFixed(3)})`;
     if (askBarEl) askBarEl.style.transform = `scaleX(${askFrac.toFixed(3)})`;
 
-    const bidRows = ob.bids.slice(0, 10);
-    const askRows = [...ob.asks.slice(0, 10)].reverse();
+    const bidRows = ob.bids.slice(0, 6);
+    const askRows = [...ob.asks.slice(0, 6)].reverse();
     let maxBidSz = 0;
     let maxAskSz = 0;
     for (const r of bidRows) if (r.sz > maxBidSz) maxBidSz = r.sz;
@@ -72,11 +83,11 @@
     }
     bidsEl.innerHTML = bidRows.map((r) => {
       const pct = maxBidSz > 0 ? Math.max(6, (r.sz / maxBidSz) * 100) : 0;
-      return `<button type="button" class="perp-ob-row bid" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></div><span>${escapeHtml(fmtObSz(r.sz))}</span><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span></button>`;
+      return `<button type="button" class="perp-ob-row bid" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></div><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span><span>${escapeHtml(fmtObSz(r.sz))}</span></button>`;
     }).join('');
     asksEl.innerHTML = askRows.map((r) => {
       const pct = maxAskSz > 0 ? Math.max(6, (r.sz / maxAskSz) * 100) : 0;
-      return `<button type="button" class="perp-ob-row ask" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></div><span>${escapeHtml(fmtObSz(r.sz))}</span><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span></button>`;
+      return `<button type="button" class="perp-ob-row ask" data-action="fill-perp-ob-px" data-px="${escapeHtml(String(r.px))}"><div class="perp-ob-row-depth" style="width:${pct.toFixed(0)}%"></div><span class="perp-ob-px">${escapeHtml(formatPerpPx(r.px))}</span><span>${escapeHtml(fmtObSz(r.sz))}</span></button>`;
     }).join('');
   }
 
@@ -183,6 +194,21 @@
     if (btn) {
       btn.disabled = Boolean(evalRes.disabled);
       btn.textContent = evalRes.text;
+    }
+    const lev = Math.max(1, Number(st.perp.leverage) || 5);
+    const btnLong = $('btn-perp-submit-long');
+    if (btnLong) {
+      btnLong.disabled = Boolean(evalRes.disabled);
+      btnLong.textContent = st.perp.submitting
+        ? t('提交签名中...', 'Submitting...')
+        : t(`买入 (做多) ${lev}x`, `Buy Long ${lev}x`);
+    }
+    const btnShort = $('btn-perp-submit-short');
+    if (btnShort) {
+      btnShort.disabled = Boolean(evalRes.disabled);
+      btnShort.textContent = st.perp.submitting
+        ? t('提交签名中...', 'Submitting...')
+        : t(`卖出 (做空) ${lev}x`, `Sell Short ${lev}x`);
     }
     return evalRes;
   }
@@ -410,6 +436,7 @@
         ? `${(market.fundingRate * 100).toFixed(4)}%`
         : '--';
     }
+    updatePerpFundingCountdown();
 
     const curIv = st.perp.chartInterval || '15m';
     if (typeof document !== 'undefined') {
@@ -420,9 +447,8 @@
     const chartWrap = $('perp-chart-wrap');
     const chartSvgEl = $('perp-chart-svg');
     const chartHlEl = $('perp-chart-hl');
-    if (chartWrap) chartWrap.classList.toggle('hidden', !st.perp.showChart);
-    $('btn-perp-chart-toggle')?.classList.toggle('active', Boolean(st.perp.showChart));
-    if (chartSvgEl && st.perp.showChart) {
+    if (chartWrap) chartWrap.classList.remove('hidden');
+    if (chartSvgEl) {
       const selIdx = Number.isInteger(st.perp.inspectedCandleIdx) ? st.perp.inspectedCandleIdx : null;
       chartSvgEl.innerHTML = renderPerpCandleSvg(st.perp.candles, market, selIdx);
       bindPerpChartGestures();
@@ -431,7 +457,6 @@
     }
 
     renderPerpOrderbook();
-    renderPerpLongShortBar();
 
     $('perp-side-long')?.classList.toggle('active', st.perp.side === 'long');
     $('perp-side-short')?.classList.toggle('active', st.perp.side === 'short');
@@ -469,28 +494,19 @@
     if (btn) btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
   }
 
-  function renderPerpLongShortBar() {
-    const st = getState();
-    const wrap = $('perp-ls-ratio-wrap');
-    if (!wrap) return;
-    wrap.classList.remove('hidden');
-    const coin = (st.perp && st.perp.selectedCoin) || 'BTC';
-    const ls = st.perp && st.perp.lsRatio && st.perp.lsRatio.coin === coin ? st.perp.lsRatio : null;
-    if (!ls || !Number.isFinite(ls.longPct) || !Number.isFinite(ls.shortPct)) {
-      if (wrap.style) wrap.style.opacity = '0.55';
-      if ($('perp-ls-long-label')) $('perp-ls-long-label').textContent = `${t('做多', 'Long')} --`;
-      if ($('perp-ls-short-label')) $('perp-ls-short-label').textContent = `-- ${t('做空', 'Short')}`;
-      if ($('perp-ls-long-bar')) $('perp-ls-long-bar').style.transform = 'scaleX(0.5)';
-      if ($('perp-ls-short-bar')) $('perp-ls-short-bar').style.transform = 'scaleX(0.5)';
-      return;
-    }
-    if (wrap.style) wrap.style.opacity = '1';
-    const longPct = Math.max(1, Math.min(99, ls.longPct));
-    const shortPct = Math.max(1, Math.min(99, 100 - longPct));
-    if ($('perp-ls-long-label')) $('perp-ls-long-label').textContent = `${t('做多', 'Long')} ${ls.longPct.toFixed(1)}%`;
-    if ($('perp-ls-short-label')) $('perp-ls-short-label').textContent = `${ls.shortPct.toFixed(1)}% ${t('做空', 'Short')}`;
-    if ($('perp-ls-long-bar')) $('perp-ls-long-bar').style.transform = `scaleX(${(longPct / 100).toFixed(3)})`;
-    if ($('perp-ls-short-bar')) $('perp-ls-short-bar').style.transform = `scaleX(${(shortPct / 100).toFixed(3)})`;
+  function updatePerpFundingCountdown() {
+    const el = $('perp-ob-funding-countdown');
+    if (!el) return;
+    const market = getSelectedPerpMarket();
+    const frText = (market && typeof market.fundingRate === 'number' && Number.isFinite(market.fundingRate))
+      ? `${(market.fundingRate * 100).toFixed(4)}%`
+      : '--';
+    const now = Date.now();
+    const nextHourMs = (Math.floor(now / 3_600_000) + 1) * 3_600_000;
+    const remSec = Math.max(0, Math.floor((nextHourMs - now) / 1000));
+    const mm = String(Math.floor(remSec / 60)).padStart(2, '0');
+    const ss = String(remSec % 60).padStart(2, '0');
+    el.textContent = `${frText} / ${mm}:${ss}`;
   }
 
   let _perpRefreshInFlight = null;
@@ -553,7 +569,6 @@
         }
         await refreshPerpOrderbookAndCandlesAsync();
         if (force) {
-          refreshPerpLongShortAsync(st.perp.selectedCoin || 'BTC', true).catch(() => {});
           showToast(t('合约数据已刷新', 'Perps synced'));
         }
       } catch (err) {
@@ -632,6 +647,7 @@
     if (clearMargin) {
       domIds.push('perp-margin-input');
       defaults.marginInput = '';
+      clearPerpPctDots();
     }
     if (clearTpSl) {
       domIds.push('perp-tp-input', 'perp-sl-input', 'perp-reduce-only-chk');
@@ -668,7 +684,6 @@
     } else if (mkt && mkt.onlyIsolated) {
       st.perp.marginMode = 'isolated';
     }
-    st.perp.lsRatio = null;
     st.perp.inspectedCandleIdx = null;
     st.perp.chartOffsetFromEnd = 0;
     st.perp.chartVisibleCount = 48;
@@ -686,7 +701,6 @@
     }
     renderPerpView();
     refreshPerpOrderbookAndCandlesAsync().catch(() => {});
-    refreshPerpLongShortAsync(st.perp.selectedCoin, false).catch(() => {});
     startPerpLiveFeed();
   }
 
@@ -780,8 +794,17 @@
     evaluatePerpOrderUI();
   }
 
+  function clearPerpPctDots() {
+    if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+      document.querySelectorAll('.perp-okx-pct-dots [data-pct]').forEach((dot) => {
+        dot.classList.remove('active');
+      });
+    }
+  }
+
   function handlePerpMarginInput() {
     getState().perp.errorMsg = '';
+    clearPerpPctDots();
     evaluatePerpOrderUI();
   }
 
@@ -792,6 +815,24 @@
 
   function setPerpMarginPercent(pct) {
     const st = getState();
+    const targetPct = Number(pct);
+    const updatePctDots = () => {
+      if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+        document.querySelectorAll('.perp-okx-pct-dots [data-pct]').forEach((dot) => {
+          const dVal = Number(dot.getAttribute('data-pct'));
+          dot.classList.toggle('active', Number.isFinite(dVal) && Math.abs(dVal - targetPct) < 0.02);
+        });
+      }
+    };
+    if (!Number.isFinite(targetPct) || targetPct <= 0) {
+      st.perp.marginInput = '';
+      const inp = $('perp-margin-input');
+      if (inp) inp.value = '';
+      st.perp.errorMsg = '';
+      updatePctDots();
+      evaluatePerpOrderUI();
+      return;
+    }
     const avail = st.perp.account ? Number(st.perp.account.availableMargin || 0) : 0;
     if (avail <= 0) {
       showToast(t('可用保证金为 0，请先充值或从 Spot 划转', 'Available margin is 0; deposit or transfer first'));
@@ -799,20 +840,14 @@
     }
     const lev = Math.max(1, Number(st.perp.leverage) || 5);
     const feeRate = Number(st.perp.account?.takerFeeRate) || 0.00045;
-    const maxSafeRatio = Number(pct) >= 0.99 ? Math.max(0.5, 1 / (1 + lev * feeRate) - 0.005) : Number(pct);
+    const maxSafeRatio = targetPct >= 0.99 ? Math.max(0.5, 1 / (1 + lev * feeRate) - 0.005) : targetPct;
     const amt = Math.max(0, avail * maxSafeRatio).toFixed(2);
     st.perp.marginInput = amt;
     const inp = $('perp-margin-input');
     if (inp) inp.value = amt;
     st.perp.errorMsg = '';
+    updatePctDots();
     evaluatePerpOrderUI();
-  }
-
-  function togglePerpChart() {
-    const st = getState();
-    st.perp.showChart = !st.perp.showChart;
-    renderPerpView();
-    if (st.perp.showChart) refreshPerpOrderbookAndCandlesAsync().catch(() => {});
   }
 
   function fillPerpLimitPrice(px) {
