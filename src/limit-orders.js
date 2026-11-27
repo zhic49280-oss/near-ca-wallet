@@ -858,7 +858,8 @@
       const cryptoEngine = (typeof window !== 'undefined' && window.NearCACrypto) || (typeof globalThis !== 'undefined' && globalThis.NearCACrypto);
       if (txBytes && txBytes.length > 65 && cryptoEngine && typeof cryptoEngine.base58Encode === 'function') {
         const lenBytes = txBytes[0] < 0x80 ? 1 : 2;
-        candidateSig = cryptoEngine.base58Encode(txBytes.slice(lenBytes, lenBytes + 64));
+        const sig0 = txBytes.slice(lenBytes, lenBytes + 64);
+        if (sig0.some((b) => b !== 0)) candidateSig = cryptoEngine.base58Encode(sig0);
       }
     } catch (_) {}
 
@@ -888,10 +889,36 @@
       throw new Error(msg);
     }
 
+    const confirmSolTxOrThrow = async (txSig, timeoutMs = 45_000) => {
+      if (typeof contracts.waitForSolanaTxConfirmation === 'function') {
+        const st = await contracts.waitForSolanaTxConfirmation(txSig, timeoutMs);
+        if (!st || st.err || (st.meta && st.meta.err)) {
+          throw new Error(
+            !st
+              ? t(`Solana 限价单交易确认超时 (tx: ${txSig})`, `Solana limit order confirmation timed out (tx: ${txSig})`)
+              : t(`Solana 限价单链上执行失败 (tx: ${txSig})`, `Solana limit order transaction failed (tx: ${txSig})`)
+          );
+        }
+        return st;
+      }
+      const stRes = await contracts.callSolanaRpc('getSignatureStatuses', [[txSig], { searchTransactionHistory: true }], 5000).catch(() => null);
+      const stVal = stRes && stRes.value && stRes.value[0];
+      if (stVal && stVal.err) {
+        throw new Error(t(`Solana 限价单链上执行失败 (tx: ${txSig})`, `Solana limit order transaction failed (tx: ${txSig})`));
+      }
+      if (!stVal || (stVal.confirmationStatus !== 'confirmed' && stVal.confirmationStatus !== 'finalized')) {
+        throw new Error(t(`Solana 限价单交易未确认 (tx: ${txSig})`, `Solana limit order transaction unconfirmed (tx: ${txSig})`));
+      }
+      return stVal;
+    };
+
     if (candidateSig) {
       const stRes = await contracts.callSolanaRpc('getSignatureStatuses', [[candidateSig], { searchTransactionHistory: true }], 5000).catch(() => null);
       const stVal = stRes && stRes.value && stRes.value[0];
-      if (stVal && !stVal.err && (stVal.confirmationStatus === 'confirmed' || stVal.confirmationStatus === 'finalized' || stVal.confirmationStatus === 'processed')) {
+      if (stVal && stVal.err) {
+        throw new Error(t(`Solana 限价单链上执行失败 (tx: ${candidateSig})`, `Solana limit order transaction failed (tx: ${candidateSig})`));
+      }
+      if (stVal && !stVal.err && (stVal.confirmationStatus === 'confirmed' || stVal.confirmationStatus === 'finalized')) {
         return {
           ok: true,
           txHash: candidateSig,
@@ -906,6 +933,7 @@
         [signedBase64, { encoding: 'base64', skipPreflight: false, maxRetries: 3 }],
         15_000
       );
+      await confirmSolTxOrThrow(txHash, 45_000);
       return {
         ok: true,
         txHash,
@@ -915,7 +943,13 @@
       if (candidateSig && /already\s*processed/i.test(String(rpcErr && rpcErr.message || ''))) {
         const stRes = await contracts.callSolanaRpc('getSignatureStatuses', [[candidateSig], { searchTransactionHistory: true }], 5000).catch(() => null);
         const stVal = stRes && stRes.value && stRes.value[0];
-        if (!stVal || !stVal.err) {
+        if (stVal && stVal.err) {
+          throw new Error(t(`Solana 限价单链上执行失败 (tx: ${candidateSig})`, `Solana limit order transaction failed (tx: ${candidateSig})`));
+        }
+        if (stVal && !stVal.err) {
+          if (stVal.confirmationStatus === 'processed') {
+            await confirmSolTxOrThrow(candidateSig, 15_000);
+          }
           return {
             ok: true,
             txHash: candidateSig,
@@ -1132,6 +1166,7 @@
 
   async function approveEvmCowToken({ wallet, chainKey, tokenAddress }) {
     const contracts = getContracts();
+    const ethers = getEthers();
     const key = String(chainKey || '').toLowerCase();
     const cfg = COW_CHAINS[key];
     if (!cfg) throw new Error(t(`该链暂不支持限价单: ${chainKey}`, `Limit orders not supported on ${chainKey}`));
@@ -1146,12 +1181,32 @@
       amount: cfg.gasReserve,
       isNative: false
     });
+    const steps = [];
+    const tokenLower = String(tokenAddress || '').trim().toLowerCase();
+    if (key === 'eth' && tokenLower === '0xdac17f958d2ee523a2206206994597c13d831ec7') {
+      const owner = typeof contracts.resolveWalletEvmSender === 'function'
+        ? contracts.resolveWalletEvmSender(resolvedWallet, ethers)
+        : (resolvedWallet.evmPrivateKey && ethers ? new ethers.Wallet(resolvedWallet.evmPrivateKey).address : (resolvedWallet.mpcEvmAddress || resolvedWallet.evmAddress));
+      if (!owner) {
+        throw new Error(t('EVM 地址或 NEAR MPC 凭据不可用', 'EVM address or NEAR MPC credentials unavailable'));
+      }
+      const curAllow = await checkEvmCowAllowance({ chainKey: key, owner, tokenAddress });
+      if (curAllow > 0n) {
+        steps.push({
+          to: tokenAddress,
+          data: '0x095ea7b3' + encodeAddressArg32(GPV2_VAULT_RELAYER) + '0'.repeat(64),
+          value: '0',
+          chainId: cfg.chainId
+        });
+      }
+    }
     const maxUintHex = 'f'.repeat(64);
     const data = '0x095ea7b3' + encodeAddressArg32(GPV2_VAULT_RELAYER) + maxUintHex;
+    steps.push({ to: tokenAddress, data, value: '0', chainId: cfg.chainId });
     return contracts.executeEvmRawSteps({
       wallet: resolvedWallet,
       chainKey: key,
-      steps: [{ to: tokenAddress, data, value: '0', chainId: cfg.chainId }]
+      steps
     });
   }
 

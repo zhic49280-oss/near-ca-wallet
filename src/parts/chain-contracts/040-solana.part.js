@@ -138,7 +138,8 @@
       const res = await callSolanaRpc('getSignatureStatuses', [[txSig], { searchTransactionHistory: true }], 5000).catch(() => null);
       const status = res && Array.isArray(res.value) ? res.value[0] : null;
       if (status) {
-        if (status.err) {
+        const txErr = status.err ?? (status.meta && status.meta.err) ?? null;
+        if (txErr !== null) {
           throw new Error(t(`Solana 链上交易执行失败 (tx: ${txSig})`, `Solana transaction failed (tx: ${txSig})`));
         }
         if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
@@ -410,15 +411,57 @@
     return Uint8Array.from(sigObj.signature, (b) => Number(b) & 0xff);
   }
 
-  async function signSolanaBase64Tx(base64Tx, solSeedHex, mpcWallet = null, mpcPath = 'solana-1') {
-    const txBytes = base64ToBytes(base64Tx);
+  function parseSolanaTxSignerKeys(txBytes) {
     const { value: numSigs, length: lenBytes } = decodeCompactU16(txBytes, 0);
     const msgOffset = lenBytes + numSigs * 64;
+    if (msgOffset >= txBytes.length) {
+      throw new Error(t('Solana 交易数据格式无效', 'Invalid Solana transaction format'));
+    }
     const msgBytes = txBytes.slice(msgOffset);
+    const isVersioned = (msgBytes[0] & 0x80) !== 0;
+    if (isVersioned && (msgBytes[0] & 0x7f) !== 0) {
+      throw new Error(t('不支持的 Solana 交易版本', 'Unsupported Solana transaction version'));
+    }
+    let pos = isVersioned ? 1 : 0;
+    if (pos + 3 >= msgBytes.length) {
+      throw new Error(t('Solana 交易消息头无效', 'Invalid Solana message header'));
+    }
+    const numReqSigs = msgBytes[pos];
+    pos += 3;
+    const { value: numKeys, length: keysLenBytes } = decodeCompactU16(msgBytes, pos);
+    pos += keysLenBytes;
+    if (numSigs < numReqSigs || numKeys < numReqSigs || pos + numKeys * 32 > msgBytes.length) {
+      throw new Error(t('Solana 交易账户列表无效', 'Invalid Solana staticAccountKeys'));
+    }
+    const staticAccountKeys = [];
+    for (let i = 0; i < numKeys; i++) {
+      staticAccountKeys.push(base58Encode(msgBytes.slice(pos + i * 32, pos + (i + 1) * 32)));
+    }
+    return { numSigs, lenBytes, msgBytes, numReqSigs, staticAccountKeys };
+  }
+
+  async function signSolanaBase64Tx(base64Tx, solSeedHex, mpcWallet = null, mpcPath = 'solana-1') {
+    const txBytes = base64ToBytes(base64Tx);
+    const { lenBytes, msgBytes, numReqSigs, staticAccountKeys } = parseSolanaTxSignerKeys(txBytes);
+    const cryptoEngine = getCryptoEngine();
+    let signerAddr = String((mpcWallet && mpcWallet.solAddress) || '').trim();
+    if (!signerAddr && solSeedHex && cryptoEngine && typeof cryptoEngine.ed25519PublicKeyFromSeedAsync === 'function') {
+      signerAddr = base58Encode(await cryptoEngine.ed25519PublicKeyFromSeedAsync(solSeedHex));
+    }
+    if (!signerAddr && mpcWallet && typeof ensureWalletSigningKeysAsync === 'function') {
+      const resolved = await ensureWalletSigningKeysAsync(mpcWallet);
+      signerAddr = String((resolved && resolved.solAddress) || '').trim();
+    }
+    if (!signerAddr) {
+      throw new Error(t('缺少 Solana 钱包地址', 'Missing Solana wallet address'));
+    }
+    const slotIndex = staticAccountKeys.slice(0, numReqSigs).indexOf(signerAddr);
+    if (slotIndex < 0) {
+      throw new Error(t('钱包地址不在 Solana 交易所需签名列表中', 'Wallet Solana address not found in required signers'));
+    }
 
     let sig;
     if (solSeedHex) {
-      const cryptoEngine = getCryptoEngine();
       if (!cryptoEngine || typeof cryptoEngine.ed25519SignAsync !== 'function') {
         throw new Error(t('Ed25519 签名引擎不可用', 'NearCACrypto.ed25519SignAsync unavailable'));
       }
@@ -435,25 +478,38 @@
       throw new Error(t('缺少 Solana 签名凭据', 'Solana signing credentials unavailable'));
     }
 
-    txBytes.set(sig, lenBytes);
+    txBytes.set(sig, lenBytes + slotIndex * 64);
     return {
       txBytes,
-      signedBase64: bytesToBase64(txBytes)
+      signedBase64: bytesToBase64(txBytes),
+      slotIndex
     };
   }
 
-  async function signAndBroadcastSolanaBase64Tx(base64Tx, solSeedHex, mpcWallet = null, mpcPath = 'solana-1') {
-    const { signedBase64 } = await signSolanaBase64Tx(base64Tx, solSeedHex, mpcWallet, mpcPath);
-
+  async function broadcastAndConfirmSolanaTx(signedBase64) {
     const txHash = await callSolanaRpc(
       'sendTransaction',
       [signedBase64, { encoding: 'base64', skipPreflight: false, maxRetries: 3 }],
       15000
     );
+    const status = await waitForSolanaTxConfirmation(txHash, 45000);
+    const txErr = status && (status.err ?? (status.meta && status.meta.err) ?? null);
+    if (!status || txErr !== null) {
+      throw new Error(
+        !status
+          ? t(`Solana 交易确认超时，请到区块浏览器核对结果 (tx: ${txHash})`, `Solana transaction confirmation timed out; please check explorer (tx: ${txHash})`)
+          : t(`Solana 链上交易执行失败 (tx: ${txHash})`, `Solana transaction failed (tx: ${txHash})`)
+      );
+    }
     return {
       txHash,
       explorerUrl: `${SOLSCAN_TX}${txHash}`
     };
+  }
+
+  async function signAndBroadcastSolanaBase64Tx(base64Tx, solSeedHex, mpcWallet = null, mpcPath = 'solana-1') {
+    const { signedBase64 } = await signSolanaBase64Tx(base64Tx, solSeedHex, mpcWallet, mpcPath);
+    return broadcastAndConfirmSolanaTx(signedBase64);
   }
 
   const SOL_ED25519_P = (1n << 255n) - 19n;
@@ -819,17 +875,7 @@
       sig = extractSolanaMpcSignatureBytes(mpcRes);
     }
     const signedTxBytes = concatUint8Arrays([encodeCompactU16(1), sig, messageBytes]);
-    const signedBase64 = bytesToBase64(signedTxBytes);
-
-    const txHash = await callSolanaRpc(
-      'sendTransaction',
-      [signedBase64, { encoding: 'base64', skipPreflight: false, maxRetries: 3 }],
-      15000
-    );
-    return {
-      txHash,
-      explorerUrl: `${SOLSCAN_TX}${txHash}`
-    };
+    return broadcastAndConfirmSolanaTx(bytesToBase64(signedTxBytes));
   }
 
   /**

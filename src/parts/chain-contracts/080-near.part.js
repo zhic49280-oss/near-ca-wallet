@@ -362,7 +362,26 @@
       actionsBytes: concatUint8Arrays(encodedList),
       actionCount: encodedList.length
     });
-    return out.txHash;
+    const rawRes = out && out.result && typeof out.result === 'object' ? out.result : {};
+    const txObj = rawRes.transaction && typeof rawRes.transaction === 'object' ? rawRes.transaction : {};
+    const finalOutcome = {
+      ...rawRes,
+      status: rawRes.status || { SuccessValue: out.successValueB64 || '' },
+      transaction: {
+        signer_id: sender,
+        receiver_id: receiverId,
+        ...txObj,
+        hash: txObj.hash || out.txHash || ''
+      },
+      receipts_outcome: Array.isArray(rawRes.receipts_outcome) ? rawRes.receipts_outcome : []
+    };
+    return {
+      txHash: out.txHash,
+      explorerUrl: out.txHash ? `${NEAR_EXPLORER_TX}${out.txHash}` : '',
+      successValueB64: out.successValueB64,
+      outcome: finalOutcome,
+      result: finalOutcome
+    };
   }
 
   async function signAndSendNearTransfer({

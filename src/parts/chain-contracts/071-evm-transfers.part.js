@@ -560,9 +560,19 @@
       } else {
         lastRes = await sendEvmMpcSignedTransaction({ wallet, path: 'ethereum-1', ...stepParams });
       }
-      if (i + 1 < execQueue.length && lastRes && lastRes.txHash) {
-        await waitForEvmTxConfirmation(targetKey, lastRes.txHash, 45000).catch(() => null);
+      if (!lastRes || !lastRes.txHash) {
+        throw new Error(t('交易广播失败，未返回交易哈希', 'Transaction broadcast returned no txHash'));
       }
+      const stepReceipt = (lastRes.receipt && isEvmReceiptSuccess(lastRes.receipt))
+        ? lastRes.receipt
+        : await waitForEvmTxConfirmation(targetKey, lastRes.txHash, 45000);
+      if (!stepReceipt) {
+        throw new Error(t(`链上交易确认超时，请到区块浏览器核对结果 (tx: ${lastRes.txHash})`, `On-chain transaction confirmation timed out (tx: ${lastRes.txHash})`));
+      }
+      if (!isEvmReceiptSuccess(stepReceipt)) {
+        throw new Error(t(`链上交易执行失败 (tx: ${lastRes.txHash})`, `On-chain transaction reverted (tx: ${lastRes.txHash})`));
+      }
+      lastRes = { ...lastRes, receipt: stepReceipt };
     }
     return lastRes;
   }

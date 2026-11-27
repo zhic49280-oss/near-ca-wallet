@@ -170,6 +170,16 @@
     return null;
   }
 
+  function isEvmReceiptSuccess(receipt) {
+    if (!receipt || typeof receipt !== 'object') return false;
+    const st = receipt.status;
+    if (st === undefined || st === null) return false;
+    if (typeof st === 'number') return st === 1;
+    if (typeof st === 'boolean') return st;
+    const norm = String(st).trim().toLowerCase();
+    return norm === '0x1' || norm === '1' || norm === '0x01';
+  }
+
   async function waitForEvmTxConfirmation(chainKey, txHash, timeoutMs = 45000) {
     if (!txHash) return null;
     const deadline = Date.now() + timeoutMs;
@@ -180,15 +190,47 @@
         5000
       ).catch(() => null);
       const receipt = res && res.result ? res.result : null;
-      if (receipt && receipt.blockNumber) {
-        if (receipt.status === '0x0') {
+      if (receipt && (receipt.blockNumber || (receipt.status !== undefined && receipt.status !== null))) {
+        if (receipt.status !== undefined && receipt.status !== null && !isEvmReceiptSuccess(receipt)) {
           throw new Error(t(`链上交易执行失败 (tx: ${txHash})`, `On-chain transaction reverted (tx: ${txHash})`));
         }
-        return receipt;
+        if (isEvmReceiptSuccess(receipt) || receipt.blockNumber) {
+          return receipt;
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 1800));
     }
     return null;
+  }
+
+  async function confirmEvmTxOrThrow(chainKey, txHash, timeoutMs = 45000) {
+    if (!txHash) {
+      throw new Error(t('EVM 交易广播未返回交易哈希', 'EVM transaction broadcast returned no txHash'));
+    }
+    const receipt = await waitForEvmTxConfirmation(chainKey, txHash, timeoutMs);
+    if (!receipt) {
+      throw new Error(t(`链上交易确认超时，请到区块浏览器核对结果 (tx: ${txHash})`, `On-chain transaction confirmation timed out; please check explorer (tx: ${txHash})`));
+    }
+    if (!isEvmReceiptSuccess(receipt)) {
+      throw new Error(t(`链上交易执行失败 (tx: ${txHash})`, `On-chain transaction reverted (tx: ${txHash})`));
+    }
+    return receipt;
+  }
+
+  async function waitForApprovalReceipt(chainKey, txResp) {
+    const receipt = await txResp.wait(1).catch((err) => {
+      if (err && err.code === 'CALL_EXCEPTION') {
+        throw new Error(t(`授权交易执行失败 (tx: ${txResp.hash})`, `Approval transaction reverted (tx: ${txResp.hash})`));
+      }
+      return waitForEvmTxConfirmation(chainKey, txResp.hash, 45000);
+    });
+    if (!receipt) {
+      throw new Error(t('授权交易确认超时，请稍后重试', 'Approval confirmation timed out; please retry'));
+    }
+    if (receipt.status !== undefined && receipt.status !== null && !isEvmReceiptSuccess(receipt)) {
+      throw new Error(t(`授权交易执行失败 (tx: ${txResp.hash})`, `Approval transaction reverted (tx: ${txResp.hash})`));
+    }
+    return receipt;
   }
 
   async function fetchEvmNativeAndErc20Balance(chainKey, evmAddress, tokenContract = null, decimals = 18) {
@@ -575,10 +617,7 @@
     const ZERO_RESET_APPROVE_TOKENS = new Set(['0xdac17f958d2ee523a2206206994597c13d831ec7']);
 
     async function waitAndVerifyApproval(txResp, ownerAddr, checkAllowance) {
-      const receipt = await txResp.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, txResp.hash, 45000));
-      if (!receipt) {
-        throw new Error(t('授权交易确认超时，请稍后重试', 'Approval confirmation timed out; please retry'));
-      }
+      await waitForApprovalReceipt(chainKey, txResp);
       if (checkAllowance) {
         const postAllow = await withEvmProviderFailover(chainKey, ethersLib, (provider) => {
           const erc20 = new ethersLib.Contract(
@@ -617,9 +656,11 @@
     }
 
     const txResp = await signAndBroadcastOne(to, data, value, !approvalToken);
+    const receipt = await confirmEvmTxOrThrow(chainKey, txResp && txResp.hash, 45000);
     return {
       txHash: txResp.hash,
-      explorerUrl: `${cfg.explorer}${txResp.hash}`
+      explorerUrl: `${cfg.explorer}${txResp.hash}`,
+      receipt
     };
   }
 
@@ -711,20 +752,14 @@
             const erc20 = new ethersLib.Contract(approvalToken, ['function approve(address spender, uint256 amount) returns (bool)'], signer);
             return erc20.approve(spender, '0');
           });
-          const resetReceipt = await resetTx.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, resetTx.hash, 45000));
-          if (!resetReceipt) {
-            throw new Error(t('授权交易确认超时，请稍后重试', 'Approval confirmation timed out; please retry'));
-          }
+          await waitForApprovalReceipt(chainKey, resetTx);
         }
         const approveTx = await withEvmProviderFailover(chainKey, ethersLib, async (provider) => {
           const signer = new ethersLib.Wallet(privateKey, provider);
           const erc20 = new ethersLib.Contract(approvalToken, ['function approve(address spender, uint256 amount) returns (bool)'], signer);
           return erc20.approve(spender, amountRaw);
         });
-        const appReceipt = await approveTx.wait(1).catch(() => waitForEvmTxConfirmation(chainKey, approveTx.hash, 45000));
-        if (!appReceipt) {
-          throw new Error(t('授权交易确认超时，请稍后重试', 'Approval confirmation timed out; please retry'));
-        }
+        await waitForApprovalReceipt(chainKey, approveTx);
         const postAllow = await withEvmProviderFailover(chainKey, ethersLib, (provider) => {
           const erc20 = new ethersLib.Contract(
             approvalToken,
@@ -783,9 +818,11 @@
     });
 
     const txResp = await withEvmProviderFailover(chainKey, ethersLib, (provider) => provider.broadcastTransaction(signedRaw));
+    const receipt = await confirmEvmTxOrThrow(chainKey, txResp && txResp.hash, 45000);
     return {
       txHash: txResp.hash,
-      explorerUrl: `${cfg.explorer}${txResp.hash}`
+      explorerUrl: `${cfg.explorer}${txResp.hash}`,
+      receipt
     };
   }
 
