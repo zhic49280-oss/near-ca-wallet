@@ -377,7 +377,7 @@
     const bioAllowed = isWalletBiometricAllowed(wallet);
     const nativePlugin = bioAllowed ? getNativeSecurityPlugin(overrides.nativePlugin) : null;
     const hasWebAuthn = bioAllowed ? Boolean(wallet.webauthnCredentialId) : false;
-    return Boolean(nativePlugin || hasWebAuthn || hasStoredPin());
+    return Boolean(nativePlugin || hasWebAuthn);
   }
 
   function setRootClass(cls, enabled) {
@@ -426,7 +426,7 @@
     if (overlay) overlay.setAttribute('aria-hidden', 'false');
     const statusEl = $('app-lock-status');
     if (statusEl) {
-      statusEl.textContent = t('请通过生物识别或安全 PIN 码解锁', 'Unlock with Biometrics or Security PIN');
+      statusEl.textContent = t('请通过生物识别或锁屏密码解锁', 'Unlock with Biometrics or Device Passcode');
     }
     if (autoPrompt && typeof unlockAppLockNow === 'function') {
       unlockAppLockNow(overrides).catch(() => {});
@@ -460,18 +460,6 @@
           overrides
         );
         if (res && res.ok) {
-          if (hasAnyVaultLockedWallet(st)) {
-            const pinOk = await verifyPinFallbackAsync(
-              t('验证安全 PIN 码以解密钱包密钥', 'Enter Security PIN to decrypt wallet vault'),
-              overrides
-            );
-            if (pinOk !== true) {
-              if (statusEl) {
-                statusEl.textContent = t('需要验证 PIN 码以解密钱包', 'PIN verification required to decrypt wallet');
-              }
-              return false;
-            }
-          }
           clearAppLock();
           return true;
         }
@@ -479,19 +467,9 @@
           res && (res.unavailable || res.code === 'AUTH_UNAVAILABLE' || /AUTH_UNAVAILABLE|unavailable|not enrolled|passcode not set|not configured/i.test(String(res.error || '')))
         );
         if (bioUnavailable) {
-          const pinOk = await verifyPinFallbackAsync(
-            t('验证安全 PIN 码以解锁 Nexus Wallet', 'Enter Security PIN to unlock Nexus Wallet'),
-            overrides
-          );
-          if (pinOk === true || pinOk === null) {
-            if (pinOk === null) hintEnableDeviceLock();
-            clearAppLock();
-            return true;
-          }
-          if (statusEl) {
-            statusEl.textContent = t('PIN 码验证未通过，请重试', 'PIN verification failed. Please retry.');
-          }
-          return false;
+          hintEnableDeviceLock();
+          clearAppLock();
+          return true;
         }
         if (statusEl) {
           statusEl.textContent = (res && res.cancelled)
@@ -500,18 +478,8 @@
         }
         return false;
       }
-      const pinOk = await verifyPinFallbackAsync(
-        t('验证安全 PIN 码以解锁 Nexus Wallet', 'Enter Security PIN to unlock Nexus Wallet'),
-        overrides
-      );
-      if (pinOk === true || pinOk === null) {
-        clearAppLock();
-        return true;
-      }
-      if (statusEl) {
-        statusEl.textContent = t('PIN 码验证未通过，请重试', 'PIN verification failed. Please retry.');
-      }
-      return false;
+      clearAppLock();
+      return true;
     } finally {
       if (unlockBtn) unlockBtn.disabled = false;
     }
@@ -662,238 +630,6 @@
     }
   }
 
-  // ==================== In-App 6-Digit PIN Fallback & Vault Gate ====================
-
-  const PIN_STORAGE_KEY = 'near_ca_pin_v1';
-  let _activePinModalClose = null;
-
-  function hasAnyVaultLockedWallet(st) {
-    return Boolean(st && Array.isArray(st.wallets) && st.wallets.some((item) => item && item._vaultLocked));
-  }
-
-  function hasStoredPin() {
-    try {
-      if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function') {
-        return Boolean(localStorage.getItem(PIN_STORAGE_KEY));
-      }
-    } catch (_) {}
-    return false;
-  }
-
-  async function savePinHashAsync(pin) {
-    const pinStr = String(pin || '').trim();
-    if (!/^\d{6}$/.test(pinStr)) {
-      throw new Error(t('请输入 6 位数字 PIN 码', 'Please enter a 6-digit PIN'));
-    }
-    const crypto = getCrypto();
-    if (!crypto || typeof crypto.hashPinAsync !== 'function') {
-      throw new Error(t('安全加密模块未就绪', 'Security module unavailable'));
-    }
-    const record = await crypto.hashPinAsync(pinStr);
-    if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.setItem === 'function') {
-      localStorage.setItem(PIN_STORAGE_KEY, JSON.stringify(record));
-    }
-    const st = getState();
-    if (st && typeof st.setVaultSessionPassphrase === 'function') {
-      st.setVaultSessionPassphrase(pinStr);
-    }
-    if (st && typeof st.saveWalletsWithVaultAsync === 'function') {
-      await st.saveWalletsWithVaultAsync(pinStr).catch(() => {});
-    }
-    return true;
-  }
-
-  async function verifyStoredPinAsync(pin) {
-    const pinStr = String(pin || '').trim();
-    if (!/^\d{6}$/.test(pinStr)) return false;
-    let raw = null;
-    try {
-      if (typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function') {
-        raw = localStorage.getItem(PIN_STORAGE_KEY);
-      }
-    } catch (_) {}
-    if (!raw) return false;
-    const crypto = getCrypto();
-    if (!crypto || typeof crypto.verifyPinAsync !== 'function') return false;
-    try {
-      const record = JSON.parse(raw);
-      const ok = await crypto.verifyPinAsync(pinStr, record);
-      if (!ok) return false;
-      const st = getState();
-      if (st && typeof st.unlockWalletsVaultAsync === 'function') {
-        const unlocked = await st.unlockWalletsVaultAsync(pinStr).catch(() => false);
-        if (!unlocked) return false;
-      } else if (st && typeof st.setVaultSessionPassphrase === 'function') {
-        st.setVaultSessionPassphrase(pinStr);
-      }
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function promptPinModalAsync(mode = 'verify', reason = '') {
-    const hasInteractiveDom = typeof document !== 'undefined' && Boolean(document.body) && typeof document.createElement === 'function';
-    if (!hasInteractiveDom) {
-      return Promise.resolve({ ok: false, noDom: true });
-    }
-    if (typeof _activePinModalClose === 'function') {
-      try { _activePinModalClose({ ok: false, cancelled: true, superseded: true }); } catch (_) {}
-    }
-    return new Promise((resolve) => {
-      const existing = $('nexus-pin-modal');
-      if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
-
-      const isSetup = mode === 'setup';
-      const overlay = document.createElement('div');
-      overlay.id = 'nexus-pin-modal';
-      overlay.setAttribute('role', 'dialog');
-      overlay.setAttribute('aria-modal', 'true');
-      overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(8,12,20,0.82);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:16px;';
-
-      const card = document.createElement('div');
-      card.style.cssText = 'width:100%;max-width:340px;background:#111827;border:1px solid rgba(148,163,184,0.22);border-radius:18px;padding:20px;box-shadow:0 20px 50px rgba(0,0,0,0.55);color:#f8fafc;font-family:inherit;';
-
-      const title = document.createElement('div');
-      title.style.cssText = 'font-size:17px;font-weight:700;margin-bottom:6px;';
-      title.textContent = isSetup
-        ? t('设置 6 位安全 PIN 码', 'Set 6-Digit Security PIN')
-        : t('输入 6 位安全 PIN 码', 'Enter 6-Digit Security PIN');
-
-      const desc = document.createElement('div');
-      desc.style.cssText = 'font-size:13px;color:#94a3b8;line-height:1.45;margin-bottom:14px;';
-      desc.textContent = reason || (isSetup
-        ? t('当前设备未开启生物识别，请设置 6 位数字 PIN 码以保护资产与私钥', 'Biometrics unavailable. Set a 6-digit PIN to protect your assets and keys.')
-        : t('请输入 6 位数字 PIN 码以继续操作', 'Enter your 6-digit PIN to continue.'));
-
-      const inputStyle = 'width:100%;box-sizing:border-box;height:46px;padding:0 14px;border-radius:12px;border:1px solid rgba(148,163,184,0.28);background:#0b1120;color:#f8fafc;font-size:18px;letter-spacing:6px;text-align:center;outline:none;margin-bottom:10px;';
-      const pinInput = document.createElement('input');
-      pinInput.type = 'password';
-      pinInput.inputMode = 'numeric';
-      pinInput.maxLength = 6;
-      pinInput.autocomplete = 'one-time-code';
-      pinInput.placeholder = isSetup ? t('输入 6 位数字', '6-digit PIN') : '••••••';
-      pinInput.style.cssText = inputStyle;
-
-      let confirmInput = null;
-      if (isSetup) {
-        confirmInput = document.createElement('input');
-        confirmInput.type = 'password';
-        confirmInput.inputMode = 'numeric';
-        confirmInput.maxLength = 6;
-        confirmInput.autocomplete = 'one-time-code';
-        confirmInput.placeholder = t('再次输入以确认', 'Confirm 6-digit PIN');
-        confirmInput.style.cssText = inputStyle;
-      }
-
-      const errEl = document.createElement('div');
-      errEl.style.cssText = 'min-height:18px;font-size:12px;color:#f87171;margin-bottom:10px;text-align:center;';
-
-      const btnRow = document.createElement('div');
-      btnRow.style.cssText = 'display:flex;gap:10px;margin-top:4px;';
-
-      const cancelBtn = document.createElement('button');
-      cancelBtn.type = 'button';
-      cancelBtn.textContent = t('取消', 'Cancel');
-      cancelBtn.style.cssText = 'flex:1;min-height:44px;border-radius:12px;border:1px solid rgba(148,163,184,0.24);background:transparent;color:#cbd5e1;font-size:14px;font-weight:600;cursor:pointer;';
-
-      const okBtn = document.createElement('button');
-      okBtn.type = 'button';
-      okBtn.textContent = isSetup ? t('保存并继续', 'Save & Continue') : t('确认', 'Confirm');
-      okBtn.style.cssText = 'flex:1;min-height:44px;border-radius:12px;border:none;background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#ffffff;font-size:14px;font-weight:600;cursor:pointer;';
-
-      let settled = false;
-      const close = (result) => {
-        if (settled) return;
-        settled = true;
-        if (_activePinModalClose === close) _activePinModalClose = null;
-        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-        resolve(result);
-      };
-      _activePinModalClose = close;
-
-      const submit = async () => {
-        const val = String(pinInput.value || '').trim();
-        if (!/^\d{6}$/.test(val)) {
-          errEl.textContent = t('请输入 6 位数字 PIN 码', 'Please enter a 6-digit numeric PIN');
-          return;
-        }
-        if (isSetup && confirmInput) {
-          const cVal = String(confirmInput.value || '').trim();
-          if (val !== cVal) {
-            errEl.textContent = t('两次输入的 PIN 码不一致', 'PINs do not match');
-            return;
-          }
-          okBtn.disabled = true;
-          try {
-            await savePinHashAsync(val);
-            close({ ok: true, pin: val });
-          } catch (err) {
-            okBtn.disabled = false;
-            errEl.textContent = toUserFriendlyError(err, 'PIN 设置失败，请重试', 'Failed to save PIN. Please retry.');
-          }
-          return;
-        }
-        okBtn.disabled = true;
-        const valid = await verifyStoredPinAsync(val);
-        if (valid) {
-          close({ ok: true, pin: val });
-        } else {
-          okBtn.disabled = false;
-          pinInput.value = '';
-          errEl.textContent = t('PIN 码错误，请重试', 'Incorrect PIN. Please retry.');
-          try { pinInput.focus(); } catch (_) {}
-        }
-      };
-
-      cancelBtn.onclick = () => close({ ok: false, cancelled: true });
-      okBtn.onclick = () => { submit().catch(() => {}); };
-      overlay.onclick = (e) => { if (e && e.target === overlay) close({ ok: false, cancelled: true }); };
-      const onKey = (e) => {
-        if (e && e.key === 'Enter') submit().catch(() => {});
-        else if (e && e.key === 'Escape') close({ ok: false, cancelled: true });
-      };
-      pinInput.onkeydown = onKey;
-      if (confirmInput) confirmInput.onkeydown = onKey;
-
-      card.appendChild(title);
-      card.appendChild(desc);
-      card.appendChild(pinInput);
-      if (confirmInput) card.appendChild(confirmInput);
-      card.appendChild(errEl);
-      btnRow.appendChild(cancelBtn);
-      btnRow.appendChild(okBtn);
-      card.appendChild(btnRow);
-      overlay.appendChild(card);
-      document.body.appendChild(overlay);
-      try { pinInput.focus(); } catch (_) {}
-    });
-  }
-
-  async function verifyPinFallbackAsync(reason = '', overrides = {}) {
-    if (overrides && typeof overrides.pin === 'string') {
-      if (hasStoredPin()) {
-        return verifyStoredPinAsync(overrides.pin);
-      }
-      if (/^\d{6}$/.test(overrides.pin.trim())) {
-        await savePinHashAsync(overrides.pin.trim());
-        return true;
-      }
-      return false;
-    }
-    if (hasStoredPin()) {
-      const res = await promptPinModalAsync('verify', reason);
-      if (res && res.ok) return true;
-      if (res && res.cancelled) showToast(t('已取消验证', 'Verification cancelled'));
-      return false;
-    }
-    const setupRes = await promptPinModalAsync('setup', reason);
-    if (setupRes && setupRes.ok) return true;
-    if (setupRes && setupRes.noDom) return null;
-    if (setupRes && setupRes.cancelled) showToast(t('已取消设置安全 PIN 码', 'PIN setup cancelled'));
-    return false;
-  }
-
   // 设备能力不足时的友好提示（每次会话仅提示一次，避免打扰）
   let _noDeviceAuthHinted = false;
   function hintEnableDeviceLock() {
@@ -902,47 +638,21 @@
     showToast(t('建议在系统设置中开启锁屏密码或生物识别，以更好保护资产', 'Enable a device screen lock or biometrics in system settings to better protect your assets'));
   }
 
-  async function verifySecurityAuthAsync(wallet, reason = '', overrides = {}) {
+  async function verifySecurityAuthAsync(wallet, reason = '') {
     const st = getState();
     const w = wallet || st.getActiveWallet();
     if (!w) return false;
-    if (!isWalletBiometricAllowed(w)) {
-      const pinOk = await verifyPinFallbackAsync(reason, overrides);
-      if (pinOk === true) return true;
-      if (pinOk === null) return true;
-      return false;
-    }
-    const profile = (overrides && overrides.nativePlugin)
-      ? { supported: true }
-      : (_cachedBioProfile || await detectDeviceBiometricProfileAsync(overrides));
+    if (!isWalletBiometricAllowed(w)) return true;
+    const profile = _cachedBioProfile || await detectDeviceBiometricProfileAsync();
     if (!(profile && profile.supported)) {
-      const pinOk = await verifyPinFallbackAsync(reason, overrides);
-      if (pinOk === true) return true;
-      if (pinOk === null) {
-        hintEnableDeviceLock();
-        return true;
-      }
-      return false;
-    }
-    const res = await requestBiometricAuth(reason, w, overrides);
-    if (res && res.ok) {
-      if (w._vaultLocked || hasAnyVaultLockedWallet(st)) {
-        const pinOk = await verifyPinFallbackAsync(
-          reason || t('验证安全 PIN 码以解密钱包密钥', 'Enter Security PIN to decrypt wallet vault'),
-          overrides
-        );
-        return pinOk === true;
-      }
+      hintEnableDeviceLock();
       return true;
     }
+    const res = await requestBiometricAuth(reason, w);
+    if (res && res.ok) return true;
     if (res && res.unavailable) {
-      const pinOk = await verifyPinFallbackAsync(reason, overrides);
-      if (pinOk === true) return true;
-      if (pinOk === null) {
-        hintEnableDeviceLock();
-        return true;
-      }
-      return false;
+      hintEnableDeviceLock();
+      return true;
     }
     if (res && res.cancelled) {
       showToast(t('已取消验证', 'Verification cancelled'));

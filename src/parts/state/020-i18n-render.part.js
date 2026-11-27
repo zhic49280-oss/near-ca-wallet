@@ -33,79 +33,22 @@
   }
 
   let _saveWalletsTimer = null;
-  let _vaultSessionPassphrase = null;
 
-  function hasVaultPin() {
-    return Boolean(safeStorageGet(VAULT_PIN_STORAGE_KEY));
-  }
-
-  function setVaultSessionPassphrase(passphrase) {
-    _vaultSessionPassphrase = passphrase ? String(passphrase) : null;
-  }
-
-  function clearVaultSessionPassphrase() {
-    _vaultSessionPassphrase = null;
-  }
-
-  function isVaultSessionUnlocked() {
-    return Boolean(_vaultSessionPassphrase);
-  }
-
-  function _extractWalletSecrets(wallet) {
-    const secrets = {};
-    for (const field of WALLET_SECRET_FIELDS) {
-      if (wallet && wallet[field]) {
-        secrets[field] = wallet[field];
-      }
+  function saveWallets() {
+    if (_saveWalletsTimer && typeof clearTimeout === 'function') {
+      clearTimeout(_saveWalletsTimer);
+      _saveWalletsTimer = null;
     }
-    return secrets;
-  }
-
-  function _prepareWalletForStorage(w) {
-    if (!w || typeof w !== 'object') return w;
-    const copy = { ...w };
-    delete copy.multiBalances;
-    delete copy.nearBalance;
-    delete copy.balance;
-    delete copy._needsSelfHealSave;
-    delete copy._vaultLocked;
-    delete copy._cachedVaultEnvelope;
-    copy.erc20Balances = serializeCompactErc20Map(w.erc20Balances);
-    return copy;
-  }
-
-  async function saveWalletsWithVaultAsync(passphrase) {
-    const pass = passphrase ? String(passphrase) : _vaultSessionPassphrase;
-    if (!pass) {
-      return saveWallets();
-    }
-    _vaultSessionPassphrase = pass;
-    const cryptoEngine = getCryptoEngine();
-    if (!cryptoEngine || typeof cryptoEngine.encryptVaultSecretsAsync !== 'function') {
-      return saveWallets();
-    }
-    const compactWallets = [];
-    for (const w of (state.wallets || [])) {
-      if (!w || typeof w !== 'object') {
-        compactWallets.push(w);
-        continue;
-      }
-      const copy = _prepareWalletForStorage(w);
-      if (w._vaultLocked && w._vault) {
-        copy._vault = w._vault;
-        for (const field of WALLET_SECRET_FIELDS) delete copy[field];
-      } else {
-        const secrets = _extractWalletSecrets(w);
-        const envelope = await cryptoEngine.encryptVaultSecretsAsync(secrets, pass);
-        w._vault = envelope;
-        w._cachedVaultEnvelope = envelope;
-        copy._vault = envelope;
-        for (const field of WALLET_SECRET_FIELDS) {
-          delete copy[field];
-        }
-      }
-      compactWallets.push(copy);
-    }
+    const compactWallets = (state.wallets || []).map((w) => {
+      if (!w || typeof w !== 'object') return w;
+      const copy = { ...w };
+      delete copy.multiBalances;
+      delete copy.nearBalance;
+      delete copy.balance;
+      delete copy._needsSelfHealSave;
+      copy.erc20Balances = serializeCompactErc20Map(w.erc20Balances);
+      return copy;
+    });
     return safeStorageSet(
       WALLETS_STORAGE_KEY,
       JSON.stringify({
@@ -113,92 +56,6 @@
         activeWalletId: state.activeWalletId
       })
     );
-  }
-
-  async function unlockWalletsVaultAsync(passphrase) {
-    const pass = String(passphrase || '');
-    if (!pass) return false;
-    const cryptoEngine = getCryptoEngine();
-    if (!cryptoEngine || typeof cryptoEngine.decryptVaultSecretsAsync !== 'function') return false;
-
-    const rawPin = safeStorageGet(VAULT_PIN_STORAGE_KEY);
-    if (rawPin && typeof cryptoEngine.verifyPinAsync === 'function') {
-      try {
-        const pinRecord = JSON.parse(rawPin);
-        const ok = await cryptoEngine.verifyPinAsync(pass, pinRecord);
-        if (!ok) return false;
-      } catch (_) {
-        return false;
-      }
-    }
-
-    let needsMigrationSave = false;
-    for (const w of (state.wallets || [])) {
-      if (!w || typeof w !== 'object') continue;
-      if (w._vault && typeof w._vault === 'object' && w._vault.ct) {
-        try {
-          const secrets = await cryptoEngine.decryptVaultSecretsAsync(w._vault, pass);
-          if (secrets && typeof secrets === 'object') {
-            for (const field of WALLET_SECRET_FIELDS) {
-              if (secrets[field] !== undefined) w[field] = secrets[field];
-            }
-          }
-          delete w._vaultLocked;
-          w._cachedVaultEnvelope = w._vault;
-          recomputeWalletMpcAddresses(w);
-          syncWalletCompatBalances(w);
-        } catch (_) {
-          return false;
-        }
-      } else {
-        needsMigrationSave = true;
-      }
-    }
-
-    _vaultSessionPassphrase = pass;
-    if (needsMigrationSave && (state.wallets || []).length > 0) {
-      await saveWalletsWithVaultAsync(pass);
-    }
-    emitStateTopic('wallet');
-    return true;
-  }
-
-  function saveWallets() {
-    if (_saveWalletsTimer && typeof clearTimeout === 'function') {
-      clearTimeout(_saveWalletsTimer);
-      _saveWalletsTimer = null;
-    }
-    const useVault = Boolean(_vaultSessionPassphrase || hasVaultPin());
-    let needsAsyncReencrypt = false;
-    const compactWallets = (state.wallets || []).map((w) => {
-      if (!w || typeof w !== 'object') return w;
-      const copy = _prepareWalletForStorage(w);
-      if (useVault) {
-        if (w._vaultLocked && w._vault) {
-          copy._vault = w._vault;
-        } else {
-          if (w._cachedVaultEnvelope || w._vault) {
-            copy._vault = w._cachedVaultEnvelope || w._vault;
-          }
-          if (_vaultSessionPassphrase) needsAsyncReencrypt = true;
-        }
-        for (const field of WALLET_SECRET_FIELDS) {
-          delete copy[field];
-        }
-      }
-      return copy;
-    });
-    const ok = safeStorageSet(
-      WALLETS_STORAGE_KEY,
-      JSON.stringify({
-        wallets: compactWallets,
-        activeWalletId: state.activeWalletId
-      })
-    );
-    if (needsAsyncReencrypt && _vaultSessionPassphrase) {
-      saveWalletsWithVaultAsync(_vaultSessionPassphrase).catch(() => {});
-    }
-    return ok;
   }
 
   function saveWalletsDebounced(delayMs = 250) {
@@ -831,13 +688,6 @@
   state.emitStateTopic = emitStateTopic;
   state.getActiveWallet = getActiveWallet;
   state.saveWallets = saveWallets;
-  state.saveWalletsWithVaultAsync = saveWalletsWithVaultAsync;
-  state.unlockWalletsVaultAsync = unlockWalletsVaultAsync;
-  state.hasVaultPin = hasVaultPin;
-  state.setVaultSessionPassphrase = setVaultSessionPassphrase;
-  state.clearVaultSessionPassphrase = clearVaultSessionPassphrase;
-  state.isVaultSessionUnlocked = isVaultSessionUnlocked;
-  state.VAULT_PIN_STORAGE_KEY = VAULT_PIN_STORAGE_KEY;
   state.saveWalletsDebounced = saveWalletsDebounced;
   state.loadWallets = loadWallets;
   state.saveSwapPair = saveSwapPair;

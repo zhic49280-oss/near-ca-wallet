@@ -256,112 +256,6 @@
     return out;
   }
 
-  // ======================== Local Vault Encryption & PIN Hashing ========================
-
-  const VAULT_PBKDF2_ITERATIONS = 100000;
-
-  function getSubtleCrypto() {
-    const gCrypto = (typeof globalThis !== 'undefined' && globalThis.crypto) ||
-      (typeof window !== 'undefined' && window.crypto) ||
-      (nodeCrypto && nodeCrypto.webcrypto) ||
-      null;
-    if (gCrypto && gCrypto.subtle) return gCrypto.subtle;
-    throw new Error('WebCrypto subtle API is unavailable');
-  }
-
-  async function deriveVaultAesKeyAsync(passphrase, saltBytes, iterations = VAULT_PBKDF2_ITERATIONS) {
-    const passStr = String(passphrase || '');
-    if (!passStr) throw new Error('Vault passphrase is required');
-    const subtle = getSubtleCrypto();
-    const passBytes = new TextEncoder().encode(passStr);
-    const baseKey = await subtle.importKey('raw', passBytes, 'PBKDF2', false, ['deriveKey']);
-    return subtle.deriveKey(
-      { name: 'PBKDF2', salt: toUint8Array(saltBytes), iterations, hash: 'SHA-256' },
-      baseKey,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
-  }
-
-  async function encryptVaultSecretsAsync(secretsObj, passphrase) {
-    const salt = getRandomBytes(16);
-    const iv = getRandomBytes(12);
-    const key = await deriveVaultAesKeyAsync(passphrase, salt, VAULT_PBKDF2_ITERATIONS);
-    const plaintext = new TextEncoder().encode(JSON.stringify(secretsObj || {}));
-    const ctBuf = await getSubtleCrypto().encrypt({ name: 'AES-GCM', iv }, key, plaintext);
-    return {
-      v: 1,
-      alg: 'AES-256-GCM',
-      kdf: 'PBKDF2-SHA256',
-      iter: VAULT_PBKDF2_ITERATIONS,
-      salt: bytesToBase64(salt),
-      iv: bytesToBase64(iv),
-      ct: bytesToBase64(new Uint8Array(ctBuf))
-    };
-  }
-
-  async function decryptVaultSecretsAsync(envelope, passphrase) {
-    if (!envelope || typeof envelope !== 'object' || !envelope.ct || !envelope.iv || !envelope.salt) {
-      throw new Error('Invalid vault envelope');
-    }
-    const salt = base64ToBytes(envelope.salt);
-    const iv = base64ToBytes(envelope.iv);
-    const ct = base64ToBytes(envelope.ct);
-    const iter = Number(envelope.iter) > 0 ? Number(envelope.iter) : VAULT_PBKDF2_ITERATIONS;
-    const key = await deriveVaultAesKeyAsync(passphrase, salt, iter);
-    const ptBuf = await getSubtleCrypto().decrypt({ name: 'AES-GCM', iv }, key, ct);
-    return JSON.parse(new TextDecoder().decode(new Uint8Array(ptBuf)));
-  }
-
-  async function hashPinAsync(pin) {
-    const pinStr = String(pin || '');
-    if (!pinStr) throw new Error('PIN is required');
-    const salt = getRandomBytes(16);
-    const iter = VAULT_PBKDF2_ITERATIONS;
-    const subtle = getSubtleCrypto();
-    const baseKey = await subtle.importKey('raw', new TextEncoder().encode(pinStr), 'PBKDF2', false, ['deriveBits']);
-    const bits = await subtle.deriveBits(
-      { name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' },
-      baseKey,
-      256
-    );
-    return {
-      v: 1,
-      kdf: 'PBKDF2-SHA256',
-      iter,
-      salt: bytesToBase64(salt),
-      hash: bytesToBase64(new Uint8Array(bits))
-    };
-  }
-
-  async function verifyPinAsync(pin, storedRecord) {
-    if (!pin || !storedRecord || typeof storedRecord !== 'object' || !storedRecord.salt || !storedRecord.hash) {
-      return false;
-    }
-    try {
-      const salt = base64ToBytes(storedRecord.salt);
-      const expected = base64ToBytes(storedRecord.hash);
-      const iter = Number(storedRecord.iter) > 0 ? Number(storedRecord.iter) : VAULT_PBKDF2_ITERATIONS;
-      const subtle = getSubtleCrypto();
-      const baseKey = await subtle.importKey('raw', new TextEncoder().encode(String(pin)), 'PBKDF2', false, ['deriveBits']);
-      const bits = await subtle.deriveBits(
-        { name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' },
-        baseKey,
-        256
-      );
-      const actual = new Uint8Array(bits);
-      if (actual.length !== expected.length) return false;
-      let diff = 0;
-      for (let i = 0; i < actual.length; i += 1) {
-        diff |= actual[i] ^ expected[i];
-      }
-      return diff === 0;
-    } catch (_) {
-      return false;
-    }
-  }
-
   // ======================== Export Bundle ========================
 
   const NearCACrypto = {
@@ -433,13 +327,7 @@
     deriveNearMpcSolanaAddress,
     deriveNearMpcPearlAddress,
     deriveNearMpcBitcoinAddress,
-    deriveNearMpcAllAddresses,
-
-    // 6. Local Vault Encryption & PIN Hashing
-    encryptVaultSecretsAsync,
-    decryptVaultSecretsAsync,
-    hashPinAsync,
-    verifyPinAsync
+    deriveNearMpcAllAddresses
   };
 
   if (root) {

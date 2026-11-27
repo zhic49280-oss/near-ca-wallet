@@ -71,3 +71,8 @@
   - 业务视图与工具：`150-limit-orders-core` / `151-limit-orders-ui`、`160-perps-core` / `161-perps-chart` / `162-perps-orderbook` / `163-perps-trade` / `164-perps-funding`、`170-earn`、`180-near-keys`、`190-mining`、`200-solana-rent`、`210-near-storage`、`220-contacts`、`230-walletconnect`、`240-lifecycle`。
 - **独立模块（未分片，直接编辑）**：`src/limit-orders.js`（NEAR DCL / Jupiter Trigger / CoW 限价单）、`src/hyperliquid-perps.js`（Hyperliquid 永续协议）、`src/mining-pro.js`（Pearl 矿机遥测与扫币，按需懒加载）。
 - **测试文件（`test/`）**：`helpers.js` + `01-core-modules` / `02-v1-v2.0` / `03-v2.1-v3.3` / `04-v4-v5` / `05-v6.0-v6.4` / `06-v6.7-v6.10` / `07-v6.11-plus` / `08-build-parts.test.js`。
+
+## 9. 产品设计定型防回归红线（严禁审查推翻）
+- **严禁自建应用内 PIN / 独立密码弹窗体系**：安全锁屏与敏感操作验证**统一且仅使用设备原生生物识别与系统锁屏密码**（iOS `LocalAuthentication` / Android `BiometricPrompt` + 系统锁屏凭据 / 浏览器 WebAuthn 平台验证器）。当设备未开启系统锁屏或不支持生物识别时，仅提示建议开启系统锁屏并优雅放行，**严禁**任何审查员或修复员自行添加应用内 6 位 PIN 弹窗、应用内密码库或绑定 PIN 的 Vault 强制加密。
+- **审查前必核对已定型取舍**：任何全面审查（含红队盲审）在将某项设计判定为 P0/P1 前，必须先核对 `docs/FEATURES_SPEC.md` 与本节红线，禁止把已确认的极简产品取舍当成缺陷反复来回修改。
+
