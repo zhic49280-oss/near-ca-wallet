@@ -61,58 +61,19 @@ test('v6.89 Regression 1: oRHEA storage_deposit, 3-scale timestamp, lockDays gua
   assert.ok(x402Matches.length >= 3, 'limit-orders.js must handle HTTP 402 / x402 across quote/order/cancel paths');
 });
 
-test('v6.89 Regression 2: Vault AES-256-GCM encrypt/decrypt, PIN hash/verify & zero plaintext leak in saveWallets()', async () => {
-  const secretPayload = {
-    mnemonic: TEST_MNEMONIC,
-    nearPrivateKey: 'ed25519:testKey',
-    evmPrivateKey: '0xdeadbeef'
-  };
-  const envelope = await cryptoEngine.encryptVaultSecretsAsync(secretPayload, '123456');
-  assert.ok(envelope && envelope.ct && envelope.iv && envelope.salt, 'Vault envelope must include ct, iv, and salt');
-  assert.equal(JSON.stringify(envelope).includes(TEST_MNEMONIC), false, 'Encrypted envelope must not contain plaintext mnemonic');
+test('v6.89 Regression 2: OS-native security only (no in-app PIN/Vault modal), CSPRNG guard & Perps scroll reset', async () => {
+  const secSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/010-security.part.js'), 'utf8');
+  assert.equal(secSrc.includes('nexus-pin-modal'), false, 'Must NOT include in-app PIN modal (OS biometric/passcode only)');
+  assert.equal(secSrc.includes('Math.random()'), false, 'getRandomBytesCompat must never fall back to Math.random()');
+  assert.ok(secSrc.includes('crypto.getRandomValues'), 'getRandomBytesCompat must require crypto.getRandomValues');
 
-  const decrypted = await cryptoEngine.decryptVaultSecretsAsync(envelope, '123456');
-  assert.deepEqual(decrypted, secretPayload, 'Decrypted vault payload must match original secrets');
-  await assert.rejects(
-    () => cryptoEngine.decryptVaultSecretsAsync(envelope, '000000'),
-    /./,
-    'Wrong passphrase must fail AES-256-GCM decryption'
-  );
+  const storeSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/state/000-store.part.js'), 'utf8');
+  assert.equal(storeSrc.includes('VAULT_PIN_STORAGE_KEY'), false, 'Must NOT include in-app PIN storage key');
 
-  const pinRecord = await cryptoEngine.hashPinAsync('246810');
-  assert.ok(pinRecord && pinRecord.hash && pinRecord.salt, 'hashPinAsync must return salted hash');
-  assert.equal(await cryptoEngine.verifyPinAsync('246810', pinRecord), true, 'verifyPinAsync must accept correct PIN');
-  assert.equal(await cryptoEngine.verifyPinAsync('999999', pinRecord), false, 'verifyPinAsync must reject wrong PIN');
-
-  // Verify saveWallets() strips plaintext secrets when Vault PIN is set
-  await withMockedStorage({}, async (storage) => {
-    const prevWallets = state.wallets;
-    const prevActive = state.activeWalletId;
-    try {
-      const pinRec = await cryptoEngine.hashPinAsync('135790');
-      storage.setItem(state.VAULT_PIN_STORAGE_KEY || 'near_ca_pin_v1', JSON.stringify(pinRec));
-      const w = state.normalizeWalletRecord({
-        id: 'w_vault_test',
-        mnemonic: TEST_MNEMONIC,
-        name: 'Vault Wallet',
-        nearAddress: 'test-vault.near',
-        nearPrivateKey: 'ed25519:secretTestKey',
-        evmPrivateKey: '0xdeadbeefsecret'
-      });
-      w._cachedVaultEnvelope = envelope;
-      state.wallets = [w];
-      state.activeWalletId = w.id;
-      state.saveWallets();
-      const rawSaved = storage.getItem('near_ca_wallets_v1') || '';
-      assert.ok(rawSaved.length > 0, 'saveWallets must persist wallet metadata');
-      assert.equal(rawSaved.includes(TEST_MNEMONIC), false, 'saveWallets must never leak plaintext mnemonic when Vault is enabled');
-      assert.equal(rawSaved.includes(w.nearPrivateKey), false, 'saveWallets must never leak nearPrivateKey when Vault is enabled');
-      assert.equal(rawSaved.includes(w.evmPrivateKey), false, 'saveWallets must never leak evmPrivateKey when Vault is enabled');
-    } finally {
-      state.wallets = prevWallets;
-      state.activeWalletId = prevActive;
-    }
-  });
+  const obSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/162-perps-orderbook.part.js'), 'utf8');
+  assert.ok(obSrc.includes('scrollPerpViewportTo(0)'), 'openPerpTradeScreen must scroll viewport to top');
+  assert.ok(obSrc.includes('_perpOverviewScrollY = readPerpViewportScrollY()'), 'openPerpTradeScreen must save overview scroll position');
+  assert.ok(obSrc.includes('scrollPerpViewportTo(_perpOverviewScrollY)'), 'backToPerpOverview must restore overview scroll position');
 });
 
 test('v6.89 Regression 3: iOS ProMotion 120Hz, swap follow-up delta guard, perp TP/SL guard & PerpsView declarative active', () => {
