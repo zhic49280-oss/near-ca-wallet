@@ -3,6 +3,61 @@
   let _contactsPickerTarget = null;
   let _lockedScrollY = 0;
   let _sheetScrollBound = false;
+  let _sheetScrollPositions = Object.create(null);
+
+  const _sheetScrollResetTargets = {
+    'sheet-token-detail': ['#sheet-token-detail .sheet-body'],
+    'sheet-tx-history': ['#sheet-tx-history .sheet-body', '#tx-history-full-list'],
+    'sheet-tx-detail': ['#tx-detail-body'],
+    'sheet-token-picker': ['#token-picker-list', '#sheet-token-picker .sheet-body'],
+    'sheet-perp-markets': ['#perp-market-list', '#sheet-perp-markets .sheet-body']
+  };
+
+  function getSheetScrollTargets(sheetId) {
+    const targets = [];
+    const sheet = $(sheetId);
+    if (sheet) {
+      targets.push(sheet);
+      if (typeof sheet.querySelector === 'function') {
+        const body = sheet.querySelector('.sheet-body');
+        if (body && !targets.includes(body)) targets.push(body);
+      }
+    }
+    const extra = _sheetScrollResetTargets[sheetId] || [];
+    for (const sel of extra) {
+      let el = null;
+      if (sel.startsWith('#') && !sel.includes(' ')) {
+        el = $(sel.slice(1));
+      } else if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+        el = document.querySelector(sel);
+      }
+      if (el && !targets.includes(el)) targets.push(el);
+    }
+    return targets;
+  }
+
+  function saveSheetScrollPosition(sheetId) {
+    if (!sheetId) return 0;
+    let top = 0;
+    for (const el of getSheetScrollTargets(sheetId)) {
+      const stTop = Number(el && el.scrollTop);
+      if (Number.isFinite(stTop) && stTop > 0) {
+        top = stTop;
+        break;
+      }
+    }
+    _sheetScrollPositions[sheetId] = top;
+    return top;
+  }
+
+  function applySheetScrollPosition(sheetId, top = 0) {
+    const val = Math.max(0, Number(top) || 0);
+    for (const el of getSheetScrollTargets(sheetId)) {
+      if (el && ('scrollTop' in el || typeof el.scrollTop === 'number')) {
+        el.scrollTop = val;
+      }
+    }
+  }
 
   function updateVisualViewportVars() {
     if (typeof document === 'undefined' || typeof window === 'undefined') return;
@@ -162,7 +217,10 @@
     const hasHtmlClassList = Boolean(html && html.classList && typeof html.classList.add === 'function');
     if (hasOpen) {
       if (hasBodyClassList && !body.classList.contains('sheet-scroll-locked')) {
-        _lockedScrollY = (typeof window !== 'undefined' ? (window.scrollY || window.pageYOffset || 0) : 0);
+        const winY = typeof window !== 'undefined' ? Number(window.scrollY ?? window.pageYOffset ?? 0) : 0;
+        _lockedScrollY = (Number.isFinite(winY) && winY > 0)
+          ? winY
+          : Number((html && html.scrollTop) || (body && body.scrollTop) || 0) || 0;
         body.classList.add('sheet-scroll-locked');
         if (hasHtmlClassList) html.classList.add('sheet-scroll-locked');
       }
@@ -171,14 +229,18 @@
       const wasLocked = Boolean(hasBodyClassList && body.classList.contains('sheet-scroll-locked'));
       if (hasBodyClassList) body.classList.remove('sheet-scroll-locked');
       if (hasHtmlClassList) html.classList.remove('sheet-scroll-locked');
-      if (wasLocked && typeof window !== 'undefined' && typeof window.scrollTo === 'function' && _lockedScrollY > 0) {
-        try { window.scrollTo(0, _lockedScrollY); } catch (_) {}
+      if (wasLocked && _lockedScrollY > 0) {
+        if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+          try { window.scrollTo(0, _lockedScrollY); } catch (_) {}
+        }
+        if (html && typeof html.scrollTop === 'number') html.scrollTop = _lockedScrollY;
+        if (body && typeof body.scrollTop === 'number') body.scrollTop = _lockedScrollY;
       }
       _lockedScrollY = 0;
     }
   }
 
-  function openSheet(sheetId) {
+  function openSheet(sheetId, opts = {}) {
     ensureSheetInteractionGuards();
     const backdrop = $('sheet-backdrop');
     const sheet = $(sheetId);
@@ -188,6 +250,12 @@
           if (s.id === 'sheet-confirm-dialog' && typeof dismissConfirmDialog === 'function') {
             dismissConfirmDialog(false);
             return;
+          }
+          if (s.id === 'sheet-dapp-approve' && typeof rejectDAppApproval === 'function') {
+            rejectDAppApproval();
+          }
+          if (s.id === 'sheet-qr-scanner' && typeof stopQrScannerStream === 'function') {
+            stopQrScannerStream();
           }
           s.classList.remove('open');
           s.setAttribute('aria-hidden', 'true');
@@ -205,6 +273,22 @@
       bindSheetHandleDrag(sheet);
       sheet.classList.add('open');
       sheet.setAttribute('aria-hidden', 'false');
+      const shouldRestore = Boolean(opts && opts.restoreScroll && Object.prototype.hasOwnProperty.call(_sheetScrollPositions, sheetId));
+      if (shouldRestore) {
+        const savedTop = _sheetScrollPositions[sheetId];
+        delete _sheetScrollPositions[sheetId];
+        applySheetScrollPosition(sheetId, savedTop);
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(() => {
+            if (sheet.classList && sheet.classList.contains('open')) {
+              applySheetScrollPosition(sheetId, savedTop);
+            }
+          });
+        }
+      } else if (_sheetScrollResetTargets[sheetId]) {
+        delete _sheetScrollPositions[sheetId];
+        applySheetScrollPosition(sheetId, 0);
+      }
     }
     syncSheetScrollLock();
   }
@@ -215,12 +299,8 @@
       closeTxFlowModal();
     }
     if (typeof stopQrScannerStream === 'function') stopQrScannerStream();
-    const contactsSheet = $('sheet-contacts');
-    if (contactsSheet && contactsSheet.classList && contactsSheet.classList.contains('open') && _contactsPickerTarget === 'send') {
-      _contactsPickerTarget = null;
-      openSheet('sheet-send');
-      return;
-    }
+    _contactsPickerTarget = null;
+    _sheetScrollPositions = Object.create(null);
     const st = getState();
     if (st && st.limit) st.limit.pickerSide = null;
     if (typeof _dappSession !== 'undefined' && _dappSession && _dappSession.pendingApproval && typeof _dappSession.pendingApproval.resolve === 'function') {

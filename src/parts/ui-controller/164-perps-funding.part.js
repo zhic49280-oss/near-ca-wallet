@@ -340,8 +340,17 @@
     evaluatePerpWithdrawUI();
   }
 
+  let _perpOneClickPollTimer = null;
+  let _perpOneClickPollSeq = 0;
+  let _perpQuoteSeq = 0;
+
   function openPerpFundingSheet(modeOrTab = 'deposit') {
     const st = getState();
+    if (_perpQuoteTimer) {
+      clearTimeout(_perpQuoteTimer);
+      _perpQuoteTimer = null;
+    }
+    _perpQuoteSeq += 1;
     if (modeOrTab === 'withdraw' || modeOrTab === 'transfer') {
       st.perp.fundingMode = 'withdraw';
     } else {
@@ -355,9 +364,6 @@
     renderPerpFundingSheet();
     openSheet('sheet-perp-funding');
   }
-
-  let _perpOneClickPollTimer = null;
-  let _perpOneClickPollSeq = 0;
 
   function stopPerpOneClickDepositPolling() {
     _perpOneClickPollSeq += 1;
@@ -373,18 +379,33 @@
     stopPerpOneClickDepositPolling();
     const seq = ++_perpOneClickPollSeq;
     const st = getState();
+    const startWallet = st && typeof st.getActiveWallet === 'function' ? st.getActiveWallet() : null;
+    const startWalletId = startWallet ? startWallet.id : (st ? st.activeWalletId : null);
     st.perp.oneClickDepositStatus = { depositAddress: addr, status: 'PENDING_DEPOSIT', updatedAt: Date.now() };
     let attempts = 0;
     let lastNotifiedStatus = '';
 
+    const isPollInvalid = () => {
+      if (seq !== _perpOneClickPollSeq) return true;
+      const curWallet = st && typeof st.getActiveWallet === 'function' ? st.getActiveWallet() : null;
+      const curWalletId = curWallet ? curWallet.id : (st ? st.activeWalletId : null);
+      return Boolean(startWalletId && curWalletId !== startWalletId);
+    };
+
     const tick = async () => {
-      if (seq !== _perpOneClickPollSeq) return;
+      if (isPollInvalid()) {
+        stopPerpOneClickDepositPolling();
+        return;
+      }
       attempts += 1;
       try {
         const intents = getIntents();
         if (!intents || typeof intents.fetchSwapOrderStatus !== 'function') return;
         const res = await intents.fetchSwapOrderStatus(addr).catch(() => null);
-        if (seq !== _perpOneClickPollSeq) return;
+        if (isPollInvalid()) {
+          stopPerpOneClickDepositPolling();
+          return;
+        }
         if (res && res.ok && res.status) {
           const status = String(res.status).toUpperCase();
           st.perp.oneClickDepositStatus = { depositAddress: addr, status, updatedAt: Date.now() };
@@ -406,7 +427,7 @@
           }
         }
       } catch (_) {}
-      if (seq === _perpOneClickPollSeq && attempts < maxAttempts) {
+      if (!isPollInvalid() && attempts < maxAttempts) {
         _perpOneClickPollTimer = setTimeout(tick, intervalMs);
         if (_perpOneClickPollTimer && typeof _perpOneClickPollTimer.unref === 'function') {
           _perpOneClickPollTimer.unref();
@@ -422,6 +443,11 @@
 
   function setPerpFundingTab(tab) {
     const st = getState();
+    if (_perpQuoteTimer) {
+      clearTimeout(_perpQuoteTimer);
+      _perpQuoteTimer = null;
+    }
+    _perpQuoteSeq += 1;
     st.perp.fundingTab = tab === 'arbitrum' ? 'arbitrum' : 'oneclick';
     resetFormFields(['perp-oc-amount', 'perp-arb-amount']);
     st.perp.fundingQuote = null;
@@ -429,8 +455,6 @@
     st.perp.fundingQuoting = false;
     renderPerpFundingSheet();
   }
-
-  let _perpQuoteSeq = 0;
 
   function schedulePerpOneClickQuote(isOriginChange = false) {
     const st = getState();
@@ -458,12 +482,16 @@
     renderPerpFundingSheet();
     _perpQuoteTimer = setTimeout(async () => {
       try {
+        if (seq !== _perpQuoteSeq) return;
         const hl = getHyperliquid();
         const wallet = st.getActiveWallet();
         const curEntries = getEligiblePerpOneClickEntries(wallet);
-        const curKey = $('perp-oc-origin-select')?.value || '';
+        const curKey = $('perp-oc-origin-select')?.value || st.perp.fundingOriginAssetId || '';
         const curEntry = curEntries.find((e) => e.key === curKey) || curEntries[0];
-        if (!hl || !wallet || !curEntry) return;
+        if (!hl || !wallet || !curEntry) {
+          if (seq === _perpQuoteSeq) st.perp.fundingQuoting = false;
+          return;
+        }
         const q = await hl.quoteOneClickDepositToHlSpot({ wallet, originToken: curEntry, amount: amt, dry: true });
         if (seq !== _perpQuoteSeq) return;
         st.perp.fundingQuoting = false;
@@ -482,7 +510,10 @@
         st.perp.fundingQuote = null;
         st.perp.fundingQuoteError = formatPerpError(err, '询价失败，请稍后重试', 'Quote failed. Please try again.');
       } finally {
-        if (seq === _perpQuoteSeq) evaluatePerpOneClickUI();
+        if (seq === _perpQuoteSeq) {
+          st.perp.fundingQuoting = false;
+          evaluatePerpOneClickUI();
+        }
       }
     }, 360);
   }

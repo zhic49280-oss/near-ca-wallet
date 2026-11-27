@@ -29,16 +29,26 @@
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const refreshBtn = $('btn-refresh-sol-rent');
     const execBtn = $('btn-execute-sol-rent');
-    const prevRefreshTxt = refreshBtn ? refreshBtn.textContent : '';
+    const loadingZh = '扫描中...';
+    const loadingEn = 'Scanning...';
+    let prevRefreshTxt = '';
     if (refreshBtn) {
+      if (!refreshBtn.dataset) refreshBtn.dataset = {};
+      if (!refreshBtn.disabled) {
+        const raw = String(refreshBtn.textContent || '').trim();
+        if (raw && raw !== loadingZh && raw !== loadingEn) {
+          refreshBtn.dataset.baseLabel = raw;
+        }
+      }
+      prevRefreshTxt = refreshBtn.dataset.baseLabel || '';
       refreshBtn.disabled = true;
-      refreshBtn.textContent = t('扫描中...', 'Scanning...');
+      refreshBtn.textContent = t(loadingZh, loadingEn);
     }
     if (execBtn) {
       execBtn.disabled = true;
-      execBtn.textContent = t('扫描中...', 'Scanning...');
+      execBtn.textContent = t(loadingZh, loadingEn);
     }
-    if (sumEl) sumEl.textContent = t('扫描中...', 'Scanning...');
+    if (sumEl) sumEl.textContent = t(loadingZh, loadingEn);
     if (listEl && fw && typeof fw.mountSolRentPanel === 'function') {
       fw.mountSolRentPanel(listEl, { accounts: [], selectedAtas: [], loading: true, isEn: st.lang === 'en', formatBal });
     }
@@ -96,7 +106,8 @@
     } finally {
       if (refreshBtn && scanSeq === _solRentScanSeq) {
         refreshBtn.disabled = false;
-        if (prevRefreshTxt) refreshBtn.textContent = prevRefreshTxt;
+        const base = (refreshBtn.dataset && refreshBtn.dataset.baseLabel) || prevRefreshTxt;
+        refreshBtn.textContent = base || t('刷新', 'Refresh');
       }
     }
   }

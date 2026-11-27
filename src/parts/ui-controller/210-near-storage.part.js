@@ -30,12 +30,22 @@
 
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     const refreshBtn = $('btn-refresh-near-storage');
-    const prevRefreshTxt = refreshBtn ? refreshBtn.textContent : '';
+    const loadingZh = '扫描中...';
+    const loadingEn = 'Scanning...';
+    let prevRefreshTxt = '';
     if (refreshBtn) {
+      if (!refreshBtn.dataset) refreshBtn.dataset = {};
+      if (!refreshBtn.disabled) {
+        const raw = String(refreshBtn.textContent || '').trim();
+        if (raw && raw !== loadingZh && raw !== loadingEn) {
+          refreshBtn.dataset.baseLabel = raw;
+        }
+      }
+      prevRefreshTxt = refreshBtn.dataset.baseLabel || '';
       refreshBtn.disabled = true;
-      refreshBtn.textContent = t('扫描中...', 'Scanning...');
+      refreshBtn.textContent = t(loadingZh, loadingEn);
     }
-    if (sumEl) sumEl.textContent = t('扫描中...', 'Scanning...');
+    if (sumEl) sumEl.textContent = t(loadingZh, loadingEn);
     if (listEl && fw && typeof fw.mountNearStoragePanel === 'function') {
       fw.mountNearStoragePanel(listEl, { accounts: [], selectedContracts: [], loading: true, isEn: st.lang === 'en', formatBal });
     }
@@ -72,7 +82,8 @@
     } finally {
       if (refreshBtn && scanSeq === _nearStorageScanSeq) {
         refreshBtn.disabled = false;
-        if (prevRefreshTxt) refreshBtn.textContent = prevRefreshTxt;
+        const base = (refreshBtn.dataset && refreshBtn.dataset.baseLabel) || prevRefreshTxt;
+        refreshBtn.textContent = base || t('刷新', 'Refresh');
       }
     }
   }

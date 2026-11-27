@@ -62,6 +62,7 @@
       const ds = target.dataset || {};
       switch (action) {
         case 'switch-wallet': switchActiveWallet(ds.walletId || ''); break;
+        case 'delete-wallet': deleteWalletById(ds.walletId || ''); break;
         case 'copy-text': copyTextValue(ds.val || '', ds.label || ''); break;
         case 'open-token-detail': openTokenDetailSheet(ds.symbol || ''); break;
         case 'toggle-home-dust': toggleHomeDustAssets(); break;
@@ -487,6 +488,7 @@
     setPerpWithdrawMax,
     jumpFromPerpToSwap,
     schedulePerpOneClickQuote,
+    stopPerpOneClickDepositPolling,
     executePerpOneClickDepositUI,
     executePerpArbBridgeDepositUI,
     executePerpWithdrawUI,
@@ -738,6 +740,7 @@
     setPerpWithdrawMax,
     jumpFromPerpToSwap,
     schedulePerpOneClickQuote,
+    stopPerpOneClickDepositPolling,
     executePerpOneClickDepositUI,
     executePerpArbBridgeDepositUI,
     executePerpWithdrawUI,

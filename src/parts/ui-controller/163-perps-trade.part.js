@@ -1,19 +1,24 @@
+  let _perpObCandlesSeq = 0;
+
   async function refreshPerpOrderbookAndCandlesAsync() {
     const st = getState();
     const hl = getHyperliquid();
     if (!hl) return;
+    const reqSeq = ++_perpObCandlesSeq;
     const coin = st.perp.selectedCoin || 'BTC';
     const iv = st.perp.chartInterval || '15m';
     const tasks = [hl.fetchHlOrderbook(coin).catch(() => null)];
-    if (st.perp.showChart) tasks.push(hl.fetchHlCandles(coin, iv, 180).catch(() => []));
+    if (st.perp.showChart) tasks.push(hl.fetchHlCandles(coin, iv, 180).catch(() => null));
     const [ob, candles] = await Promise.all(tasks);
-    if (st.perp.selectedCoin !== coin) return;
+    if (reqSeq !== _perpObCandlesSeq || st.perp.selectedCoin !== coin) return;
     const ivStillCurrent = (st.perp.chartInterval || '15m') === iv;
     if (ob) {
       st.perp.orderbook = ob;
       _perpLastL2BookTs = Date.now();
     }
-    if (Array.isArray(candles) && ivStillCurrent) st.perp.candles = candles;
+    if (Array.isArray(candles) && ivStillCurrent && (candles.length > 0 || !Array.isArray(st.perp.candles) || st.perp.candles.length === 0)) {
+      st.perp.candles = candles;
+    }
     if (typeof st.saveCachedPerpSnapshot === 'function') {
       st.saveCachedPerpSnapshot({
         candles: Array.isArray(candles) && candles.length > 0 ? candles : undefined,
@@ -480,6 +485,9 @@
 
   function selectPerpMarket(coin) {
     const st = getState();
+    if (st.perp.subView !== 'trade') {
+      _perpOverviewScrollY = readPerpViewportScrollY();
+    }
     const nextCoin = String(coin || 'BTC');
     const changedCoin = nextCoin !== st.perp.selectedCoin;
     st.perp.selectedCoin = nextCoin;
@@ -513,6 +521,7 @@
     }
     closeAllSheets();
     renderPerpView();
+    scrollPerpViewportTo(0);
     startPerpLiveFeed();
     refreshPerpOrderbookAndCandlesAsync().catch(() => {});
   }

@@ -125,6 +125,10 @@
     _tokenDetailState.chainFilter = String(chainFilter || 'all').toLowerCase();
     _tokenDetailState.historyLoading = true;
     _tokenDetailState.historyItems = [];
+    if (typeof _sheetScrollPositions !== 'undefined' && _sheetScrollPositions) {
+      delete _sheetScrollPositions['sheet-token-detail'];
+      delete _sheetScrollPositions['sheet-tx-history'];
+    }
     renderTokenDetailSheet();
     openSheet('sheet-token-detail');
     fetchTokenDetailHistoryAsync();
@@ -360,6 +364,9 @@
     st.txModal.listTitle = symKey ? `${symKey} ${t('交易记录', 'Transactions')}` : t('交易记录', 'Transactions');
     st.txModal.items = Array.isArray(items) ? items : [];
     st.txModal.sourceSheetId = 'sheet-token-detail';
+    if (typeof saveSheetScrollPosition === 'function') {
+      saveSheetScrollPosition('sheet-token-detail');
+    }
     renderTxHistorySheet();
     openSheet('sheet-tx-history');
   }
@@ -369,20 +376,23 @@
     st.txModal.listTitle = t('挖矿打款记录', 'Mining Payouts');
     st.txModal.items = Array.isArray(_lastMiningNormalizedPayouts) ? _lastMiningNormalizedPayouts : [];
     st.txModal.sourceSheetId = 'sheet-mining-pro';
+    if (typeof saveSheetScrollPosition === 'function') {
+      saveSheetScrollPosition('sheet-mining-pro');
+    }
     renderTxHistorySheet();
     openSheet('sheet-tx-history');
   }
 
   function navigateBackFromTxHistory() {
     const target = getState().txModal?.sourceSheetId || 'sheet-token-detail';
-    if (target) openSheet(target);
+    if (target) openSheet(target, { restoreScroll: true });
     else closeAllSheets();
   }
 
   function navigateBackFromTxDetail() {
     const raw = getState().txModal?.detailBackSheetId;
     const target = raw === undefined ? 'sheet-token-detail' : raw;
-    if (target) openSheet(target);
+    if (target) openSheet(target, { restoreScroll: true });
     else closeAllSheets();
   }
 
@@ -531,8 +541,12 @@
   function openTxDetailSheet(txItem, backSheetId = 'sheet-token-detail') {
     const st = getState();
     if (!txItem) return;
+    const resolvedBack = backSheetId !== undefined ? backSheetId : 'sheet-token-detail';
+    if (resolvedBack && typeof saveSheetScrollPosition === 'function') {
+      saveSheetScrollPosition(resolvedBack);
+    }
     st.txModal.currentItem = txItem;
-    st.txModal.detailBackSheetId = backSheetId !== undefined ? backSheetId : 'sheet-token-detail';
+    st.txModal.detailBackSheetId = resolvedBack;
     st.txModal.detailData = null;
     st.txModal.detailLoading = false;
     renderTxDetailSheet();

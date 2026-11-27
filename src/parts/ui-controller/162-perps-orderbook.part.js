@@ -593,6 +593,8 @@
 
   let _perpRefreshInFlight = null;
   let _perpRefreshWalletId = null;
+  let _perpRefreshSeq = 0;
+  let _perpForceRefreshSeq = 0;
   let _lastHip3SyncAt = 0;
 
   async function refreshPerpDataAsync(force = false) {
@@ -602,14 +604,27 @@
     if (!force && _perpRefreshInFlight && !isDifferentWallet) {
       return _perpRefreshInFlight;
     }
+    const refreshSeq = ++_perpRefreshSeq;
+    const forceSeq = force ? ++_perpForceRefreshSeq : 0;
     const refreshBtns = force
       ? ['btn-perp-overview-refresh', 'btn-perp-trade-refresh'].map((id) => $(id)).filter(Boolean)
       : [];
-    const prevBtnTexts = refreshBtns.map((b) => b.textContent);
+    const loadingZh = '刷新中...';
+    const loadingEn = 'Refreshing...';
+    const prevBtnTexts = refreshBtns.map((b) => {
+      if (!b.dataset) b.dataset = {};
+      if (!b.disabled) {
+        const raw = String(b.textContent || '').trim();
+        if (raw && raw !== loadingZh && raw !== loadingEn) {
+          b.dataset.baseLabel = raw;
+        }
+      }
+      return b.dataset.baseLabel || '';
+    });
     if (force) {
       refreshBtns.forEach((b) => {
         b.disabled = true;
-        b.textContent = t('刷新中...', 'Refreshing...');
+        b.textContent = t(loadingZh, loadingEn);
       });
     }
     const run = (async () => {
@@ -624,7 +639,7 @@
         const refreshWalletId = wallet.id;
         const refreshStale = () => {
           const cur = st.getActiveWallet();
-          return !cur || cur.id !== refreshWalletId;
+          return refreshSeq !== _perpRefreshSeq || !cur || cur.id !== refreshWalletId;
         };
         if ((!st.perp.markets.length || !st.perp.account) && typeof st.loadCachedPerpSnapshot === 'function') {
           st.loadCachedPerpSnapshot(hlAddr);
@@ -654,18 +669,20 @@
           });
         }
         await refreshPerpOrderbookAndCandlesAsync();
+        if (refreshStale()) return;
         if (force) {
           showToast(t('合约数据已刷新', 'Perps synced'));
         }
       } catch (err) {
-        if (force) {
+        if (force && refreshSeq === _perpRefreshSeq) {
           showToast(formatPerpError(err, '刷新合约数据失败，请稍后重试', 'Failed to refresh Perps. Please try again.'));
         }
       } finally {
-        if (force) {
+        if (force && forceSeq === _perpForceRefreshSeq) {
           refreshBtns.forEach((b, idx) => {
             b.disabled = false;
-            b.textContent = prevBtnTexts[idx] || t('刷新', 'Refresh');
+            const base = (b.dataset && b.dataset.baseLabel) || prevBtnTexts[idx];
+            b.textContent = base || t('刷新', 'Refresh');
           });
         }
       }
@@ -787,9 +804,7 @@
     st.perp.subView = 'overview';
     stopPerpLiveFeed();
     renderPerpView();
-    if (_perpOverviewScrollY > 0) {
-      scrollPerpViewportTo(_perpOverviewScrollY);
-    }
+    scrollPerpViewportTo(_perpOverviewScrollY);
   }
 
   function openPerpTradeScreen(coin) {

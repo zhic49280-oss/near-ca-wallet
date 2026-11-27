@@ -1,26 +1,43 @@
   // ==================== Earn / Liquid Staking Controller ====================
 
+  let _stakingRefreshSeq = 0;
+  let _stakingFeedbackRefreshSeq = 0;
+
   async function refreshStakingMetrics(showFeedback = false) {
     const st = getState();
     const contracts = getContracts();
     if (st.staking.loading && !showFeedback) return;
     st.staking.loading = true;
+    const reqSeq = ++_stakingRefreshSeq;
+    const fbSeq = showFeedback ? ++_stakingFeedbackRefreshSeq : 0;
     const refreshBtn = $('btn-earn-refresh');
-    const prevBtnTxt = refreshBtn ? refreshBtn.textContent : '';
+    const loadingZh = '刷新中...';
+    const loadingEn = 'Refreshing...';
+    let prevBtnTxt = '';
     if (refreshBtn && showFeedback) {
+      if (!refreshBtn.dataset) refreshBtn.dataset = {};
+      if (!refreshBtn.disabled) {
+        const raw = String(refreshBtn.textContent || '').trim();
+        if (raw && raw !== loadingZh && raw !== loadingEn) {
+          refreshBtn.dataset.baseLabel = raw;
+        }
+      }
+      prevBtnTxt = refreshBtn.dataset.baseLabel || '';
       refreshBtn.disabled = true;
-      refreshBtn.textContent = t('刷新中...', 'Refreshing...');
+      refreshBtn.textContent = t(loadingZh, loadingEn);
     }
     try {
       const pools = await contracts.fetchLiveStakingMetrics({
         useCache: !showFeedback && Boolean(st.staking.pools),
         onFastUpdate: (fastPools) => {
+          if (reqSeq !== _stakingRefreshSeq) return;
           if (Array.isArray(fastPools) && fastPools.length > 0) {
             st.staking.pools = fastPools;
             renderEarnView();
           }
         }
       });
+      if (reqSeq !== _stakingRefreshSeq) return;
       st.staking.pools = pools;
       if (typeof st.saveCachedStakingMetrics === 'function') st.saveCachedStakingMetrics(pools);
       renderEarnView();
@@ -30,6 +47,7 @@
       }
       if (showFeedback) showToast(t('已同步实时质押年化', 'Staking APY synced'));
     } catch (err) {
+      if (reqSeq !== _stakingRefreshSeq) return;
       if (showFeedback) {
         const msg = contracts && typeof contracts.toUserFriendlyError === 'function'
           ? contracts.toUserFriendlyError(err, '获取质押利率失败，请稍后重试', 'Failed to refresh APY. Please try again.')
@@ -37,10 +55,13 @@
         showToast(msg);
       }
     } finally {
-      st.staking.loading = false;
-      if (refreshBtn && showFeedback) {
+      if (reqSeq === _stakingRefreshSeq) {
+        st.staking.loading = false;
+      }
+      if (refreshBtn && showFeedback && fbSeq === _stakingFeedbackRefreshSeq) {
         refreshBtn.disabled = false;
-        refreshBtn.textContent = prevBtnTxt || t('刷新利率', 'Refresh APY');
+        const base = (refreshBtn.dataset && refreshBtn.dataset.baseLabel) || prevBtnTxt;
+        refreshBtn.textContent = base || t('刷新利率', 'Refresh APY');
       }
     }
   }

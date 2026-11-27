@@ -59,12 +59,25 @@ export function ReceiveAddressListPanel({
   options = [],
   selectedNetwork = 'near',
   mode = 'pills',
+  address = '',
   isEn: isEnProp
 }) {
   const st = useWalletState(['receive', 'lang']);
   const isEn = typeof isEnProp === 'boolean'
     ? isEnProp
     : Boolean(st && st.lang === 'en');
+
+  if (mode === 'address') {
+    return address || '--';
+  }
+
+  if (mode === 'qtc-loading') {
+    return (
+      <span style={{ color: 'var(--text-secondary)' }}>
+        {isEn ? 'Fetching QTC deposit address...' : '正在获取 QTC 收款地址...'}
+      </span>
+    );
+  }
 
   if (mode === 'qtc-error') {
     return (
