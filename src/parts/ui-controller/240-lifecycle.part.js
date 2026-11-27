@@ -92,7 +92,6 @@
         case 'cancel-limit-order': cancelLimitOrderUI(ds.chain || 'near', ds.orderId || '', ds.remain || '', ds.sellToken || '', ds.buyToken || ''); break;
         case 'select-perp-market': selectPerpMarket(ds.coin || 'BTC'); break;
         case 'toggle-perp-tpsl': togglePerpTpSl(); break;
-        case 'toggle-perp-lev': togglePerpLeverageDrawer(); break;
         case 'fill-perp-ob-px': fillPerpLimitPrice(ds.px || ''); break;
         case 'close-perp-pos': closePerpPositionUI(ds.coin || ''); break;
         case 'cancel-perp-order': cancelPerpOrderUI(ds.coin || '', ds.oid || ''); break;
@@ -459,7 +458,6 @@
     fillPerpBboPrice,
     togglePerpReduceOnly,
     setPerpLeverage,
-    togglePerpLeverageDrawer,
     setPerpMarginPercent,
     togglePerpInputUnit,
     syncPerpInputUnitUI,
@@ -710,7 +708,6 @@
     fillPerpBboPrice,
     togglePerpReduceOnly,
     setPerpLeverage,
-    togglePerpLeverageDrawer,
     setPerpMarginPercent,
     togglePerpInputUnit,
     syncPerpInputUnitUI,

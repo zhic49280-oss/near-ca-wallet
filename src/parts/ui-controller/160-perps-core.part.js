@@ -225,12 +225,3 @@
     return `$${n.toFixed(0)}`;
   }
 
-  function togglePerpLeverageDrawer() {
-    const drawer = $('perp-lev-drawer');
-    if (!drawer) return;
-    const willOpen = drawer.classList.contains('hidden');
-    drawer.classList.toggle('hidden', !willOpen);
-    const btn = $('btn-perp-lev-toggle');
-    if (btn) btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-  }
-

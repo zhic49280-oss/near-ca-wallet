@@ -2992,7 +2992,6 @@ test('F7-T1-04: Order ticket math (Short, Cross, 10x Leverage, Post-Only, 50%, T
     assert.notEqual(session.getVisibleText('#perp-meta-size'), '--');
     assert.notEqual(session.getVisibleText('#perp-meta-liq'), '--');
 
-    await session.click('#btn-perp-tpsl-toggle');
     assert.equal(session.isVisible('#perp-tpsl-drawer'), true);
     session.assertNoRuntimeErrors();
     session.assertNoRealBroadcasts();

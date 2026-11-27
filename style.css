@@ -2133,6 +2133,8 @@ html.nexus-locked #app-lock-overlay {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  margin-top: auto;
+  padding-top: 4px;
 }
 
 .perp-ob-power-track {
@@ -2211,8 +2213,8 @@ html.nexus-locked #app-lock-overlay {
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  height: 19px;
-  min-height: 19px;
+  height: 21px;
+  min-height: 21px;
   padding: 1px 4px;
   border-radius: 4px;
   font-size: 11px;
@@ -2290,8 +2292,11 @@ html.nexus-locked #app-lock-overlay {
   color: #fb7185;
 }
 
-.perp-slider {
+.perp-slider,
+#perp-leverage-slider {
   width: 100%;
+  height: 4px;
+  margin: 2px 0;
   accent-color: var(--near-emerald);
   cursor: pointer;
 }
@@ -2735,22 +2740,19 @@ html.nexus-locked #app-lock-overlay {
   gap: 6px;
 }
 
+.perp-okx-lev-badge,
 .perp-okx-lev-pill {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 4px 9px;
+  padding: 3px 8px;
   border-radius: 999px;
   background: rgba(0, 236, 151, 0.12);
   border: 1px solid rgba(0, 236, 151, 0.28);
   color: var(--near-emerald);
   font-size: 11.5px;
   font-weight: 800;
-  cursor: pointer;
-}
-
-.perp-okx-lev-drawer {
-  padding: 2px 2px 4px;
+  line-height: 1.2;
 }
 
 .perp-okx-ordtype-switch {
@@ -3023,8 +3025,8 @@ html.nexus-locked #app-lock-overlay {
   flex: 1;
   display: flex !important;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 2px !important;
+  justify-content: flex-start;
+  gap: 3px !important;
 }
 
 .perp-ob-mid-badge {

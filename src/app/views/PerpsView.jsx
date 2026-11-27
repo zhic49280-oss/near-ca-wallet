@@ -252,29 +252,19 @@ export function PerpView() {
                     {tr('perp.crossBtn', '全仓')}
                   </button>
                 </div>
-                <button
-                  type="button"
-                  id="btn-perp-lev-toggle"
-                  className="perp-okx-lev-pill"
-                  onClick={() => window.togglePerpLeverageDrawer && window.togglePerpLeverageDrawer()}
-                >
-                  <span id="perp-lev-val" className="mono">5x</span>
-                  <span style={{ fontSize: '9px', opacity: 0.75 }}>▾</span>
-                </button>
+                <span id="perp-lev-val" className="perp-okx-lev-badge mono">5x</span>
               </div>
 
-              <div id="perp-lev-drawer" className="perp-okx-lev-drawer hidden">
-                <input
-                  id="perp-leverage-slider"
-                  type="range"
-                  min="1"
-                  max="50"
-                  step="1"
-                  defaultValue="5"
-                  className="perp-slider"
-                  onInput={(e) => window.setPerpLeverage && window.setPerpLeverage(e.currentTarget.value)}
-                />
-              </div>
+              <input
+                id="perp-leverage-slider"
+                type="range"
+                min="1"
+                max="50"
+                step="1"
+                defaultValue="5"
+                className="perp-slider"
+                onInput={(e) => window.setPerpLeverage && window.setPerpLeverage(e.currentTarget.value)}
+              />
 
               <div className="mode-pill-switch perp-okx-ordtype-switch" style={{ width: '100%', justifyContent: 'space-between' }}>
                 <button
@@ -394,18 +384,9 @@ export function PerpView() {
                   />
                   <span data-i18n="perp.reduceOnlyLabel">{tr('perp.reduceOnlyLabel', '只减仓')}</span>
                 </label>
-                <button
-                  type="button"
-                  id="btn-perp-tpsl-toggle"
-                  className="perp-tpsl-toggle-btn"
-                  style={{ width: 'auto', padding: '2px 7px', fontSize: '10.5px' }}
-                  data-action="toggle-perp-tpsl"
-                  aria-expanded="false"
-                >
-                  <span data-i18n="perp.tpslLabel">{tr('perp.tpslLabel', '止盈/止损')}</span> ▾
-                </button>
+                <span className="meta-key" style={{ fontSize: '10.5px' }} data-i18n="perp.tpslLabel">{tr('perp.tpslLabel', '止盈/止损')}</span>
               </div>
-              <div id="perp-tpsl-drawer" className="flex gap-1 hidden">
+              <div id="perp-tpsl-drawer" className="flex gap-1">
                 <input
                   id="perp-tp-input"
                   type="number"

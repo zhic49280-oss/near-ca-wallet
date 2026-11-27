@@ -660,10 +660,6 @@
       defaults.tpInput = '';
       defaults.slInput = '';
       defaults.reduceOnly = false;
-      const drawer = $('perp-tpsl-drawer');
-      if (drawer) drawer.classList.add('hidden');
-      const btn = $('btn-perp-tpsl-toggle');
-      if (btn) btn.setAttribute('aria-expanded', 'false');
     }
     resetFormFields(domIds, st.perp, defaults);
     if (typeof syncPerpInputUnitUI === 'function') syncPerpInputUnitUI();
