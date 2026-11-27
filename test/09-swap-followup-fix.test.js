@@ -194,12 +194,14 @@ test('P1-5 startOrderStatusPolling timeout preserves SwapActiveOrderPanel VDOM a
     });
     state.wallets = [w];
     state.activeWalletId = w.id;
+    state.saveWallets();
     state.lang = 'en';
 
     const order = {
       walletId: w.id,
       depositAddress: '0xdeposit_poll_1',
-      status: 'PENDING_DEPOSIT'
+      status: 'PENDING_DEPOSIT',
+      createdAt: Date.now()
     };
     state.swap.activeOrder = order;
 

@@ -433,7 +433,7 @@ test.describe('Real-Browser 375px Preact E2E Suite (10 Real-Click Journeys)', { 
     // 1b. Reset storage and verify Import Mnemonic onboarding path with deterministic TEST_MNEMONIC
     await cdp.evalJs(`localStorage.clear();`);
     await cdp.send('Page.reload');
-    await cdp.waitFor(`Boolean(document.querySelector('#onboard-choice-panel [data-i18n="onboard.importBtn"]'))`, 5000, 'onboarding reloaded');
+    await cdp.waitFor(`!document.getElementById('view-onboarding')?.classList.contains('hidden') && Boolean(document.querySelector('#onboard-choice-panel [data-i18n="onboard.importBtn"]'))`, 5000, 'onboarding reloaded');
 
     await cdp.clickReal('#onboard-choice-panel [data-i18n="onboard.importBtn"]');
     await cdp.waitFor(`!document.getElementById('onboard-import-panel')?.classList.contains('hidden')`, 2000, 'import panel visible');
@@ -995,5 +995,349 @@ test.describe('Real-Browser 375px Preact E2E Suite (10 Real-Click Journeys)', { 
       }
     })()`);
     await cdp.clickReal('#btn-perp-back');
+  });
+
+  test('E2E 15: Multi-wallet manager delete-wallet real click triggers confirm dialog and removes wallet cleanly', async () => {
+    await cdp.clickReal('.bottom-nav .nav-item[data-tab="wallet"]');
+    await cdp.waitFor(`!document.getElementById('view-wallet')?.classList.contains('hidden')`, 2000, 'home view visible for E2E 15');
+
+    await cdp.clickReal('#header-account-pill');
+    await cdp.waitFor(`document.getElementById('sheet-wallets')?.classList.contains('open')`, 2000, 'wallet switcher open');
+    const initialDeleteCount = await cdp.evalJs(`document.querySelectorAll('#wallets-switcher-list [data-action="delete-wallet"]').length`);
+    assert.equal(initialDeleteCount, 0, 'Single wallet must not show delete button');
+
+    await cdp.clickReal('#sheet-wallets [data-i18n="sheet.walletsCreateBtn"]');
+    await cdp.waitFor(`!document.getElementById('onboard-create-panel')?.classList.contains('hidden')`, 2000, 'additional wallet create panel visible');
+    await cdp.typeReal('#onboard-create-name', 'Temp Wallet 2');
+    await cdp.clickReal('#btn-confirm-create-wallet');
+    await cdp.waitFor(`!document.getElementById('view-wallet')?.classList.contains('hidden')`, 5000, 'returned to wallet view after creating 2nd wallet');
+    await cdp.waitFor(`document.getElementById('btn-home-refresh')?.disabled === false`, 6000, '2nd wallet balance sync settled');
+
+    await cdp.clickReal('#header-account-pill');
+    await cdp.waitFor(`document.getElementById('sheet-wallets')?.classList.contains('open')`, 2000, 'wallet switcher reopened with 2 wallets');
+    const tempWalletId = await cdp.evalJs(`(() => {
+      const raw = localStorage.getItem('near_ca_wallets_v1');
+      const parsed = JSON.parse(raw || '{}');
+      const arr = Array.isArray(parsed?.wallets) ? parsed.wallets : (Array.isArray(parsed) ? parsed : []);
+      const found = arr.find((w) => w && w.name === 'Temp Wallet 2');
+      return found ? found.id : '';
+    })()`);
+    assert.ok(tempWalletId, 'Temp Wallet 2 must be persisted before deletion');
+
+    await cdp.clickReal(`#wallets-switcher-list [data-action="delete-wallet"][data-wallet-id="${tempWalletId}"]`);
+    await cdp.waitFor(`document.getElementById('sheet-confirm-dialog')?.classList.contains('open')`, 2000, 'delete wallet confirm dialog open');
+    const confirmMeta = await cdp.evalJs(`(() => {
+      const msg = (document.getElementById('confirm-dialog-message')?.textContent || '').trim();
+      const cancelBtn = document.getElementById('btn-confirm-dialog-cancel');
+      const cs = cancelBtn ? getComputedStyle(cancelBtn) : null;
+      const rect = cancelBtn ? cancelBtn.getBoundingClientRect() : null;
+      return {
+        msg,
+        hasGhostClass: Boolean(cancelBtn && cancelBtn.classList.contains('btn-ghost')),
+        width: rect ? rect.width : 0,
+        height: rect ? rect.height : 0,
+        bg: cs ? cs.backgroundColor : '',
+        borderTopWidth: cs ? cs.borderTopWidth : '',
+        color: cs ? cs.color : ''
+      };
+    })()`);
+    assert.ok(confirmMeta.msg.includes('Temp Wallet 2'), `Confirm dialog must name target wallet, got "${confirmMeta.msg}"`);
+    assert.equal(confirmMeta.hasGhostClass, true, 'Confirm dialog cancel button must use .btn-ghost');
+    assert.ok(confirmMeta.width > 40 && confirmMeta.height > 25, `.btn-ghost must have non-zero dimensions (${confirmMeta.width}x${confirmMeta.height})`);
+    assert.notEqual(confirmMeta.bg, 'rgba(0, 0, 0, 0)', '.btn-ghost must have dark-theme translucent background');
+    assert.equal(confirmMeta.borderTopWidth, '1px', '.btn-ghost must have 1px border');
+    assert.notEqual(confirmMeta.color, 'rgb(0, 0, 0)', '.btn-ghost text color must not fallback to black');
+
+    await cdp.clickReal('#btn-confirm-dialog-ok');
+    await cdp.waitFor(`!document.getElementById('sheet-confirm-dialog')?.classList.contains('open')`, 2000, 'delete confirm dialog closed');
+    await cdp.waitFor(`document.querySelectorAll('#wallets-switcher-list [data-action="delete-wallet"]').length === 0`, 3000, 'delete button removed when 1 wallet remains');
+
+    const remainingWallets = await cdp.evalJs(`(() => {
+      const raw = localStorage.getItem('near_ca_wallets_v1');
+      const parsed = JSON.parse(raw || '{}');
+      const arr = Array.isArray(parsed?.wallets) ? parsed.wallets : (Array.isArray(parsed) ? parsed : []);
+      return arr.map((w) => w.name);
+    })()`);
+    assert.deepEqual(remainingWallets, ['Real E2E Wallet'], 'Only Real E2E Wallet must remain after deleting Temp Wallet 2');
+
+    await cdp.waitFor(`document.getElementById('btn-home-refresh')?.disabled === false`, 6000, 'active wallet restored balance sync settled');
+    await cdp.clickReal('#sheet-backdrop');
+    await cdp.waitFor(`!document.getElementById('sheet-wallets')?.classList.contains('open')`, 2000, 'wallet switcher closed');
+  });
+
+  test('E2E 16: Receive sheet #receive-addr-value handles QTC error then clean EVM/NEAR display and copy without -- pollution', async () => {
+    await cdp.clickReal('.bottom-nav .nav-item[data-tab="wallet"]');
+    await cdp.waitFor(`!document.getElementById('view-wallet')?.classList.contains('hidden')`, 2000, 'home view visible for E2E 16');
+
+    await cdp.evalJs(`(() => {
+      window.__e2eCopiedTexts = [];
+      try {
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: {
+            writeText: async (txt) => { window.__e2eCopiedTexts.push(String(txt)); }
+          }
+        });
+      } catch (_) {}
+    })()`);
+
+    await cdp.clickReal('#view-wallet .quick-action-btn:nth-child(2)');
+    await cdp.waitFor(`document.getElementById('sheet-receive')?.classList.contains('open')`, 2000, 'receive sheet open for E2E 16');
+
+    // Trigger QTC fetch failure via fault injection
+    injectFaults = true;
+    try {
+      await cdp.clickReal('#receive-network-pills [data-action="select-receive-network"][data-net="qtc"]');
+      await cdp.waitFor(`document.getElementById('receive-addr-value')?.dataset?.error === '1' && Boolean(document.querySelector('#receive-addr-value button[data-net="qtc"]'))`, 4000, 'QTC error state & retry button rendered');
+    } finally {
+      injectFaults = false;
+    }
+
+    // Click Retry button inside #receive-addr-value and verify clean QTC deposit address without --
+    await cdp.clickReal('#receive-addr-value button[data-net="qtc"]');
+    await cdp.waitFor(`(document.getElementById('receive-addr-value')?.textContent || '').trim() === 'e2e-deposit.near'`, 4000, 'QTC retry resolved clean depositAddress');
+    const qtcRecovered = await cdp.evalJs(`(() => {
+      const el = document.getElementById('receive-addr-value');
+      return {
+        text: (el?.textContent || '').trim(),
+        err: el?.dataset?.error || '',
+        loading: el?.dataset?.loading || ''
+      };
+    })()`);
+    assert.equal(qtcRecovered.text, 'e2e-deposit.near');
+    assert.equal(qtcRecovered.err, '');
+    assert.equal(qtcRecovered.loading, '');
+
+    // Switch to EVM and verify clean address display + clipboard copy (no -- concatenation or stale retry button)
+    await cdp.clickReal('#receive-network-pills [data-action="select-receive-network"][data-net="evm"]');
+    await cdp.waitFor(`/^0x[0-9a-f]{40}$/i.test((document.getElementById('receive-addr-value')?.textContent || '').trim())`, 2000, 'clean EVM receive address displayed');
+    const evmReceiveState = await cdp.evalJs(`(() => {
+      const el = document.getElementById('receive-addr-value');
+      return {
+        text: (el?.textContent || '').trim(),
+        err: el?.dataset?.error || '',
+        loading: el?.dataset?.loading || '',
+        hasButton: Boolean(el && el.querySelector('button'))
+      };
+    })()`);
+    assert.match(evmReceiveState.text, /^0x[0-9a-f]{40}$/i, `EVM receive address must be clean, got "${evmReceiveState.text}"`);
+    assert.equal(evmReceiveState.text.includes('--'), false, 'EVM receive address must not have -- concatenation');
+    assert.equal(evmReceiveState.err, '');
+    assert.equal(evmReceiveState.loading, '');
+    assert.equal(evmReceiveState.hasButton, false, 'Stale QTC retry button must be cleared on chain switch');
+
+    await cdp.clickReal('#sheet-receive [data-i18n="sheet.receiveCopyBtn"]');
+    await cdp.waitFor(`window.__e2eCopiedTexts.length >= 1`, 2000, 'EVM address copied');
+    const copiedEvm = await cdp.evalJs(`window.__e2eCopiedTexts[window.__e2eCopiedTexts.length - 1]`);
+    assert.equal(copiedEvm, evmReceiveState.text, 'Copied EVM address must exactly match displayed clean address');
+
+    // Switch back to NEAR and verify clean display + copy
+    await cdp.clickReal('#receive-network-pills [data-action="select-receive-network"][data-net="near"]');
+    await cdp.waitFor(`/^[0-9a-f]{64}$|\\.near$/i.test((document.getElementById('receive-addr-value')?.textContent || '').trim())`, 2000, 'clean NEAR receive address displayed');
+    const nearAddr = await cdp.evalJs(`(document.getElementById('receive-addr-value')?.textContent || '').trim()`);
+    assert.equal(nearAddr.includes('--'), false, 'NEAR receive address must not have -- concatenation');
+    await cdp.clickReal('#sheet-receive [data-i18n="sheet.receiveCopyBtn"]');
+    await cdp.waitFor(`window.__e2eCopiedTexts.length >= 2`, 2000, 'NEAR address copied');
+    const copiedNear = await cdp.evalJs(`window.__e2eCopiedTexts[window.__e2eCopiedTexts.length - 1]`);
+    assert.equal(copiedNear, nearAddr, 'Copied NEAR address must match displayed clean address');
+
+    await cdp.clickReal('#sheet-backdrop');
+    await cdp.waitFor(`!document.getElementById('sheet-receive')?.classList.contains('open')`, 2000, 'receive sheet closed');
+  });
+
+  test('E2E 17: Dark-theme CSS primitives (StatusBadge & EmptyState with spinner) render with real dark styles and non-zero sizes', async () => {
+    // 1) StatusBadge via Send cross-chain preview
+    await cdp.clickReal('.bottom-nav .nav-item[data-tab="wallet"]');
+    await cdp.clickReal('#view-wallet .quick-action-btn:nth-child(1)');
+    await cdp.waitFor(`document.getElementById('sheet-send')?.classList.contains('open')`, 2000, 'send sheet open for StatusBadge check');
+    await cdp.typeReal('#send-recipient-input', '0x2222222222222222222222222222222222222222');
+    await cdp.typeReal('#send-amount-input', '1');
+    await cdp.waitFor(`Boolean(document.querySelector('#send-route-preview span.rounded-full'))`, 3000, 'StatusBadge rendered inside #send-route-preview');
+    const badgeMetrics = await cdp.evalJs(`(() => {
+      const el = document.querySelector('#send-route-preview span.rounded-full');
+      const rect = el ? el.getBoundingClientRect() : null;
+      const cs = el ? getComputedStyle(el) : null;
+      return {
+        width: rect ? rect.width : 0,
+        height: rect ? rect.height : 0,
+        bg: cs ? cs.backgroundColor : '',
+        color: cs ? cs.color : '',
+        radius: cs ? parseFloat(cs.borderTopLeftRadius || '0') : 0,
+        whiteSpace: cs ? cs.whiteSpace : '',
+        borderWidth: cs ? cs.borderTopWidth : ''
+      };
+    })()`);
+    assert.ok(badgeMetrics.width > 20 && badgeMetrics.height > 12, `StatusBadge must have non-zero size (${badgeMetrics.width}x${badgeMetrics.height})`);
+    assert.notEqual(badgeMetrics.bg, 'rgba(0, 0, 0, 0)', 'StatusBadge must have dark-theme background');
+    assert.notEqual(badgeMetrics.color, 'rgb(0, 0, 0)', 'StatusBadge must have light text color');
+    assert.ok(badgeMetrics.radius >= 100, `StatusBadge must be pill-rounded, got ${badgeMetrics.radius}`);
+    assert.equal(badgeMetrics.whiteSpace, 'nowrap', 'StatusBadge must prevent line wrapping');
+    assert.equal(badgeMetrics.borderWidth, '1px', 'StatusBadge must have 1px border');
+    await cdp.clickReal('#sheet-backdrop');
+    await cdp.waitFor(`!document.getElementById('sheet-send')?.classList.contains('open')`, 2000, 'send sheet closed');
+
+    // 2) EmptyState via WalletConnect sheet + EmptyState loading spinner CSS check
+    await cdp.clickReal('.bottom-nav .nav-item[data-tab="hub"]');
+    await cdp.waitFor(`!document.getElementById('view-hub')?.classList.contains('hidden')`, 2000, 'hub view visible for EmptyState check');
+    await cdp.evalJs(`document.querySelector('#view-hub [data-i18n="hub.wcTitle"]')?.closest('button')?.click()`);
+    await cdp.waitFor(`document.getElementById('sheet-walletconnect')?.classList.contains('open')`, 2000, 'walletconnect sheet open');
+    await cdp.waitFor(`Boolean(document.querySelector('#wc-sessions-list .text-slate-200'))`, 2000, 'EmptyState rendered inside #wc-sessions-list');
+    const emptyMetrics = await cdp.evalJs(`(() => {
+      const wrap = document.querySelector('#wc-sessions-list > div');
+      const title = document.querySelector('#wc-sessions-list .text-slate-200');
+      const rect = wrap ? wrap.getBoundingClientRect() : null;
+      const wCs = wrap ? getComputedStyle(wrap) : null;
+      const tCs = title ? getComputedStyle(title) : null;
+      // Probe EmptyState loading spinner class styling against loaded style.css
+      const probe = document.createElement('span');
+      probe.className = 'inline-block w-4 h-4 mb-2 rounded-full border-2 border-slate-500 border-t-emerald-400 animate-spin';
+      wrap.appendChild(probe);
+      const pRect = probe.getBoundingClientRect();
+      const pCs = getComputedStyle(probe);
+      const spinnerInfo = {
+        width: pRect.width,
+        height: pRect.height,
+        borderTopColor: pCs.borderTopColor,
+        borderLeftColor: pCs.borderLeftColor,
+        radius: parseFloat(pCs.borderTopLeftRadius || '0'),
+        animName: pCs.animationName
+      };
+      probe.remove();
+      return {
+        width: rect ? rect.width : 0,
+        height: rect ? rect.height : 0,
+        wrapColor: wCs ? wCs.color : '',
+        titleColor: tCs ? tCs.color : '',
+        textAlign: wCs ? wCs.textAlign : '',
+        spinnerInfo
+      };
+    })()`);
+    assert.ok(emptyMetrics.width > 100 && emptyMetrics.height > 30, `EmptyState must have non-zero size (${emptyMetrics.width}x${emptyMetrics.height})`);
+    assert.equal(emptyMetrics.textAlign, 'center');
+    assert.notEqual(emptyMetrics.wrapColor, 'rgb(0, 0, 0)', 'EmptyState muted text must be light slate');
+    assert.notEqual(emptyMetrics.titleColor, 'rgb(0, 0, 0)', 'EmptyState title text must be light slate');
+    assert.equal(emptyMetrics.spinnerInfo.width, 16, 'EmptyState spinner .w-4 must be 16px wide');
+    assert.equal(emptyMetrics.spinnerInfo.height, 16, 'EmptyState spinner .h-4 must be 16px tall');
+    assert.ok(emptyMetrics.spinnerInfo.radius >= 100, 'EmptyState spinner .rounded-full must be circular');
+    assert.notEqual(emptyMetrics.spinnerInfo.borderTopColor, 'rgb(0, 0, 0)', 'EmptyState spinner top border must be emerald accent');
+    assert.equal(emptyMetrics.spinnerInfo.animName, 'ptr-spin', 'EmptyState spinner .animate-spin must bind ptr-spin animation');
+
+    await cdp.clickReal('#sheet-backdrop');
+    await cdp.waitFor(`!document.getElementById('sheet-walletconnect')?.classList.contains('open')`, 2000, 'walletconnect sheet closed');
+  });
+
+  test('E2E 18: Token detail/Perps scroll reset & restore + openSheet switching releases pending DApp approval', async () => {
+    // 1) Token detail scroll reset on open & 2nd-level back restore
+    await cdp.clickReal('.bottom-nav .nav-item[data-tab="wallet"]');
+    await cdp.waitFor(`!document.getElementById('view-wallet')?.classList.contains('hidden')`, 2000, 'home view visible for E2E 18');
+    await cdp.evalJs(`(() => {
+      const w = window.NearCAState.getActiveWallet();
+      w.activityHistory = Array.from({ length: 8 }, (_, i) => ({
+        id: 'e2e_tx_' + i,
+        type: 'send',
+        symbol: 'NEAR',
+        chain: 'near',
+        amount: 0.1 + i * 0.01,
+        txHash: 'e2e_hash_' + i,
+        status: 'SUCCESS',
+        timestamp: Date.now() - i * 60000
+      }));
+    })()`);
+
+    await cdp.clickReal('#home-unified-asset-list [data-action="open-token-detail"]');
+    await cdp.waitFor(`document.getElementById('sheet-token-detail')?.classList.contains('open')`, 2000, 'token detail open');
+    await cdp.waitFor(`!document.getElementById('token-detail-history-all-btn')?.classList.contains('hidden')`, 2000, 'history all button visible');
+    const detailInitialTop = await cdp.evalJs(`document.querySelector('#sheet-token-detail .sheet-body').scrollTop`);
+    assert.equal(detailInitialTop, 0, 'Token detail must open at scrollTop === 0');
+
+    const scrolledDetail = await cdp.evalJs(`(() => {
+      const body = document.querySelector('#sheet-token-detail .sheet-body');
+      body.scrollTop = 140;
+      return body.scrollTop;
+    })()`);
+    assert.ok(scrolledDetail > 0, `Expected scrollable token detail body, got scrollTop=${scrolledDetail}`);
+
+    await cdp.clickReal('#token-detail-history-all-btn');
+    await cdp.waitFor(`document.getElementById('sheet-tx-history')?.classList.contains('open')`, 2000, 'tx history sheet open');
+    const historyTop = await cdp.evalJs(`document.querySelector('#sheet-tx-history .sheet-body').scrollTop`);
+    assert.equal(historyTop, 0, 'Secondary tx history sheet must open at scrollTop === 0');
+
+    await cdp.clickReal('#sheet-tx-history [data-i18n="common.back"]');
+    await cdp.waitFor(`document.getElementById('sheet-token-detail')?.classList.contains('open')`, 2000, 'returned to token detail');
+    await new Promise((r) => setTimeout(r, 60));
+    const restoredDetailTop = await cdp.evalJs(`document.querySelector('#sheet-token-detail .sheet-body').scrollTop`);
+    assert.ok(restoredDetailTop >= 100, `Back from history must restore token detail scrollTop, got ${restoredDetailTop}`);
+
+    await cdp.clickReal('#sheet-backdrop');
+    await cdp.waitFor(`!document.getElementById('sheet-token-detail')?.classList.contains('open')`, 2000, 'token detail closed');
+    await cdp.clickReal('#home-unified-asset-list [data-action="open-token-detail"]');
+    await cdp.waitFor(`document.getElementById('sheet-token-detail')?.classList.contains('open')`, 2000, 'token detail reopened');
+    const reopenedTop = await cdp.evalJs(`document.querySelector('#sheet-token-detail .sheet-body').scrollTop`);
+    assert.equal(reopenedTop, 0, 'Freshly reopened token detail must reset scrollTop to 0');
+    await cdp.clickReal('#sheet-backdrop');
+    await cdp.waitFor(`!document.getElementById('sheet-token-detail')?.classList.contains('open')`, 2000, 'token detail closed again');
+
+    // 2) Perps market switch resets trade scroll to 0 & back restores overview scroll=0
+    await cdp.clickReal('.bottom-nav .nav-item[data-tab="perp"]');
+    await cdp.waitFor(`document.querySelectorAll('#perp-overview-list .perp-overview-row').length >= 10`, 3000, 'perp overview rows visible');
+    await cdp.evalJs(`window.scrollTo(0, 0)`);
+    await cdp.clickReal('#perp-overview-list .perp-overview-row');
+    await cdp.waitFor(`!document.getElementById('perp-trade-panel')?.classList.contains('hidden')`, 2000, 'perp trade open');
+    await cdp.evalJs(`window.scrollTo(0, 380)`);
+    await cdp.clickReal('#perp-coin-btn');
+    await cdp.waitFor(`document.getElementById('sheet-perp-markets')?.classList.contains('open')`, 2000, 'perp markets sheet open');
+    await cdp.clickReal('#perp-market-list [data-action="select-perp-market"]:nth-child(2)');
+    await cdp.waitFor(`!document.getElementById('sheet-perp-markets')?.classList.contains('open')`, 2000, 'perp markets sheet closed');
+    await new Promise((r) => setTimeout(r, 80));
+    const afterSelectY = await cdp.evalJs(`window.scrollY || document.documentElement.scrollTop || 0`);
+    assert.equal(afterSelectY, 0, `selectPerpMarket must reset trade scroll to 0, got ${afterSelectY}`);
+
+    await cdp.evalJs(`window.scrollTo(0, 320)`);
+    await cdp.clickReal('#btn-perp-back');
+    await cdp.waitFor(`!document.getElementById('perp-overview-panel')?.classList.contains('hidden')`, 2000, 'perp overview restored');
+    await new Promise((r) => setTimeout(r, 80));
+    const restoredOverviewY = await cdp.evalJs(`window.scrollY || document.documentElement.scrollTop || 0`);
+    assert.equal(restoredOverviewY, 0, `backToPerpOverview must restore 0px overview scroll, got ${restoredOverviewY}`);
+
+    // 3) openSheet switching while #sheet-dapp-approve is open rejects & releases bridge approval queue
+    await cdp.clickReal('.bottom-nav .nav-item[data-tab="hub"]');
+    await cdp.evalJs(`(() => {
+      window.__e2eDAppResponses = [];
+      const w = window.NearCAState.getActiveWallet();
+      if (w) {
+        w.nativeBalances = w.nativeBalances || {};
+        window.__e2ePrevEthBal18 = w.nativeBalances.eth;
+        w.nativeBalances.eth = 1.0;
+      }
+    })()`);
+    await cdp.evalJs(`document.querySelector('#hub-dapp-browser-btn')?.closest('button')?.click()`);
+    await cdp.waitFor(`document.getElementById('sheet-dapp-browser')?.classList.contains('open')`, 2000, 'dapp sheet open');
+    await cdp.typeReal('#dapp-url-input', 'https://near.com');
+    await cdp.clickReal('#btn-dapp-open');
+    await cdp.waitFor(`!document.getElementById('sheet-dapp-browser')?.classList.contains('open')`, 2000, 'dapp sheet closed');
+    await cdp.evalJs(`(() => {
+      const w = window.NearCAState.getActiveWallet();
+      window.__e2eEmitDAppBridge({
+        id: 'e2e-switch-release-1',
+        namespace: 'evm',
+        method: 'eth_sendTransaction',
+        origin: 'https://near.com',
+        params: [{ from: w.mpcEvmAddress || w.evmAddress, to: '0x2222222222222222222222222222222222222222', value: '0x0', data: '0x' }]
+      });
+    })()`);
+    await cdp.waitFor(`document.getElementById('sheet-dapp-approve')?.classList.contains('open')`, 3000, 'dapp approve open');
+
+    // Switch sheet via real click on #header-account-pill (opens #sheet-wallets via openSheet)
+    await cdp.clickReal('#header-account-pill');
+    await cdp.waitFor(`document.getElementById('sheet-wallets')?.classList.contains('open') && !document.getElementById('sheet-dapp-approve')?.classList.contains('open')`, 2000, 'wallet sheet replaced dapp approve');
+    await cdp.waitFor(`window.__e2eDAppResponses.some((r) => r.id === 'e2e-switch-release-1')`, 2000, 'pending DApp approval released with rejection');
+    const releasedResp = await cdp.evalJs(`window.__e2eDAppResponses.find((r) => r.id === 'e2e-switch-release-1')`);
+    assert.ok(releasedResp && releasedResp.errorJson && !releasedResp.resultJson, 'Switching away from #sheet-dapp-approve must reject & release bridge');
+    await cdp.evalJs(`(() => {
+      const w = window.NearCAState.getActiveWallet();
+      if (w && w.nativeBalances) w.nativeBalances.eth = window.__e2ePrevEthBal18;
+    })()`);
+    await cdp.clickReal('#sheet-backdrop');
+    await cdp.waitFor(`!document.getElementById('sheet-wallets')?.classList.contains('open')`, 2000, 'wallet sheet closed');
   });
 });

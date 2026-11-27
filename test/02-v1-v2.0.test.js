@@ -1139,6 +1139,9 @@ test('v2.0 Fix 3: Jupiter DAO Staking (JUP -> Staked JUP) PDA derivation, pre-va
         broadcastedTxB64 = b.params[0];
         return jsonResponse({ jsonrpc: '2.0', result: '5jupDaoStakeSig111111111111111111111111111' });
       }
+      if (b.method === 'getSignatureStatuses') {
+        return jsonResponse({ jsonrpc: '2.0', result: { value: [{ confirmationStatus: 'confirmed', err: null }] } });
+      }
     }
     if ((url.includes('rpc.mainnet.near.org') || url.includes('near.drpc.org')) && opts?.body) {
       const rpc = JSON.parse(opts.body);

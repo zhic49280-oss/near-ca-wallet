@@ -11,7 +11,7 @@
    - 助记词按 `m/44'/397'/0'` (SLIP-10 Ed25519) 派生 64 位隐式账户 (`nearAddress`) 及密钥对；
    - 支持链上自动发现或注册 `.near` 命名账户 (`nearNamedAccount`)，一旦存在命名账户，所有 NEAR 交易、NEP-141 资产与 MPC 派生均以 `nearNamedAccount` 为主身份。
 2. **NEAR MPC (`v1.signer`) 链抽象与本地自愈派生**：
-   - **EVM 10 链** (`eth`, `base`, `arb`, `bsc`, `op`, `pol`, `avax`, `hype`, `hood`, `arc`)：统一使用 `mpcEvmAddress || evmAddress`；
+   - **EVM 10 链** (`eth`, `base`, `arb`, `bsc`, `op`, `pol`, `avax`, `hype`, `hood`, `arc`)：统一通过 `resolveWalletEvmSender` 解析活跃地址（存在本地 `evmPrivateKey` 时优先使用对应私钥地址，否则使用 `mpcEvmAddress || evmAddress`）；
    - **Solana (`sol`)**：使用 `solAddress`；
    - **Pearl (`prl`)**：BIP-86 Taproot (`m/86'/808276'/0'/0/0`) 派生 `prl1p...` 地址，支持在【多链收款地址】弹窗单独绑定/更换独立挖矿助记词 (`prlMnemonic`) 或一键恢复默认派生；
    - **Bitcoin (`btc`)**：BIP-86 Taproot (`m/86'/0'/0'/0/0`) 派生 `bc1p...` 地址。
@@ -132,5 +132,5 @@
    - **NEAR 存储押金回收 (`sheet-near-storage`)**：扫描 0 余额且无 DCL 挂单的 NEP-141 合约，一键注销退回存储 NEAR。
 3. **矿机遥测 (`sheet-mining-pro`)、DApp 浏览器 (`sheet-dapp-browser`)、联系人地址簿 (`sheet-contacts`) 与设备原生生物识别安全锁 (`010-security.part.js`)**：
    - **设备原生安全验证**：统一调用设备原生能力（iOS `LocalAuthentication` / Android `BiometricPrompt` + 系统锁屏凭据 / 浏览器 WebAuthn 平台验证器）进行敏感操作校验与锁屏解锁；当设备不支持或未开启任何系统锁屏/生物识别时，提示建议开启系统锁屏并优雅放行，不阻断用户使用；
-   - **内置 DApp 浏览器安全边界**：连接授权按 `wallet.id` 严格隔离，切/删钱包不暴露旧授权；内置生态白名单 (`DAPP_CATALOG`) 仅在确认 `.near` 命名账户后才免弹窗预授权，启动及 `near:signIn` 前自动绕过失效空锁并水合 `.near` 命名账户；手动输入的外部未知域名必须经过 `sheet-dapp-approve` 明确授权后方可获取钱包地址；Solana `solana:signTransaction` 透传 `Uint8Array`；NEAR `signAndSendTransaction` 多 Action 请求通过 `signAndSendNearActionsBatch` 原子打包进单笔链上交易签名广播；EVM `personal_sign` 通过 NEAR MPC 签名后自动执行 `yParity` 地址恢复校验；交易审批自动解码 ERC-20 `approve` 与 NFT `setApprovalForAll` 授权对象及额度，并对 `eth_sign` 原始高危盲签触发强制二次确认；
+   - **内置 DApp 浏览器安全边界**：连接授权与 WalletConnect 会话按 `wallet.id` 严格隔离，切/删钱包不暴露旧授权并持久化已断连 origin；原生桥接仅绑定主 Frame 真实 `nativeOrigin`；内置生态白名单 (`DAPP_CATALOG`) 仅在确认 `.near` 命名账户后才免弹窗预授权，启动及 `near:signIn` 前自动水合 `.near` 命名账户；未授权或已断连域名不注入真实地址与自动连接标记；NEAR 返回规范 `FinalExecutionOutcome` 并支持 `BigInt`/`Uint8Array` 桥接序列化；Solana Wallet Standard 支持变长入参与 `'change'` 事件，并在 `signSolanaBase64Tx` 按签名账户匹配真实签名槽位；EVM/Solana/限价单交易广播后强制校验终态回执；交易审批自动解码 ERC-20 `approve` 与 NFT `setApprovalForAll` 授权对象及额度，并对 `eth_sign` 原始高危盲签触发强制二次确认；
    - **全局错误清洗与终端用户文案规范**：所有链上/网络异常均通过 `toUserFriendlyError` 转换为自然友好的中英文提示，剔除底层 HTTP 状态码、RPC、WebView、CORS、合约协议名等开发者术语。

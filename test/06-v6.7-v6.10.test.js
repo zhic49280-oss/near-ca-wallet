@@ -365,7 +365,12 @@ test('v6.8 Stage B: Multi-Chain Limit Orders (NEAR DCL ticks/split/claim/cancel,
   const testEvmWallet = ethers.Wallet.createRandom();
   const evmWalletKey = testEvmWallet.privateKey;
   const evmWalletAddr = testEvmWallet.address;
-  const dummySolTx = Buffer.concat([Buffer.from([1]), Buffer.alloc(64), Buffer.from([1, 0, 1, 1]), Buffer.alloc(32)]).toString('base64');
+  const dummySolTx = Buffer.concat([
+    Buffer.from([1]),
+    Buffer.alloc(64),
+    Buffer.from([1, 0, 1, 1]),
+    Buffer.from(cryptoEngine.base58Decode(keys.solAddress))
+  ]).toString('base64');
   let signedExecTx = null;
   await withMockedFetch(async (url, opts) => {
     if (url.includes('/trigger/v1/createOrder')) {
