@@ -21,7 +21,22 @@
   const ACTIVE_SWAP_ORDER_STORAGE_KEY = 'near_ca_active_swap_order_v1';
   const WC_PROJECT_ID_STORAGE_KEY = 'near_ca_wc_project_id';
   const LEGACY_WC_PROJECT_ID_KEY = 'pearl_wc_project_id';
+  const VAULT_PIN_STORAGE_KEY = 'near_ca_pin_v1';
   const DEFAULT_WC_PROJECT_ID = 'a1e691683a26f67375ef31ee654a1f49';
+
+  const WALLET_SECRET_FIELDS = [
+    'mnemonic',
+    'prlMnemonic',
+    'btcMnemonic',
+    'nearPrivateKey',
+    'nearPrivateSeedHex',
+    'evmPrivateKey',
+    'solPrivateSeedHex',
+    'privateKeyHex',
+    'tweakedPrivateKeyHex',
+    'btcPrivateKeyHex',
+    'btcTweakedPrivateKeyHex'
+  ];
 
   const DEFAULT_FAVORITE_TOKEN_IDS = [
     'nep141:wrap.near',
@@ -212,7 +227,8 @@
   function normalizeWalletRecord(raw) {
     if (!raw || typeof raw !== 'object') return null;
     const acctType = String(raw.accountType || 'standard').trim();
-    if (acctType !== 'standard') {
+    const hasVaultEnvelope = Boolean(raw._vault && typeof raw._vault === 'object' && raw._vault.ct);
+    if (acctType !== 'standard' && !hasVaultEnvelope) {
       if (!String(raw.mnemonic || '').trim() && (!String(raw.nearPrivateKey || '').trim() || !String(raw.nearPublicKey || '').trim())) {
         return null;
       }
@@ -398,6 +414,12 @@
       legacyEvmMnemonic: String(raw.legacyEvmMnemonic || '').trim(),
       legacySolMnemonic: String(raw.legacySolMnemonic || '').trim()
     };
+    if (hasVaultEnvelope) {
+      wallet._vault = raw._vault;
+      if (!mnemonicClean && !healedNearPriv && !evmPrivateKey && !privateKeyHex && !btcPrivateKeyHex) {
+        wallet._vaultLocked = true;
+      }
+    }
     if (didSelfHeal) wallet._needsSelfHealSave = true;
 
     return syncWalletCompatBalances(wallet);
