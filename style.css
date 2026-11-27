@@ -2087,7 +2087,7 @@ html.nexus-locked #app-lock-overlay {
 }
 
 .perp-chart-wrap {
-  padding: 8px;
+  padding: 6px 8px;
   border-radius: 12px;
   background: rgba(6, 10, 20, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -2095,7 +2095,8 @@ html.nexus-locked #app-lock-overlay {
 
 .perp-chart-svg {
   width: 100%;
-  height: 248px;
+  height: auto;
+  aspect-ratio: 360 / 216;
   display: block;
   touch-action: pan-y;
   user-select: none;
@@ -2106,6 +2107,7 @@ html.nexus-locked #app-lock-overlay {
   display: inline-flex;
   align-items: center;
   line-height: 1;
+  flex-shrink: 0;
 }
 
 .perp-market-stats {
@@ -2643,6 +2645,12 @@ html.nexus-locked #app-lock-overlay {
 .perp-chart-canvas-wrap {
   position: relative;
   width: 100%;
+  aspect-ratio: 360 / 216;
+}
+
+#perp-chart-svg {
+  width: 100%;
+  height: 100%;
 }
 
 .perp-okx-hud-float {
@@ -3134,6 +3142,7 @@ html.nexus-locked #app-lock-overlay {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
+  width: 100%;
   min-width: 0;
 }
 
@@ -3141,7 +3150,8 @@ html.nexus-locked #app-lock-overlay {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-shrink: 0;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .perp-trade-top-right {
@@ -3187,15 +3197,22 @@ html.nexus-locked #app-lock-overlay {
 }
 
 #perp-coin-btn {
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   white-space: nowrap;
-  min-width: fit-content;
   gap: 5px;
   padding: 5px 9px 5px 6px;
   font-size: 12.5px;
 }
 
 .perp-coin-name-text {
+  display: block;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -3284,6 +3301,13 @@ html.nexus-locked #app-lock-overlay {
     padding: 4px 6px 4px 5px;
     font-size: 11.5px;
     gap: 3px;
+  }
+  .perp-okx-perp-badge {
+    font-size: 9px;
+    padding: 1px 4px;
+  }
+  .perp-okx-chg-badge {
+    padding: 2px 4px;
   }
   .perp-top-icon-btn,
   .perp-top-act-btn {

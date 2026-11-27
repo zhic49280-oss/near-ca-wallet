@@ -257,7 +257,8 @@
     renderPerpCandleDetailBar(st.perp.candles, st.perp.inspectedCandleIdx);
   }
 
-  function renderPerpCandleSvg(candles, market = null, selectedIdx = null) {
+  function renderPerpCandleSvg(candles, market = null, selectedIdx = null, renderOpts = null) {
+    const isInteractivePan = Boolean(renderOpts && renderOpts.interactive);
     const { fullList, start, end, list } = getPerpChartWindow(candles);
     if (fullList.length < 2 || list.length < 2) {
       return `<div style="text-align:center; padding: 64px 0; font-size: 11.5px; color: var(--text-muted);">--</div>`;
@@ -413,13 +414,15 @@
       `<text data-ch="ypill-txt" x="323" y="${(yPillY + 10).toFixed(1)}" text-anchor="middle" fill="#f8fafc" font-size="8.0" font-weight="700" font-family="ui-monospace, monospace">${escapeHtml(chPxStr)}</text>` +
       `</g>`;
 
-    // Transparent Interactive Hit Targets per Candle
-    const hitTargetsSvg = list.map((_, idx) => {
-      const hx = plotL + idx * step;
-      return `<rect x="${hx.toFixed(1)}" y="${candleTop}" width="${step.toFixed(1)}" height="${(volBottom - candleTop).toFixed(1)}" fill="transparent" class="perp-candle-hit" data-action="inspect-perp-candle" data-candle-idx="${idx}" />`;
-    }).join('');
+    // Transparent Interactive Hit Targets per Candle (omitted during active pan/inertia to reduce SVG DOM parse cost)
+    const hitTargetsSvg = isInteractivePan
+      ? ''
+      : list.map((_, idx) => {
+        const hx = plotL + idx * step;
+        return `<rect x="${hx.toFixed(1)}" y="${candleTop}" width="${step.toFixed(1)}" height="${(volBottom - candleTop).toFixed(1)}" fill="transparent" class="perp-candle-hit" data-action="inspect-perp-candle" data-candle-idx="${idx}" />`;
+      }).join('');
 
-    return `<svg viewBox="0 0 ${W} ${H}" class="perp-chart-svg">${legendSvg}${gridSvg}${timeGridSvg}${candleSvg}${maSvg}${hiPin}${loPin}${markSvg}${crosshairSvg}${hitTargetsSvg}</svg>`;
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMin meet" class="perp-chart-svg">${legendSvg}${gridSvg}${timeGridSvg}${candleSvg}${maSvg}${hiPin}${loPin}${markSvg}${crosshairSvg}${hitTargetsSvg}</svg>`;
   }
 
   function bindPerpChartGestures() {
@@ -430,7 +433,14 @@
     if (host.style) {
       host.style.cursor = 'grab';
       if (!host.style.overflow) host.style.overflow = 'hidden';
+      if (!host.style.touchAction) host.style.touchAction = 'pan-y';
     }
+
+    const nowMs = () => (
+      typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now()
+    );
 
     let cachedRect = { width: 320, left: 0 };
     const refreshHostRect = () => {
@@ -449,27 +459,55 @@
       } catch (_) {}
     }
 
+    const PAN_REDRAW_THROTTLE_MS = 48;
+    const PAN_MAX_CANDLE_DRIFT = 6;
+    const INERTIA_MIN_START_V = 0.12; // px/ms
+    const INERTIA_STOP_V = 0.02;      // px/ms
+    const INERTIA_MAX_V = 3.2;        // px/ms
+    const INERTIA_FRICTION = 0.935;   // per 16.67ms frame
+
     let mode = null; // 'pan' | 'scrub' | 'pinch' | 'scroll'
     let startX = 0;
     let startY = 0;
+    let panOriginX = 0;
     let startOffset = 0;
     let startPinchDist = 0;
     let startVisibleCount = 48;
     let longPressTimer = null;
     let rafId = 0;
+    let pendingRedrawInteractive = false;
+    let redrawThrottleTimer = null;
     let scrubRafId = 0;
     let panTransformRafId = 0;
+    let inertiaRafId = 0;
     let pendingPanPx = 0;
     let panBoundaryCrossed = false;
+    let renderedOffset = Number((getState().perp && getState().perp.chartOffsetFromEnd) || 0);
+    let floatOffset = renderedOffset;
+    let lastRedrawAt = 0;
+    let lastDetailIdx = (getState().perp && getState().perp.inspectedCandleIdx) ?? null;
+
+    // Velocity tracker for flick momentum
+    let lastMoveX = 0;
+    let lastMoveAt = 0;
+    let panVelocityPxPerMs = 0;
+
     let mouseDown = false;
     let mouseDragged = false;
     let mouseStartX = 0;
     let mouseStartOffset = 0;
 
+    const getPxPerCandle = (st) => {
+      const width = cachedRect.width || 320;
+      const plotPx = Math.max(60, width * (348 / 360));
+      const visCount = Math.max(20, Math.min(140, Math.round(Number((st && st.perp && st.perp.chartVisibleCount) || 48))));
+      return plotPx / visCount;
+    };
+
     const setChartPanTransform = (px) => {
       const target = (host.firstElementChild && host.firstElementChild.style) ? host.firstElementChild : host;
       if (!target || !target.style) return;
-      if (px === 0) {
+      if (!px || Math.abs(px) < 0.05) {
         target.style.transform = '';
         target.style.willChange = '';
       } else {
@@ -500,29 +538,166 @@
       setChartPanTransform(0);
     };
 
+    const clearRedrawThrottle = () => {
+      if (redrawThrottleTimer) {
+        clearTimeout(redrawThrottleTimer);
+        redrawThrottleTimer = null;
+      }
+    };
+
+    const stopPanInertia = () => {
+      if (inertiaRafId && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(inertiaRafId);
+      }
+      inertiaRafId = 0;
+    };
+
+    const commitChartRedraw = (interactive = false) => {
+      clearRedrawThrottle();
+      const st = getState();
+      if (!st || !st.perp) return;
+      const market = getSelectedPerpMarket();
+      const selIdx = st.perp.inspectedCandleIdx;
+      host.innerHTML = renderPerpCandleSvg(
+        st.perp.candles,
+        market,
+        selIdx,
+        interactive ? { interactive: true } : null
+      );
+      renderedOffset = Number(st.perp.chartOffsetFromEnd || 0);
+      lastRedrawAt = nowMs();
+      if (interactive) {
+        const pxPerCandle = getPxPerCandle(st);
+        const residualPx = (floatOffset - renderedOffset) * pxPerCandle;
+        pendingPanPx = residualPx;
+        setChartPanTransform(residualPx);
+      } else {
+        floatOffset = renderedOffset;
+        resetPanTransform();
+      }
+      if (lastDetailIdx !== selIdx) {
+        lastDetailIdx = selIdx;
+        renderPerpCandleDetailBar(st.perp.candles, selIdx);
+      }
+    };
+
+    const scheduleChartRedraw = (interactive = false) => {
+      if (!interactive) pendingRedrawInteractive = false;
+      else if (!rafId) pendingRedrawInteractive = true;
+
+      if (typeof requestAnimationFrame !== 'function') {
+        commitChartRedraw(interactive);
+        return;
+      }
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        const useInteractive = pendingRedrawInteractive;
+        pendingRedrawInteractive = false;
+        commitChartRedraw(useInteractive);
+      });
+    };
+
+    const applyContinuousOffset = (nextFloatOffset, interactive = true) => {
+      const st = getState();
+      const total = Array.isArray(st.perp && st.perp.candles) ? st.perp.candles.length : 0;
+      const visCount = Math.max(20, Math.min(140, Math.round(Number((st.perp && st.perp.chartVisibleCount) || 48))));
+      const maxOff = Math.max(0, total - Math.min(total, visCount));
+      const clamped = Math.max(0, Math.min(maxOff, nextFloatOffset));
+      floatOffset = clamped;
+      const targetInt = Math.round(clamped);
+      const pxPerCandle = getPxPerCandle(st);
+
+      if (st.perp.inspectedCandleIdx !== null && st.perp.inspectedCandleIdx !== undefined) {
+        st.perp.inspectedCandleIdx = null;
+        lastDetailIdx = null;
+        renderPerpCandleDetailBar(st.perp.candles, null);
+      }
+
+      const visualShiftPx = (floatOffset - renderedOffset) * pxPerCandle;
+      schedulePanTransform(visualShiftPx);
+
+      if (targetInt !== st.perp.chartOffsetFromEnd) {
+        st.perp.chartOffsetFromEnd = targetInt;
+        panBoundaryCrossed = true;
+      }
+
+      if (targetInt !== renderedOffset) {
+        const elapsed = nowMs() - lastRedrawAt;
+        const candleDrift = Math.abs(floatOffset - renderedOffset);
+        if (!interactive || elapsed >= PAN_REDRAW_THROTTLE_MS || candleDrift >= PAN_MAX_CANDLE_DRIFT) {
+          scheduleChartRedraw(interactive);
+        } else if (!redrawThrottleTimer) {
+          redrawThrottleTimer = setTimeout(() => {
+            redrawThrottleTimer = null;
+            if (mode === 'pan' || mouseDragged || inertiaRafId) {
+              scheduleChartRedraw(true);
+            }
+          }, Math.max(16, PAN_REDRAW_THROTTLE_MS - elapsed));
+        }
+      }
+      return { clamped, hitBound: clamped !== nextFloatOffset, maxOff };
+    };
+
     const applyPanDelta = (dx, baseOffset) => {
       const st = getState();
-      const width = cachedRect.width || 320;
-      const visCount = Number(st.perp.chartVisibleCount || 48);
-      const pxPerCandle = width / Math.max(1, visCount);
-      const candleDelta = Math.round(dx / pxPerCandle);
-      const total = Array.isArray(st.perp.candles) ? st.perp.candles.length : 0;
-      const maxOff = Math.max(0, total - Math.min(total, visCount));
-      const nextOff = Math.max(0, Math.min(maxOff, baseOffset + candleDelta));
-      if (nextOff !== st.perp.chartOffsetFromEnd) {
-        st.perp.chartOffsetFromEnd = nextOff;
-        st.perp.inspectedCandleIdx = null;
-        panBoundaryCrossed = true;
-        resetPanTransform();
-        scheduleChartRedraw();
-      } else {
-        const appliedCandles = nextOff - baseOffset;
-        let residualPx = dx - appliedCandles * pxPerCandle;
-        if ((nextOff === 0 && residualPx < 0) || (nextOff === maxOff && residualPx > 0)) {
-          residualPx = 0;
+      const pxPerCandle = getPxPerCandle(st);
+      return applyContinuousOffset(baseOffset + dx / pxPerCandle, true);
+    };
+
+    const recordPanVelocity = (clientX) => {
+      const tNow = nowMs();
+      if (lastMoveAt > 0) {
+        const dt = tNow - lastMoveAt;
+        if (dt >= 4 && dt <= 120) {
+          const instV = (clientX - lastMoveX) / dt;
+          panVelocityPxPerMs = panVelocityPxPerMs * 0.45 + instV * 0.55;
+        } else if (dt > 120) {
+          panVelocityPxPerMs = 0;
         }
-        schedulePanTransform(residualPx);
       }
+      lastMoveX = clientX;
+      lastMoveAt = tNow;
+    };
+
+    const settlePanToInteger = () => {
+      stopPanInertia();
+      clearRedrawThrottle();
+      const st = getState();
+      const total = Array.isArray(st.perp && st.perp.candles) ? st.perp.candles.length : 0;
+      const visCount = Math.max(20, Math.min(140, Math.round(Number((st.perp && st.perp.chartVisibleCount) || 48))));
+      const maxOff = Math.max(0, total - Math.min(total, visCount));
+      const finalOff = Math.max(0, Math.min(maxOff, Math.round(floatOffset)));
+      st.perp.chartOffsetFromEnd = finalOff;
+      floatOffset = finalOff;
+      scheduleChartRedraw(false);
+    };
+
+    const startPanInertia = (initialV) => {
+      stopPanInertia();
+      if (typeof requestAnimationFrame !== 'function') {
+        settlePanToInteger();
+        return;
+      }
+      let vx = Math.max(-INERTIA_MAX_V, Math.min(INERTIA_MAX_V, initialV));
+      let prevTs = nowMs();
+      const step = () => {
+        inertiaRafId = 0;
+        const tNow = nowMs();
+        const dt = Math.min(34, Math.max(4, tNow - prevTs));
+        prevTs = tNow;
+        const st = getState();
+        const pxPerCandle = getPxPerCandle(st);
+        const nextFloat = floatOffset + (vx * dt) / pxPerCandle;
+        const { hitBound } = applyContinuousOffset(nextFloat, true);
+        vx *= Math.pow(INERTIA_FRICTION, dt / 16.67);
+        if (hitBound || Math.abs(vx) < INERTIA_STOP_V) {
+          settlePanToInteger();
+          return;
+        }
+        inertiaRafId = requestAnimationFrame(step);
+      };
+      inertiaRafId = requestAnimationFrame(step);
     };
 
     const clientXToCandleIdx = (clientX) => {
@@ -539,7 +714,10 @@
         if (!updatePerpCrosshairOverlay(host, st.perp.candles, st.perp.inspectedCandleIdx)) {
           const market = getSelectedPerpMarket();
           host.innerHTML = renderPerpCandleSvg(st.perp.candles, market, st.perp.inspectedCandleIdx);
+          renderedOffset = Number(st.perp.chartOffsetFromEnd || 0);
+          floatOffset = renderedOffset;
         }
+        lastDetailIdx = st.perp.inspectedCandleIdx;
         renderPerpCandleDetailBar(st.perp.candles, st.perp.inspectedCandleIdx);
       };
       if (typeof requestAnimationFrame !== 'function') {
@@ -553,29 +731,33 @@
       });
     };
 
-    const scheduleChartRedraw = () => {
-      if (typeof requestAnimationFrame !== 'function') {
-        const st = getState();
-        const market = getSelectedPerpMarket();
-        host.innerHTML = renderPerpCandleSvg(st.perp.candles, market, st.perp.inspectedCandleIdx);
-        renderPerpCandleDetailBar(st.perp.candles, st.perp.inspectedCandleIdx);
-        return;
+    const cancelScheduledRedraw = () => {
+      if (rafId && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(rafId);
       }
-      if (rafId) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = 0;
-        const st = getState();
-        const market = getSelectedPerpMarket();
-        host.innerHTML = renderPerpCandleSvg(st.perp.candles, market, st.perp.inspectedCandleIdx);
-        renderPerpCandleDetailBar(st.perp.candles, st.perp.inspectedCandleIdx);
-      });
+      rafId = 0;
+      pendingRedrawInteractive = false;
+    };
+
+    const syncOffsetFromState = (wasCoasting) => {
+      const st = getState();
+      const curStateOff = Number((st.perp && st.perp.chartOffsetFromEnd) || 0);
+      if (!wasCoasting || Math.abs(Math.round(floatOffset) - curStateOff) > 1) {
+        renderedOffset = curStateOff;
+        floatOffset = curStateOff;
+      }
     };
 
     host.addEventListener('touchstart', (e) => {
       if (!e.touches) return;
+      const wasCoasting = Boolean(inertiaRafId);
+      stopPanInertia();
+      clearRedrawThrottle();
+      cancelScheduledRedraw();
       refreshHostRect();
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
       const st = getState();
+      syncOffsetFromState(wasCoasting);
       if (e.touches.length === 2) {
         mode = 'pinch';
         startPinchDist = Math.hypot(
@@ -590,7 +772,11 @@
         panBoundaryCrossed = false;
         startX = e.touches[0].clientX;
         startY = e.touches[0].clientY;
-        startOffset = Number(st.perp.chartOffsetFromEnd || 0);
+        panOriginX = startX;
+        startOffset = floatOffset;
+        lastMoveX = startX;
+        lastMoveAt = nowMs();
+        panVelocityPxPerMs = 0;
         const touchX = e.touches[0].clientX;
         longPressTimer = setTimeout(() => {
           mode = 'scrub';
@@ -615,7 +801,7 @@
         );
         const scale = startPinchDist / Math.max(10, dist);
         st.perp.chartVisibleCount = Math.max(20, Math.min(140, Math.round(startVisibleCount * scale)));
-        scheduleChartRedraw();
+        scheduleChartRedraw(false);
         return;
       }
       if (e.touches.length === 1) {
@@ -632,8 +818,13 @@
             mode = 'scroll';
             return;
           }
-          if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+          if (Math.abs(dx) > 7 && Math.abs(dx) > Math.abs(dy) * 1.15) {
             mode = 'pan';
+            panOriginX = curX;
+            startOffset = floatOffset;
+            lastMoveX = curX;
+            lastMoveAt = nowMs();
+            panVelocityPxPerMs = 0;
           }
         }
         if (mode === 'scroll') return;
@@ -646,7 +837,8 @@
           }
         } else if (mode === 'pan') {
           if (e.cancelable) e.preventDefault();
-          applyPanDelta(dx, startOffset);
+          recordPanVelocity(curX);
+          applyPanDelta(curX - panOriginX, startOffset);
         }
       }
     }, { passive: false });
@@ -655,8 +847,16 @@
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
       if (mode === 'scrub') _lastLongPressAt = Date.now();
       if (mode === 'pan') {
-        resetPanTransform();
-        if (panBoundaryCrossed) scheduleChartRedraw();
+        const age = nowMs() - lastMoveAt;
+        const releaseV = age <= 90 ? panVelocityPxPerMs : 0;
+        mode = null;
+        panBoundaryCrossed = false;
+        if (Math.abs(releaseV) >= INERTIA_MIN_START_V) {
+          startPanInertia(releaseV);
+        } else {
+          settlePanToInteger();
+        }
+        return;
       }
       panBoundaryCrossed = false;
       mode = null;
@@ -666,13 +866,20 @@
 
     host.addEventListener('mousedown', (e) => {
       if (!e || (e.button !== undefined && e.button !== 0)) return;
+      const wasCoasting = Boolean(inertiaRafId);
+      stopPanInertia();
+      clearRedrawThrottle();
+      cancelScheduledRedraw();
       refreshHostRect();
-      const st = getState();
+      syncOffsetFromState(wasCoasting);
       mouseDown = true;
       mouseDragged = false;
       panBoundaryCrossed = false;
       mouseStartX = e.clientX;
-      mouseStartOffset = Number((st.perp && st.perp.chartOffsetFromEnd) || 0);
+      mouseStartOffset = floatOffset;
+      lastMoveX = e.clientX;
+      lastMoveAt = nowMs();
+      panVelocityPxPerMs = 0;
       if (host.style) host.style.cursor = 'grabbing';
     });
 
@@ -682,9 +889,15 @@
         const dx = e.clientX - mouseStartX;
         if (!mouseDragged && Math.abs(dx) >= 5) {
           mouseDragged = true;
+          mouseStartX = e.clientX;
+          mouseStartOffset = floatOffset;
+          lastMoveX = e.clientX;
+          lastMoveAt = nowMs();
+          panVelocityPxPerMs = 0;
         }
         if (mouseDragged) {
-          applyPanDelta(dx, mouseStartOffset);
+          recordPanVelocity(e.clientX);
+          applyPanDelta(e.clientX - mouseStartX, mouseStartOffset);
         }
       });
       window.addEventListener('mouseup', () => {
@@ -693,16 +906,23 @@
         if (host.style) host.style.cursor = 'grab';
         if (mouseDragged) {
           _lastLongPressAt = Date.now();
+          const age = nowMs() - lastMoveAt;
+          const releaseV = age <= 90 ? panVelocityPxPerMs : 0;
           mouseDragged = false;
-          resetPanTransform();
-          if (panBoundaryCrossed) scheduleChartRedraw();
           panBoundaryCrossed = false;
+          if (Math.abs(releaseV) >= INERTIA_MIN_START_V) {
+            startPanInertia(releaseV);
+          } else {
+            settlePanToInteger();
+          }
         }
       });
     }
 
     host.addEventListener('wheel', (e) => {
       if (!e || typeof e.deltaY !== 'number') return;
+      stopPanInertia();
+      clearRedrawThrottle();
       const st = getState();
       const cur = Number(st.perp.chartVisibleCount || 48);
       const step = e.deltaY > 0 ? 6 : -6;
@@ -710,7 +930,7 @@
       if (next !== cur) {
         e.preventDefault();
         st.perp.chartVisibleCount = next;
-        scheduleChartRedraw();
+        scheduleChartRedraw(false);
       }
     }, { passive: false });
   }

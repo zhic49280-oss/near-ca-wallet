@@ -9,7 +9,10 @@
     const [ob, candles] = await Promise.all(tasks);
     if (st.perp.selectedCoin !== coin) return;
     const ivStillCurrent = (st.perp.chartInterval || '15m') === iv;
-    if (ob) st.perp.orderbook = ob;
+    if (ob) {
+      st.perp.orderbook = ob;
+      _perpLastL2BookTs = Date.now();
+    }
     if (Array.isArray(candles) && ivStillCurrent) st.perp.candles = candles;
     if (typeof st.saveCachedPerpSnapshot === 'function') {
       st.saveCachedPerpSnapshot({
@@ -47,6 +50,7 @@
   let _perpPollTimer = null;
   let _perpObFallbackTimer = null;
   let _perpObFallbackInFlight = false;
+  let _perpLastL2BookTs = 0;
   let _perpFundingTickTimer = null;
   let _perpTradeActionBusy = false;
   let _perpMidsRenderTimer = null;
@@ -63,6 +67,7 @@
       _perpObFallbackTimer = null;
     }
     _perpObFallbackInFlight = false;
+    _perpLastL2BookTs = 0;
     if (_perpFundingTickTimer) {
       clearInterval(_perpFundingTickTimer);
       _perpFundingTickTimer = null;
@@ -229,6 +234,7 @@
                 askTotalSz,
                 bidRatioPct: tot > 0 ? Math.round((bidTotalSz / tot) * 100) : 50
               };
+              _perpLastL2BookTs = Date.now();
               scheduleThrottledOrderbookRender();
             } else if (msg && msg.channel === 'allMids' && msg.data && msg.data.mids) {
               const m = getSelectedPerpMarket();
@@ -335,7 +341,9 @@
 
     _perpObFallbackTimer = unrefTimer(setInterval(async () => {
       if (!isPerpTradeActive()) return;
-      if (_perpWs && _perpWs.readyState === 1) return;
+      const wsOpen = Boolean(_perpWs && _perpWs.readyState === 1);
+      const l2BookFresh = _perpLastL2BookTs > 0 && (Date.now() - _perpLastL2BookTs < 3000);
+      if (wsOpen && l2BookFresh) return;
       if (_perpObFallbackInFlight) return;
       const hl = getHyperliquid();
       if (!hl || typeof hl.fetchHlOrderbook !== 'function') return;
@@ -346,6 +354,7 @@
         const latestSt = getState();
         if (ob && latestSt.perp && latestSt.perp.selectedCoin === targetCoin) {
           latestSt.perp.orderbook = ob;
+          _perpLastL2BookTs = Date.now();
           flushOrderbookRenderRaf();
         }
       } finally {

@@ -182,15 +182,6 @@ export function PerpView() {
               >
                 ☆
               </button>
-              <button
-                type="button"
-                id="btn-perp-trade-refresh"
-                className="btn-ghost-sm perp-top-act-btn"
-                onClick={() => window.refreshPerpDataAsync && window.refreshPerpDataAsync(true)}
-                data-i18n="common.refresh"
-              >
-                {tr('common.refresh', '刷新')}
-              </button>
             </div>
           </div>
 
@@ -210,7 +201,7 @@ export function PerpView() {
           </div>
 
           <div id="perp-chart-wrap" className="perp-chart-wrap">
-            <div className="flex items-center justify-between gap-1" style={{ marginBottom: '4px' }}>
+            <div className="flex items-center justify-between gap-1" style={{ marginBottom: '2px' }}>
               <div id="perp-interval-pills" className="flex gap-1">
                 {[
                   ['5m', 'perp.iv5m', '5分'],
