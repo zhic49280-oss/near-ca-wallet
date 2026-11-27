@@ -162,6 +162,7 @@
     if (amtInp && (typeof document === 'undefined' || document.activeElement !== amtInp)) {
       amtInp.value = '';
     }
+    clearSendMaxSweepState(st);
     if ($('send-detected-net')) $('send-detected-net').textContent = '';
     $('send-route-preview')?.classList.add('hidden');
     if (typeof resetSendTxReceipt === 'function') resetSendTxReceipt();
@@ -197,6 +198,22 @@
 
   const sendDec = (a, fb = 8) => (a && isNativeSendAsset(a) && a.blockchain === 'arc') ? 18 : (a?.decimals ?? fb);
 
+  const SEND_LIVE_GAS_TTL_MS = 15_000;
+
+  function clearSendMaxSweepState(st) {
+    if (st && st.send && typeof st.send === 'object') {
+      st.send._isMaxSweep = false;
+      st.send._maxSweepKey = '';
+      st.send._maxSweepAmount = '';
+    }
+  }
+
+  function isSendMaxSweepActive(st, asset, amtStr) {
+    if (!st || !st.send || !st.send._isMaxSweep || !asset) return false;
+    return String(st.send._maxSweepKey || '') === String(asset.key || '') &&
+      String(st.send._maxSweepAmount || '').trim() === String(amtStr || '').trim();
+  }
+
   function resolveEffectiveSendGasPlan(wallet, asset) {
     const st = getState();
     const contracts = getContracts();
@@ -209,7 +226,7 @@
     const walletKey = wallet ? (wallet.id || wallet.nearNamedAccount || wallet.nearAddress || 'default') : 'none';
     const cacheKey = `${walletKey}:${chain}:transfer`;
     const cached = st.send && st.send._liveGas;
-    const isFresh = Boolean(cached && cached.key === cacheKey && (Date.now() - cached.ts) < 60_000 && cached.data);
+    const isFresh = Boolean(cached && cached.key === cacheKey && (Date.now() - cached.ts) < SEND_LIVE_GAS_TTL_MS && cached.data);
     const liveGas = isFresh ? cached.data : null;
 
     let gasBuffer = null;
@@ -238,7 +255,7 @@
     const walletKey = wallet.id || wallet.nearNamedAccount || wallet.nearAddress || 'default';
     const cacheKey = `${walletKey}:${chain}:transfer`;
     const cached = st.send && st.send._liveGas;
-    if (!force && cached && cached.key === cacheKey && (Date.now() - cached.ts) < 60_000 && cached.data) {
+    if (!force && cached && cached.key === cacheKey && (Date.now() - cached.ts) < SEND_LIVE_GAS_TTL_MS && cached.data) {
       return cached.data;
     }
 
@@ -246,9 +263,129 @@
     if (res) {
       if (!st.send) st.send = {};
       st.send._liveGas = { key: cacheKey, ts: Date.now(), data: res };
-      handleSendAmountInput();
+      handleSendAmountInput({ preserveMaxSweep: Boolean(st.send._isMaxSweep) });
     }
     return res;
+  }
+
+  async function reconcileSendLiveGasBeforeSignAsync({ wallet, asset, avail, rawAmtStr, forceRefresh = false } = {}) {
+    const st = getState();
+    const contracts = getContracts();
+    const prePlan = resolveEffectiveSendGasPlan(wallet, asset);
+    const isNativeGas = prePlan.isNative;
+    const amtStr = String(rawAmtStr || '');
+    const amt = Number(amtStr || 0);
+    if (!wallet || !asset || !isNativeGas) {
+      return {
+        ok: true,
+        trimmed: false,
+        amtStr,
+        amt,
+        gasPlan: prePlan,
+        gasBuf: null,
+        gasMeta: {},
+        effectiveAvail: avail !== null && avail !== undefined ? avail : 0,
+        rawUnits: null
+      };
+    }
+
+    const chain = String(asset.blockchain || '').toLowerCase();
+    const walletKey = wallet.id || wallet.nearNamedAccount || wallet.nearAddress || 'default';
+    const cacheKey = `${walletKey}:${chain}:transfer`;
+    const cached = st.send && st.send._liveGas;
+    const hadSameKeyCache = Boolean(cached && cached.key === cacheKey && cached.data);
+    const isFresh = Boolean(hadSameKeyCache && (Date.now() - cached.ts) < SEND_LIVE_GAS_TTL_MS);
+    const isMax = isSendMaxSweepActive(st, asset, amtStr);
+
+    if (!isFresh && (forceRefresh || isMax || hadSameKeyCache)) {
+      await prefetchSendLiveGasAsync(true).catch(() => null);
+    }
+
+    const gasPlan = resolveEffectiveSendGasPlan(wallet, asset);
+    const gasBuf = gasPlan.gasBuffer;
+    const gasMeta = (gasPlan.liveGas && gasPlan.liveGas.meta) || {};
+    let effectiveAvail = avail !== null && avail !== undefined ? avail : 0;
+    let rawUnits = gasPlan.liveGas && gasPlan.liveGas.liveBalanceBaseUnits ? gasPlan.liveGas.liveBalanceBaseUnits : null;
+    if (rawUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
+      const liveNum = Number(contracts.fromBaseUnits(rawUnits, sendDec(asset, 18)));
+      if (Number.isFinite(liveNum) && liveNum > 0) {
+        effectiveAvail = liveNum;
+      } else {
+        rawUnits = null;
+      }
+    }
+
+    const feePlan = resolveNativeFeeDeductPlan({
+      wallet,
+      chain: asset.blockchain,
+      amount: amt,
+      avail: effectiveAvail,
+      isNative: true,
+      gasBuffer: gasBuf,
+      decimals: sendDec(asset, 6),
+      rawBaseUnits: rawUnits,
+      exactFeeBaseUnits: gasPlan.exactFeeBaseUnits
+    });
+    if (feePlan.mode === 'insufficient_balance') {
+      return { ok: false, trimmed: false, reason: 'insufficient_balance', error: `${asset.symbol} ${t('余额不足', 'balance insufficient')}` };
+    }
+    if (feePlan.mode !== 'insufficient_gas') {
+      return { ok: true, trimmed: false, amtStr, amt, gasPlan, gasBuf, gasMeta, effectiveAvail, rawUnits, feePlan };
+    }
+
+    const gasSym = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' }[chain] || 'ETH';
+    const prevGas = Number(prePlan.gasBuffer || 0);
+    const newGas = Number(gasBuf || 0);
+    if (!isMax) {
+      handleSendAmountInput();
+      return {
+        ok: false,
+        trimmed: false,
+        reason: 'insufficient_gas',
+        error: `${gasSym} ${t('网络手续费余额不足', 'network fee insufficient')}`
+      };
+    }
+
+    const maxOutNum = Number(feePlan.maxSpendable || 0);
+    const deficit = Math.max(0, amt - maxOutNum);
+    const ratioOk = !(prevGas > 0 && newGas > prevGas * 3 && deficit > amt * 0.01);
+    const magOk = (deficit <= amt * 0.05) || (prevGas > 0 && deficit <= prevGas * 0.5);
+    if (maxOutNum > 0 && feePlan.maxSpendableStr && feePlan.maxSpendableStr !== '0' && magOk && ratioOk) {
+      const nextInp = $('send-amount-input');
+      if (nextInp && (typeof document === 'undefined' || document.activeElement !== nextInp)) {
+        nextInp.value = feePlan.maxSpendableStr;
+      }
+      if (!st.send) st.send = {};
+      st.send._isMaxSweep = true;
+      st.send._maxSweepKey = asset.key;
+      st.send._maxSweepAmount = feePlan.maxSpendableStr;
+      handleSendAmountInput({ preserveMaxSweep: true });
+      return {
+        ok: true,
+        trimmed: true,
+        amtStr: feePlan.maxSpendableStr,
+        amt: Number(feePlan.maxSpendableStr),
+        gasPlan,
+        gasBuf,
+        gasMeta,
+        effectiveAvail,
+        rawUnits,
+        feePlan,
+        toastMsg: t(
+          `Gas 略有上涨，已自动将发送数量微调为 ${feePlan.maxSpendableStr} ${asset.symbol}`,
+          `Gas increased slightly; auto-adjusted amount to ${feePlan.maxSpendableStr} ${asset.symbol}`
+        )
+      };
+    }
+
+    return {
+      ok: false,
+      trimmed: false,
+      reason: 'gas_spike_too_large',
+      error: maxOutNum <= 0
+        ? t(`当前 ${gasSym} Gas 暴涨（需约 ${formatBal(newGas, 6)} ${gasSym}），余额已不足支付手续费`, `${gasSym} gas spiked (~${formatBal(newGas, 6)} ${gasSym}); balance cannot cover fee`)
+        : t(`当前 ${gasSym} Gas 突然大幅上涨（需约 ${formatBal(newGas, 6)} ${gasSym}），已超出自动微调范围，请重新确认金额`, `${gasSym} gas spiked sharply (~${formatBal(newGas, 6)} ${gasSym}), exceeding safe auto-trim limit. Please re-confirm amount.`)
+    };
   }
 
   function checkChainAddressValid(crypto, net, addr) {
@@ -269,6 +406,7 @@
     ++_sendCrossQuoteSeq;
     _sendCrossQuoteWarn = null;
     _sendCachedCrossQuote = null;
+    clearSendMaxSweepState(getState());
     const sym = ($('send-asset-select')?.value || '').toUpperCase();
     populateSendSourceSelect(sym);
     const amtInput = $('send-amount-input');
@@ -304,6 +442,7 @@
   function updateSendAvailabilityUI() {
     const amtInpUi = $('send-amount-input');
     if (!amtInpUi || typeof document === 'undefined' || document.activeElement !== amtInpUi) {
+      clearSendMaxSweepState(getState());
       if (typeof resetFormFields === 'function') {
         resetFormFields(['send-amount-input']);
       } else if (amtInpUi) {
@@ -322,12 +461,15 @@
     handleSendAmountInput();
   }
 
-  function handleSendAmountInput() {
+  function handleSendAmountInput(opts = {}) {
     updateSendRoutePreview();
     const st = getState();
     const contracts = getContracts();
     const wallet = st.getActiveWallet();
     const asset = getSelectedSendAsset();
+    if (!opts || !opts.preserveMaxSweep) {
+      clearSendMaxSweepState(st);
+    }
     const fixBanner = $('send-gas-fix-banner');
     const fixText = $('send-gas-fix-text');
     if (!fixBanner || !wallet || !asset) {
@@ -384,14 +526,24 @@
   }
 
   function applySendMaxSpendableFix() {
+    const st = getState();
+    const asset = getSelectedSendAsset();
     const feePlan = handleSendAmountInput();
     const inp = $('send-amount-input');
     if (inp && (typeof document === 'undefined' || document.activeElement !== inp) && feePlan && feePlan.maxSpendableStr && feePlan.maxSpendableStr !== '0') {
       inp.value = feePlan.maxSpendableStr;
+      if (asset) {
+        if (!st.send) st.send = {};
+        st.send._isMaxSweep = true;
+        st.send._maxSweepKey = asset.key;
+        st.send._maxSweepAmount = feePlan.maxSpendableStr;
+      }
       $('send-gas-fix-banner')?.classList.add('hidden');
-      handleSendAmountInput();
+      handleSendAmountInput({ preserveMaxSweep: true });
     }
   }
+
+  let _sendMaxSeq = 0;
 
   async function setSendMaxAmount() {
     const st = getState();
@@ -406,13 +558,19 @@
       return;
     }
     if (bal <= 0) return;
+    const maxSeq = ++_sendMaxSeq;
 
     if (!isNativeSendAsset(asset)) {
       const rawUnits = getWalletTokenRawBaseUnits(wallet, asset.blockchain, asset.contractAddress);
+      const maxStr = formatMaxDecimalString(bal, asset.decimals ?? 6, rawUnits);
       if (typeof document === 'undefined' || document.activeElement !== inp) {
-        inp.value = formatMaxDecimalString(bal, asset.decimals ?? 6, rawUnits);
+        inp.value = maxStr;
       }
-      handleSendAmountInput();
+      if (!st.send) st.send = {};
+      st.send._isMaxSweep = true;
+      st.send._maxSweepKey = asset.key;
+      st.send._maxSweepAmount = maxStr;
+      handleSendAmountInput({ preserveMaxSweep: true });
       return;
     }
 
@@ -422,16 +580,17 @@
     try {
       const liveGas = await prefetchSendLiveGasAsync(false).catch(() => null);
       const curAsset = getSelectedSendAsset();
-      if (!curAsset || curAsset.key !== startKey) return;
+      if (maxSeq !== _sendMaxSeq || !curAsset || curAsset.key !== startKey) return;
 
       const gasPlan = resolveEffectiveSendGasPlan(wallet, curAsset);
       let effectiveBal = bal;
       let rawUnits = null;
-      if (liveGas && liveGas.liveBalanceBaseUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
-        const liveNum = Number(contracts.fromBaseUnits(liveGas.liveBalanceBaseUnits, sendDec(curAsset, 18)));
+      const activeLiveGas = gasPlan.liveGas || liveGas;
+      if (activeLiveGas && activeLiveGas.liveBalanceBaseUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
+        const liveNum = Number(contracts.fromBaseUnits(activeLiveGas.liveBalanceBaseUnits, sendDec(curAsset, 18)));
         if (Number.isFinite(liveNum) && liveNum > 0) {
           effectiveBal = liveNum;
-          rawUnits = liveGas.liveBalanceBaseUnits;
+          rawUnits = activeLiveGas.liveBalanceBaseUnits;
         }
       }
       const maxInfo = computeExactMaxSpendable({
@@ -442,10 +601,15 @@
         gasReserve: gasPlan.gasBuffer || 0,
         exactFeeBaseUnits: gasPlan.exactFeeBaseUnits
       });
+      const nextVal = maxInfo.maxAmountStr || '0';
       if (inp && (typeof document === 'undefined' || document.activeElement !== inp)) {
-        inp.value = maxInfo.maxAmountStr || '0';
+        inp.value = nextVal;
       }
-      handleSendAmountInput();
+      if (!st.send) st.send = {};
+      st.send._isMaxSweep = Boolean(nextVal && nextVal !== '0');
+      st.send._maxSweepKey = st.send._isMaxSweep ? curAsset.key : '';
+      st.send._maxSweepAmount = st.send._isMaxSweep ? nextVal : '';
+      handleSendAmountInput({ preserveMaxSweep: st.send._isMaxSweep });
     } finally {
       if (maxBtn) maxBtn.disabled = false;
     }
@@ -518,8 +682,8 @@
 
     const asset = getSelectedSendAsset();
     const recipient = ($('send-recipient-input')?.value || '').trim();
-    const rawAmtStr = String($('send-amount-input')?.value || '').trim();
-    const amountNum = Number(rawAmtStr || 0);
+    let rawAmtStr = String($('send-amount-input')?.value || '').trim();
+    let amountNum = Number(rawAmtStr || 0);
 
     if (!asset) return;
     if (!recipient) {
@@ -542,10 +706,10 @@
       showToast(t('余额同步中，请稍候重试', 'Balance syncing, please wait'));
       return;
     }
-    const gasPlan = resolveEffectiveSendGasPlan(wallet, asset);
+    let gasPlan = resolveEffectiveSendGasPlan(wallet, asset);
     const isNativeGas = gasPlan.isNative;
-    const gasBuf = isNativeGas ? gasPlan.gasBuffer : null;
-    const gasMeta = (gasPlan.liveGas && gasPlan.liveGas.meta) || {};
+    let gasBuf = isNativeGas ? gasPlan.gasBuffer : null;
+    let gasMeta = (gasPlan.liveGas && gasPlan.liveGas.meta) || {};
     let effectiveAvail = avail !== null ? avail : 0;
     let rawUnits = isNativeGas && gasPlan.liveGas && gasPlan.liveGas.liveBalanceBaseUnits ? gasPlan.liveGas.liveBalanceBaseUnits : null;
     if (isNativeGas && rawUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
@@ -557,58 +721,75 @@
       }
     }
 
-    const feePlan = resolveNativeFeeDeductPlan({
-      wallet,
-      chain: asset.blockchain,
-      amount: amountNum,
-      avail: effectiveAvail,
-      isNative: isNativeGas,
-      gasBuffer: gasBuf,
-      decimals: sendDec(asset, 6),
-      rawBaseUnits: rawUnits,
-      exactFeeBaseUnits: gasPlan.exactFeeBaseUnits
-    });
-    if (feePlan.mode === 'insufficient_balance') {
-      showToast(`${asset.symbol} ${t('余额不足', 'balance insufficient')}`);
-      return;
-    }
-    if (feePlan.mode === 'insufficient_gas') {
-      handleSendAmountInput();
-      const gasSym = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' }[String(asset.blockchain || '').toLowerCase()] || 'ETH';
-      showToast(`${gasSym} ${t('网络手续费余额不足', 'network fee insufficient')}`);
-      return;
-    }
+    const sendChainKey = String(asset.blockchain || '').toLowerCase();
+    const sendCacheKey = `${wallet.id || wallet.nearNamedAccount || wallet.nearAddress || 'default'}:${sendChainKey}:transfer`;
+    const cachedSendGas = st.send && st.send._liveGas;
+    const deferStaleNativeGasCheck = Boolean(
+      isNativeGas && (
+        isSendMaxSweepActive(st, asset, rawAmtStr) ||
+        (cachedSendGas && cachedSendGas.key === sendCacheKey && cachedSendGas.data)
+      )
+    );
 
-    try {
-      contracts.validateSufficientChainBalance({
+    if (deferStaleNativeGasCheck) {
+      if (amountNum > effectiveAvail + 1e-12) {
+        showToast(`${asset.symbol} ${t('余额不足', 'balance insufficient')}`);
+        return;
+      }
+    } else {
+      const feePlan = resolveNativeFeeDeductPlan({
         wallet,
         chain: asset.blockchain,
-        tokenSymbol: asset.symbol,
         amount: amountNum,
+        avail: effectiveAvail,
         isNative: isNativeGas,
-        tokenBalance: effectiveAvail,
-        gasBuffer: gasBuf
+        gasBuffer: gasBuf,
+        decimals: sendDec(asset, 6),
+        rawBaseUnits: rawUnits,
+        exactFeeBaseUnits: gasPlan.exactFeeBaseUnits
       });
-      if (!isNativeGas && typeof contracts.getNativeGasReserve === 'function') {
-        const minNative = contracts.getNativeGasReserve(asset.blockchain);
-        const nativeBal = typeof contracts.resolveWalletChainBalance === 'function'
-          ? contracts.resolveWalletChainBalance(wallet, asset.blockchain)
-          : Number((wallet.nativeBalances && wallet.nativeBalances[asset.blockchain]) ?? 0);
-        if (minNative > 0 && nativeBal + 1e-12 < minNative) {
-          const gasSym = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' }[String(asset.blockchain || '').toLowerCase()] || 'ETH';
-          throw new Error(`${gasSym} ${t('网络手续费余额不足', 'network fee balance insufficient')} (${nativeBal.toFixed(5)} < ${minNative})`);
-        }
+      if (feePlan.mode === 'insufficient_balance') {
+        showToast(`${asset.symbol} ${t('余额不足', 'balance insufficient')}`);
+        return;
       }
-      if (asset.blockchain === 'sol' && isNativeGas) {
-        const feeSol = typeof gasBuf === 'number' ? gasBuf : 0.00001;
-        const remainingSol = effectiveAvail - amountNum - feeSol;
-        if (remainingSol > 1e-9 && remainingSol < 0.00089088) {
-          throw new Error(t('Solana 账户剩余 SOL 低于免租阈值 (0.000891 SOL)，请点击「全部」或减少发送金额', 'Remaining SOL would fall below rent-exempt minimum (0.000891 SOL). Tap Max or send less.'));
-        }
+      if (feePlan.mode === 'insufficient_gas') {
+        handleSendAmountInput();
+        const gasSym = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' }[sendChainKey] || 'ETH';
+        showToast(`${gasSym} ${t('网络手续费余额不足', 'network fee insufficient')}`);
+        return;
       }
-    } catch (err) {
-      showToast(toUserFriendlyError(err, '余额或参数校验未通过', 'Balance or validation check failed'));
-      return;
+
+      try {
+        contracts.validateSufficientChainBalance({
+          wallet,
+          chain: asset.blockchain,
+          tokenSymbol: asset.symbol,
+          amount: amountNum,
+          isNative: isNativeGas,
+          tokenBalance: effectiveAvail,
+          gasBuffer: gasBuf
+        });
+        if (!isNativeGas && typeof contracts.getNativeGasReserve === 'function') {
+          const minNative = contracts.getNativeGasReserve(asset.blockchain);
+          const nativeBal = typeof contracts.resolveWalletChainBalance === 'function'
+            ? contracts.resolveWalletChainBalance(wallet, asset.blockchain)
+            : Number((wallet.nativeBalances && wallet.nativeBalances[asset.blockchain]) ?? 0);
+          if (minNative > 0 && nativeBal + 1e-12 < minNative) {
+            const gasSym = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' }[sendChainKey] || 'ETH';
+            throw new Error(`${gasSym} ${t('网络手续费余额不足', 'network fee balance insufficient')} (${nativeBal.toFixed(5)} < ${minNative})`);
+          }
+        }
+        if (asset.blockchain === 'sol' && isNativeGas) {
+          const feeSol = typeof gasBuf === 'number' ? gasBuf : 0.00001;
+          const remainingSol = effectiveAvail - amountNum - feeSol;
+          if (remainingSol > 1e-9 && remainingSol < 0.00089088) {
+            throw new Error(t('Solana 账户剩余 SOL 低于免租阈值 (0.000891 SOL)，请点击「全部」或减少发送金额', 'Remaining SOL would fall below rent-exempt minimum (0.000891 SOL). Tap Max or send less.'));
+          }
+        }
+      } catch (err) {
+        showToast(toUserFriendlyError(err, '余额或参数校验未通过', 'Balance or validation check failed'));
+        return;
+      }
     }
 
     _sendExecuting = true;
@@ -621,6 +802,29 @@
     }
 
     try {
+      if (isNativeGas) {
+        const preGas = await reconcileSendLiveGasBeforeSignAsync({ wallet, asset, avail, rawAmtStr });
+        if (!preGas.ok) {
+          throw new Error(preGas.error);
+        }
+        gasPlan = preGas.gasPlan;
+        gasBuf = preGas.gasBuf;
+        gasMeta = preGas.gasMeta;
+        effectiveAvail = preGas.effectiveAvail;
+        if (preGas.trimmed) {
+          rawAmtStr = preGas.amtStr;
+          amountNum = preGas.amt;
+          if (preGas.toastMsg) showToast(preGas.toastMsg);
+        }
+        if (asset.blockchain === 'sol') {
+          const feeSol = typeof gasBuf === 'number' ? gasBuf : 0.00001;
+          const remainingSol = effectiveAvail - amountNum - feeSol;
+          if (remainingSol > 1e-9 && remainingSol < 0.00089088) {
+            throw new Error(t('Solana 账户剩余 SOL 低于免租阈值 (0.000891 SOL)，请点击「全部」或减少发送金额', 'Remaining SOL would fall below rent-exempt minimum (0.000891 SOL). Tap Max or send less.'));
+          }
+        }
+      }
+
       const isEvmOrigin = EVM_CHAIN_KEYS.includes(asset.blockchain);
       const targetEvmChain = detectedNet === 'evm'
         ? (_sendTargetEvmChain || (isEvmOrigin ? asset.blockchain : 'eth'))
@@ -632,7 +836,7 @@
         (asset.blockchain === 'prl' && detectedNet === 'prl') ||
         (asset.blockchain === 'btc' && detectedNet === 'btc');
 
-      const exactAmt = rawAmtStr || amountNum;
+      let exactAmt = rawAmtStr || amountNum;
       let preQuotedCross = null;
       let preDestAsset = null;
       let authReason = `${t('确认发送', 'Confirm send')} ${exactAmt} ${asset.symbol}`;
@@ -697,6 +901,30 @@
         if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
         return;
       }
+      if (isNativeGas) {
+        const postGas = await reconcileSendLiveGasBeforeSignAsync({ wallet, asset, avail, rawAmtStr: String(exactAmt) });
+        if (!postGas.ok) {
+          if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+          throw new Error(postGas.error);
+        }
+        gasPlan = postGas.gasPlan;
+        gasBuf = postGas.gasBuf;
+        gasMeta = postGas.gasMeta;
+        effectiveAvail = postGas.effectiveAvail;
+        if (postGas.trimmed) {
+          exactAmt = postGas.amtStr;
+          amountNum = postGas.amt;
+          if (postGas.toastMsg) showToast(postGas.toastMsg);
+        }
+        if (asset.blockchain === 'sol') {
+          const feeSol = typeof gasBuf === 'number' ? gasBuf : 0.00001;
+          const remainingSol = effectiveAvail - amountNum - feeSol;
+          if (remainingSol > 1e-9 && remainingSol < 0.00089088) {
+            if (typeof closeTxFlowModal === 'function') closeTxFlowModal();
+            throw new Error(t('Solana 账户剩余 SOL 低于免租阈值 (0.000891 SOL)，请点击「全部」或减少发送金额', 'Remaining SOL would fall below rent-exempt minimum (0.000891 SOL). Tap Max or send less.'));
+          }
+        }
+      }
       sendStepper = sendPlan && typeof createTxStepperController === 'function'
         ? createTxStepperController(t('正在发送转账', 'Sending Transfer'), sendPlan.steps)
         : null;
@@ -727,7 +955,7 @@
 
       // Case 1: Same-chain direct on-chain transfer
       if (isSameChain) {
-        const sent = await dispatchOnChainSend({ contracts, wallet, asset, isEvmOrigin, isNativeGas, toAddress: recipient, exactAmt, avail, gasBuf, gasMeta });
+        const sent = await dispatchOnChainSend({ contracts, wallet, asset, isEvmOrigin, isNativeGas, toAddress: recipient, exactAmt, avail: effectiveAvail, gasBuf, gasMeta });
         if (!sent || !sent.txHash) {
           throw new Error(t('暂不支持该代币的同链转账', 'Direct transfer is not supported for this token yet'));
         }
@@ -759,6 +987,7 @@
         }
         if ($('send-amount-input')) $('send-amount-input').value = '';
         if ($('send-recipient-input')) $('send-recipient-input').value = '';
+        clearSendMaxSweepState(st);
         _sendCachedCrossQuote = null;
         _sendCrossQuoteWarn = null;
         ++_sendCrossQuoteSeq;
@@ -775,7 +1004,7 @@
       // Case 2: Cross-chain L1 -> L1 transfer via pre-quoted 1Click ORIGIN_CHAIN -> DESTINATION_CHAIN
       const destAsset = preDestAsset;
       const quote = preQuotedCross;
-      const crossSent = await dispatchOnChainSend({ contracts, wallet, asset, isEvmOrigin, isNativeGas, toAddress: quote.depositAddress, exactAmt, avail, gasBuf, gasMeta });
+      const crossSent = await dispatchOnChainSend({ contracts, wallet, asset, isEvmOrigin, isNativeGas, toAddress: quote.depositAddress, exactAmt, avail: effectiveAvail, gasBuf, gasMeta });
       const depositTxHash = (crossSent && crossSent.txHash) || '';
       const depositFeeNum = (crossSent && crossSent.fee !== null && crossSent.fee !== undefined && Number.isFinite(Number(crossSent.fee))) ? Number(crossSent.fee) : null;
       if (depositTxHash && (asset.blockchain === 'prl' || asset.blockchain === 'btc')) {
@@ -836,6 +1065,7 @@
       }
       if ($('send-amount-input')) $('send-amount-input').value = '';
       if ($('send-recipient-input')) $('send-recipient-input').value = '';
+      clearSendMaxSweepState(st);
       _sendCachedCrossQuote = null;
       _sendCrossQuoteWarn = null;
       ++_sendCrossQuoteSeq;

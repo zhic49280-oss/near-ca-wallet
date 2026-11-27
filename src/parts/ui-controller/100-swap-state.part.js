@@ -108,54 +108,149 @@
     return Boolean(contracts && contracts.EVM_CHAINS && contracts.EVM_CHAINS[bc]);
   }
 
-  function validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData = null, amountIn = 0 } = {}) {
-    if (!wallet || !fromToken || !toToken) {
-      return { ok: true, requiredNear: 0, availNearForGas: 0, needsNearHub: false, needsMpcSign: false };
-    }
-    const fromBc = String(fromToken.blockchain || '').toLowerCase();
-    const contracts = getContracts();
-    const isEvmChain = (bc) => Boolean(contracts && contracts.EVM_CHAINS && contracts.EVM_CHAINS[bc]);
+  const SWAP_LIVE_GAS_TTL_MS = 15_000;
 
-    const rawNear = wallet.nativeBalances && wallet.nativeBalances.near !== undefined && wallet.nativeBalances.near !== null
-      ? wallet.nativeBalances.near
-      : wallet.nearBalance;
-    const nearBal = Number.isFinite(Number(rawNear)) ? Number(rawNear) : 0;
-    const isNativeNearInput = fromBc === 'near' && String(fromToken.symbol || '').toUpperCase() === 'NEAR';
-    const availNearForGas = isNativeNearInput ? Math.max(0, nearBal - (Number(amountIn) || 0)) : nearBal;
-
+  function resolveSwapNearRouteNeeds({ wallet, fromToken, toToken, quoteData = null } = {}) {
+    const fromBc = String((fromToken && fromToken.blockchain) || '').toLowerCase();
+    const toBc = String((toToken && toToken.blockchain) || '').toLowerCase();
+    const isSameChainNear = Boolean(fromToken && toToken && fromBc === 'near' && toBc === 'near');
     const compType = quoteData && quoteData.compositeType ? String(quoteData.compositeType) : '';
     const stages = quoteData && Array.isArray(quoteData.stages) ? quoteData.stages : [];
     const isConfidential = compType === 'NEARCOM_CONFIDENTIAL_SWAP';
+    const isDirect1Click = isDirectOneClickQuote(quoteData);
 
-    const needsNearHub = !isConfidential && Boolean(
+    const needsNearHub = !isConfidential && !isSameChainNear && Boolean(
       quoteData && (
         (compType === 'SMART_HUB_ROUTE' && stages.some((s) => s && (s.type === 'NEAR_SWAP' || s.type === 'BRIDGE_OUT'))) ||
-        ((isPrlSwapToken(fromToken) !== isPrlSwapToken(toToken)) && !isDirectOneClickQuote(quoteData)) ||
+        ((isPrlSwapToken(fromToken) !== isPrlSwapToken(toToken)) && !isDirect1Click) ||
         ['PRL_TO_EXTERNAL', 'EXTERNAL_TO_PRL', 'PRL_TO_NEAR_DCL', 'PRL_TO_NEAR_REF', 'NEAR_TO_PRL_REF'].includes(compType)
       )
     );
 
-    const originNeedsMpc =
+    const contracts = getContracts();
+    const isEvmChain = (bc) => Boolean(contracts && contracts.EVM_CHAINS && contracts.EVM_CHAINS[bc]);
+    const originNeedsMpc = Boolean(wallet && (
       (fromBc === 'sol' && !wallet.solPrivateSeedHex) ||
-      (isEvmChain(fromBc) && !wallet.evmPrivateKey);
-    const destNeedsMpc = Boolean(
+      (isEvmChain(fromBc) && !wallet.evmPrivateKey)
+    ));
+    const destNeedsMpc = Boolean(wallet && (
       (compType === 'SMART_HUB_ROUTE' && stages.some((s) => s && s.type === 'DEST_DEX' && ((s.chain === 'sol' && !wallet.solPrivateSeedHex) || (s.chain !== 'sol' && !wallet.evmPrivateKey)))) ||
       (compType === 'CROSS_CHAIN_TO_SOL_DEX' && !wallet.solPrivateSeedHex) ||
       (['CROSS_CHAIN_TO_EVM_DEX', 'CROSS_CHAIN_TO_ARC_MAINNET', 'EVM_TO_ARC_MAINNET', 'ARC_MAINNET_TO_CROSS_CHAIN'].includes(compType) && !wallet.evmPrivateKey)
-    );
+    ));
     const needsMpcSign = Boolean(originNeedsMpc || destNeedsMpc);
+    const routeSig = `${isSameChainNear ? 1 : 0}:${needsNearHub ? 1 : 0}:${needsMpcSign ? 1 : 0}:${isDirect1Click ? 1 : 0}`;
+    return { isSameChainNear, isDirect1Click, needsNearHub, needsMpcSign, routeSig };
+  }
 
-    const requiredNear = Number(((needsNearHub ? 0.02 : 0) + (needsMpcSign ? 0.01 : 0)).toFixed(4));
-    if (requiredNear > 0 && availNearForGas < requiredNear) {
+  function buildSwapLiveGasCacheKey(wallet, chain, kind, fromToken = null, toToken = null, quoteData = null) {
+    const walletKey = wallet ? (wallet.id || wallet.nearNamedAccount || wallet.nearAddress || 'default') : 'none';
+    const chainKey = String(chain || '').toLowerCase();
+    const destKey = (chainKey === 'near' || (chainKey === 'sol' && kind === 'dex_swap')) && toToken
+      ? String(toToken.assetId || toToken.contractAddress || toToken.symbol || '').toLowerCase()
+      : '';
+    const routeSig = chainKey === 'near'
+      ? resolveSwapNearRouteNeeds({ wallet, fromToken, toToken, quoteData }).routeSig
+      : '';
+    return `${walletKey}:${chainKey}:${kind}:${destKey}:${routeSig}`;
+  }
+
+  function getFreshSwapLiveGas(cacheKey) {
+    const st = getState();
+    const cached = st.swap && st.swap._liveGas;
+    if (cached && cached.key === cacheKey && (Date.now() - cached.ts) < SWAP_LIVE_GAS_TTL_MS && cached.data) {
+      return cached.data;
+    }
+    return null;
+  }
+
+  function resolveSwapNearGasRequirementPlan({ wallet, fromToken, toToken, quoteData = null, amountIn = 0 } = {}) {
+    if (!wallet || !fromToken || !toToken) {
+      return {
+        requiredNear: 0,
+        exactFeeBaseUnits: null,
+        availNearForGas: 0,
+        needsNearHub: false,
+        needsMpcSign: false,
+        isSameChainNear: false,
+        liveGas: null
+      };
+    }
+    const fromBc = String(fromToken.blockchain || '').toLowerCase();
+    const { isSameChainNear, isDirect1Click, needsNearHub, needsMpcSign } = resolveSwapNearRouteNeeds({
+      wallet,
+      fromToken,
+      toToken,
+      quoteData
+    });
+    const isSameChainNearDex = Boolean(isSameChainNear && !isDirect1Click && isSameChainContractSwap(fromToken, toToken));
+
+    const contracts = getContracts();
+    const rawNear = wallet.nativeBalances && wallet.nativeBalances.near !== undefined && wallet.nativeBalances.near !== null
+      ? wallet.nativeBalances.near
+      : wallet.nearBalance;
+    let nearBal = Number.isFinite(Number(rawNear)) ? Number(rawNear) : 0;
+
+    const kind = isSameChainContractSwap(fromToken, toToken) ? 'dex_swap' : 'transfer';
+    let liveGas = null;
+    if (fromBc === 'near') {
+      const cacheKey = buildSwapLiveGasCacheKey(wallet, 'near', kind, fromToken, toToken, quoteData);
+      liveGas = getFreshSwapLiveGas(cacheKey);
+      if (liveGas && liveGas.liveBalanceBaseUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
+        const liveNearNum = Number(contracts.fromBaseUnits(liveGas.liveBalanceBaseUnits, 24));
+        if (Number.isFinite(liveNearNum) && liveNearNum > 0 && liveNearNum <= nearBal + 1e-12) {
+          nearBal = liveNearNum;
+        }
+      }
+    }
+
+    const isNativeNearInput = fromBc === 'near' && isSwapTokenNative(fromToken);
+    const availNearForGas = isNativeNearInput ? Math.max(0, nearBal - (Number(amountIn) || 0)) : nearBal;
+
+    let requiredNear = 0;
+    let exactFeeBaseUnits = null;
+    if (needsNearHub || needsMpcSign || (isSameChainNearDex && fromBc === 'near')) {
+      if (liveGas && Number.isFinite(Number(liveGas.gasReserve)) && Number(liveGas.gasReserve) > 0) {
+        requiredNear = Number(liveGas.gasReserve);
+        exactFeeBaseUnits = liveGas.exactFeeBaseUnits || null;
+      } else {
+        const baseFallback = needsNearHub ? 0.02 : (isSameChainNearDex ? 0.005 : 0);
+        requiredNear = Number((baseFallback + (needsMpcSign ? 0.01 : 0)).toFixed(4));
+      }
+    }
+
+    return {
+      requiredNear,
+      exactFeeBaseUnits,
+      availNearForGas,
+      needsNearHub,
+      needsMpcSign,
+      isSameChainNear,
+      liveGas
+    };
+  }
+
+  function validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData = null, amountIn = 0 } = {}) {
+    if (!wallet || !fromToken || !toToken) {
+      return { ok: true, requiredNear: 0, availNearForGas: 0, needsNearHub: false, needsMpcSign: false };
+    }
+    const plan = resolveSwapNearGasRequirementPlan({ wallet, fromToken, toToken, quoteData, amountIn });
+    if (plan.requiredNear > 0 && plan.availNearForGas + 1e-12 < plan.requiredNear) {
       throw new Error(
         t(
-          `NEAR 余额不足以支付中转/MPC Gas (需至少 ${requiredNear} NEAR，当前可用: ${availNearForGas.toFixed(4)} NEAR)`,
-          `Insufficient NEAR for hub/MPC gas (Need >= ${requiredNear} NEAR, available: ${availNearForGas.toFixed(4)} NEAR)`
+          `NEAR 余额不足以支付中转/MPC Gas (需至少 ${plan.requiredNear} NEAR，当前可用: ${plan.availNearForGas.toFixed(4)} NEAR)`,
+          `Insufficient NEAR for hub/MPC gas (Need >= ${plan.requiredNear} NEAR, available: ${plan.availNearForGas.toFixed(4)} NEAR)`
         )
       );
     }
 
-    return { ok: true, requiredNear, availNearForGas, needsNearHub, needsMpcSign };
+    return {
+      ok: true,
+      requiredNear: plan.requiredNear,
+      availNearForGas: plan.availNearForGas,
+      needsNearHub: plan.needsNearHub,
+      needsMpcSign: plan.needsMpcSign
+    };
   }
 
   function resolveWalletEvmAddress(wallet) {
@@ -245,6 +340,17 @@
       extraReserve = extras[toChain] || 0.002;
     } else {
       return empty;
+    }
+
+    const st = getState();
+    const destCache = st.swap && st.swap._destDexLiveGas;
+    const destCacheKey = `${toChain}:${toChain === 'sol' ? (isNewSolAta ? 1 : 0) : 0}`;
+    if (destCache && destCache.key === destCacheKey && (Date.now() - destCache.ts) < SWAP_LIVE_GAS_TTL_MS && destCache.data && destCache.data.isLive) {
+      const liveVal = Number(destCache.data.gasReserve);
+      if (Number.isFinite(liveVal) && liveVal > 0) {
+        minReq = Number((Math.ceil(liveVal * 1e6) / 1e6).toFixed(6));
+        if (extraReserve < minReq) extraReserve = minReq;
+      }
     }
 
     // Show selector when cross-chain to a non-native token (likely 2-stage DEX) or same-chain SOL -> new SPL token

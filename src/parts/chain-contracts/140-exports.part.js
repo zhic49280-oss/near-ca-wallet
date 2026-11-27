@@ -24,6 +24,7 @@
     resolveWalletChainBalance,
     validateSufficientChainBalance,
     estimateLiveNativeGasAsync,
+    estimateDestDexGasAsync,
     raceWithGraceWindow,
     callSolanaRpc,
     waitForSolanaTxConfirmation,

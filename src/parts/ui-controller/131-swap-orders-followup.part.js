@@ -285,8 +285,28 @@
           const availLamports = BigInt(balRes?.nativeLamports || '0');
           const preLamports = BigInt(follow.preSolLamports || '0');
           const expectedLamports = BigInt(follow.expectedSolRaw || '0');
-          const reserveSolVal = typeof follow.reserveSol === 'number' && Number.isFinite(follow.reserveSol) ? follow.reserveSol : 0.0035;
-          const reserveLamports = BigInt(intents.toBaseUnits(String(reserveSolVal), 9));
+          let isNewSolAta = Boolean(follow.isNewSolAta);
+          if (follow.outputMint && balRes && !balRes.splFetchFailed && balRes.ataMints && typeof balRes.ataMints === 'object') {
+            isNewSolAta = !balRes.ataMints[follow.outputMint];
+          } else if (follow.outputMint && follow.isNewSolAta === undefined) {
+            const hasTrackedAtas = Boolean(wallet.solAtaMints && typeof wallet.solAtaMints === 'object');
+            isNewSolAta = hasTrackedAtas
+              ? !wallet.solAtaMints[follow.outputMint]
+              : !(wallet.splBalances && Object.prototype.hasOwnProperty.call(wallet.splBalances, follow.outputMint));
+          }
+          const hasExplicitMode = follow.gasReserveMode === 'auto' || follow.gasReserveMode === 'extra';
+          const fallbackSolVal = typeof follow.reserveSol === 'number' && Number.isFinite(follow.reserveSol) ? follow.reserveSol : 0.0035;
+          const isExtraMode = hasExplicitMode ? follow.gasReserveMode === 'extra' : (fallbackSolVal >= 0.008);
+          let reserveLamports = BigInt(intents.toBaseUnits(String(fallbackSolVal), 9));
+          if (!isExtraMode && typeof contracts.estimateDestDexGasAsync === 'function') {
+            const liveDest = await contracts.estimateDestDexGasAsync({ chainKey: 'sol', wallet, isNewSolAta }).catch(() => null);
+            if (liveDest && liveDest.exactFeeBaseUnits && /^\d+$/.test(String(liveDest.exactFeeBaseUnits)) && BigInt(String(liveDest.exactFeeBaseUnits)) > 0n) {
+              reserveLamports = BigInt(String(liveDest.exactFeeBaseUnits));
+            } else if (liveDest && Number.isFinite(Number(liveDest.gasReserve)) && Number(liveDest.gasReserve) > 0) {
+              reserveLamports = BigInt(intents.toBaseUnits(String(liveDest.gasReserve), 9));
+            }
+          }
+          const reserveSolEffective = Number(contracts.fromBaseUnits(reserveLamports.toString(), 9));
           const maxSpendable = availLamports > reserveLamports ? availLamports - reserveLamports : 0n;
           const deltaLamports = availLamports > preLamports ? availLamports - preLamports : 0n;
           const hasPreLamports = follow.preSolLamports !== undefined && follow.preSolLamports !== null && follow.preSolLamports !== '';
@@ -315,7 +335,8 @@
             quoteResponse: jQuote,
             wrapAndUnwrapSol: true,
             tokenBalance: Number(contracts.fromBaseUnits(availLamports.toString(), 9)),
-            inputDecimals: 9
+            inputDecimals: 9,
+            gasBuffer: Number.isFinite(reserveSolEffective) ? reserveSolEffective : null
           });
           order.followUpExecuted = true;
           order.followUpFailed = false;
@@ -334,10 +355,26 @@
           const availWei = BigInt(balRes?.nativeRaw || '0');
           const preWei = BigInt(follow.preNativeWei || '0');
           const expectedWei = BigInt(follow.expectedInRaw || '0');
-          const reserveHuman = typeof follow.reserveNative === 'number' && Number.isFinite(follow.reserveNative)
+          const hasExplicitMode = follow.gasReserveMode === 'auto' || follow.gasReserveMode === 'extra';
+          const evmExtraThresholds = { eth: 0.005, base: 0.002, arb: 0.002, op: 0.002, hood: 0.002, bsc: 0.002, pol: 0.2, avax: 0.02, hype: 0.005, arc: 0.05 };
+          const defaultMinHuman = (contracts.CHAIN_MIN_GAS_RESERVES && contracts.CHAIN_MIN_GAS_RESERVES[follow.chainKey]) || 0.0005;
+          const reserveHumanFallback = typeof follow.reserveNative === 'number' && Number.isFinite(follow.reserveNative)
             ? follow.reserveNative
-            : ((contracts.CHAIN_MIN_GAS_RESERVES && contracts.CHAIN_MIN_GAS_RESERVES[follow.chainKey]) || 0.0005);
-          const reserveWei = BigInt(intents.toBaseUnits(String(reserveHuman), 18));
+            : defaultMinHuman;
+          const extraThreshold = evmExtraThresholds[follow.chainKey] || 0.002;
+          const isExtraMode = hasExplicitMode
+            ? follow.gasReserveMode === 'extra'
+            : (reserveHumanFallback >= extraThreshold);
+          let reserveWei = BigInt(intents.toBaseUnits(String(reserveHumanFallback), 18));
+          if (!isExtraMode && typeof contracts.estimateDestDexGasAsync === 'function') {
+            const liveDest = await contracts.estimateDestDexGasAsync({ chainKey: follow.chainKey, wallet }).catch(() => null);
+            if (liveDest && liveDest.exactFeeBaseUnits && /^\d+$/.test(String(liveDest.exactFeeBaseUnits)) && BigInt(String(liveDest.exactFeeBaseUnits)) > 0n) {
+              reserveWei = BigInt(String(liveDest.exactFeeBaseUnits));
+            } else if (liveDest && Number.isFinite(Number(liveDest.gasReserve)) && Number(liveDest.gasReserve) > 0) {
+              reserveWei = BigInt(intents.toBaseUnits(String(liveDest.gasReserve), 18));
+            }
+          }
+          const reserveNativeEffective = Number(contracts.fromBaseUnits(reserveWei.toString(), 18));
           const maxSpendable = availWei > reserveWei ? availWei - reserveWei : 0n;
           const deltaWei = availWei > preWei ? availWei - preWei : 0n;
           const hasPreWei = follow.preNativeWei !== undefined && follow.preNativeWei !== null && follow.preNativeWei !== '';
@@ -377,6 +414,7 @@
             srcDecimals: 18,
             slippageBps: follow.slippageBps || 100,
             tokenBalance: Number(contracts.fromBaseUnits(availWei.toString(), 18)),
+            gasBuffer: Number.isFinite(reserveNativeEffective) ? reserveNativeEffective : null,
             feeBps: 0
           });
           order.followUpExecuted = true;

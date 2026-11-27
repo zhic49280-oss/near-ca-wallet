@@ -47,6 +47,22 @@
     renderSwapRateDisplay(fromToken, toToken);
 
     const sameChainDex = isSameChainContractSwap(fromToken, toToken);
+    const triggerPostQuoteGasSync = (activeQuoteData) => {
+      const fromBc = String((fromToken && fromToken.blockchain) || '').toLowerCase();
+      if (isSwapTokenNative(fromToken) && (fromBc === 'near' || fromBc === 'sol') && typeof prefetchSwapLiveGasAsync === 'function') {
+        const kind = sameChainDex ? 'dex_swap' : 'transfer';
+        const qKey = buildSwapLiveGasCacheKey(wallet, fromBc, kind, fromToken, toToken, activeQuoteData);
+        if (!getFreshSwapLiveGas(qKey)) {
+          prefetchSwapLiveGasAsync(false).catch(() => {});
+        }
+      }
+      if (typeof prefetchDestDexLiveGasAsync === 'function') {
+        const destInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', activeQuoteData);
+        if (destInfo && destInfo.showSelector) {
+          prefetchDestDexLiveGasAsync(false).catch(() => {});
+        }
+      }
+    };
     const routeBadge = $('swap-auto-route-badge');
     if (routeBadge && fromToken && toToken) {
       const fromMeta = tokens.getChainMeta(fromToken.blockchain);
@@ -154,9 +170,21 @@
     updateSwapUsdEstimates();
   }
 
-  function handleSwapAmountInput() {
+  let _swapMaxSeq = 0;
+
+  function handleSwapAmountInput(opts = {}) {
     const st = getState();
-    st.swap.amountIn = ($('swap-amount-in')?.value || '').trim();
+    const amtEl = $('swap-amount-in');
+    if (amtEl) {
+      st.swap.amountIn = String(amtEl.value || '').trim();
+    } else {
+      st.swap.amountIn = String(st.swap.amountIn || '').trim();
+    }
+    if (!opts || !opts.preserveMaxSweep) {
+      st.swap._isMaxSweep = false;
+      st.swap._maxSweepAssetId = '';
+      st.swap._maxSweepAmount = '';
+    }
     st.swap._lastError = '';
     st.swap._quoting = false;
     resetSwapQuoteDisplay();
@@ -172,29 +200,35 @@
     const toToken = resolveSwapToken(st.swap.toAssetId, 1);
     const bal = getSwapTokenAvailableBalance(fromToken);
     if (!fromToken || bal === null || bal <= 0) return;
+    const maxSeq = ++_swapMaxSeq;
 
     const isNative = isSwapTokenNative(fromToken);
     if (!isNative) {
       const rawUnits = getWalletTokenRawBaseUnits(wallet, fromToken.blockchain, fromToken.contractAddress);
       st.swap.amountIn = formatMaxDecimalString(bal, fromToken.decimals || 6, rawUnits);
+      st.swap._isMaxSweep = true;
+      st.swap._maxSweepAssetId = fromToken.assetId;
+      st.swap._maxSweepAmount = st.swap.amountIn;
       const amtEl = $('swap-amount-in');
       if (amtEl && (typeof document === 'undefined' || document.activeElement !== amtEl)) {
         amtEl.value = st.swap.amountIn;
       }
-      handleSwapAmountInput();
+      handleSwapAmountInput({ preserveMaxSweep: true });
       return;
     }
 
     const tokenIdAtStart = fromToken.assetId;
     const liveGas = await prefetchSwapLiveGasAsync(false).catch(() => null);
     const curFrom = resolveSwapToken(st.swap.fromAssetId, 0);
-    if (!curFrom || curFrom.assetId !== tokenIdAtStart) return;
+    const curTo = resolveSwapToken(st.swap.toAssetId, 1);
+    if (maxSeq !== _swapMaxSeq || !curFrom || curFrom.assetId !== tokenIdAtStart) return;
 
-    const plan = resolveEffectiveSwapGasPlan(wallet, curFrom, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
+    const plan = resolveEffectiveSwapGasPlan(wallet, curFrom, curTo, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
     let effectiveBal = bal;
     let rawUnits = null;
-    const scaledGas = scaleSwapLiveGasUnits(curFrom, liveGas && liveGas.liveBalanceBaseUnits, plan.exactFeeBaseUnits);
-    if (liveGas && liveGas.liveBalanceBaseUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
+    const activeLiveGas = plan.liveGas || liveGas;
+    const scaledGas = scaleSwapLiveGasUnits(curFrom, activeLiveGas && activeLiveGas.liveBalanceBaseUnits, plan.exactFeeBaseUnits);
+    if (activeLiveGas && activeLiveGas.liveBalanceBaseUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
       const scaledLiveRaw = scaledGas.balanceUnits;
       const liveNum = Number(contracts.fromBaseUnits(scaledLiveRaw, curFrom.decimals || 18));
       if (Number.isFinite(liveNum) && liveNum > 0 && liveNum <= bal + 1e-12) {
@@ -212,11 +246,14 @@
       exactFeeBaseUnits: effFeeBaseUnits
     });
     st.swap.amountIn = maxInfo.maxAmountStr || '0';
+    st.swap._isMaxSweep = Boolean(maxInfo.maxAmountStr && maxInfo.maxAmountStr !== '0');
+    st.swap._maxSweepAssetId = st.swap._isMaxSweep ? curFrom.assetId : '';
+    st.swap._maxSweepAmount = st.swap._isMaxSweep ? st.swap.amountIn : '';
     const amtEl = $('swap-amount-in');
     if (amtEl && (typeof document === 'undefined' || document.activeElement !== amtEl)) {
       amtEl.value = st.swap.amountIn;
     }
-    handleSwapAmountInput();
+    handleSwapAmountInput({ preserveMaxSweep: st.swap._isMaxSweep });
   }
 
   function cancelPendingSwapQuote() {
@@ -238,6 +275,9 @@
   function clearSwapAmountAndQuote() {
     const st = getState();
     cancelPendingSwapQuote();
+    st.swap._isMaxSweep = false;
+    st.swap._maxSweepAssetId = '';
+    st.swap._maxSweepAmount = '';
     resetFormFields(['swap-amount-in'], st.swap, { amountIn: '', _lastError: '' });
     resetSwapQuoteDisplay();
     updateSwapPrimaryButtonState();
@@ -255,6 +295,10 @@
     st.swap._quoting = false;
     st.swap._lastError = '';
     st.swap._liveGas = null;
+    st.swap._destDexLiveGas = null;
+    st.swap._isMaxSweep = false;
+    st.swap._maxSweepAssetId = '';
+    st.swap._maxSweepAmount = '';
     resetFormFields(['swap-amount-in'], st.swap, { amountIn: '' });
     if (typeof st.saveSwapPair === 'function') st.saveSwapPair();
     setSwapError('');
@@ -324,6 +368,22 @@
     const amtInputStr = String(st.swap.amountIn);
 
     const sameChainDex = isSameChainContractSwap(fromToken, toToken);
+    const triggerPostQuoteGasSync = (activeQuoteData) => {
+      const fromBc = String((fromToken && fromToken.blockchain) || '').toLowerCase();
+      if (isSwapTokenNative(fromToken) && (fromBc === 'near' || fromBc === 'sol') && typeof prefetchSwapLiveGasAsync === 'function') {
+        const kind = sameChainDex ? 'dex_swap' : 'transfer';
+        const qKey = buildSwapLiveGasCacheKey(wallet, fromBc, kind, fromToken, toToken, activeQuoteData);
+        if (!getFreshSwapLiveGas(qKey)) {
+          prefetchSwapLiveGasAsync(false).catch(() => {});
+        }
+      }
+      if (typeof prefetchDestDexLiveGasAsync === 'function') {
+        const destInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', activeQuoteData);
+        if (destInfo && destInfo.showSelector) {
+          prefetchDestDexLiveGasAsync(false).catch(() => {});
+        }
+      }
+    };
     const amountRaw = intents.toBaseUnits(amtInputStr, fromToken.decimals);
     if (amountRaw === '0') {
       st.swap._quoting = false;
@@ -395,6 +455,7 @@
       syncSwapRecipientInputState(wallet, fromToken, toToken, cached.quoteData);
       renderSwapGasReserveRow(wallet, fromToken, toToken);
       updateSwapPrimaryButtonState();
+      triggerPostQuoteGasSync(cached.quoteData);
       return;
     }
 
@@ -445,6 +506,7 @@
       syncSwapRecipientInputState(wallet, fromToken, toToken, quoteData);
       renderSwapGasReserveRow(wallet, fromToken, toToken);
       updateSwapPrimaryButtonState();
+      triggerPostQuoteGasSync(quoteData);
       if (_swapQuoteCache.size > 40) _swapQuoteCache.clear();
       _swapQuoteCache.set(cacheKey, { ts: Date.now(), quoteData, quoteSource, feeBps, grossOutNum: outHumanNum, rateOutPerIn, amountOut: amtOutText, rateText, usdInRaw: usdInRaw || null, usdOutRaw, usdOut });
     };

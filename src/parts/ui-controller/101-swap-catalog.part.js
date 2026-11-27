@@ -243,7 +243,6 @@
   }
 
   function resolveEffectiveSwapGasPlan(wallet, fromToken, toToken, gasReserveMode = 'auto', quoteData = null) {
-    const st = getState();
     const contracts = getContracts();
     const chain = String((fromToken && fromToken.blockchain) || '').toLowerCase();
     const isNative = Boolean(fromToken && isSwapTokenNative(fromToken));
@@ -254,11 +253,8 @@
     }
 
     const buffers = (contracts && contracts.DEFAULT_GAS_BUFFERS) || {};
-    const walletKey = wallet ? (wallet.id || wallet.nearNamedAccount || wallet.nearAddress || 'default') : 'none';
-    const cacheKey = `${walletKey}:${chain}:${kind}`;
-    const cached = st.swap && st.swap._liveGas;
-    const isFresh = Boolean(cached && cached.key === cacheKey && (Date.now() - cached.ts) < 60_000 && cached.data);
-    const liveGas = isFresh ? cached.data : null;
+    const cacheKey = buildSwapLiveGasCacheKey(wallet, chain, kind, fromToken, toToken, quoteData);
+    const liveGas = getFreshSwapLiveGas(cacheKey);
 
     let gasBuffer = null;
     let exactFeeBaseUnits = null;
@@ -271,8 +267,22 @@
     } else if (chain === 'sol' && kind === 'dex_swap') {
       gasBuffer = 0.0015;
       exactFeeBaseUnits = '1500000';
+    } else if (chain === 'near') {
+      const nearPlan = resolveSwapNearGasRequirementPlan({ wallet, fromToken, toToken, quoteData });
+      gasBuffer = nearPlan.requiredNear > 0
+        ? nearPlan.requiredNear
+        : Number((kind === 'dex_swap' ? 0.005 : buffers.near) || 0.005);
+      exactFeeBaseUnits = nearPlan.exactFeeBaseUnits || null;
     } else {
       gasBuffer = Number(buffers[chain] || 0);
+    }
+
+    if (chain === 'near') {
+      const nearPlan = resolveSwapNearGasRequirementPlan({ wallet, fromToken, toToken, quoteData });
+      if (nearPlan.requiredNear > gasBuffer) {
+        gasBuffer = nearPlan.requiredNear;
+        exactFeeBaseUnits = nearPlan.exactFeeBaseUnits || null;
+      }
     }
 
     if (chain === 'sol' && gasReserveInfo && gasReserveInfo.selectedReserve > 0) {
@@ -296,19 +306,207 @@
 
     const chain = String(fromToken.blockchain || '').toLowerCase();
     const kind = isSameChainContractSwap(fromToken, toToken) ? 'dex_swap' : 'transfer';
-    const walletKey = wallet.id || wallet.nearNamedAccount || wallet.nearAddress || 'default';
-    const cacheKey = `${walletKey}:${chain}:${kind}`;
-    const cached = st.swap._liveGas;
-    if (!force && cached && cached.key === cacheKey && (Date.now() - cached.ts) < 60_000 && cached.data) {
+    const quoteData = st.swap.quoteData || null;
+    const cacheKey = buildSwapLiveGasCacheKey(wallet, chain, kind, fromToken, toToken, quoteData);
+    if (!force) {
+      const existing = getFreshSwapLiveGas(cacheKey);
+      if (existing) return existing;
+    }
+
+    const res = await contracts.estimateLiveNativeGasAsync({
+      wallet,
+      chain,
+      kind,
+      fromToken,
+      toToken,
+      quoteData
+    }).catch(() => null);
+    if (res) {
+      const curFrom = resolveSwapToken(st.swap.fromAssetId, 0);
+      const curTo = resolveSwapToken(st.swap.toAssetId, 1);
+      const curKind = isSameChainContractSwap(curFrom, curTo) ? 'dex_swap' : 'transfer';
+      const curKey = buildSwapLiveGasCacheKey(wallet, chain, curKind, curFrom, curTo, st.swap.quoteData || null);
+      if (curKey === cacheKey || (curFrom && curFrom.assetId === fromToken.assetId)) {
+        st.swap._liveGas = { key: cacheKey, ts: Date.now(), data: res };
+        updateSwapPrimaryButtonState();
+      }
+    }
+    return res;
+  }
+
+  async function prefetchDestDexLiveGasAsync(force = false) {
+    const st = getState();
+    const contracts = getContracts();
+    const wallet = st.getActiveWallet();
+    const fromToken = resolveSwapToken(st.swap.fromAssetId, 0);
+    const toToken = resolveSwapToken(st.swap.toAssetId, 1);
+    if (!wallet || !fromToken || !toToken || !contracts || typeof contracts.estimateDestDexGasAsync !== 'function') return null;
+    const info = getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
+    if (!info || !info.showSelector || !info.chainKey) return null;
+
+    const destKey = `${info.chainKey}:${info.chainKey === 'sol' ? (info.isNewSolAta ? 1 : 0) : 0}`;
+    const cached = st.swap && st.swap._destDexLiveGas;
+    if (!force && cached && cached.key === destKey && (Date.now() - cached.ts) < SWAP_LIVE_GAS_TTL_MS && cached.data) {
       return cached.data;
     }
 
-    const res = await contracts.estimateLiveNativeGasAsync({ wallet, chain, kind }).catch(() => null);
-    if (res) {
-      st.swap._liveGas = { key: cacheKey, ts: Date.now(), data: res };
-      updateSwapPrimaryButtonState();
+    const res = await contracts.estimateDestDexGasAsync({
+      chainKey: info.chainKey,
+      wallet,
+      isNewSolAta: info.isNewSolAta
+    }).catch(() => null);
+    if (res && res.isLive) {
+      const curFrom = resolveSwapToken(st.swap.fromAssetId, 0);
+      const curTo = resolveSwapToken(st.swap.toAssetId, 1);
+      const curInfo = getTargetChainGasReserveInfo(wallet, curFrom, curTo, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
+      const curDestKey = curInfo && curInfo.chainKey ? `${curInfo.chainKey}:${curInfo.chainKey === 'sol' ? (curInfo.isNewSolAta ? 1 : 0) : 0}` : '';
+      if (curDestKey === destKey) {
+        st.swap._destDexLiveGas = { key: destKey, ts: Date.now(), data: res };
+        renderSwapGasReserveRow(wallet, curFrom, curTo);
+        if (st.swap.quoteData && curFrom && curTo) {
+          const updatedInfo = getTargetChainGasReserveInfo(wallet, curFrom, curTo, st.swap.gasReserveMode || 'auto', st.swap.quoteData);
+          const { netOutNum, ratio } = computeNetSwapOutput(st.swap.quoteData, curTo, updatedInfo);
+          const amtOutText = formatBal(netOutNum, 6);
+          st.swap.amountOut = amtOutText;
+          if ($('swap-amount-out')) $('swap-amount-out').value = amtOutText;
+          const outPrice = getTokenUnitPrice(curTo);
+          const numUsdOut = st.swap.quoteData.amountOutUsd && Number(st.swap.quoteData.amountOutUsd) > 0
+            ? Number(st.swap.quoteData.amountOutUsd) * ratio
+            : (outPrice !== null && Number.isFinite(netOutNum) ? netOutNum * outPrice : null);
+          st.swap._usdOutVal = numUsdOut;
+          if ($('swap-usd-out')) $('swap-usd-out').textContent = numUsdOut !== null ? formatUsd(numUsdOut) : '--';
+        }
+        updateSwapPrimaryButtonState();
+      }
     }
     return res;
+  }
+
+  function isSwapMaxSweepActive(st, fromToken, amtStr) {
+    if (!st || !st.swap || !st.swap._isMaxSweep || !fromToken) return false;
+    const idMatch = String(st.swap._maxSweepAssetId || '').toLowerCase() === String(fromToken.assetId || '').toLowerCase();
+    const valMatch = String(st.swap._maxSweepAmount || '').trim() === String(amtStr ?? st.swap.amountIn ?? '').trim();
+    return idMatch && valMatch;
+  }
+
+  async function reconcileSwapLiveGasBeforeSignAsync({ wallet, fromToken, toToken, amtStr, quoteData = null, forceRefresh = false } = {}) {
+    const st = getState();
+    const contracts = getContracts();
+    const isNative = Boolean(fromToken && isSwapTokenNative(fromToken));
+    const prePlan = resolveEffectiveSwapGasPlan(wallet, fromToken, toToken, (st.swap && st.swap.gasReserveMode) || 'auto', quoteData);
+    if (!wallet || !fromToken || !isNative) {
+      return { ok: true, trimmed: false, amtStr: String(amtStr || ''), amt: Number(amtStr || 0), gasPlan: prePlan };
+    }
+
+    const chain = String(fromToken.blockchain || '').toLowerCase();
+    const kind = isSameChainContractSwap(fromToken, toToken) ? 'dex_swap' : 'transfer';
+    const cacheKey = buildSwapLiveGasCacheKey(wallet, chain, kind, fromToken, toToken, quoteData);
+    const cached = st.swap && st.swap._liveGas;
+    const hadSameKeyCache = Boolean(cached && cached.key === cacheKey && cached.data);
+    const isFresh = Boolean(hadSameKeyCache && (Date.now() - cached.ts) < SWAP_LIVE_GAS_TTL_MS);
+    const isMax = isSwapMaxSweepActive(st, fromToken, amtStr);
+    const availBase = getWalletNativeBalanceForToken(wallet, fromToken.blockchain, fromToken.symbol, fromToken.contractAddress) ?? 0;
+    const amt = Number(amtStr || 0);
+    const prevGas = Number(prePlan.gasBuffer || 0);
+    const isTight = Number.isFinite(amt) && amt > 0 && (amt + prevGas * 1.5 >= availBase - 1e-12);
+
+    if (!isFresh && (forceRefresh || isMax || hadSameKeyCache || isTight)) {
+      await prefetchSwapLiveGasAsync(true).catch(() => null);
+    }
+
+    const newPlan = resolveEffectiveSwapGasPlan(wallet, fromToken, toToken, (st.swap && st.swap.gasReserveMode) || 'auto', quoteData);
+    const arcScaled = scaleSwapLiveGasUnits(fromToken, newPlan.liveGas && newPlan.liveGas.liveBalanceBaseUnits, newPlan.exactFeeBaseUnits);
+    let effectiveAvail = availBase;
+    let checkedRawUnits = arcScaled && arcScaled.balanceUnits ? arcScaled.balanceUnits : null;
+    if (checkedRawUnits && contracts && typeof contracts.fromBaseUnits === 'function') {
+      const liveNum = Number(contracts.fromBaseUnits(checkedRawUnits, fromToken.decimals || 18));
+      if (Number.isFinite(liveNum) && liveNum > 0 && liveNum <= effectiveAvail + 1e-12) {
+        effectiveAvail = liveNum;
+      } else {
+        checkedRawUnits = null;
+      }
+    }
+
+    const feePlan = resolveNativeFeeDeductPlan({
+      wallet,
+      chain: fromToken.blockchain,
+      amount: amt,
+      avail: effectiveAvail,
+      isNative: true,
+      gasBuffer: newPlan.gasBuffer,
+      decimals: fromToken.decimals || 6,
+      rawBaseUnits: checkedRawUnits,
+      exactFeeBaseUnits: arcScaled ? arcScaled.feeUnits : newPlan.exactFeeBaseUnits
+    });
+    const nearReq = chain === 'near'
+      ? resolveSwapNearGasRequirementPlan({ wallet, fromToken, toToken, quoteData, amountIn: amt })
+      : { requiredNear: 0, availNearForGas: 0 };
+    const nearGasShort = Boolean(nearReq.requiredNear > 0 && nearReq.availNearForGas + 1e-12 < nearReq.requiredNear);
+
+    if (feePlan.mode !== 'insufficient_gas' && !nearGasShort) {
+      return {
+        ok: true,
+        trimmed: false,
+        amtStr: String(amtStr),
+        amt,
+        gasPlan: newPlan,
+        effectiveAvail
+      };
+    }
+
+    const newGas = Number(newPlan.gasBuffer || nearReq.requiredNear || 0);
+    const gasMap = { sol: 'SOL', near: 'NEAR', prl: 'PRL', btc: 'BTC', bsc: 'BNB', pol: 'POL', avax: 'AVAX', hype: 'HYPE', arc: 'USDC' };
+    const gasSym = gasMap[chain] || 'ETH';
+    if (!isMax) {
+      updateSwapPrimaryButtonState();
+      return {
+        ok: false,
+        trimmed: false,
+        reason: 'insufficient_gas',
+        gasPlan: newPlan,
+        error: t(
+          `${gasSym} 网络 Gas 上涨（需约 ${formatBal(newGas, 6)} ${gasSym}），当前金额会导致余额不足，请减少数量或使用全部(Max)`,
+          `${gasSym} network gas increased (~${formatBal(newGas, 6)} ${gasSym} needed). Reduce amount or tap Max.`
+        )
+      };
+    }
+
+    const maxOutNum = Number(feePlan.maxSpendable || 0);
+    const deficit = Math.max(0, amt - maxOutNum);
+    const ratioOk = !(prevGas > 0 && newGas > prevGas * 3 && deficit > amt * 0.01);
+    const magOk = (deficit <= amt * 0.05) || (prevGas > 0 && deficit <= prevGas * 0.5);
+    if (maxOutNum > 0 && feePlan.maxSpendableStr && feePlan.maxSpendableStr !== '0' && magOk && ratioOk) {
+      st.swap.amountIn = feePlan.maxSpendableStr;
+      st.swap._maxSweepAmount = feePlan.maxSpendableStr;
+      const amtEl = $('swap-amount-in');
+      if (amtEl && (typeof document === 'undefined' || document.activeElement !== amtEl)) {
+        amtEl.value = feePlan.maxSpendableStr;
+      }
+      updateSwapPrimaryButtonState();
+      return {
+        ok: true,
+        trimmed: true,
+        amtStr: feePlan.maxSpendableStr,
+        amt: Number(feePlan.maxSpendableStr),
+        gasPlan: newPlan,
+        effectiveAvail,
+        toastMsg: t(
+          `Gas 略有上涨，已自动将兑换数量微调为 ${feePlan.maxSpendableStr} ${fromToken.symbol}`,
+          `Gas increased slightly; auto-adjusted amount to ${feePlan.maxSpendableStr} ${fromToken.symbol}`
+        )
+      };
+    }
+
+    updateSwapPrimaryButtonState();
+    return {
+      ok: false,
+      trimmed: false,
+      reason: 'gas_spike_too_large',
+      gasPlan: newPlan,
+      error: maxOutNum <= 0
+        ? t(`当前 ${gasSym} Gas 暴涨（需约 ${formatBal(newGas, 6)} ${gasSym}），余额已不足支付手续费`, `${gasSym} gas spiked (~${formatBal(newGas, 6)} ${gasSym}); balance cannot cover fee`)
+        : t(`当前 ${gasSym} Gas 突然大幅上涨（需约 ${formatBal(newGas, 6)} ${gasSym}），已超出自动微调范围，请重新确认金额`, `${gasSym} gas spiked sharply (~${formatBal(newGas, 6)} ${gasSym}), exceeding safe auto-trim limit. Please re-confirm amount.`)
+    };
   }
 
   function evaluateSwapButtonState({
@@ -569,12 +767,15 @@
     });
     if (view && view.maxSpendableStr && view.maxSpendableStr !== '0') {
       st.swap.amountIn = view.maxSpendableStr;
+      st.swap._isMaxSweep = true;
+      st.swap._maxSweepAssetId = fromToken.assetId;
+      st.swap._maxSweepAmount = view.maxSpendableStr;
       const amtEl = $('swap-amount-in');
       if (amtEl && (typeof document === 'undefined' || document.activeElement !== amtEl)) {
         amtEl.value = view.maxSpendableStr;
       }
       $('swap-gas-fix-banner')?.classList.add('hidden');
-      handleSwapAmountInput();
+      handleSwapAmountInput({ preserveMaxSweep: true });
     }
   }
 

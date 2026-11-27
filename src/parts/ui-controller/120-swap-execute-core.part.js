@@ -122,9 +122,9 @@
 
     const avail = getSwapTokenAvailableBalance(fromToken);
     const isNative = isSwapTokenNative(fromToken);
-    const gasPlan = resolveEffectiveSwapGasPlan(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
-    const gasBuf = isNative ? gasPlan.gasBuffer : null;
-    const originGasOverride = isNative
+    let gasPlan = resolveEffectiveSwapGasPlan(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', st.swap.quoteData || null);
+    let gasBuf = isNative ? gasPlan.gasBuffer : null;
+    let originGasOverride = isNative
       ? { gasBuffer: gasPlan.gasBuffer, meta: (gasPlan.liveGas && gasPlan.liveGas.meta) || {} }
       : null;
     let effectiveAvail = avail !== null ? avail : 0;
@@ -135,21 +135,43 @@
         effectiveAvail = liveNum;
       }
     }
-    const amt = rawAmt;
-    const amtStr = String(st.swap.amountIn);
+    let amt = rawAmt;
+    let amtStr = String(st.swap.amountIn);
 
     // Strict Local Balance Pre-Validation BEFORE firing RPC / quotes
+    const deferExpiredLiveGasCheck = Boolean(
+      isNative && (
+        (typeof isSwapMaxSweepActive === 'function' && isSwapMaxSweepActive(st, fromToken, amtStr)) ||
+        (st.swap && st.swap._liveGas && st.swap._liveGas.data &&
+          typeof buildSwapLiveGasCacheKey === 'function' &&
+          st.swap._liveGas.key === buildSwapLiveGasCacheKey(wallet, fromToken.blockchain, isSameChainContractSwap(fromToken, toToken) ? 'dex_swap' : 'transfer', fromToken, toToken, st.swap.quoteData || null))
+      )
+    );
     try {
-      contracts.validateSufficientChainBalance({
-        wallet,
-        chain: fromToken.blockchain,
-        tokenSymbol: fromToken.symbol,
-        amount: amt,
-        isNative,
-        tokenBalance: effectiveAvail,
-        gasBuffer: gasBuf
-      });
-      validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData: st.swap.quoteData, amountIn: amt });
+      if (deferExpiredLiveGasCheck) {
+        if (amt > effectiveAvail + 1e-12) {
+          contracts.validateSufficientChainBalance({
+            wallet,
+            chain: fromToken.blockchain,
+            tokenSymbol: fromToken.symbol,
+            amount: amt,
+            isNative: false,
+            tokenBalance: effectiveAvail,
+            gasBuffer: 0
+          });
+        }
+      } else {
+        contracts.validateSufficientChainBalance({
+          wallet,
+          chain: fromToken.blockchain,
+          tokenSymbol: fromToken.symbol,
+          amount: amt,
+          isNative,
+          tokenBalance: effectiveAvail,
+          gasBuffer: gasBuf
+        });
+        validateSwapNearGasRequirement({ wallet, fromToken, toToken, quoteData: st.swap.quoteData, amountIn: amt });
+      }
       if (!isNative && (typeof contracts.getNativeGasReserve === 'function' || contracts.DEFAULT_GAS_BUFFERS)) {
         const ck = String(fromToken.blockchain || '').toLowerCase();
         const minNative = typeof contracts.getNativeGasReserve === 'function'
@@ -222,6 +244,30 @@
         _swapAbortedOrFailed = true;
         return;
       }
+      const applyReconciledSwapGas = async (afterAuth = false) => {
+        if (!isNative || typeof reconcileSwapLiveGasBeforeSignAsync !== 'function') return true;
+        const gChk = await reconcileSwapLiveGasBeforeSignAsync({ wallet, fromToken, toToken, amtStr, quoteData: st.swap.quoteData || null });
+        if (!gChk.ok) {
+          if (afterAuth) closeTxFlowModal();
+          _swapAbortedOrFailed = true;
+          setSwapError(gChk.error);
+          showToast(gChk.error);
+          return false;
+        }
+        gasPlan = gChk.gasPlan || gasPlan;
+        gasBuf = gasPlan.gasBuffer;
+        originGasOverride = { gasBuffer: gasPlan.gasBuffer, meta: (gasPlan.liveGas && gasPlan.liveGas.meta) || {} };
+        if (Number.isFinite(gChk.effectiveAvail)) effectiveAvail = gChk.effectiveAvail;
+        if (gChk.trimmed) {
+          amt = gChk.amt;
+          amtStr = gChk.amtStr;
+          if (gChk.toastMsg) showToast(gChk.toastMsg);
+          st.swap.quoteData = null;
+          if (typeof fetchLiveSwapQuoteAsync === 'function') await fetchLiveSwapQuoteAsync().catch(() => null);
+        }
+        return true;
+      };
+      if (!(await applyReconciledSwapGas(false))) return;
       const thirdPartySuffix = isThirdParty ? ` → ${shortenAddr(st.swap.recipientAddress)}` : '';
       const flowPlan = buildSwapTxFlowPlan({
         wallet,
@@ -274,6 +320,7 @@
         _swapAbortedOrFailed = true;
         return;
       }
+      if (!(await applyReconciledSwapGas(true))) return;
       if (st.swap.quoteData && st.swap.quoteData.quotedAt && (Date.now() - Number(st.swap.quoteData.quotedAt)) > 30000) {
         closeTxFlowModal();
         if (typeof fetchLiveSwapQuoteAsync === 'function') {
@@ -299,13 +346,19 @@
         if (fromToken.blockchain === 'near') {
           const is1ClickBest = st.swap.quoteData?.routeSource === 'NEAR_INTENTS_1CLICK'
             || (st.swap.quoteData?.bestSource === '1Click Solver' && !st.swap.quoteData?.compositeType);
-          const hasNearDexQuote = Boolean(
-            st.swap.quoteData
-            && (st.swap.quoteData.actions?.length || (st.swap.quoteData.isDcl && st.swap.quoteData.poolIds?.length))
+          const isNearToPrlSameChain = Boolean(
+            st.swap.quoteData?.compositeType === 'NEAR_TO_PRL_REF'
+            && String(toToken.blockchain || '').toLowerCase() === 'near'
+            && st.swap.quoteData?.refQuote
           );
-          if (!st.swap.quoteData?.compositeType && !is1ClickBest && !isThirdParty) {
+          const nearDexSrc = isNearToPrlSameChain ? st.swap.quoteData.refQuote : st.swap.quoteData;
+          const hasNearDexQuote = Boolean(
+            nearDexSrc
+            && (nearDexSrc.actions?.length || (nearDexSrc.isDcl && nearDexSrc.poolIds?.length))
+          );
+          if ((!st.swap.quoteData?.compositeType || isNearToPrlSameChain) && !is1ClickBest && !isThirdParty) {
             const refQ = hasNearDexQuote
-              ? st.swap.quoteData
+              ? nearDexSrc
               : await contracts.quoteNearRefFinanceSwap({
                   tokenIn: fromToken.contractAddress,
                   tokenOut: toToken.contractAddress,
@@ -325,9 +378,10 @@
                 tokenOut: toToken.contractAddress,
                 amountRaw,
                 slippageBps: st.swap.slippageBps,
-                tokenBalance: avail,
+                tokenBalance: effectiveAvail,
                 inputDecimals: fromToken.decimals,
-                tokenSymbol: fromToken.symbol
+                tokenSymbol: fromToken.symbol,
+                gasBuffer: isNative ? gasBuf : null
               });
               advanceStep(0, 'done', { txHash: res.txHash, chain: 'near' });
               stepper.finish(true, { text: t('兑换成功', 'Swap completed'), doneTitle: t('兑换成功', 'Swap Completed') });
@@ -682,6 +736,8 @@
         };
         const buildDestDexFollowUp = async (expectedInRaw) => {
           if (!destDexLeg) return {};
+          const gasMode = st.swap.gasReserveMode || 'auto';
+          const destReserveInfo = getTargetChainGasReserveInfo(wallet, fromToken, toToken, gasMode, activeQuote);
           if (destDexLeg.chain === 'sol') {
             const preSol = await contracts.fetchSolanaNativeAndSplBalances(wallet.solAddress, []).catch(() => null);
             return {
@@ -691,7 +747,9 @@
                 toSymbol: toToken.symbol,
                 expectedSolRaw: String(expectedInRaw || '0'),
                 preSolLamports: String(preSol?.nativeLamports || '0'),
-                reserveSol: getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', activeQuote).selectedReserve,
+                reserveSol: destReserveInfo.selectedReserve,
+                gasReserveMode: gasMode,
+                isNewSolAta: Boolean(destReserveInfo.isNewSolAta),
                 slippageBps: st.swap.slippageBps
               }
             };
@@ -706,7 +764,8 @@
               toSymbol: toToken.symbol,
               expectedInRaw: String(expectedInRaw || '0'),
               preNativeWei: String(preEvm?.nativeRaw || '0'),
-              reserveNative: getTargetChainGasReserveInfo(wallet, fromToken, toToken, st.swap.gasReserveMode || 'auto', activeQuote).selectedReserve,
+              reserveNative: destReserveInfo.selectedReserve,
+              gasReserveMode: gasMode,
               slippageBps: st.swap.slippageBps
             }
           };
@@ -921,9 +980,10 @@
             tokenOut: first.tokenOut,
             amountRaw: stageAmtRaw,
             slippageBps: st.swap.slippageBps,
-            tokenBalance: avail,
+            tokenBalance: String(fromToken.blockchain || '').toLowerCase() === 'near' ? effectiveAvail : avail,
             inputDecimals: first.inDecimals || fromToken.decimals || 18,
-            tokenSymbol: first.inSymbol || fromToken.symbol
+            tokenSymbol: first.inSymbol || fromToken.symbol,
+            gasBuffer: (String(fromToken.blockchain || '').toLowerCase() === 'near' && isNative) ? gasBuf : null
           });
           advanceStep(smartStep, 'done', { txHash: swapRes.txHash, chain: 'near' });
           if (!outLeg) {

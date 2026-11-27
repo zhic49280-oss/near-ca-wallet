@@ -11,7 +11,8 @@
     slippageBps = 100,
     tokenBalance = null,
     inputDecimals = 6,
-    tokenSymbol = 'TOKEN'
+    tokenSymbol = 'TOKEN',
+    gasBuffer = null
   } = {}) {
     if (!wallet) throw new Error(t('钱包对象不可用', 'Wallet is required'));
     const inId = normalizeNearRefTokenContract(tokenIn);
@@ -21,6 +22,9 @@
       throw new Error(t('兑换数量必须大于 0', 'Swap amount must be positive'));
     }
 
+    const resolvedGasBuf = (gasBuffer !== null && gasBuffer !== undefined && Number.isFinite(Number(gasBuffer)) && Number(gasBuffer) >= 0)
+      ? Number(gasBuffer)
+      : 0.01;
     const humanAmount = Number(fromBaseUnits(amtStr, inputDecimals));
     if (tokenBalance !== null && tokenBalance !== undefined) {
       validateSufficientChainBalance({
@@ -29,7 +33,7 @@
         tokenSymbol,
         amount: humanAmount,
         isNative: inId === WRAP_NEAR_CONTRACT,
-        gasBuffer: 0.01,
+        gasBuffer: resolvedGasBuf,
         tokenBalance
       });
     } else {
@@ -37,7 +41,7 @@
         wallet,
         chain: 'near',
         tokenSymbol: 'NEAR',
-        amount: inId === WRAP_NEAR_CONTRACT ? humanAmount + 0.01 : 0.01,
+        amount: inId === WRAP_NEAR_CONTRACT ? humanAmount + resolvedGasBuf : resolvedGasBuf,
         isNative: false,
         tokenBalance: resolveWalletChainBalance(wallet, 'near')
       });
@@ -146,7 +150,8 @@
     slippageBps = 100,
     tokenBalance = null,
     inputDecimals = 8,
-    tokenSymbol = 'TOKEN'
+    tokenSymbol = 'TOKEN',
+    gasBuffer = null
   } = {}) {
     if ((routeData && routeData.isDcl) || (Array.isArray(poolIds) && poolIds.length > 0)) {
       return executeNearDclPoolSwap({
@@ -159,7 +164,8 @@
         slippageBps,
         tokenBalance,
         inputDecimals,
-        tokenSymbol
+        tokenSymbol,
+        gasBuffer
       });
     }
 
@@ -171,6 +177,9 @@
       throw new Error(t('兑换数量必须大于 0', 'Swap amount must be positive'));
     }
 
+    const resolvedGasBuf = (gasBuffer !== null && gasBuffer !== undefined && Number.isFinite(Number(gasBuffer)) && Number(gasBuffer) >= 0)
+      ? Number(gasBuffer)
+      : 0.01;
     const humanAmount = Number(fromBaseUnits(amtStr, inputDecimals));
     if (tokenBalance !== null && tokenBalance !== undefined) {
       validateSufficientChainBalance({
@@ -179,7 +188,7 @@
         tokenSymbol,
         amount: humanAmount,
         isNative: inId === WRAP_NEAR_CONTRACT,
-        gasBuffer: 0.01,
+        gasBuffer: resolvedGasBuf,
         tokenBalance
       });
     } else {
@@ -187,7 +196,7 @@
         wallet,
         chain: 'near',
         tokenSymbol: 'NEAR',
-        amount: inId === WRAP_NEAR_CONTRACT ? humanAmount + 0.01 : 0.01,
+        amount: inId === WRAP_NEAR_CONTRACT ? humanAmount + resolvedGasBuf : resolvedGasBuf,
         isNative: false,
         tokenBalance: resolveWalletChainBalance(wallet, 'near')
       });
@@ -231,7 +240,8 @@
           slippageBps,
           tokenBalance,
           inputDecimals,
-          tokenSymbol
+          tokenSymbol,
+          gasBuffer
         });
       }
       if (!q.ok || !q.actions.length) {
