@@ -58,7 +58,7 @@
       let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
         updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-        await loadScriptOnce('walletconnect.umd.min.js?v=6.94');
+        await loadScriptOnce('walletconnect.umd.min.js?v=6.95');
         sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       }
       if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -104,7 +104,14 @@
         }
       };
       const onSessionDelete = (ev) => {
-        if (ev && ev.topic) drainTopicRequests(ev.topic);
+        if (ev && ev.topic) {
+          drainTopicRequests(ev.topic);
+          syncWcSessionWalletsCache();
+          if (_wcSessionWallets[ev.topic]) {
+            delete _wcSessionWallets[ev.topic];
+            savePersistedWcSessionWallets();
+          }
+        }
         renderWcSessions();
         renderHeaderAndHero();
       };
@@ -115,6 +122,12 @@
         renderWcCards();
       };
       client._nexusDrainTopicRequests = drainTopicRequests;
+      client._nexusClearAllPendingRequests = () => {
+        _wcRequestQueue.length = 0;
+        st.wc.pendingRequest = null;
+        st.wc.pendingProposal = null;
+        renderWcCards();
+      };
       client._nexusListeners = {
         proposal: onSessionProposal,
         request: onSessionRequest,
@@ -124,6 +137,16 @@
 
       st.wc.client = client;
       st.wc.initProjectId = projectId;
+      syncWcSessionWalletsCache();
+      const liveTopics = new Set(Object.keys((typeof client.getActiveSessions === 'function' ? client.getActiveSessions() : null) || {}));
+      let pruned = false;
+      for (const mappedTopic of Object.keys(_wcSessionWallets)) {
+        if (!liveTopics.has(mappedTopic)) {
+          delete _wcSessionWallets[mappedTopic];
+          pruned = true;
+        }
+      }
+      if (pruned) savePersistedWcSessionWallets();
       updateWcStatusPill(t('已就绪', 'Ready'), true);
       renderWcSessions();
       renderHeaderAndHero();
@@ -313,6 +336,12 @@
           }
           $('wc-request-payload').textContent = preview;
         }
+        if (typeof document !== 'undefined') {
+          const rejectBtnEl = $('btn-wc-request-reject') || document.querySelector('#wc-request-card .btn-secondary');
+          const approveBtnEl = $('btn-wc-request-approve') || document.querySelector('#wc-request-card .btn-primary');
+          if (rejectBtnEl) rejectBtnEl.disabled = Boolean(_wcApprovingRequest);
+          if (approveBtnEl) approveBtnEl.disabled = Boolean(_wcApprovingRequest);
+        }
         rCard.classList.remove('hidden');
       }
     }
@@ -322,7 +351,7 @@
     const st = getState();
     const listEl = $('wc-sessions-list');
     if (!listEl) return;
-    const sessions = st.wc.client ? Object.values(st.wc.client.getActiveSessions() || {}) : [];
+    const sessions = getActiveWalletWcSessions();
     const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (!fw || typeof fw.mountWcSessionsPanel !== 'function') return;
     fw.mountWcSessionsPanel(listEl, { sessions, isEn: st.lang === 'en' });
@@ -469,7 +498,9 @@
         }
       });
       if (approvedSess && approvedSess.topic) {
+        syncWcSessionWalletsCache();
         _wcSessionWallets[approvedSess.topic] = wallet.id;
+        savePersistedWcSessionWallets();
       }
       st.wc.pendingProposal = null;
       renderWcCards();
@@ -491,6 +522,7 @@
   }
 
   async function rejectWcProposal() {
+    if (_wcApprovingProposal) return;
     const st = getState();
     const p = st.wc.pendingProposal;
     if (p && st.wc.client) {
@@ -510,8 +542,151 @@
     }
   }
 
+  const WC_SESSION_WALLETS_STORAGE_KEY = 'near_ca_wc_session_wallets_v1';
   let _wcApprovingRequest = false;
-  const _wcSessionWallets = {};
+
+  function loadPersistedWcSessionWallets() {
+    try {
+      if (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function') {
+        const raw = localStorage.getItem(WC_SESSION_WALLETS_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            const out = {};
+            for (const [topic, wid] of Object.entries(parsed)) {
+              if (topic && wid) out[String(topic)] = String(wid);
+            }
+            return out;
+          }
+        }
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  const _wcSessionWallets = loadPersistedWcSessionWallets();
+  let _lastWcStorageRef = typeof localStorage !== 'undefined' ? localStorage : null;
+  let _lastWcStorageRaw = (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function')
+    ? (localStorage.getItem(WC_SESSION_WALLETS_STORAGE_KEY) || '')
+    : '';
+
+  function syncWcSessionWalletsCache() {
+    if (typeof localStorage === 'undefined' || typeof localStorage.getItem !== 'function') return _wcSessionWallets;
+    const raw = localStorage.getItem(WC_SESSION_WALLETS_STORAGE_KEY) || '';
+    if (localStorage !== _lastWcStorageRef || raw !== _lastWcStorageRaw) {
+      _lastWcStorageRef = localStorage;
+      _lastWcStorageRaw = raw;
+      for (const k of Object.keys(_wcSessionWallets)) delete _wcSessionWallets[k];
+      Object.assign(_wcSessionWallets, loadPersistedWcSessionWallets());
+    }
+    return _wcSessionWallets;
+  }
+
+  function savePersistedWcSessionWallets() {
+    try {
+      if (typeof localStorage !== 'undefined' && typeof localStorage.setItem === 'function') {
+        const serialized = JSON.stringify(_wcSessionWallets);
+        localStorage.setItem(WC_SESSION_WALLETS_STORAGE_KEY, serialized);
+        _lastWcStorageRef = localStorage;
+        _lastWcStorageRaw = serialized;
+      }
+    } catch (_) {}
+  }
+
+  function getWcWalletEvmLower(wallet) {
+    if (!wallet) return '';
+    const contracts = typeof getContracts === 'function' ? getContracts() : null;
+    const addr = (contracts && typeof contracts.resolveWalletEvmSender === 'function'
+      ? contracts.resolveWalletEvmSender(wallet)
+      : '') || wallet.mpcEvmAddress || wallet.evmAddress || '';
+    return String(addr).trim().toLowerCase();
+  }
+
+  function doesWcSessionBelongToWallet(session, wallet) {
+    if (!session || !wallet) return false;
+    syncWcSessionWalletsCache();
+    const topic = session.topic ? String(session.topic) : '';
+    const mappedWalletId = topic ? _wcSessionWallets[topic] : '';
+    if (mappedWalletId) {
+      return mappedWalletId === String(wallet.id);
+    }
+    const walletEvm = getWcWalletEvmLower(wallet);
+    const sessAccounts = session.namespaces && session.namespaces.eip155 && Array.isArray(session.namespaces.eip155.accounts)
+      ? session.namespaces.eip155.accounts.map((a) => String(a).split(':')[2]?.toLowerCase()).filter(Boolean)
+      : [];
+    if (walletEvm && sessAccounts.length > 0) {
+      return sessAccounts.includes(walletEvm);
+    }
+    return false;
+  }
+
+  function getActiveWalletWcSessions(walletOverride) {
+    const st = getState();
+    const wallet = walletOverride || (st && typeof st.getActiveWallet === 'function' ? st.getActiveWallet() : null);
+    const client = st && st.wc ? st.wc.client : null;
+    if (!client || typeof client.getActiveSessions !== 'function' || !wallet) return [];
+    const allSessions = Object.values(client.getActiveSessions() || {});
+    return allSessions.filter((s) => doesWcSessionBelongToWallet(s, wallet));
+  }
+
+  async function cleanupWalletConnectForDeletedWalletAsync(wallet, deletedActive = false) {
+    if (!wallet || !wallet.id) return;
+    const wid = String(wallet.id);
+    const st = getState();
+    const client = st && st.wc ? st.wc.client : null;
+    syncWcSessionWalletsCache();
+
+    const topicsToDisconnect = new Set();
+    for (const [topic, ownerId] of Object.entries(_wcSessionWallets)) {
+      if (String(ownerId) === wid) topicsToDisconnect.add(topic);
+    }
+    if (client && typeof client.getActiveSessions === 'function') {
+      for (const sess of Object.values(client.getActiveSessions() || {})) {
+        if (sess && sess.topic && doesWcSessionBelongToWallet(sess, wallet)) {
+          topicsToDisconnect.add(sess.topic);
+        }
+      }
+    }
+
+    for (const topic of topicsToDisconnect) {
+      delete _wcSessionWallets[topic];
+    }
+    savePersistedWcSessionWallets();
+
+    if (st && st.wc) {
+      if (deletedActive && st.wc.pendingProposal) {
+        const pendingP = st.wc.pendingProposal;
+        st.wc.pendingProposal = null;
+        if (client && typeof client.rejectSession === 'function') {
+          await client.rejectSession({ id: pendingP.id, reason: { code: 5000, message: 'Wallet removed' } }).catch(() => {});
+        }
+      }
+      if (client) {
+        for (const topic of topicsToDisconnect) {
+          if (typeof client._nexusDrainTopicRequests === 'function') {
+            client._nexusDrainTopicRequests(topic);
+          } else if (st.wc.pendingRequest && st.wc.pendingRequest.topic === topic) {
+            st.wc.pendingRequest = null;
+          }
+        }
+      } else if (st.wc.pendingRequest && topicsToDisconnect.has(st.wc.pendingRequest.topic)) {
+        st.wc.pendingRequest = null;
+      }
+    }
+
+    if (client && typeof client.disconnectSession === 'function' && topicsToDisconnect.size > 0) {
+      const disconnectTasks = Array.from(topicsToDisconnect).map((topic) =>
+        client.disconnectSession({ topic, reason: { code: 6000, message: 'Wallet removed' } }).catch(() => {})
+      );
+      await Promise.race([
+        Promise.allSettled(disconnectTasks),
+        new Promise((resolve) => setTimeout(resolve, 400))
+      ]);
+    }
+
+    renderWcCards();
+    renderWcSessions();
+  }
 
   async function approveWcRequest() {
     if (_wcApprovingRequest) return;
@@ -523,6 +698,7 @@
     const wallet = st.getActiveWallet();
     if (!ev || !client || !wallet) return;
 
+    syncWcSessionWalletsCache();
     const reqTopic = ev.topic;
     const sess = reqTopic && client.session && typeof client.session.get === 'function'
       ? client.session.get(reqTopic)
@@ -544,11 +720,15 @@
     }
 
     _wcApprovingRequest = true;
-    const approveBtn = typeof document !== 'undefined' ? document.querySelector('#wc-request-card .btn-primary') : null;
+    const approveBtn = typeof document !== 'undefined' ? ($('btn-wc-request-approve') || document.querySelector('#wc-request-card .btn-primary')) : null;
+    const rejectBtn = typeof document !== 'undefined' ? ($('btn-wc-request-reject') || document.querySelector('#wc-request-card .btn-secondary')) : null;
     const prevBtnText = approveBtn ? approveBtn.textContent : '';
     if (approveBtn) {
       approveBtn.disabled = true;
       approveBtn.textContent = t('处理中...', 'Signing...');
+    }
+    if (rejectBtn) {
+      rejectBtn.disabled = true;
     }
     try {
       if (!(await verifySecurityAuthAsync(wallet, t('批准 WalletConnect DApp 请求', 'Approve WalletConnect request')))) {
@@ -730,11 +910,15 @@
         approveBtn.disabled = false;
         if (prevBtnText) approveBtn.textContent = prevBtnText;
       }
+      if (rejectBtn) {
+        rejectBtn.disabled = false;
+      }
       if (st.wc.pendingRequest) renderWcCards();
     }
   }
 
   async function rejectWcRequest() {
+    if (_wcApprovingRequest) return;
     const st = getState();
     const ev = st.wc.pendingRequest;
     const client = st.wc.client;
@@ -755,6 +939,11 @@
     const client = st.wc.client;
     if (!client) return;
     try { await client.disconnectSession({ topic, reason: { code: 6000, message: 'Disconnected' } }); } catch (_) {}
+    syncWcSessionWalletsCache();
+    if (topic && _wcSessionWallets[topic]) {
+      delete _wcSessionWallets[topic];
+      savePersistedWcSessionWallets();
+    }
     if (typeof client._nexusDrainTopicRequests === 'function') {
       client._nexusDrainTopicRequests(topic);
     } else if (st.wc.pendingRequest && st.wc.pendingRequest.topic === topic) {
@@ -845,7 +1034,7 @@
     const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
     if (existing) return existing;
     if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
-      await loadScriptOnce('src/jsqr-lazy.js?v=6.94').catch(() => false);
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.95').catch(() => false);
       return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     }
     return null;

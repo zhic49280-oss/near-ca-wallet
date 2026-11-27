@@ -24,7 +24,10 @@
       regBtn.classList.toggle('hidden', Boolean(wallet.nearNamedAccount));
     }
 
-    const wcCount = st.wc.client ? Object.keys(st.wc.client.getActiveSessions() || {}).length : 0;
+    const wcSessions = typeof getActiveWalletWcSessions === 'function'
+      ? getActiveWalletWcSessions(wallet)
+      : (st.wc.client ? Object.values(st.wc.client.getActiveSessions() || {}) : []);
+    const wcCount = wcSessions.length;
     const wcDot = $('header-wc-dot');
     if (wcDot) {
       wcDot.classList.toggle('connected', wcCount > 0);

@@ -172,8 +172,8 @@ export function ToolsAndChainSheets() {
             <div id="wc-request-dapp" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>--</div>
             <pre id="wc-request-payload" class="mono" style={{ margin: 0, fontSize: '10.5px', maxHeight: '120px', overflow: 'auto', background: 'rgba(0,0,0,0.35)', padding: '8px', borderRadius: '8px' }} />
             <div class="flex gap-2">
-              <button type="button" class="btn-secondary flex-1" onClick={() => callWin('rejectWcRequest')} data-i18n="sheet.wcRejectBtn">{tr('sheet.wcRejectBtn', '拒绝')}</button>
-              <button type="button" class="btn-primary flex-1" onClick={() => callWin('approveWcRequest')} data-i18n="sheet.wcApproveBtn">{tr('sheet.wcApproveBtn', '批准')}</button>
+              <button type="button" id="btn-wc-request-reject" class="btn-secondary flex-1" onClick={() => callWin('rejectWcRequest')} data-i18n="sheet.wcRejectBtn">{tr('sheet.wcRejectBtn', '拒绝')}</button>
+              <button type="button" id="btn-wc-request-approve" class="btn-primary flex-1" onClick={() => callWin('approveWcRequest')} data-i18n="sheet.wcApproveBtn">{tr('sheet.wcApproveBtn', '批准')}</button>
             </div>
           </div>
 

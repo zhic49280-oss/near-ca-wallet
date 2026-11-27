@@ -47,6 +47,38 @@ public class NativeDAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin, WKNavigationD
         return false
     }
 
+    private func originString(for url: URL?) -> String? {
+        guard let url = url,
+              let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased(),
+              !host.isEmpty else {
+            return nil
+        }
+        if let port = url.port {
+            let isDefaultPort = (scheme == "https" && port == 443) || (scheme == "http" && port == 80)
+            if !isDefaultPort {
+                return "\(scheme)://\(host):\(port)"
+            }
+        }
+        return "\(scheme)://\(host)"
+    }
+
+    private func isDefaultOrMatchingPort(url: URL, securityOrigin: WKSecurityOrigin) -> Bool {
+        let scheme = (url.scheme ?? "").lowercased()
+        let urlPort = url.port ?? 0
+        let secPort = securityOrigin.port
+        if urlPort == secPort {
+            return true
+        }
+        if secPort == 0 && ((scheme == "https" && urlPort == 443) || (scheme == "http" && urlPort == 80)) {
+            return true
+        }
+        if urlPort == 0 && ((scheme == "https" && secPort == 443) || (scheme == "http" && secPort == 80)) {
+            return true
+        }
+        return false
+    }
+
     private func jsStringLiteral(_ value: String?) -> String {
         guard let value = value else { return "null" }
         if let data = try? JSONSerialization.data(withJSONObject: [value], options: []),
@@ -104,7 +136,7 @@ public class NativeDAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin, WKNavigationD
 
             let ucc = WKUserContentController()
             if !script.isEmpty {
-                let userScript = WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+                let userScript = WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true)
                 ucc.addUserScript(userScript)
             }
             ucc.add(WeakScriptMessageTrampoline(self), name: "nexusBridge")
@@ -260,11 +292,26 @@ public class NativeDAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin, WKNavigationD
 
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "nexusBridge",
-              isAllowedDAppUrl(dappWebView?.url),
+              message.frameInfo.isMainFrame,
+              let topUrl = dappWebView?.url,
+              isAllowedDAppUrl(topUrl),
+              let nativeOrigin = originString(for: topUrl),
               let body = message.body as? String else {
             return
         }
-        notifyListeners("bridgeMessage", data: ["payload": body])
+        let frameOrigin = message.frameInfo.securityOrigin
+        let topScheme = (topUrl.scheme ?? "").lowercased()
+        let topHost = (topUrl.host ?? "").lowercased()
+        guard frameOrigin.protocol.lowercased() == topScheme,
+              frameOrigin.host.lowercased() == topHost,
+              isDefaultOrMatchingPort(url: topUrl, securityOrigin: frameOrigin) else {
+            return
+        }
+        notifyListeners("bridgeMessage", data: [
+            "payload": body,
+            "nativeOrigin": nativeOrigin,
+            "nativeUrl": topUrl.absoluteString
+        ])
     }
 
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {

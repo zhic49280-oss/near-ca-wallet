@@ -28,6 +28,10 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.util.Collections;
 import java.util.Set;
 
@@ -36,6 +40,8 @@ import org.json.JSONObject;
 @CapacitorPlugin(name = "NativeDAppBrowser")
 public class NativeDAppBrowserPlugin extends Plugin {
 
+    private static final String WEB_MESSAGE_BRIDGE_NAME = "NexusAndroidWebMessage";
+
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private LinearLayout overlayRoot;
     private WebView dappWebView;
@@ -43,7 +49,10 @@ public class NativeDAppBrowserPlugin extends Plugin {
     private Button backButton;
     private Button forwardButton;
     private String injectedScriptSource = "";
+    private String guardedInjectedScript = "";
+    private String bridgeSessionToken = "";
     private boolean documentStartRegistered = false;
+    private boolean webMessageListenerRegistered = false;
 
     private static boolean isAllowedDAppUrl(String rawUrl) {
         if (rawUrl == null || rawUrl.trim().isEmpty()) return false;
@@ -56,6 +65,40 @@ public class NativeDAppBrowserPlugin extends Plugin {
         } catch (Exception ignored) {
         }
         return false;
+    }
+
+    private static String originString(String rawUrl) {
+        if (rawUrl == null || rawUrl.trim().isEmpty()) return null;
+        try {
+            Uri uri = Uri.parse(rawUrl.trim());
+            String scheme = uri.getScheme() != null ? uri.getScheme().toLowerCase() : "";
+            String host = uri.getHost() != null ? uri.getHost().toLowerCase() : "";
+            if (scheme.isEmpty() || host.isEmpty()) return null;
+            int port = uri.getPort();
+            boolean isDefaultPort = (port == -1) || ("https".equals(scheme) && port == 443) || ("http".equals(scheme) && port == 80);
+            return isDefaultPort ? (scheme + "://" + host) : (scheme + "://" + host + ":" + port);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static String generateBridgeToken() {
+        byte[] bytes = new byte[24];
+        new SecureRandom().nextBytes(bytes);
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
+    private static String buildMainFrameGuardedScript(String rawScript, String token) {
+        if (rawScript == null || rawScript.isEmpty()) return "";
+        return "(function(){"
+                + "try{if(window.self!==window.top)return;}catch(_){return;}"
+                + "var __NEXUS_ANDROID_BRIDGE_TOKEN__=" + JSONObject.quote(token != null ? token : "") + ";"
+                + rawScript
+                + "\n})();";
     }
 
     private int dp(int value) {
@@ -87,16 +130,35 @@ public class NativeDAppBrowserPlugin extends Plugin {
         return btn;
     }
 
+    private void emitNativeBridgeMessage(final String payloadJson, final String expectedSourceOrigin) {
+        if (payloadJson == null || dappWebView == null) return;
+        final String topUrl = dappWebView.getUrl();
+        if (!isAllowedDAppUrl(topUrl)) return;
+        final String nativeOrigin = originString(topUrl);
+        if (nativeOrigin == null) return;
+        if (expectedSourceOrigin != null && !nativeOrigin.equalsIgnoreCase(expectedSourceOrigin)) return;
+        JSObject data = new JSObject();
+        data.put("payload", payloadJson);
+        data.put("nativeOrigin", nativeOrigin);
+        data.put("nativeUrl", topUrl);
+        notifyListeners("bridgeMessage", data);
+    }
+
     private class BridgeJsInterface {
         @JavascriptInterface
         public void postMessage(final String payloadJson) {
-            if (payloadJson == null) return;
-            mainHandler.post(() -> {
-                if (dappWebView == null || !isAllowedDAppUrl(dappWebView.getUrl())) return;
-                JSObject data = new JSObject();
-                data.put("payload", payloadJson);
-                notifyListeners("bridgeMessage", data);
-            });
+            // Unauthenticated 1-arg bridge calls are blocked to prevent subframe spoofing.
+        }
+
+        @JavascriptInterface
+        public void postMessageSecure(final String payloadJson, final String token) {
+            if (payloadJson == null || token == null || bridgeSessionToken == null || bridgeSessionToken.isEmpty()) return;
+            if (!MessageDigest.isEqual(
+                    bridgeSessionToken.getBytes(StandardCharsets.UTF_8),
+                    token.getBytes(StandardCharsets.UTF_8))) {
+                return;
+            }
+            mainHandler.post(() -> emitNativeBridgeMessage(payloadJson, null));
         }
     }
 
@@ -118,6 +180,8 @@ public class NativeDAppBrowserPlugin extends Plugin {
                 return;
             }
             teardownOverlayOnly();
+            this.bridgeSessionToken = generateBridgeToken();
+            this.guardedInjectedScript = buildMainFrameGuardedScript(this.injectedScriptSource, this.bridgeSessionToken);
 
             ViewGroup rootContent = act.findViewById(android.R.id.content);
             if (rootContent == null) {
@@ -232,12 +296,62 @@ public class NativeDAppBrowserPlugin extends Plugin {
             backButton = backBtn;
             forwardButton = fwdBtn;
 
-            documentStartRegistered = tryRegisterDocumentStartScript(wv, this.injectedScriptSource);
+            webMessageListenerRegistered = tryRegisterWebMessageListener(wv);
+            documentStartRegistered = tryRegisterDocumentStartScript(wv, this.guardedInjectedScript);
             wv.loadUrl(targetUrl);
             JSObject out = new JSObject();
             out.put("opened", true);
             call.resolve(out);
         });
+    }
+
+    private boolean tryRegisterWebMessageListener(WebView view) {
+        if (view == null) return false;
+        try {
+            Class<?> featureCls = Class.forName("androidx.webkit.WebViewFeature");
+            String featureName = "WEB_MESSAGE_LISTENER";
+            try {
+                Object fieldVal = featureCls.getField("WEB_MESSAGE_LISTENER").get(null);
+                if (fieldVal instanceof String) featureName = (String) fieldVal;
+            } catch (Exception ignored) {
+            }
+            Method isSupported = featureCls.getMethod("isFeatureSupported", String.class);
+            Object supported = isSupported.invoke(null, featureName);
+            if (!Boolean.TRUE.equals(supported)) return false;
+
+            Class<?> compatCls = Class.forName("androidx.webkit.WebViewCompat");
+            Class<?> listenerCls = Class.forName("androidx.webkit.WebViewCompat$WebMessageListener");
+            Object proxy = Proxy.newProxyInstance(
+                    listenerCls.getClassLoader(),
+                    new Class<?>[]{ listenerCls },
+                    (p, method, args) -> {
+                        if (method != null && "onPostMessage".equals(method.getName()) && args != null && args.length >= 4) {
+                            Object msgObj = args[1];
+                            Uri sourceUri = args[2] instanceof Uri ? (Uri) args[2] : null;
+                            boolean isMainFrame = Boolean.TRUE.equals(args[3]);
+                            if (!isMainFrame || msgObj == null || sourceUri == null) return null;
+                            String srcOrigin = originString(sourceUri.toString());
+                            if (srcOrigin == null) return null;
+                            Object rawData = msgObj.getClass().getMethod("getData").invoke(msgObj);
+                            if (!(rawData instanceof String)) return null;
+                            final String payloadJson = (String) rawData;
+                            mainHandler.post(() -> emitNativeBridgeMessage(payloadJson, srcOrigin));
+                        }
+                        return null;
+                    }
+            );
+            Method addListener = compatCls.getMethod(
+                    "addWebMessageListener",
+                    WebView.class,
+                    String.class,
+                    Set.class,
+                    listenerCls
+            );
+            addListener.invoke(null, view, WEB_MESSAGE_BRIDGE_NAME, Collections.singleton("*"), proxy);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private boolean tryRegisterDocumentStartScript(WebView view, String script) {
@@ -265,9 +379,9 @@ public class NativeDAppBrowserPlugin extends Plugin {
 
     private void injectProviderIfAllowed(WebView view, String url) {
         if (documentStartRegistered) return;
-        if (view == null || injectedScriptSource == null || injectedScriptSource.isEmpty()) return;
+        if (view == null || guardedInjectedScript == null || guardedInjectedScript.isEmpty()) return;
         if (!isAllowedDAppUrl(url)) return;
-        view.evaluateJavascript(injectedScriptSource, null);
+        view.evaluateJavascript(guardedInjectedScript, null);
     }
 
     private void syncChrome(WebView view) {
@@ -291,6 +405,13 @@ public class NativeDAppBrowserPlugin extends Plugin {
 
     private void teardownOverlayOnly() {
         if (dappWebView != null) {
+            if (webMessageListenerRegistered) {
+                try {
+                    Class<?> compatCls = Class.forName("androidx.webkit.WebViewCompat");
+                    Method removeListener = compatCls.getMethod("removeWebMessageListener", WebView.class, String.class);
+                    removeListener.invoke(null, dappWebView, WEB_MESSAGE_BRIDGE_NAME);
+                } catch (Exception ignored) {}
+            }
             try { dappWebView.removeJavascriptInterface("NexusAndroidBridge"); } catch (Exception ignored) {}
             try { dappWebView.stopLoading(); } catch (Exception ignored) {}
             try { dappWebView.destroy(); } catch (Exception ignored) {}
@@ -303,7 +424,10 @@ public class NativeDAppBrowserPlugin extends Plugin {
         urlView = null;
         backButton = null;
         forwardButton = null;
+        bridgeSessionToken = "";
+        guardedInjectedScript = "";
         documentStartRegistered = false;
+        webMessageListenerRegistered = false;
     }
 
     @PluginMethod

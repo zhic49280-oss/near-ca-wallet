@@ -398,13 +398,39 @@
       }
     }
     if (st.perp) {
+      if (typeof stopPerpOneClickDepositPolling === 'function') {
+        stopPerpOneClickDepositPolling();
+      } else if (typeof globalThis !== 'undefined' && globalThis.NearCAUI && typeof globalThis.NearCAUI.stopPerpOneClickDepositPolling === 'function') {
+        globalThis.NearCAUI.stopPerpOneClickDepositPolling();
+      }
       st.perp.account = null;
       st.perp.lastAccountSyncTs = 0;
+      st.perp.oneClickDepositStatus = null;
+      st.perp.fundingQuote = null;
+      st.perp.fundingQuoteError = '';
+      st.perp.fundingQuoting = false;
       if (typeof resetPerpOrderForm === 'function') {
         resetPerpOrderForm({ clearPrice: true, clearMargin: true, clearTpSl: true });
       }
       if (nextWallet && typeof st.loadCachedPerpSnapshot === 'function') {
-        st.loadCachedPerpSnapshot(nextWallet.mpcEvmAddress || nextWallet.evmAddress || '');
+        const contracts = typeof getContracts === 'function' ? getContracts() : null;
+        const perpAddr = (typeof resolveWalletEvmAddress === 'function' && resolveWalletEvmAddress(nextWallet))
+          || (contracts && typeof contracts.resolveWalletEvmSender === 'function' ? contracts.resolveWalletEvmSender(nextWallet) : '')
+          || (nextWallet.evmPrivateKey ? (nextWallet.evmAddress || nextWallet.mpcEvmAddress) : (nextWallet.mpcEvmAddress || nextWallet.evmAddress))
+          || '';
+        st.loadCachedPerpSnapshot(perpAddr);
+      }
+    }
+    if (st.wc) {
+      st.wc.pendingProposal = null;
+      st.wc.pendingRequest = null;
+      if (st.wc.client && typeof st.wc.client._nexusClearAllPendingRequests === 'function') {
+        st.wc.client._nexusClearAllPendingRequests();
+      } else if (typeof renderWcCards === 'function') {
+        renderWcCards();
+      }
+      if (typeof renderWcSessions === 'function') {
+        renderWcSessions();
       }
     }
     if (st.txModal) st.txModal.currentItem = null;
@@ -469,6 +495,9 @@
       st.wallets = st.wallets.filter((w) => w.id !== walletId);
       if (typeof clearDAppWalletConnections === 'function') {
         clearDAppWalletConnections(walletId);
+      }
+      if (typeof cleanupWalletConnectForDeletedWalletAsync === 'function') {
+        await cleanupWalletConnectForDeletedWalletAsync(target, deletedActive).catch(() => {});
       }
       if (deletedActive) {
         st.activeWalletId = st.wallets[0] ? st.wallets[0].id : null;

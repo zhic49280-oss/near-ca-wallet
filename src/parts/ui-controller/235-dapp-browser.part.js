@@ -1,6 +1,7 @@
   // ==================== Native In-App DApp Browser ====================
 
   const DAPP_CONN_STORAGE_KEY = 'near_ca_dapp_connections_v1';
+  const DAPP_DISCONN_STORAGE_KEY = 'near_ca_dapp_disconnected_v1';
 
   function getActiveDAppWalletId() {
     try {
@@ -27,10 +28,10 @@
     return `${wid}:${ns}:${orig}`;
   }
 
-  function loadPersistedDAppConnections() {
+  function loadPersistedDAppSet(storageKey) {
     try {
       if (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function') {
-        const raw = localStorage.getItem(DAPP_CONN_STORAGE_KEY);
+        const raw = localStorage.getItem(storageKey);
         if (raw) {
           const arr = JSON.parse(raw);
           if (Array.isArray(arr)) {
@@ -42,11 +43,11 @@
     return new Set();
   }
 
-  function savePersistedDAppConnections(setObj) {
+  function savePersistedDAppSet(storageKey, setObj) {
     try {
       if (typeof localStorage !== 'undefined' && typeof localStorage.setItem === 'function') {
         const clean = Array.from(setObj || []).filter((x) => Boolean(parseDAppConnKey(x)));
-        localStorage.setItem(DAPP_CONN_STORAGE_KEY, JSON.stringify(clean));
+        localStorage.setItem(storageKey, JSON.stringify(clean));
       }
     } catch (_) {}
   }
@@ -54,13 +55,31 @@
   const _dappSession = {
     chainFilter: 'ALL',
     activeEvmChainKey: 'eth',
-    connectedOrigins: loadPersistedDAppConnections(),
-    disconnectedOrigins: new Set(),
+    connectedOrigins: loadPersistedDAppSet(DAPP_CONN_STORAGE_KEY),
+    disconnectedOrigins: loadPersistedDAppSet(DAPP_DISCONN_STORAGE_KEY),
     pendingApproval: null,
     listenersBound: false,
-    nativeOpen: false
+    nativeOpen: false,
+    currentUrl: '',
+    currentOrigin: ''
   };
+  let _lastDAppStorageRef = typeof localStorage !== 'undefined' ? localStorage : null;
   let _dappBridgeQueue = Promise.resolve();
+
+  function syncDAppStorageSetsIfChanged() {
+    if (typeof localStorage === 'undefined') return;
+    if (localStorage !== _lastDAppStorageRef) {
+      _lastDAppStorageRef = localStorage;
+      _dappSession.connectedOrigins = loadPersistedDAppSet(DAPP_CONN_STORAGE_KEY);
+      _dappSession.disconnectedOrigins = loadPersistedDAppSet(DAPP_DISCONN_STORAGE_KEY);
+    }
+  }
+
+  function persistAllDAppOriginSets() {
+    savePersistedDAppSet(DAPP_CONN_STORAGE_KEY, _dappSession.connectedOrigins);
+    savePersistedDAppSet(DAPP_DISCONN_STORAGE_KEY, _dappSession.disconnectedOrigins);
+    if (typeof localStorage !== 'undefined') _lastDAppStorageRef = localStorage;
+  }
 
   function getNativeDAppPlugin() {
     if (typeof window === 'undefined' || !window.Capacitor) return null;
@@ -77,37 +96,52 @@
     } catch (_) {}
   }
 
+  function emitNativeDisconnectEvents() {
+    const plugin = getNativeDAppPlugin();
+    if (!_dappSession.nativeOpen || !plugin || typeof plugin.emitProviderEvent !== 'function') return;
+    plugin.emitProviderEvent({ namespace: 'evm', eventName: 'accountsChanged', payload: '[]' }).catch(() => {});
+    plugin.emitProviderEvent({ namespace: 'solana', eventName: 'disconnect', payload: 'null' }).catch(() => {});
+    plugin.emitProviderEvent({ namespace: 'near', eventName: 'accountsChanged', payload: '[]' }).catch(() => {});
+  }
+
   function isDAppOriginConnected(origin, namespace, walletIdOverride) {
+    syncDAppStorageSetsIfChanged();
     const wid = walletIdOverride !== undefined ? String(walletIdOverride || '') : getActiveDAppWalletId();
     const key = makeDAppConnKey(wid, namespace, origin);
     return key ? _dappSession.connectedOrigins.has(key) : false;
   }
 
   function isDAppOriginDisconnected(origin, namespace, walletIdOverride) {
+    syncDAppStorageSetsIfChanged();
     const wid = walletIdOverride !== undefined ? String(walletIdOverride || '') : getActiveDAppWalletId();
     const key = makeDAppConnKey(wid, namespace, origin);
     return key ? _dappSession.disconnectedOrigins.has(key) : false;
   }
 
   function markDAppOriginConnected(origin, namespace, walletIdOverride) {
+    syncDAppStorageSetsIfChanged();
     const wid = walletIdOverride !== undefined ? String(walletIdOverride || '') : getActiveDAppWalletId();
     const key = makeDAppConnKey(wid, namespace, origin);
     if (!key) return;
     _dappSession.disconnectedOrigins.delete(key);
     _dappSession.connectedOrigins.add(key);
-    savePersistedDAppConnections(_dappSession.connectedOrigins);
+    persistAllDAppOriginSets();
+    renderDAppConnectedSection();
   }
 
   function markDAppOriginDisconnected(origin, namespace, walletIdOverride) {
+    syncDAppStorageSetsIfChanged();
     const wid = walletIdOverride !== undefined ? String(walletIdOverride || '') : getActiveDAppWalletId();
     const key = makeDAppConnKey(wid, namespace, origin);
     if (!key) return;
     _dappSession.connectedOrigins.delete(key);
     _dappSession.disconnectedOrigins.add(key);
-    savePersistedDAppConnections(_dappSession.connectedOrigins);
+    persistAllDAppOriginSets();
+    renderDAppConnectedSection();
   }
 
   function disconnectDAppOrigin(origin) {
+    syncDAppStorageSetsIfChanged();
     const clean = String(origin || '').trim();
     const wid = getActiveDAppWalletId();
     if (!clean || !wid) return;
@@ -117,12 +151,16 @@
       _dappSession.connectedOrigins.delete(key);
       _dappSession.disconnectedOrigins.add(key);
     });
-    savePersistedDAppConnections(_dappSession.connectedOrigins);
+    persistAllDAppOriginSets();
+    if (_dappSession.nativeOpen && _dappSession.currentOrigin === clean) {
+      emitNativeDisconnectEvents();
+    }
     renderDAppCatalog();
     showToast(t('已断开 DApp 授权', 'DApp disconnected'));
   }
 
   function disconnectAllDAppOrigins() {
+    syncDAppStorageSetsIfChanged();
     const wid = getActiveDAppWalletId();
     if (!wid) return;
     const prefix = `${wid}:`;
@@ -132,12 +170,14 @@
         _dappSession.disconnectedOrigins.add(key);
       }
     }
-    savePersistedDAppConnections(_dappSession.connectedOrigins);
+    persistAllDAppOriginSets();
+    emitNativeDisconnectEvents();
     renderDAppCatalog();
     showToast(t('已断开全部 DApp 授权', 'All DApps disconnected'));
   }
 
   function clearDAppWalletConnections(walletId) {
+    syncDAppStorageSetsIfChanged();
     const wid = String(walletId || '').trim();
     if (!wid) return;
     const prefix = `${wid}:`;
@@ -147,7 +187,7 @@
     for (const key of Array.from(_dappSession.disconnectedOrigins)) {
       if (key.startsWith(prefix)) _dappSession.disconnectedOrigins.delete(key);
     }
-    savePersistedDAppConnections(_dappSession.connectedOrigins);
+    persistAllDAppOriginSets();
     if (_dappSession.pendingApproval && typeof _dappSession.pendingApproval.resolve === 'function') {
       const resolvePending = _dappSession.pendingApproval.resolve;
       _dappSession.pendingApproval = null;
@@ -156,14 +196,48 @@
     renderDAppConnectedSection();
   }
 
-  function syncDAppSessionForWallet(_nextWallet) {
+  function syncDAppSessionForWallet(nextWallet) {
     if (_dappSession.pendingApproval && typeof _dappSession.pendingApproval.resolve === 'function') {
       const resolvePending = _dappSession.pendingApproval.resolve;
       _dappSession.pendingApproval = null;
       resolvePending(false);
     }
     _dappSession.activeEvmChainKey = 'eth';
-    _dappSession.connectedOrigins = loadPersistedDAppConnections();
+    _dappSession.connectedOrigins = loadPersistedDAppSet(DAPP_CONN_STORAGE_KEY);
+    _dappSession.disconnectedOrigins = loadPersistedDAppSet(DAPP_DISCONN_STORAGE_KEY);
+    if (typeof localStorage !== 'undefined') _lastDAppStorageRef = localStorage;
+
+    const plugin = getNativeDAppPlugin();
+    if (_dappSession.nativeOpen && plugin && typeof plugin.emitProviderEvent === 'function') {
+      const curOrigin = _dappSession.currentOrigin;
+      const wid = nextWallet && nextWallet.id ? String(nextWallet.id) : getActiveDAppWalletId();
+      const contracts = typeof getContracts === 'function' ? getContracts() : null;
+      const evmConnected = Boolean(curOrigin && wid && isDAppOriginConnected(curOrigin, 'evm', wid));
+      const solConnected = Boolean(curOrigin && wid && isDAppOriginConnected(curOrigin, 'solana', wid));
+      const nearConnected = Boolean(curOrigin && wid && isDAppOriginConnected(curOrigin, 'near', wid));
+      const evmAddr = (nextWallet && contracts && typeof contracts.resolveWalletEvmSender === 'function'
+        ? contracts.resolveWalletEvmSender(nextWallet)
+        : '') || (nextWallet && (nextWallet.mpcEvmAddress || nextWallet.evmAddress)) || '';
+      const solAddr = (nextWallet && nextWallet.solAddress) || '';
+      const nearAcct = (nextWallet && (nextWallet.nearNamedAccount || nextWallet.nearAddress)) || '';
+
+      plugin.emitProviderEvent({
+        namespace: 'evm',
+        eventName: 'accountsChanged',
+        payload: JSON.stringify(evmConnected && evmAddr ? [evmAddr] : [])
+      }).catch(() => {});
+      plugin.emitProviderEvent({
+        namespace: 'solana',
+        eventName: solConnected && solAddr ? 'accountChanged' : 'disconnect',
+        payload: solConnected && solAddr ? JSON.stringify({ publicKey: solAddr }) : 'null'
+      }).catch(() => {});
+      plugin.emitProviderEvent({
+        namespace: 'near',
+        eventName: 'accountsChanged',
+        payload: JSON.stringify(nearConnected && nearAcct ? [nearAcct] : [])
+      }).catch(() => {});
+    }
+
     renderDAppConnectedSection();
   }
 
@@ -416,16 +490,65 @@
     }
     if (!msg || !msg.id) return;
 
+    const rawNativeOrigin = rawEvent && typeof rawEvent === 'object' && rawEvent.nativeOrigin
+      ? String(rawEvent.nativeOrigin).trim()
+      : '';
+    const rawNativeUrl = rawEvent && typeof rawEvent === 'object' && rawEvent.nativeUrl
+      ? String(rawEvent.nativeUrl).trim()
+      : '';
+    let trustedOrigin = '';
+    let trustedUrl = '';
+    if (rawNativeOrigin || rawNativeUrl) {
+      const sanitizedNative = browserMod.sanitizeDAppUrl(rawNativeOrigin || rawNativeUrl);
+      const sanitizedUrl = rawNativeUrl ? browserMod.sanitizeDAppUrl(rawNativeUrl) : sanitizedNative;
+      if (sanitizedNative) {
+        try {
+          const originParsed = new URL(sanitizedNative).origin;
+          if (sanitizedUrl) {
+            const urlOrigin = new URL(sanitizedUrl).origin;
+            if (!rawNativeOrigin || originParsed === urlOrigin) {
+              trustedOrigin = originParsed;
+              trustedUrl = sanitizedUrl;
+            }
+          } else {
+            trustedOrigin = originParsed;
+            trustedUrl = sanitizedNative;
+          }
+        } catch (_) {}
+      }
+    } else if (_dappSession.nativeOpen && _dappSession.currentOrigin) {
+      trustedOrigin = _dappSession.currentOrigin;
+      trustedUrl = _dappSession.currentUrl || _dappSession.currentOrigin;
+    }
+
+    if (!trustedOrigin) {
+      if (plugin && typeof plugin.sendResponse === 'function') {
+        await plugin.sendResponse({
+          id: String(msg.id),
+          errorJson: JSON.stringify(browserMod.serializeRpcError({ code: 4100, message: 'Untrusted DApp origin' }))
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    const sanitizedReq = {
+      ...msg,
+      origin: trustedOrigin,
+      url: trustedUrl
+    };
+
     const walletId = wallet && wallet.id ? String(wallet.id) : '';
     try {
       const ethersLib = await ensureEthersLoaded().catch(() => null);
-      const result = await browserMod.handleDAppRpcRequest(msg, {
+      const result = await browserMod.handleDAppRpcRequest(sanitizedReq, {
         wallet,
         contracts,
         crypto,
         ethers: ethersLib,
-        origin: msg.origin || '',
-        url: msg.url || '',
+        origin: trustedOrigin,
+        nativeOrigin: trustedOrigin,
+        url: trustedUrl,
+        nativeUrl: trustedUrl,
         title: msg.title || '',
         activeEvmChainKey: _dappSession.activeEvmChainKey,
         autoConnectOrigin: false,
@@ -474,12 +597,29 @@
       handleIncomingNativeBridgePayload(ev).catch(() => {});
     });
     plugin.addListener('pageChanged', (ev) => {
-      if (ev && ev.url && $('dapp-url-input')) {
-        $('dapp-url-input').value = ev.url;
+      if (ev && ev.url) {
+        const browserMod = getDAppBrowser();
+        const safe = browserMod ? browserMod.sanitizeDAppUrl(ev.url) : null;
+        if (safe) {
+          _dappSession.currentUrl = safe;
+          try {
+            _dappSession.currentOrigin = new URL(safe).origin;
+          } catch (_) {
+            _dappSession.currentOrigin = '';
+          }
+        } else {
+          _dappSession.currentUrl = '';
+          _dappSession.currentOrigin = '';
+        }
+        if ($('dapp-url-input')) {
+          $('dapp-url-input').value = ev.url;
+        }
       }
     });
     plugin.addListener('browserClosed', () => {
       _dappSession.nativeOpen = false;
+      _dappSession.currentUrl = '';
+      _dappSession.currentOrigin = '';
       if (_dappSession.pendingApproval && typeof _dappSession.pendingApproval.resolve === 'function') {
         _dappSession.pendingApproval.resolve(false);
       }
@@ -506,6 +646,9 @@
       return cachedList[0];
     }
 
+    if (!wallet.nearPublicKey && wallet.mnemonic && contracts && typeof contracts.ensureWalletSigningKeysAsync === 'function') {
+      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+    }
     const rawPk = String(wallet.nearPublicKey || '').trim();
     if (!rawPk) return '';
     const pk = rawPk.startsWith('ed25519:') ? rawPk : `ed25519:${rawPk}`;
@@ -576,15 +719,16 @@
     }
 
     ensureDAppBridgeListeners();
-    if (wallet && contracts && typeof contracts.ensureWalletSigningKeysAsync === 'function') {
-      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-    }
     if (wallet && !wallet.nearNamedAccount) {
       await hydrateNearNamedAccountForDAppAsync(wallet, contracts, st, 3500).catch(() => {});
     }
+    if (wallet && contracts && typeof contracts.ensureWalletSigningKeysAsync === 'function') {
+      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+    }
 
+    let originUrl = '';
     try {
-      const originUrl = new URL(safeUrl).origin;
+      originUrl = new URL(safeUrl).origin;
       const isCatalogOrigin = Array.isArray(browserMod.DAPP_CATALOG) && browserMod.DAPP_CATALOG.some((d) => {
         try { return new URL(d.url).origin === originUrl; } catch (_) { return false; }
       });
@@ -606,12 +750,17 @@
       ? contracts.getWalletNearSignerCredentials(wallet)
       : { accountId: (wallet && (wallet.nearNamedAccount || wallet.nearAddress)) || '', publicKeyStr: '' };
 
+    const evmConnected = Boolean(originUrl && isDAppOriginConnected(originUrl, 'evm'));
+    const solConnected = Boolean(originUrl && isDAppOriginConnected(originUrl, 'solana'));
+    const nearConnected = Boolean(originUrl && isDAppOriginConnected(originUrl, 'near'));
+
     const injectedScript = browserMod.buildInjectedProviderScript({
-      evmAddress,
+      authorizedOrigin: originUrl,
+      evmAddress: evmConnected ? evmAddress : '',
       chainIdHex: `0x${Number(evmCfg.chainId || 1).toString(16)}`,
-      solanaPublicKey: (wallet && wallet.solAddress) || '',
-      nearAccountId: nearCreds.accountId || '',
-      nearPublicKey: nearCreds.publicKeyStr || '',
+      solanaPublicKey: solConnected ? ((wallet && wallet.solAddress) || '') : '',
+      nearAccountId: nearConnected ? (nearCreds.accountId || '') : '',
+      nearPublicKey: nearConnected ? (nearCreds.publicKeyStr || '') : '',
       walletName: 'Nexus Wallet'
     });
 
@@ -619,6 +768,8 @@
     if (plugin && typeof plugin.openUrl === 'function') {
       closeAllSheets();
       _dappSession.nativeOpen = true;
+      _dappSession.currentUrl = safeUrl;
+      _dappSession.currentOrigin = originUrl;
       try {
         await plugin.openUrl({
           url: safeUrl,
@@ -626,6 +777,8 @@
         });
       } catch (e) {
         _dappSession.nativeOpen = false;
+        _dappSession.currentUrl = '';
+        _dappSession.currentOrigin = '';
         showToast(toUserFriendlyError(e, '无法打开 DApp 浏览器', 'Failed to open DApp browser'));
       }
       return;

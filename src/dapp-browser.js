@@ -255,7 +255,9 @@
   ]);
 
   function normalizeOriginLabel(req, ctx) {
-    const rawUrl = (req && (req.origin || req.url)) || (ctx && (ctx.origin || ctx.url)) || '';
+    const rawUrl = (ctx && (ctx.nativeOrigin || ctx.origin || ctx.nativeUrl || ctx.url))
+      || (req && (req.nativeOrigin || req.origin || req.url))
+      || '';
     try {
       const u = new URL(rawUrl);
       return u.origin || u.hostname || rawUrl;
@@ -356,6 +358,7 @@
 
   function buildInjectedProviderScript(opts = {}) {
     const cfg = {
+      authorizedOrigin: opts.authorizedOrigin ? String(opts.authorizedOrigin) : '',
       evmAddress: opts.evmAddress ? String(opts.evmAddress) : '',
       chainIdHex: opts.chainIdHex ? String(opts.chainIdHex) : '0x1',
       solanaPublicKey: opts.solanaPublicKey ? String(opts.solanaPublicKey) : '',
@@ -370,10 +373,20 @@
 
     return `(function () {
   if (typeof window === 'undefined') return;
+  try { if (window.self !== window.top) return; } catch (_) { return; }
   if (window.__NEXUS_INJECTED__) return;
   window.__NEXUS_INJECTED__ = true;
 
   var CFG = ${serializedCfg};
+  try {
+    var pageOrigin = (window.location && window.location.origin) || '';
+    if (CFG.authorizedOrigin && pageOrigin && pageOrigin !== CFG.authorizedOrigin) {
+      CFG.evmAddress = '';
+      CFG.solanaPublicKey = '';
+      CFG.nearAccountId = '';
+      CFG.nearPublicKey = '';
+    }
+  } catch (_) {}
   var _nextId = 1;
   var _pending = Object.create(null);
 
@@ -458,10 +471,43 @@
     };
   }
 
+  function serializeBridgeValue(_key, val) {
+    if (typeof val === 'bigint') {
+      return val.toString();
+    }
+    if (val instanceof Uint8Array) {
+      return { __nexusType: 'Uint8Array', base64: u8ToB64(val) };
+    }
+    if (typeof ArrayBuffer !== 'undefined') {
+      if (val instanceof ArrayBuffer) {
+        return { __nexusType: 'Uint8Array', base64: u8ToB64(new Uint8Array(val)) };
+      }
+      if (ArrayBuffer.isView && ArrayBuffer.isView(val)) {
+        return {
+          __nexusType: 'Uint8Array',
+          base64: u8ToB64(new Uint8Array(val.buffer, val.byteOffset, val.byteLength))
+        };
+      }
+    }
+    if (val && typeof val === 'object' && val.type === 'Buffer' && Array.isArray(val.data)) {
+      return { __nexusType: 'Uint8Array', base64: u8ToB64(new Uint8Array(val.data)) };
+    }
+    return val;
+  }
+
   function postToNativeBridge(payload) {
-    var serialized = JSON.stringify(payload);
+    var serialized = JSON.stringify(payload, serializeBridgeValue);
     if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.nexusBridge) {
       window.webkit.messageHandlers.nexusBridge.postMessage(serialized);
+      return true;
+    }
+    if (window.NexusAndroidWebMessage && typeof window.NexusAndroidWebMessage.postMessage === 'function') {
+      window.NexusAndroidWebMessage.postMessage(serialized);
+      return true;
+    }
+    if (window.NexusAndroidBridge && typeof window.NexusAndroidBridge.postMessageSecure === 'function') {
+      var bridgeTok = (typeof __NEXUS_ANDROID_BRIDGE_TOKEN__ === 'string') ? __NEXUS_ANDROID_BRIDGE_TOKEN__ : '';
+      window.NexusAndroidBridge.postMessageSecure(serialized, bridgeTok);
       return true;
     }
     if (window.NexusAndroidBridge && typeof window.NexusAndroidBridge.postMessage === 'function') {
@@ -546,8 +592,20 @@
       var method = String(reqArgs.method || '');
       var params = reqArgs.params === undefined ? [] : reqArgs.params;
       return sendBridgeRequest('evm', method, params).then(function (res) {
-        if ((method === 'eth_requestAccounts' || method === 'eth_accounts') && Array.isArray(res) && res[0]) {
-          ethProvider.selectedAddress = res[0];
+        if ((method === 'eth_requestAccounts' || method === 'eth_accounts') && Array.isArray(res)) {
+          var prevAddr = ethProvider.selectedAddress;
+          if (res[0]) {
+            ethProvider.selectedAddress = res[0];
+            if (method === 'eth_requestAccounts' && !prevAddr) {
+              evmEmitter.emit('connect', { chainId: ethProvider.chainId });
+              evmEmitter.emit('accountsChanged', res);
+            } else if (prevAddr && String(prevAddr).toLowerCase() !== String(res[0]).toLowerCase()) {
+              evmEmitter.emit('accountsChanged', res);
+            }
+          } else if (prevAddr) {
+            ethProvider.selectedAddress = null;
+            evmEmitter.emit('accountsChanged', []);
+          }
         } else if (method === 'wallet_switchEthereumChain' && params && params[0] && params[0].chainId) {
           var nextHex = String(params[0].chainId);
           if (String(ethProvider.chainId || '').toLowerCase() !== nextHex.toLowerCase()) {
@@ -667,6 +725,43 @@
   }
 
   var solEmitter = createEmitter();
+  var solStandardEmitter = createEmitter();
+  var nearEmitter = createEmitter();
+  var nearStandardEmitter = createEmitter();
+
+  function normalizeStandardInputs(argsList) {
+    var out = [];
+    for (var i = 0; i < argsList.length; i++) {
+      var item = argsList[i];
+      if (Array.isArray(item)) {
+        for (var j = 0; j < item.length; j++) {
+          if (item[j] !== undefined && item[j] !== null) out.push(item[j]);
+        }
+      } else if (item !== undefined && item !== null) {
+        out.push(item);
+      }
+    }
+    return out;
+  }
+
+  function makeSolStandardAccounts(pkStr) {
+    var clean = String(pkStr || '').trim();
+    return clean ? [{
+      address: clean,
+      publicKey: decodeB58(clean),
+      chains: ['solana:mainnet'],
+      features: ['solana:signAndSendTransaction', 'solana:signTransaction', 'solana:signMessage']
+    }] : [];
+  }
+
+  function encodeUtf8Bytes(str) {
+    var s = String(str || '');
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(s);
+    var out = [];
+    for (var i = 0; i < s.length; i++) out.push(s.charCodeAt(i) & 0xff);
+    return new Uint8Array(out);
+  }
+
   var solProvider = {
     isPhantom: true,
     isOkxWallet: true,
@@ -678,21 +773,31 @@
     off: function (ev, fn) { solEmitter.off(ev, fn); return this; },
     connect: function (connectOpts) {
       return sendBridgeRequest('solana', 'connect', [connectOpts || {}]).then(function (res) {
-        var pkStr = (res && res.publicKey) || CFG.solanaPublicKey || '';
+        var pkStr = (res && res.publicKey) || '';
         solProvider.publicKey = makeSolPublicKey(pkStr);
         solProvider.isConnected = Boolean(pkStr);
-        solEmitter.emit('connect', solProvider.publicKey);
+        if (typeof syncSolStandardAccounts === 'function') syncSolStandardAccounts(pkStr, true);
+        if (pkStr) {
+          solEmitter.emit('connect', solProvider.publicKey);
+        }
         return { publicKey: solProvider.publicKey };
       });
     },
     disconnect: function () {
       return sendBridgeRequest('solana', 'disconnect', []).then(function () {
         solProvider.isConnected = false;
+        solProvider.publicKey = null;
+        if (typeof syncSolStandardAccounts === 'function') syncSolStandardAccounts('', true);
+        try {
+          if (typeof window.localStorage !== 'undefined' && window.localStorage && window.localStorage.getItem('walletName') === JSON.stringify(CFG.walletName)) {
+            window.localStorage.removeItem('walletName');
+          }
+        } catch (_) {}
         solEmitter.emit('disconnect');
       });
     },
     signMessage: function (message) {
-      var msgB64 = typeof message === 'string' ? u8ToB64(new TextEncoder().encode(message)) : u8ToB64(message);
+      var msgB64 = typeof message === 'string' ? u8ToB64(encodeUtf8Bytes(message)) : u8ToB64(message);
       return sendBridgeRequest('solana', 'signMessage', [{ messageBase64: msgB64 }]).then(function (res) {
         var sigBytes = res && res.signatureBase64 ? b64ToU8(res.signatureBase64) : new Uint8Array(64);
         return {
@@ -730,13 +835,37 @@
     if (window.okxwallet) window.okxwallet.solana = solProvider;
   } catch (_) {}
 
-  try {
-    var solAccounts = CFG.solanaPublicKey ? [{
-      address: CFG.solanaPublicKey,
-      publicKey: decodeB58(CFG.solanaPublicKey),
-      chains: ['solana:mainnet'],
-      features: ['solana:signAndSendTransaction', 'solana:signTransaction', 'solana:signMessage']
+  var solWalletStandardObj = null;
+  var nearWalletStandardObj = null;
+
+  function syncSolStandardAccounts(pkStr, emitChange) {
+    if (!solWalletStandardObj) return [];
+    var nextAccounts = makeSolStandardAccounts(pkStr);
+    solWalletStandardObj.accounts = nextAccounts;
+    if (emitChange) {
+      solStandardEmitter.emit('change', { accounts: nextAccounts });
+    }
+    return nextAccounts;
+  }
+
+  function syncNearStandardAccounts(accountId, publicKey, emitChange) {
+    if (!nearWalletStandardObj) return [];
+    var acct = String(accountId || '').trim();
+    var pk = String(publicKey || '').trim();
+    nearWalletStandardObj.accounts = acct ? [{
+      address: acct,
+      publicKey: pk ? decodeB58(pk.replace(/^ed25519:/i, '')) : new Uint8Array(32),
+      chains: ['near:mainnet'],
+      features: ['near:signIn', 'near:signOut', 'near:signMessage', 'near:signAndSendTransaction', 'near:signAndSendTransactions']
     }] : [];
+    if (emitChange) {
+      nearStandardEmitter.emit('change', { accounts: nearWalletStandardObj.accounts });
+    }
+    return nearWalletStandardObj.accounts;
+  }
+
+  try {
+    var solAccounts = makeSolStandardAccounts(CFG.solanaPublicKey);
     var nearAccounts = CFG.nearAccountId ? [{
       address: CFG.nearAccountId,
       publicKey: CFG.nearPublicKey ? decodeB58(CFG.nearPublicKey.replace(/^ed25519:/i, '')) : new Uint8Array(32),
@@ -744,7 +873,7 @@
       features: ['near:signIn', 'near:signOut', 'near:signMessage', 'near:signAndSendTransaction', 'near:signAndSendTransactions']
     }] : [];
 
-    var solWalletStandardObj = {
+    solWalletStandardObj = {
       version: '1.0.0',
       name: CFG.walletName,
       icon: CFG.walletIcon,
@@ -755,13 +884,6 @@
           version: '1.0.0',
           connect: function () {
             return solProvider.connect().then(function () {
-              var pk = solProvider.publicKey ? solProvider.publicKey.toBase58() : '';
-              solWalletStandardObj.accounts = pk ? [{
-                address: pk,
-                publicKey: decodeB58(pk),
-                chains: ['solana:mainnet'],
-                features: ['solana:signAndSendTransaction', 'solana:signTransaction', 'solana:signMessage']
-              }] : [];
               return { accounts: solWalletStandardObj.accounts };
             });
           }
@@ -775,17 +897,17 @@
         'standard:events': {
           version: '1.0.0',
           on: function (ev, fn) {
-            solProvider.on(ev, fn);
-            return function () { solProvider.removeListener(ev, fn); };
+            solStandardEmitter.on(ev, fn);
+            return function () { solStandardEmitter.removeListener(ev, fn); };
           }
         },
         'solana:signAndSendTransaction': {
           version: '1.0.0',
           supportedTransactionVersions: ['legacy', 0],
-          signAndSendTransaction: function (inputs) {
-            var arr = Array.isArray(inputs) ? inputs : [inputs];
+          signAndSendTransaction: function () {
+            var arr = normalizeStandardInputs(arguments);
             return Promise.all(arr.map(function (inp) {
-              return solProvider.signAndSendTransaction(inp.transaction, inp.options).then(function (r) {
+              return solProvider.signAndSendTransaction(inp && inp.transaction, inp && inp.options).then(function (r) {
                 return { signature: decodeB58(r.signature) };
               });
             }));
@@ -794,25 +916,30 @@
         'solana:signTransaction': {
           version: '1.0.0',
           supportedTransactionVersions: ['legacy', 0],
-          signTransaction: function (inputs) {
-            var arr = Array.isArray(inputs) ? inputs : [inputs];
+          signTransaction: function () {
+            var arr = normalizeStandardInputs(arguments);
+            var serializeSigned = function (signed) {
+              var out = signed instanceof Uint8Array
+                ? signed
+                : (signed && typeof signed.serialize === 'function' ? signed.serialize() : new Uint8Array(0));
+              return { signedTransaction: out };
+            };
+            if (arr.length > 1) {
+              return solProvider.signAllTransactions(arr.map(function (inp) { return inp && inp.transaction; }))
+                .then(function (list) { return list.map(serializeSigned); });
+            }
             return Promise.all(arr.map(function (inp) {
-              return solProvider.signTransaction(inp.transaction).then(function (signed) {
-                var out = signed instanceof Uint8Array
-                  ? signed
-                  : (signed && typeof signed.serialize === 'function' ? signed.serialize() : new Uint8Array(0));
-                return { signedTransaction: out };
-              });
+              return solProvider.signTransaction(inp && inp.transaction).then(serializeSigned);
             }));
           }
         },
         'solana:signMessage': {
           version: '1.0.0',
-          signMessage: function (inputs) {
-            var arr = Array.isArray(inputs) ? inputs : [inputs];
+          signMessage: function () {
+            var arr = normalizeStandardInputs(arguments);
             return Promise.all(arr.map(function (inp) {
-              return solProvider.signMessage(inp.message).then(function (r) {
-                return { signedMessage: inp.message, signature: r.signature };
+              return solProvider.signMessage(inp && inp.message).then(function (r) {
+                return { signedMessage: inp && inp.message, signature: r.signature };
               });
             }));
           }
@@ -820,19 +947,7 @@
       }
     };
 
-    function syncNearStandardAccounts(accountId, publicKey) {
-      var acct = String(accountId || '').trim();
-      var pk = String(publicKey || '').trim();
-      nearWalletStandardObj.accounts = acct ? [{
-        address: acct,
-        publicKey: pk ? decodeB58(pk.replace(/^ed25519:/i, '')) : new Uint8Array(32),
-        chains: ['near:mainnet'],
-        features: ['near:signIn', 'near:signOut', 'near:signMessage', 'near:signAndSendTransaction', 'near:signAndSendTransactions']
-      }] : [];
-      return nearWalletStandardObj.accounts;
-    }
-
-    var nearWalletStandardObj = {
+    nearWalletStandardObj = {
       version: '1.0.0',
       name: CFG.walletName,
       icon: CFG.walletIcon,
@@ -843,23 +958,21 @@
           version: '1.0.0',
           connect: function () {
             return nearProvider.requestSignIn({}).then(function () {
-              return { accounts: syncNearStandardAccounts(nearProvider.accountId, nearProvider.publicKey) };
+              return { accounts: nearWalletStandardObj.accounts };
             });
           }
         },
         'standard:disconnect': {
           version: '1.0.0',
           disconnect: function () {
-            return nearProvider.signOut().then(function () {
-              syncNearStandardAccounts('', '');
-            });
+            return nearProvider.signOut();
           }
         },
         'standard:events': {
           version: '1.0.0',
           on: function (ev, fn) {
-            nearProvider.on(ev, fn);
-            return function () { nearProvider.removeListener(ev, fn); };
+            nearStandardEmitter.on(ev, fn);
+            return function () { nearStandardEmitter.removeListener(ev, fn); };
           }
         },
         'near:signIn': {
@@ -868,7 +981,7 @@
             return nearProvider.requestSignIn(inp || {}).then(function (res) {
               var acct = (res && res.accountId) || nearProvider.accountId;
               var pk = (res && res.publicKey) || nearProvider.publicKey;
-              syncNearStandardAccounts(acct, pk);
+              syncNearStandardAccounts(acct, pk, false);
               return [{ accountId: acct, publicKey: pk }];
             });
           }
@@ -876,9 +989,7 @@
         'near:signOut': {
           version: '1.0.0',
           signOut: function () {
-            return nearProvider.signOut().then(function () {
-              syncNearStandardAccounts('', '');
-            });
+            return nearProvider.signOut();
           }
         },
         'near:signMessage': {
@@ -929,7 +1040,6 @@
   } catch (_) {}
 
   // -------------------- NEAR Provider & Auto-Connect Seeds --------------------
-  var nearEmitter = createEmitter();
   var nearProvider = {
     isNexusWallet: true,
     accountId: CFG.nearAccountId || '',
@@ -947,15 +1057,24 @@
     },
     requestSignIn: function (opts) {
       return sendBridgeRequest('near', 'requestSignIn', [opts || {}]).then(function (res) {
-        nearProvider.accountId = (res && res.accountId) || CFG.nearAccountId || '';
-        nearProvider.publicKey = (res && res.publicKey) || CFG.nearPublicKey || '';
-        nearEmitter.emit('accountsChanged', [nearProvider.accountId]);
+        nearProvider.accountId = (res && res.accountId) || '';
+        nearProvider.publicKey = (res && res.publicKey) || '';
+        syncNearStandardAccounts(nearProvider.accountId, nearProvider.publicKey, true);
+        nearEmitter.emit('accountsChanged', nearProvider.accountId ? [nearProvider.accountId] : []);
         return res;
       });
     },
     signOut: function () {
       return sendBridgeRequest('near', 'signOut', []).then(function () {
         nearProvider.accountId = '';
+        nearProvider.publicKey = '';
+        syncNearStandardAccounts('', '', true);
+        try {
+          if (typeof window.localStorage !== 'undefined' && window.localStorage && window.localStorage.getItem('@near-wallet-selector:selectedWalletId') === JSON.stringify('nexus-wallet')) {
+            window.localStorage.removeItem('@near-wallet-selector:selectedWalletId');
+            window.localStorage.removeItem('@near-wallet-selector:recentlySignedInWallets');
+          }
+        } catch (_) {}
         nearEmitter.emit('accountsChanged', []);
       });
     },
@@ -995,12 +1114,23 @@
         if (!window.localStorage.getItem('@near-wallet-selector:recentlySignedInWallets')) {
           window.localStorage.setItem('@near-wallet-selector:recentlySignedInWallets', JSON.stringify(['nexus-wallet']));
         }
+      } else if (window.localStorage.getItem('@near-wallet-selector:selectedWalletId') === JSON.stringify('nexus-wallet')) {
+        window.localStorage.removeItem('@near-wallet-selector:selectedWalletId');
+        window.localStorage.removeItem('@near-wallet-selector:recentlySignedInWallets');
       }
-      if (CFG.solanaPublicKey && !window.localStorage.getItem('walletName')) {
-        window.localStorage.setItem('walletName', JSON.stringify(CFG.walletName));
+      if (CFG.solanaPublicKey) {
+        if (!window.localStorage.getItem('walletName')) {
+          window.localStorage.setItem('walletName', JSON.stringify(CFG.walletName));
+        }
+      } else if (window.localStorage.getItem('walletName') === JSON.stringify(CFG.walletName)) {
+        window.localStorage.removeItem('walletName');
       }
-      if (CFG.evmAddress && !window.localStorage.getItem('wagmi.connected')) {
-        window.localStorage.setItem('wagmi.connected', 'true');
+      if (CFG.evmAddress) {
+        if (!window.localStorage.getItem('wagmi.connected')) {
+          window.localStorage.setItem('wagmi.connected', 'true');
+        }
+      } else {
+        window.localStorage.removeItem('wagmi.connected');
       }
     }
   } catch (_) {}
@@ -1017,12 +1147,49 @@
         ethProvider.networkVersion = String(parseInt(parsed, 16) || 1);
       } else if (eventName === 'accountsChanged' && Array.isArray(parsed)) {
         ethProvider.selectedAddress = parsed[0] || null;
+        if (!ethProvider.selectedAddress) {
+          try { window.localStorage && window.localStorage.removeItem('wagmi.connected'); } catch (_) {}
+        }
       }
       evmEmitter.emit(eventName, parsed);
     } else if (namespace === 'solana') {
-      solEmitter.emit(eventName, parsed);
+      if (eventName === 'disconnect') {
+        solProvider.isConnected = false;
+        solProvider.publicKey = null;
+        syncSolStandardAccounts('', true);
+        try {
+          if (typeof window.localStorage !== 'undefined' && window.localStorage && window.localStorage.getItem('walletName') === JSON.stringify(CFG.walletName)) {
+            window.localStorage.removeItem('walletName');
+          }
+        } catch (_) {}
+        solEmitter.emit('disconnect');
+      } else if (eventName === 'connect' || eventName === 'accountChanged') {
+        var pkVal = typeof parsed === 'string' ? parsed : (parsed && parsed.publicKey ? String(parsed.publicKey) : '');
+        solProvider.publicKey = makeSolPublicKey(pkVal);
+        solProvider.isConnected = Boolean(pkVal);
+        syncSolStandardAccounts(pkVal, true);
+        solEmitter.emit(eventName, solProvider.publicKey);
+      } else {
+        solEmitter.emit(eventName, parsed);
+      }
     } else if (namespace === 'near') {
-      nearEmitter.emit(eventName, parsed);
+      if (eventName === 'accountsChanged') {
+        var nextNear = (Array.isArray(parsed) && parsed[0]) ? String(parsed[0]) : '';
+        nearProvider.accountId = nextNear;
+        if (!nextNear) {
+          nearProvider.publicKey = '';
+          try {
+            if (typeof window.localStorage !== 'undefined' && window.localStorage && window.localStorage.getItem('@near-wallet-selector:selectedWalletId') === JSON.stringify('nexus-wallet')) {
+              window.localStorage.removeItem('@near-wallet-selector:selectedWalletId');
+              window.localStorage.removeItem('@near-wallet-selector:recentlySignedInWallets');
+            }
+          } catch (_) {}
+        }
+        syncNearStandardAccounts(nearProvider.accountId, nearProvider.publicKey, true);
+        nearEmitter.emit('accountsChanged', Array.isArray(parsed) ? parsed : (nextNear ? [nextNear] : []));
+      } else {
+        nearEmitter.emit(eventName, parsed);
+      }
     }
   };
 })();`;
@@ -1037,7 +1204,7 @@
       namespace: inferNamespace(req),
       method: req.method,
       origin: normalizeOriginLabel(req, ctx),
-      url: req.url || (ctx && ctx.url) || '',
+      url: (ctx && (ctx.nativeUrl || ctx.url)) || req.url || '',
       title: req.title || (ctx && ctx.title) || '',
       ...detail
     });
@@ -1045,6 +1212,53 @@
       throw buildRpcError(4001, 'User rejected the request.');
     }
     return true;
+  }
+
+  function decodeBase64ToUint8Array(b64, crypto) {
+    if (crypto && typeof crypto.base64ToBytes === 'function') {
+      return crypto.base64ToBytes(b64);
+    }
+    if (typeof atob === 'function') {
+      const bin = atob(String(b64 || ''));
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    }
+    if (typeof Buffer !== 'undefined') {
+      return new Uint8Array(Buffer.from(String(b64 || ''), 'base64'));
+    }
+    return new Uint8Array(0);
+  }
+
+  function restoreBridgeMarkers(val, crypto) {
+    if (val === null || val === undefined || typeof val !== 'object') return val;
+    if (val instanceof Uint8Array) return val;
+    if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(val)) return val;
+    if (Array.isArray(val)) return val.map((item) => restoreBridgeMarkers(item, crypto));
+    if (val.__nexusType === 'Uint8Array') {
+      if (typeof val.base64 === 'string') {
+        return decodeBase64ToUint8Array(val.base64, crypto);
+      }
+      if (Array.isArray(val.data)) {
+        return Uint8Array.from(val.data, (b) => Number(b) & 0xff);
+      }
+    }
+    const out = {};
+    for (const [k, v] of Object.entries(val)) {
+      out[k] = restoreBridgeMarkers(v, crypto);
+    }
+    return out;
+  }
+
+  async function ensureDAppWalletReadyAsync(wallet, contracts, ctx) {
+    if (!wallet) return wallet;
+    if (!wallet.nearNamedAccount && ctx && typeof ctx.hydrateNearNamedAccountAsync === 'function') {
+      await ctx.hydrateNearNamedAccountAsync(wallet).catch(() => {});
+    }
+    if (contracts && typeof contracts.ensureWalletSigningKeysAsync === 'function') {
+      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
+    }
+    return wallet;
   }
 
   async function ensureBiometricAuth(req, ctx, reasonText) {
@@ -1122,6 +1336,8 @@
       });
     }
 
+    await ensureDAppWalletReadyAsync(wallet, contracts, ctx);
+
     if (method === 'eth_accounts') {
       const origin = normalizeOriginLabel(req, ctx);
       const isConn = Boolean(ctx && typeof ctx.isOriginConnected === 'function' && ctx.isOriginConnected(origin, 'evm'));
@@ -1157,9 +1373,6 @@
     }
 
     if (method === 'personal_sign' || method === 'eth_sign') {
-      if (typeof contracts.ensureWalletSigningKeysAsync === 'function') {
-        await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-      }
       const addr = contracts.resolveWalletEvmSender ? contracts.resolveWalletEvmSender(wallet) : wallet.evmAddress;
       const isBlindSign = method === 'eth_sign';
       const msgRaw = isBlindSign ? parseEthSignParams(params) : parsePersonalSignParams(params);
@@ -1225,9 +1438,6 @@
     }
 
     if (method === 'eth_signTypedData' || method === 'eth_signTypedData_v3' || method === 'eth_signTypedData_v4') {
-      if (typeof contracts.ensureWalletSigningKeysAsync === 'function') {
-        await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-      }
       const isEvmAddr = (v) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v.trim());
       const typedArg = (params[1] !== undefined && !isEvmAddr(params[1])) ? params[1] : params[0];
       let rawTyped = {};
@@ -1266,9 +1476,6 @@
     }
 
     if (method === 'eth_sendTransaction') {
-      if (typeof contracts.ensureWalletSigningKeysAsync === 'function') {
-        await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-      }
       const txReq = params[0] || {};
       const addr = contracts.resolveWalletEvmSender ? contracts.resolveWalletEvmSender(wallet) : wallet.evmAddress;
       const txChain = txReq.chainId
@@ -1383,9 +1590,7 @@
     const crypto = (ctx && ctx.crypto) || getCryptoLib();
     const wallet = ctx && ctx.wallet;
     if (!wallet || !contracts || !crypto) throw buildRpcError(4900, 'Wallet or crypto unavailable');
-    if (typeof contracts.ensureWalletSigningKeysAsync === 'function') {
-      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-    }
+    await ensureDAppWalletReadyAsync(wallet, contracts, ctx);
 
     const method = String(req.method || '').trim();
     const params = Array.isArray(req.params) ? req.params : [];
@@ -1507,6 +1712,76 @@
     throw buildRpcError(4200, `Unsupported Solana method: ${method}`);
   }
 
+  function formatNearActionsPreview(actions) {
+    try {
+      return JSON.stringify(actions || [], (_k, val) => {
+        if (typeof val === 'bigint') return val.toString();
+        if (val instanceof Uint8Array) {
+          if (typeof TextDecoder !== 'undefined') {
+            try {
+              const txt = new TextDecoder().decode(val);
+              if (/^[\x20-\x7e\t\r\n]+$/.test(txt)) return txt;
+            } catch (_) {}
+          }
+          return `<Uint8Array:${val.length}B>`;
+        }
+        return val;
+      }).slice(0, 500);
+    } catch (_) {
+      return `${Array.isArray(actions) ? actions.length : 0} action(s)`;
+    }
+  }
+
+  function buildFinalExecutionOutcome(contracts, creds, receiverId, rawOutcome, extraHashes) {
+    const isObj = rawOutcome && typeof rawOutcome === 'object';
+    let txHash = isObj
+      ? String(rawOutcome.txHash || (rawOutcome.transaction && rawOutcome.transaction.hash) || '')
+      : String(rawOutcome || '');
+    if (!txHash && Array.isArray(extraHashes) && extraHashes.length) {
+      txHash = String(extraHashes[extraHashes.length - 1] || '');
+    }
+    const cachedOutcome = contracts && contracts._lastNearOutcome && (!txHash || contracts._lastNearOutcome.txHash === txHash)
+      ? contracts._lastNearOutcome
+      : null;
+    const rpcRes = (isObj && rawOutcome.transaction && rawOutcome.status ? rawOutcome : null)
+      || (isObj && rawOutcome.result && typeof rawOutcome.result === 'object' ? rawOutcome.result : null)
+      || (cachedOutcome && cachedOutcome.result && typeof cachedOutcome.result === 'object' ? cachedOutcome.result : null);
+    const resolvedHash = String((rpcRes && rpcRes.transaction && rpcRes.transaction.hash) || txHash || '');
+    const defaultStatus = (cachedOutcome && typeof cachedOutcome.successValueB64 === 'string')
+      ? { SuccessValue: cachedOutcome.successValueB64 }
+      : { SuccessValue: '' };
+    const status = (rpcRes && rpcRes.status) || defaultStatus;
+    const transaction = (rpcRes && rpcRes.transaction) || {
+      signer_id: (creds && creds.accountId) || '',
+      public_key: (creds && creds.publicKeyStr) || '',
+      receiver_id: receiverId || '',
+      hash: resolvedHash,
+      actions: []
+    };
+    const transactionOutcome = (rpcRes && rpcRes.transaction_outcome) || {
+      id: resolvedHash,
+      outcome: {
+        status,
+        logs: [],
+        receipt_ids: [],
+        gas_burnt: 0
+      }
+    };
+    const receiptsOutcome = Array.isArray(rpcRes && rpcRes.receipts_outcome) ? rpcRes.receipts_outcome : [];
+    const txHashes = Array.isArray(extraHashes) && extraHashes.length
+      ? extraHashes.filter(Boolean)
+      : (resolvedHash ? [resolvedHash] : []);
+    return {
+      ...(rpcRes && typeof rpcRes === 'object' ? rpcRes : {}),
+      status,
+      transaction,
+      transaction_outcome: transactionOutcome,
+      receipts_outcome: receiptsOutcome,
+      txHash: resolvedHash,
+      transactionHashes: txHashes
+    };
+  }
+
   async function executeSingleNearTx(contracts, creds, wallet, txObj) {
     const receiverId = String((txObj && txObj.receiverId) || '');
     const actions = Array.isArray(txObj && txObj.actions) ? txObj.actions : [];
@@ -1514,7 +1789,7 @@
       throw buildRpcError(-32602, 'NEAR transaction requires receiverId and actions');
     }
     if (typeof contracts.signAndSendNearActionsBatch === 'function') {
-      const txHash = await contracts.signAndSendNearActionsBatch({
+      const batchRes = await contracts.signAndSendNearActionsBatch({
         accountId: creds.accountId,
         publicKeyStr: creds.publicKeyStr,
         privateKeyStr: creds.privateKeyStr,
@@ -1522,7 +1797,7 @@
         actions,
         wallet
       });
-      return { txHash: txHash || '', transactionHashes: txHash ? [txHash] : [] };
+      return buildFinalExecutionOutcome(contracts, creds, receiverId, batchRes);
     }
     const hashes = [];
     for (const act of actions) {
@@ -1546,7 +1821,14 @@
         const methodName = String(body.methodName || '');
         if (!methodName) throw buildRpcError(-32602, 'Unsupported NEAR action without methodName');
         const argsVal = body.args !== undefined ? body.args : (body.argsJson || '{}');
-        const argsJson = typeof argsVal === 'string' ? argsVal : JSON.stringify(argsVal);
+        let argsJson;
+        if (argsVal instanceof Uint8Array) {
+          argsJson = typeof TextDecoder !== 'undefined'
+            ? new TextDecoder().decode(argsVal)
+            : Array.from(argsVal).map((b) => String.fromCharCode(b)).join('');
+        } else {
+          argsJson = typeof argsVal === 'string' ? argsVal : JSON.stringify(argsVal);
+        }
         const txHash = await contracts.signAndSendNearFunctionCall({
           accountId: creds.accountId,
           publicKeyStr: creds.publicKeyStr,
@@ -1560,7 +1842,7 @@
         hashes.push(txHash);
       }
     }
-    return { txHash: hashes[hashes.length - 1] || '', transactionHashes: hashes };
+    return buildFinalExecutionOutcome(contracts, creds, receiverId, hashes[hashes.length - 1] || '', hashes);
   }
 
   async function handleNearRequest(req, ctx) {
@@ -1568,12 +1850,7 @@
     const crypto = (ctx && ctx.crypto) || getCryptoLib();
     const wallet = ctx && ctx.wallet;
     if (!wallet || !contracts || !crypto) throw buildRpcError(4900, 'Wallet or crypto unavailable');
-    if (typeof contracts.ensureWalletSigningKeysAsync === 'function') {
-      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-    }
-    if (!wallet.nearNamedAccount && ctx && typeof ctx.hydrateNearNamedAccountAsync === 'function') {
-      await ctx.hydrateNearNamedAccountAsync(wallet).catch(() => {});
-    }
+    await ensureDAppWalletReadyAsync(wallet, contracts, ctx);
 
     const creds = contracts.getWalletNearSignerCredentials(wallet);
     const method = String(req.method || '').trim();
@@ -1581,6 +1858,12 @@
     const arg0 = params[0] || {};
 
     if (method === 'getAccountId') {
+      const origin = normalizeOriginLabel(req, ctx);
+      const isConn = Boolean(ctx && typeof ctx.isOriginConnected === 'function' && ctx.isOriginConnected(origin, 'near'));
+      const isDisconnected = Boolean(ctx && typeof ctx.isOriginDisconnected === 'function' && ctx.isOriginDisconnected(origin, 'near'));
+      if (!isConn && (!(ctx && ctx.autoConnectOrigin) || isDisconnected)) {
+        return '';
+      }
       return creds.accountId || '';
     }
 
@@ -1667,7 +1950,7 @@
         kind: 'sendTransaction',
         chainLabel: 'NEAR',
         account: creds.accountId || '',
-        summary: `To: ${arg0.receiverId || '--'}\nActions: ${JSON.stringify(arg0.actions || []).slice(0, 500)}`
+        summary: `To: ${arg0.receiverId || '--'}\nActions: ${formatNearActionsPreview(arg0.actions)}`
       });
       await ensureBiometricAuth(req, ctx);
       return executeSingleNearTx(contracts, creds, wallet, arg0);
@@ -1694,10 +1977,12 @@
   }
 
   async function handleDAppRpcRequest(req = {}, ctx = {}) {
-    const ns = inferNamespace(req);
-    if (ns === 'solana') return handleSolanaRequest(req, ctx);
-    if (ns === 'near') return handleNearRequest(req, ctx);
-    return handleEvmRequest(req, ctx);
+    const crypto = (ctx && ctx.crypto) || getCryptoLib();
+    const restoredReq = restoreBridgeMarkers(req, crypto);
+    const ns = inferNamespace(restoredReq);
+    if (ns === 'solana') return handleSolanaRequest(restoredReq, ctx);
+    if (ns === 'near') return handleNearRequest(restoredReq, ctx);
+    return handleEvmRequest(restoredReq, ctx);
   }
 
   const api = {
