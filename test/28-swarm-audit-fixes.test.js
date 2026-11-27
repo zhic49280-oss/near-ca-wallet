@@ -268,3 +268,26 @@ test('Wave-4 OKX Perps: zero L/S ratio dead code, 10-field floating HUD, Price-l
   const obPartSrc = fs.readFileSync(path.join(root, 'src/parts/ui-controller/162-perps-orderbook.part.js'), 'utf8');
   assert.ok(obPartSrc.includes('clearPerpPctDots()'), '162-perps-orderbook must clear .active on pct dots on manual input/reset');
 });
+
+test('Wave-5: single funding rate without #perp-funding-rate, cumFunding in positions & desktop mouse drag pan', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const root = path.resolve(__dirname, '..');
+
+  const perpsViewSrc = fs.readFileSync(path.join(root, 'src/app/views/PerpsView.jsx'), 'utf8');
+  assert.equal(perpsViewSrc.includes('perp-funding-rate'), false, 'PerpsView.jsx must not render duplicate #perp-funding-rate');
+
+  const obPartSrc = fs.readFileSync(path.join(root, 'src/parts/ui-controller/162-perps-orderbook.part.js'), 'utf8');
+  assert.equal(obPartSrc.includes('perp-funding-rate'), false, '162-perps-orderbook must not reference removed #perp-funding-rate');
+
+  const obCompSrc = fs.readFileSync(path.join(root, 'src/app/components/PerpOrderbookAndPositions.jsx'), 'utf8');
+  assert.ok(obCompSrc.includes('cumFunding'), 'PerpOrderbookAndPositions.jsx must display cumFunding on position card');
+
+  const chartSrc = fs.readFileSync(path.join(root, 'src/parts/ui-controller/161-perps-chart.part.js'), 'utf8');
+  assert.ok(
+    chartSrc.includes("addEventListener('mousedown'") &&
+    chartSrc.includes("addEventListener('mousemove'") &&
+    chartSrc.includes("addEventListener('mouseup'"),
+    '161-perps-chart.part.js must support desktop mouse drag pan'
+  );
+});

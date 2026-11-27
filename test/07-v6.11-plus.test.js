@@ -94,8 +94,8 @@ test('v6.11 Orderbook 10-Level Alignment, Coin Units on Depth Bar & Zero Wallet/
 
       const bidHtml = domMap.get('perp-ob-bids').innerHTML;
       const askHtml = domMap.get('perp-ob-asks').innerHTML;
-      assert.equal((bidHtml.match(/class="perp-ob-row bid"/g) || []).length, 6);
-      assert.equal((askHtml.match(/class="perp-ob-row ask"/g) || []).length, 6);
+      assert.equal((bidHtml.match(/class="perp-ob-row bid"/g) || []).length, 8);
+      assert.equal((askHtml.match(/class="perp-ob-row ask"/g) || []).length, 8);
       assert.ok(bidHtml.includes('<div class="perp-ob-row-depth"'), 'Depth overlay must use <div class="perp-ob-row-depth"> so CSS > span rule does not displace text');
       assert.ok(domMap.get('perp-ob-bid-summary').textContent.includes('B 20%'));
       assert.ok(domMap.get('perp-ob-bid-sz-hdr').textContent.includes('BTC'));
