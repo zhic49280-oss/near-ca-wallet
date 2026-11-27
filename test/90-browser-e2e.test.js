@@ -871,4 +871,129 @@ test.describe('Real-Browser 375px Preact E2E Suite (10 Real-Click Journeys)', { 
     assert.equal(pageErrors.length, 0, `Unexpected page errors: ${pageErrors.join('; ')}`);
     assert.equal(consoleErrors.length, 0, `Unexpected console errors: ${consoleErrors.join('; ')}`);
   });
+
+  test('E2E 13: Limit orders real click #btn-refresh-limit-orders with concurrent silent refresh recovers enabled state (no deadlock)', async () => {
+    await cdp.clickReal('.bottom-nav .nav-item[data-tab="swap"]');
+    await cdp.clickReal('#swap-mode-limit-btn');
+    await cdp.waitFor(`!document.getElementById('swap-limit-panel')?.classList.contains('hidden')`, 2000, 'limit panel visible');
+    await cdp.waitFor(`Boolean(document.getElementById('btn-refresh-limit-orders'))`, 2000, 'limit refresh button present');
+
+    // Inject a 150ms delay on window.fetch for limit order RPC calls so user click (first) & silent refresh (second) overlap
+    await cdp.evalJs(`(() => {
+      window.__e2eOrigFetchForLimit = window.fetch;
+      window.fetch = async (url, opts) => {
+        const u = String(url || '');
+        if (u.includes('near.org') || u.includes('jup.ag') || u.includes('cow.fi')) {
+          await new Promise((r) => setTimeout(r, 150));
+        }
+        return window.__e2eOrigFetchForLimit(url, opts);
+      };
+    })()`);
+
+    // Real user click FIRST (showFeedback=true, smaller reqSeq), then concurrent silent refresh (showFeedback=false, larger reqSeq)
+    await cdp.clickReal('#btn-refresh-limit-orders');
+    await cdp.evalJs(`window.NearCAUI.refreshLimitOrdersAsync(false)`);
+    await cdp.waitFor(`(() => {
+      const btn = document.getElementById('btn-refresh-limit-orders');
+      return Boolean(btn && !btn.disabled && !/刷新中|Refreshing/i.test(btn.textContent || ''));
+    })()`, 5000, 'limit refresh button recovered enabled state after concurrent refresh');
+
+    const btnState = await cdp.evalJs(`(() => {
+      const btn = document.getElementById('btn-refresh-limit-orders');
+      return { disabled: Boolean(btn && btn.disabled), text: (btn && btn.textContent || '').trim() };
+    })()`);
+    assert.equal(btnState.disabled, false, '#btn-refresh-limit-orders must not deadlock disabled');
+    assert.ok(btnState.text.length > 0 && !/刷新中|Refreshing/i.test(btnState.text), `Button text must restore, got "${btnState.text}"`);
+
+    // Verify a second real click also works cleanly
+    await cdp.clickReal('#btn-refresh-limit-orders');
+    await cdp.waitFor(`!document.getElementById('btn-refresh-limit-orders')?.disabled`, 5000, 'second click recovers');
+
+    await cdp.evalJs(`(() => {
+      if (window.__e2eOrigFetchForLimit) {
+        window.fetch = window.__e2eOrigFetchForLimit;
+        delete window.__e2eOrigFetchForLimit;
+      }
+    })()`);
+    await cdp.clickReal('#swap-mode-market-btn');
+  });
+
+  test('E2E 14: Perps K-line real touchstart/touchend tap on candle shows crosshair/detail immediately with zero horizontal overflow', async () => {
+    await cdp.evalJs(`(() => {
+      window.__e2eOrigFetchForCandles = window.fetch;
+      window.fetch = async (url, opts) => {
+        if (String(url || '').includes('hyperliquid.xyz/info') && opts && opts.body) {
+          try {
+            const parsed = JSON.parse(opts.body);
+            if (parsed && parsed.type === 'candleSnapshot') {
+              const now = Date.now();
+              const candles = Array.from({ length: 30 }, (_, i) => {
+                const base = 95000 + (i % 5) * 40;
+                return { t: now - (30 - i) * 900000, o: String(base), h: String(base + 120), l: String(base - 80), c: String(base + 60), v: String(120 + i) };
+              });
+              return new Response(JSON.stringify(candles), { status: 200, headers: { 'content-type': 'application/json' } });
+            }
+          } catch (_) {}
+        }
+        return window.__e2eOrigFetchForCandles(url, opts);
+      };
+    })()`);
+    await cdp.clickReal('.bottom-nav .nav-item[data-tab="perp"]');
+    await cdp.waitFor(`document.querySelectorAll('#perp-overview-list .perp-overview-row').length >= 10`, 4000, 'perp overview rows loaded');
+    await cdp.clickReal('#perp-overview-list .perp-overview-row');
+    await cdp.waitFor(`document.querySelectorAll('#perp-chart-svg svg rect.perp-candle-hit').length >= 10`, 4000, 'perp candles rendered');
+
+    const chartRect = await cdp.evalJs(`(() => {
+      const el = document.getElementById('perp-chart-svg');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height };
+    })()`);
+    assert.ok(chartRect && chartRect.width > 100 && chartRect.height > 80, 'Perp chart container must have valid bounding box');
+
+    // Swallow synthetic click on #perp-chart-svg in capture phase (simulating iOS WKWebView) so only onTouchEnd direct tap can succeed
+    await cdp.evalJs(`(() => {
+      const el = document.getElementById('perp-chart-svg');
+      window.__e2eSwallowChartClick = (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+      };
+      if (el) el.addEventListener('click', window.__e2eSwallowChartClick, true);
+    })()`);
+
+    const tapX = Math.round(chartRect.left + chartRect.width * 0.5);
+    const tapY = Math.round(chartRect.top + chartRect.height * 0.5);
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: tapX, y: tapY, id: 1 }]
+    });
+    await new Promise((r) => setTimeout(r, 40));
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchEnd',
+      touchPoints: []
+    });
+
+    await cdp.waitFor(`(() => {
+      const ch = document.getElementById('perp-chart-crosshair');
+      const det = document.getElementById('perp-candle-detail');
+      const chVisible = Boolean(ch && ch.style.display !== 'none' && ch.getAttribute('display') !== 'none');
+      const hasOhlc = Boolean(det && !det.classList.contains('hidden') && det.classList.contains('is-inspecting') && /开盘|Open|95,?000/i.test(det.textContent || ''));
+      return chVisible && hasOhlc;
+    })()`, 3000, 'crosshair and OHLC detail visible after real touch tap');
+
+    const noOverflow = await cdp.evalJs(`document.documentElement.scrollWidth <= 375`);
+    assert.equal(noOverflow, true, 'Perps K-line view must have zero horizontal overflow after touch tap');
+    await cdp.evalJs(`(() => {
+      const el = document.getElementById('perp-chart-svg');
+      if (el && window.__e2eSwallowChartClick) {
+        el.removeEventListener('click', window.__e2eSwallowChartClick, true);
+        delete window.__e2eSwallowChartClick;
+      }
+      if (window.__e2eOrigFetchForCandles) {
+        window.fetch = window.__e2eOrigFetchForCandles;
+        delete window.__e2eOrigFetchForCandles;
+      }
+    })()`);
+    await cdp.clickReal('#btn-perp-back');
+  });
 });

@@ -132,5 +132,5 @@
    - **NEAR 存储押金回收 (`sheet-near-storage`)**：扫描 0 余额且无 DCL 挂单的 NEP-141 合约，一键注销退回存储 NEAR。
 3. **矿机遥测 (`sheet-mining-pro`)、DApp 浏览器 (`sheet-dapp-browser`)、联系人地址簿 (`sheet-contacts`) 与设备原生生物识别安全锁 (`010-security.part.js`)**：
    - **设备原生安全验证**：统一调用设备原生能力（iOS `LocalAuthentication` / Android `BiometricPrompt` + 系统锁屏凭据 / 浏览器 WebAuthn 平台验证器）进行敏感操作校验与锁屏解锁；当设备不支持或未开启任何系统锁屏/生物识别时，提示建议开启系统锁屏并优雅放行，不阻断用户使用；
-   - **内置 DApp 浏览器安全边界**：内置生态白名单 (`DAPP_CATALOG`) 支持免弹窗快速连接；手动输入的外部未知域名必须经过 `sheet-dapp-approve` 明确授权后方可获取钱包地址；NEAR `signAndSendTransaction` 多 Action 请求通过 `signAndSendNearActionsBatch` 原子打包进单笔链上交易签名广播；EVM `personal_sign` 通过 NEAR MPC 签名后自动执行 `yParity` 地址恢复校验；交易审批自动解码 ERC-20 `approve` 与 NFT `setApprovalForAll` 授权对象及额度，并对 `eth_sign` 原始高危盲签触发强制二次确认；
+   - **内置 DApp 浏览器安全边界**：连接授权按 `wallet.id` 严格隔离，切/删钱包不暴露旧授权；内置生态白名单 (`DAPP_CATALOG`) 仅在确认 `.near` 命名账户后才免弹窗预授权，启动及 `near:signIn` 前自动绕过失效空锁并水合 `.near` 命名账户；手动输入的外部未知域名必须经过 `sheet-dapp-approve` 明确授权后方可获取钱包地址；Solana `solana:signTransaction` 透传 `Uint8Array`；NEAR `signAndSendTransaction` 多 Action 请求通过 `signAndSendNearActionsBatch` 原子打包进单笔链上交易签名广播；EVM `personal_sign` 通过 NEAR MPC 签名后自动执行 `yParity` 地址恢复校验；交易审批自动解码 ERC-20 `approve` 与 NFT `setApprovalForAll` 授权对象及额度，并对 `eth_sign` 原始高危盲签触发强制二次确认；
    - **全局错误清洗与终端用户文案规范**：所有链上/网络异常均通过 `toUserFriendlyError` 转换为自然友好的中英文提示，剔除底层 HTTP 状态码、RPC、WebView、CORS、合约协议名等开发者术语。

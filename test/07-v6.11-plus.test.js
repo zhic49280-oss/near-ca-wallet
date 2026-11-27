@@ -2039,3 +2039,406 @@ test('v6.67: Security Auth overlay sheet preservation, DApp MPC yParity recovery
     globalThis.document = prevDoc;
   }
 });
+
+test('v6.94: Solana signTransaction Uint8Array, multi-hop Stage1->2 guards (120/121/122/131), DApp wallet isolation & NEAR named hydration, Perp concurrency & chart overscan/tap', async () => {
+  const vm = require('node:vm');
+  const dappBrowser = require('../src/dapp-browser.js');
+  const prevWallets = state.wallets;
+  const prevActiveId = state.activeWalletId;
+  const prevSwap = { ...state.swap };
+  const prevPerp = { ...state.perp };
+  const prevDoc = globalThis.document;
+  const prevFetch = globalThis.fetch;
+  const prevWindow = globalThis.window;
+  const prevCap = globalThis.Capacitor;
+  const prevConfirm = globalThis.confirm;
+  globalThis.confirm = () => true;
+
+  const domMap = new Map();
+  const getOrMake = (id) => {
+    if (!domMap.has(id)) domMap.set(id, createMockDomElement(id));
+    return domMap.get(id);
+  };
+  globalThis.document = {
+    documentElement: { lang: 'en', classList: createMockClassList() },
+    getElementById: (id) => (id === 'sheet-confirm-dialog' ? null : getOrMake(id)),
+    querySelectorAll: (sel) => {
+      if (sel === '.bottom-sheet.open') {
+        return Array.from(domMap.values()).filter((el) => el.classList && el.classList.contains('open'));
+      }
+      return [];
+    },
+    querySelector: () => null,
+    activeElement: null
+  };
+
+  try {
+    // 1. Injected Provider: solana:signTransaction with Uint8Array returns non-empty Uint8Array & near:signIn updates nearWalletStandardObj.accounts
+    const injectedCode = dappBrowser.buildInjectedProviderScript({
+      origin: 'https://near.com',
+      evmAddress: '0x1111111111111111111111111111111111111111',
+      solAddress: '11111111111111111111111111111111',
+      nearAccountId: '',
+      nearPublicKey: 'ed25519:11111111111111111111111111111111',
+      chainIdHex: '0x1',
+      walletName: 'Nexus Wallet'
+    });
+    const registeredStandards = [];
+    const sandboxWindow = {
+      location: { origin: 'https://near.com', href: 'https://near.com' },
+      addEventListener: () => {},
+      dispatchEvent: (ev) => {
+        if (ev && ev.type === 'wallet-standard:register-wallet' && typeof ev.detail === 'function') {
+          ev.detail({ register: (...wallets) => registeredStandards.push(...wallets) });
+        }
+        return true;
+      },
+      CustomEvent: function (name, init) { this.type = name; this.detail = init && init.detail; },
+      __NEXUS_TEST_BRIDGE__: {
+        postMessage: (raw) => {
+          const msg = JSON.parse(raw);
+          setImmediate(() => {
+            if (msg.method === 'signTransaction') {
+              sandboxWindow.__nexusOnBridgeResponse(msg.id, { signedBase64: Buffer.from([9, 8, 7, 6]).toString('base64') }, null);
+            } else if (msg.method === 'requestSignIn') {
+              sandboxWindow.__nexusOnBridgeResponse(msg.id, { accountId: 'alice.near', publicKey: 'ed25519:11111111111111111111111111111111' }, null);
+            } else {
+              sandboxWindow.__nexusOnBridgeResponse(msg.id, {}, null);
+            }
+          });
+        }
+      }
+    };
+    sandboxWindow.window = sandboxWindow;
+    vm.runInNewContext(injectedCode, {
+      window: sandboxWindow,
+      Uint8Array,
+      Array,
+      Object,
+      Promise,
+      JSON,
+      Error,
+      Math,
+      String,
+      Number,
+      Boolean,
+      parseInt,
+      setTimeout,
+      clearTimeout,
+      btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
+      atob: (s) => Buffer.from(s, 'base64').toString('binary'),
+      Buffer,
+      CustomEvent: sandboxWindow.CustomEvent
+    });
+    const solStd = registeredStandards.find((w) => w && w.features && w.features['solana:signTransaction']);
+    const nearStd = registeredStandards.find((w) => w && w.features && w.features['near:signIn']);
+    assert.ok(solStd && nearStd, 'Wallet Standard providers must register');
+    const signedRes = await solStd.features['solana:signTransaction'].signTransaction({ transaction: new Uint8Array([1, 2, 3]) });
+    assert.ok(signedRes[0].signedTransaction instanceof Uint8Array, 'solana:signTransaction must return Uint8Array');
+    assert.deepEqual(Array.from(signedRes[0].signedTransaction), [9, 8, 7, 6], 'solana:signTransaction must preserve non-empty Uint8Array bytes');
+    await nearStd.features['near:signIn'].signIn({});
+    assert.equal(nearStd.accounts.length, 1, 'near:signIn must sync nearWalletStandardObj.accounts');
+    assert.equal(nearStd.accounts[0].address, 'alice.near');
+
+    // 2. Multi-hop Stage 1 -> Stage 2 guards across 120 / 121 / 122 / 131
+    const wSwap = {
+      id: 'w_multihop_guard',
+      name: 'MultiHopGuard',
+      biometricEnabled: false,
+      nearAddress: '1111111111111111111111111111111111111111111111111111111111111111',
+      nearNamedAccount: 'alice.near',
+      nearPublicKey: 'ed25519:11111111111111111111111111111111',
+      nearPrivateKey: 'ed25519:2222222222222222222222222222222222222222222222222222222222222222',
+      solAddress: '11111111111111111111111111111111',
+      solPrivateKey: '2222222222222222222222222222222222222222222222222222222222222222',
+      evmAddress: '0x1111111111111111111111111111111111111111',
+      evmPrivateKey: '0x' + '11'.repeat(32),
+      nativeBalances: { near: 5, sol: 1, eth: 1, prl: 100 },
+      splBalances: {
+        'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 50
+      },
+      nearNep141Balances: {
+        '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1': { raw: '5000000', formatted: 5 },
+        'prl.tkn.near': { raw: '100000000000000000000', formatted: 100 }
+      },
+      solSplBalances: { 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': { raw: '50000000', amount: 50, decimals: 6 } }
+    };
+    state.wallets = [wSwap];
+    state.activeWalletId = wSwap.id;
+
+    // Save originals on chainContracts / nearIntents
+    const origWaitSol = chainContracts.waitForSolanaTxConfirmation;
+    const origFetchSol = chainContracts.fetchSolanaNativeAndSplBalances;
+    const origQuoteJup = chainContracts.quoteSolanaJupiterSwap;
+    const origExecJup = chainContracts.executeSolanaJupiterSwap;
+    const origEnsureKeys = chainContracts.ensureWalletSigningKeysAsync;
+    const origQuoteIntent = nearIntents.quoteIntentSwapOrWithdraw;
+    const origFetchNep = nearIntents.fetchNearNep141Balances;
+    const origExecRef = chainContracts.executeNearRefPoolSwap;
+    const origExecRefFin = chainContracts.executeNearRefFinanceSwap;
+    const origExecDcl = chainContracts.executeNearDclPoolSwap;
+    const origQuoteRef = chainContracts.quoteNearRefPoolSwap;
+    const origQuoteDcl = chainContracts.quoteNearDclPoolSwap;
+
+    try {
+      globalThis.fetch = async (url, init) => {
+        const u = String(url || '');
+        if (u.includes('near.org') || u.includes('fastnear.com')) {
+          return jsonResponse({
+            jsonrpc: '2.0',
+            id: 1,
+            result: { nonce: 1, permission: 'FullAccess', amount: '5000000000000000000000000', block_hash: '11111111111111111111111111111111' }
+          });
+        }
+        return jsonResponse({});
+      };
+      let stage2QuoteCalled = false;
+      chainContracts.ensureWalletSigningKeysAsync = async (w) => w;
+      chainContracts.quoteSolanaJupiterSwap = async () => ({ ok: true, outAmount: '500000000' });
+      chainContracts.executeSolanaJupiterSwap = async () => ({ txHash: 'sol_stage1_tx_1' });
+      chainContracts.fetchSolanaNativeAndSplBalances = async () => ({ nativeSol: 1, nativeLamports: '1000000000', splTokens: {} });
+      nearIntents.quoteIntentSwapOrWithdraw = async () => { stage2QuoteCalled = true; return { ok: true, depositAddress: 'dep_addr' }; };
+
+      // 122: SOL_DEX_TO_CROSS_CHAIN confirmation timeout (null) aborts Stage 2
+      chainContracts.waitForSolanaTxConfirmation = async () => null;
+      state.swap.fromAssetId = 'nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near';
+      state.swap.toAssetId = 'nep141:eth.omft.near';
+      state.swap.amountIn = '10';
+      state.swap.quoteData = {
+        ok: true,
+        routeType: 'COMPOSITE_ROUTE',
+        compositeType: 'SOL_DEX_TO_CROSS_CHAIN',
+        stage1DexQuote: { outAmount: '500000000' },
+        fromToken: { symbol: 'USDC', blockchain: 'sol', decimals: 6, contractAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', assetId: 'nep141:sol-usdc.omft.near' },
+        toToken: { symbol: 'ETH', blockchain: 'eth', decimals: 18, assetId: 'nep141:eth.omft.near' }
+      };
+      getOrMake('swap-amount-in').value = '10';
+      await uiController.executeActiveSwap();
+      assert.equal(stage2QuoteCalled, false, '122: Stage 2 quote must NOT be called when Stage 1 confirmation returns null');
+      assert.match(getOrMake('swap-error-banner').textContent || '', /Stage 1|确认/i);
+
+      // 122: SOL_DEX_TO_CROSS_CHAIN delta <= 0n aborts Stage 2 (no fallback to expectedLamports)
+      chainContracts.waitForSolanaTxConfirmation = async () => true;
+      await uiController.executeActiveSwap();
+      assert.equal(stage2QuoteCalled, false, '122: Stage 2 quote must NOT be called when deltaLamports <= 0n');
+      assert.match(getOrMake('swap-error-banner').textContent || '', /balance|余额/i);
+
+      // 120: SMART_HUB_ROUTE ORIGIN_DEX (sol) confirmation timeout (null) aborts Stage 2
+      chainContracts.waitForSolanaTxConfirmation = async () => null;
+      state.swap.quoteData = {
+        ok: true,
+        routeType: 'COMPOSITE_ROUTE',
+        compositeType: 'SMART_HUB_ROUTE',
+        fromToken: { symbol: 'USDC', blockchain: 'sol', decimals: 6, contractAddress: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', assetId: 'nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near' },
+        toToken: { symbol: 'ETH', blockchain: 'eth', decimals: 18, assetId: 'nep141:eth.omft.near' },
+        stages: [
+          { type: 'ORIGIN_DEX', chain: 'sol', quote: { outAmount: '500000000' }, intermediateSymbol: 'SOL' },
+          { type: 'BRIDGE_IN', originAsset: 'nep141:sol.omft.near' },
+          { type: 'BRIDGE_OUT', destinationAsset: 'nep141:eth.omft.near' }
+        ]
+      };
+      await uiController.executeActiveSwap();
+      assert.equal(stage2QuoteCalled, false, '120: SMART_HUB_ROUTE must abort when Stage 1 confirmation returns null');
+
+      // 121: PRL_TO_NEAR_DCL delta <= 0n aborts Step 2 (no fallback to expectedUsdc)
+      let dclQuoted = false;
+      nearIntents.fetchNearNep141Balances = async () => ({ usdc: { raw: '5000000', amount: 5 } });
+      chainContracts.quoteNearRefPoolSwap = async () => ({ ok: true, amountOut: '1000000', minAmountOut: '950000', poolId: 1 });
+      chainContracts.executeNearRefPoolSwap = async () => ({ txHash: 'ref_prl_tx_1', amountOut: '1000000' });
+      chainContracts.quoteNearDclPoolSwap = async () => { dclQuoted = true; return { ok: true, amountOut: '500000' }; };
+      state.swap.fromAssetId = 'nep141:prl.omft.near';
+      state.swap.toAssetId = nearIntents.QTC_NEAR_ASSET_ID;
+      state.swap.amountIn = '10';
+      state.swap.quoteData = {
+        ok: true,
+        routeType: 'PRL_COMPOSITE_ROUTE',
+        compositeType: 'PRL_TO_NEAR_DCL',
+        fromToken: { symbol: 'PRL', blockchain: 'near', decimals: 18, contractAddress: 'prl.tkn.near', assetId: 'nep141:prl.tkn.near' },
+        toToken: { symbol: 'QTC', blockchain: 'near', decimals: 6, contractAddress: 'qtc.tkn.near', assetId: nearIntents.QTC_NEAR_ASSET_ID }
+      };
+      await uiController.executeActiveSwap();
+      assert.equal(dclQuoted, false, '121: PRL Step 2 DCL quote must NOT be called when deltaRaw <= 0n');
+
+      // 131: followUpRefSwap -> followUpDclSwap delta <= 0n aborts Stage 2
+      chainContracts.executeNearRefFinanceSwap = async () => ({ txHash: 'ref_fin_tx_1', amountOut: '1000000' });
+      chainContracts.executeNearDclPoolSwap = async () => ({ txHash: 'dcl_tx_1' });
+      state.swap.activeOrder = {
+        walletId: wSwap.id,
+        depositAddress: 'dep_131',
+        status: 'SUCCESS',
+        followUpFailed: true,
+        followUpRefSwap: {
+          poolId: 1,
+          tokenIn: 'wrap.near',
+          tokenOut: nearIntents.NEAR_USDC_CONTRACT,
+          amountUsdcRaw: '1000000',
+          followUpDclSwap: { tokenIn: nearIntents.NEAR_USDC_CONTRACT, tokenOut: 'qtc.tkn.near' }
+        }
+      };
+      nearIntents.fetchNearNep141Balances = async () => ({
+        'wrap.near': { raw: '1000000', formatted: 1 },
+        [nearIntents.NEAR_USDC_CONTRACT]: { raw: '5000000', formatted: 5 }
+      });
+      await uiController.resumeActiveSwapFollowUp();
+      assert.equal(state.swap.activeOrder.followUpFailed, true, '131: followUpRefSwap must mark followUpFailed when deltaUsdc <= 0n');
+      assert.equal(dclQuoted, false, '131: followUpDclSwap must NOT be called when deltaUsdc <= 0n');
+    } finally {
+      chainContracts.waitForSolanaTxConfirmation = origWaitSol;
+      chainContracts.fetchSolanaNativeAndSplBalances = origFetchSol;
+      chainContracts.quoteSolanaJupiterSwap = origQuoteJup;
+      chainContracts.executeSolanaJupiterSwap = origExecJup;
+      chainContracts.ensureWalletSigningKeysAsync = origEnsureKeys;
+      nearIntents.quoteIntentSwapOrWithdraw = origQuoteIntent;
+      nearIntents.fetchNearNep141Balances = origFetchNep;
+      chainContracts.executeNearRefPoolSwap = origExecRef;
+      chainContracts.executeNearRefFinanceSwap = origExecRefFin;
+      chainContracts.executeNearDclPoolSwap = origExecDcl;
+      chainContracts.quoteNearRefPoolSwap = origQuoteRef;
+      chainContracts.quoteNearDclPoolSwap = origQuoteDcl;
+      state.swap.activeOrder = null;
+    }
+
+    // 3. DApp Browser wallet.id isolation & NEAR named hydration bypassing stale _nearAccountChecked
+    const wA = {
+      id: 'w_iso_a',
+      name: 'Wallet A',
+      biometricEnabled: false,
+      nearAddress: 'a'.repeat(64),
+      nearPublicKey: 'ed25519:11111111111111111111111111111111',
+      nearNamedAccount: '',
+      _nearAccountChecked: true,
+      discoveredNearAccounts: ['alice.near'],
+      solAddress: '11111111111111111111111111111111',
+      evmAddress: '0x1111111111111111111111111111111111111111'
+    };
+    const wB = {
+      id: 'w_iso_b',
+      name: 'Wallet B',
+      nearAddress: 'b'.repeat(64),
+      nearPublicKey: 'ed25519:22222222222222222222222222222222',
+      nearNamedAccount: '',
+      _nearAccountChecked: true,
+      solAddress: '22222222222222222222222222222222',
+      evmAddress: '0x2222222222222222222222222222222222222222'
+    };
+    state.wallets = [wA, wB];
+    state.activeWalletId = wA.id;
+
+    // getWalletNearSignerCredentials falls back to discoveredNearAccounts
+    const credsA = chainContracts.getWalletNearSignerCredentials(wA);
+    assert.equal(credsA.accountId, 'alice.near', 'getWalletNearSignerCredentials must fall back to discoveredNearAccounts');
+
+    // launchDAppUrl hydrates nearNamedAccount for wB even when _nearAccountChecked === true
+    let openedScript = '';
+    globalThis.Capacitor = {
+      Plugins: {
+        NativeDAppBrowser: {
+          openUrl: async (opts) => { openedScript = opts && opts.injectedScript ? opts.injectedScript : ''; }
+        }
+      }
+    };
+    globalThis.window = { Capacitor: globalThis.Capacitor };
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('fastnear.com') || String(url).includes('kitwallet.app')) {
+        return jsonResponse({ account_ids: ['bob.near'] });
+      }
+      return jsonResponse([]);
+    };
+    state.activeWalletId = wB.id;
+    await uiController.launchDAppUrl('https://near.com');
+    assert.equal(wB.nearNamedAccount, 'bob.near', 'launchDAppUrl must hydrate nearNamedAccount bypassing stale _nearAccountChecked');
+    assert.ok(openedScript.includes('bob.near'), 'injectedScript must receive hydrated bob.near');
+
+    // DApp connection isolation across switchActiveWallet and deleteWalletById
+    await withMockedStorage({}, async (storage) => {
+      state.activeWalletId = wA.id;
+      await uiController.launchDAppUrl('https://app.rhea.finance');
+      uiController.switchActiveWallet(wA.id);
+      uiController.openDAppBrowserSheet();
+      const listA = getOrMake('dapp-connected-section').innerHTML;
+      assert.ok(listA.includes('rhea.finance'), 'Wallet A must see its own connected origin');
+
+      uiController.switchActiveWallet(wB.id);
+      const listB = getOrMake('dapp-connected-section').innerHTML;
+      assert.equal(listB.includes('rhea.finance'), false, 'Wallet B must NOT see Wallet A connected origin');
+
+      const delWalletFn = uiController.deleteWalletById || globalThis.deleteWalletById;
+      assert.equal(typeof delWalletFn, 'function', 'deleteWalletById must be exposed');
+      await delWalletFn(wA.id);
+      const storedAfterDel = JSON.parse(storage.getItem('near_ca_dapp_connections_v1') || '[]');
+      assert.equal(storedAfterDel.some((k) => k.startsWith('w_iso_a:')), false, 'Deleting Wallet A must purge its DApp connections');
+    });
+
+    // 4. Perps: switching wallet does not reuse old _perpRefreshInFlight & renderPerpView skips rebuild when interacting === '1'
+    state.wallets = [wA, wB];
+    state.activeWalletId = wA.id;
+    let resolveFirstFetch;
+    const requestedUsers = [];
+    globalThis.fetch = async (url, init) => {
+      const u = String(url);
+      if (u.includes('hyperliquid.xyz/info') && init && init.body) {
+        const body = JSON.parse(init.body);
+        if (body.user) requestedUsers.push(body.user);
+        if (body.type === 'clearinghouseState' && requestedUsers.length === 1) {
+          await new Promise((r) => { resolveFirstFetch = r; });
+        }
+      }
+      return jsonResponse({});
+    };
+    const p1 = uiController.refreshPerpDataAsync(false);
+    await new Promise((r) => setTimeout(r, 20));
+    state.activeWalletId = wB.id;
+    const p2 = uiController.refreshPerpDataAsync(false);
+    assert.notEqual(p1, p2, 'Switching wallet must NOT reuse old wallet _perpRefreshInFlight promise');
+    if (resolveFirstFetch) resolveFirstFetch();
+    await Promise.allSettled([p1, p2]);
+    assert.ok(requestedUsers.some((a) => a.toLowerCase() === wB.evmAddress.toLowerCase()), 'New wallet must trigger its own Perp fetch');
+
+    // renderPerpView skips chartSvgEl.innerHTML when dataset.interacting === '1'
+    const chartEl = getOrMake('perp-chart-svg');
+    chartEl.dataset = chartEl.dataset || {};
+    chartEl.dataset.interacting = '1';
+    chartEl.innerHTML = '<svg data-sentinel="keep-me"></svg>';
+    state.perp.selectedCoin = 'BTC';
+    state.perp.markets = [{ name: 'BTC', markPx: '95000', szDecimals: 4, maxLeverage: 50 }];
+    state.perp.candles = Array.from({ length: 90 }, (_, i) => ({ t: 1700000000000 + i * 60000, o: 95000, h: 95100, l: 94900, c: 95050, v: 10 }));
+    state.perp.chartVisibleCount = 40;
+    state.perp.chartOffsetFromEnd = 20;
+    uiController.renderPerpView();
+    assert.equal(chartEl.innerHTML, '<svg data-sentinel="keep-me"></svg>', 'renderPerpView must skip SVG rebuild while dataset.interacting === "1"');
+
+    // 5. 161-perps-chart: 24-candle overscan buffer + touch direct tap with plotL..plotR mapping
+    const overscanSvg = uiController.renderPerpCandleSvg(state.perp.candles, state.perp.markets[0], null, { overscan: 24 });
+    assert.ok(/viewBox="0 0 (?:[4-9]\d\d|\d{4,})/.test(overscanSvg), 'Overscan SVG must have expanded viewBox width');
+    assert.ok(overscanSvg.includes('margin-left:-'), 'Overscan SVG must apply negative margin-left for left buffer');
+
+    chartEl.dataset.interacting = '0';
+    chartEl.dataset.gesturesBound = '0';
+    const listeners = {};
+    chartEl.addEventListener = (ev, fn) => { listeners[ev] = fn; };
+    chartEl.getBoundingClientRect = () => ({ left: 0, top: 0, width: 360, height: 216 });
+    chartEl.querySelector = () => null;
+    state.perp.inspectedCandleIdx = null;
+    uiController.renderPerpView();
+    assert.equal(typeof listeners.touchstart, 'function', 'bindPerpChartGestures must attach touchstart');
+    assert.equal(typeof listeners.touchend, 'function', 'bindPerpChartGestures must attach touchend');
+    // Tap at plotL (6) -> index 0; tap near plotR (353) -> last visible candle
+    listeners.touchstart({ touches: [{ identifier: 1, clientX: 6, clientY: 100 }] });
+    listeners.touchend({ changedTouches: [{ identifier: 1, clientX: 6, clientY: 100 }], touches: [] });
+    assert.equal(state.perp.inspectedCandleIdx, 0, 'Touch tap at plotL (x=6) must inspect candle index 0');
+    await new Promise((r) => setTimeout(r, 460));
+    listeners.touchstart({ touches: [{ identifier: 2, clientX: 353, clientY: 100 }] });
+    listeners.touchend({ changedTouches: [{ identifier: 2, clientX: 353, clientY: 100 }], touches: [] });
+    assert.equal(state.perp.inspectedCandleIdx, 39, 'Touch tap near plotR (x=353) must inspect last visible candle');
+  } finally {
+    state.wallets = prevWallets;
+    state.activeWalletId = prevActiveId;
+    Object.assign(state.swap, prevSwap);
+    Object.assign(state.perp, prevPerp);
+    globalThis.document = prevDoc;
+    globalThis.fetch = prevFetch;
+    globalThis.window = prevWindow;
+    globalThis.Capacitor = prevCap;
+    globalThis.confirm = prevConfirm;
+  }
+});
