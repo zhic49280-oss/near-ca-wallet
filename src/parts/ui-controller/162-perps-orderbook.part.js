@@ -509,10 +509,22 @@
     updatePerpFundingCountdown();
 
     const curIv = st.perp.chartInterval || '15m';
+    const pinnedIvs = Array.isArray(st.perp.pinnedIntervals) && st.perp.pinnedIntervals.length
+      ? st.perp.pinnedIntervals
+      : ['5m', '15m', '1h', '4h', '1d'];
     if (typeof document !== 'undefined') {
       document.querySelectorAll('#perp-interval-pills [data-iv]').forEach((btn) => {
         btn.classList.toggle('active', btn.getAttribute('data-iv') === curIv);
       });
+    }
+    const moreIvBtn = $('btn-perp-iv-more');
+    if (moreIvBtn) {
+      const isCustomIv = !pinnedIvs.includes(curIv);
+      if (moreIvBtn.classList) moreIvBtn.classList.toggle('active', isCustomIv);
+      const moreLbl = isCustomIv
+        ? (typeof getPerpIntervalLabel === 'function' ? getPerpIntervalLabel(curIv) : curIv)
+        : t('更多', 'More');
+      moreIvBtn.textContent = `${moreLbl} ▾`;
     }
     const chartWrap = $('perp-chart-wrap');
     const chartSvgEl = $('perp-chart-svg');

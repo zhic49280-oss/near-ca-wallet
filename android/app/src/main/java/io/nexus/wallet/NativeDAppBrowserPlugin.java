@@ -68,6 +68,18 @@ public class NativeDAppBrowserPlugin extends Plugin {
         return false;
     }
 
+    private static boolean isAllowedSubframeUrl(String rawUrl) {
+        if (isAllowedDAppUrl(rawUrl)) return true;
+        if (rawUrl == null || rawUrl.trim().isEmpty()) return false;
+        try {
+            Uri uri = Uri.parse(rawUrl.trim());
+            String scheme = uri.getScheme() != null ? uri.getScheme().toLowerCase() : "";
+            return "about".equals(scheme) || "blob".equals(scheme) || "data".equals(scheme);
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
+
     private static String extractWcDeepLink(String rawUrl) {
         if (rawUrl == null) return null;
         String raw = rawUrl.trim();
@@ -371,6 +383,9 @@ public class NativeDAppBrowserPlugin extends Plugin {
                 public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                     String nextUrl = request != null && request.getUrl() != null ? request.getUrl().toString() : "";
                     if (dispatchWcDeepLinkIfMatched(nextUrl)) return true;
+                    if (request != null && !request.isForMainFrame()) {
+                        return !isAllowedSubframeUrl(nextUrl);
+                    }
                     return !isAllowedDAppUrl(nextUrl);
                 }
 

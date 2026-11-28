@@ -390,9 +390,23 @@ public class NativeDAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin, WKNavigationD
         return nil
     }
 
+    private func isAllowedSubframeUrl(_ url: URL?) -> Bool {
+        if isAllowedDAppUrl(url) {
+            return true
+        }
+        guard let scheme = url?.scheme?.lowercased() else {
+            return false
+        }
+        return scheme == "about" || scheme == "blob" || scheme == "data"
+    }
+
     public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if dispatchWcDeepLinkIfMatched(navigationAction.request.url) {
             decisionHandler(.cancel)
+            return
+        }
+        if let target = navigationAction.targetFrame, !target.isMainFrame {
+            decisionHandler(isAllowedSubframeUrl(navigationAction.request.url) ? .allow : .cancel)
             return
         }
         if isAllowedDAppUrl(navigationAction.request.url) {

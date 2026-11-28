@@ -5,12 +5,27 @@ import { PerpOverviewPanel } from '../components/PerpOverviewPanel.jsx';
 import { PerpBottomListPanel, PerpOverviewPositionsPanel } from '../components/PerpOrderbookAndPositions.jsx';
 import { PerpChartHudPanel } from '../components/PerpDetailPanels.jsx';
 
+const PERP_VALID_IV_SET = new Set(['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '8h', '12h', '1d', '3d', '1w', '1M']);
+const PERP_DEFAULT_PINNED_IVS = ['5m', '15m', '1h', '4h', '1d'];
+const PERP_IV_ZH_FALLBACK = {
+  '1m': '1分', '3m': '3分', '5m': '5分', '15m': '15分', '30m': '30分',
+  '1h': '1时', '2h': '2时', '4h': '4时', '8h': '8时', '12h': '12时',
+  '1d': '1日', '3d': '3日', '1w': '1周', '1M': '1月'
+};
+
 export function PerpView() {
   const st = useWalletState(['perp']);
   const { tr, lang } = useI18n();
   const isCoinUnit = Boolean(st && st.perp && st.perp.inputUnit === 'coin');
   const orderType = (st && st.perp && st.perp.orderType) || 'market';
   const chartInterval = (st && st.perp && st.perp.chartInterval) || '15m';
+  const rawPinned = (st && st.perp && Array.isArray(st.perp.pinnedIntervals)) ? st.perp.pinnedIntervals : PERP_DEFAULT_PINNED_IVS;
+  const pinnedList = rawPinned.filter((x) => PERP_VALID_IV_SET.has(x)).slice(0, 5);
+  const pinnedIntervals = pinnedList.length ? pinnedList : PERP_DEFAULT_PINNED_IVS;
+  const isCustomInterval = !pinnedIntervals.includes(chartInterval);
+  const moreIvLabel = isCustomInterval
+    ? `${tr(`perp.iv${chartInterval}`, PERP_IV_ZH_FALLBACK[chartInterval] || chartInterval)} ▾`
+    : `${tr('perp.ivMore', '更多')} ▾`;
   const marginMode = (st && st.perp && st.perp.marginMode) || 'isolated';
   const isMarketOrder = orderType !== 'limit' && orderType !== 'post_only';
   const rawPerpCoin = String((st && st.perp && st.perp.selectedCoin) || 'BTC').trim();
@@ -203,24 +218,30 @@ export function PerpView() {
           <div id="perp-chart-wrap" className="perp-chart-wrap">
             <div className="flex items-center justify-between gap-1" style={{ marginBottom: '2px' }}>
               <div id="perp-interval-pills" className="flex gap-1">
-                {[
-                  ['5m', 'perp.iv5m', '5分'],
-                  ['15m', 'perp.iv15m', '15分'],
-                  ['1h', 'perp.iv1h', '1时'],
-                  ['4h', 'perp.iv4h', '4时'],
-                  ['1d', 'perp.iv1d', '1日'],
-                ].map(([iv, key, zh]) => (
-                  <button
-                    key={iv}
-                    type="button"
-                    className={`filter-pill${chartInterval === iv ? ' active' : ''}`}
-                    data-iv={iv}
-                    data-i18n={key}
-                    onClick={() => window.setPerpChartInterval && window.setPerpChartInterval(iv)}
-                  >
-                    {tr(key, zh)}
-                  </button>
-                ))}
+                {pinnedIntervals.map((iv) => {
+                  const key = `perp.iv${iv}`;
+                  const zh = PERP_IV_ZH_FALLBACK[iv] || iv;
+                  return (
+                    <button
+                      key={iv}
+                      type="button"
+                      className={`filter-pill${chartInterval === iv ? ' active' : ''}`}
+                      data-iv={iv}
+                      data-i18n={key}
+                      onClick={() => window.setPerpChartInterval && window.setPerpChartInterval(iv)}
+                    >
+                      {tr(key, zh)}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  id="btn-perp-iv-more"
+                  className={`filter-pill perp-iv-more-btn${isCustomInterval ? ' active' : ''}`}
+                  onClick={() => window.openPerpIntervalSheet && window.openPerpIntervalSheet()}
+                >
+                  {moreIvLabel}
+                </button>
               </div>
               <span id="perp-chart-hl" className="mono" style={{ fontSize: '10px', color: 'var(--text-muted)' }}>--</span>
             </div>

@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useWalletState } from '../store/useWalletStore.js';
+import { useI18n, useWalletState } from '../store/useWalletStore.js';
 import { TokenIconBadge } from './TokenIconBadge.jsx';
 import { EmptyState } from './ui/EmptyState.jsx';
 
@@ -26,14 +26,27 @@ function defaultFormatCompactUsd(val) {
   return `$${n.toFixed(0)}`;
 }
 
-function defaultFormatCandleTime(ts) {
+const PERP_DATE_ONLY_INTERVALS = new Set(['1d', '3d', '1w', '1M']);
+const PERP_ALL_INTERVALS = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '8h', '12h', '1d', '3d', '1w', '1M'];
+const PERP_DEFAULT_PINNED = ['5m', '15m', '1h', '4h', '1d'];
+const PERP_IV_ZH_MAP = {
+  '1m': '1分', '3m': '3分', '5m': '5分', '15m': '15分', '30m': '30分',
+  '1h': '1时', '2h': '2时', '4h': '4时', '8h': '8时', '12h': '12时',
+  '1d': '1日', '3d': '3日', '1w': '1周', '1M': '1月'
+};
+
+function defaultFormatCandleTime(ts, interval = null) {
   if (!Number.isFinite(ts) || ts <= 1e9) return '';
   const d = new Date(ts);
+  const yyyy = String(d.getFullYear());
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
+  if (interval && PERP_DATE_ONLY_INTERVALS.has(String(interval))) {
+    return `${yyyy}/${mm}/${dd}`;
+  }
   const hh = String(d.getHours()).padStart(2, '0');
   const mi = String(d.getMinutes()).padStart(2, '0');
-  return `${mm}/${dd} ${hh}:${mi}`;
+  return `${yyyy}/${mm}/${dd} ${hh}:${mi}`;
 }
 
 export function PerpMarketsSheetPanel({
@@ -143,6 +156,7 @@ export function PerpChartHudPanel({
   selectedIdx = null,
   dockSide: dockSideProp,
   isEn: isEnProp,
+  interval: intervalProp,
   formatPerpPx = defaultFormatPerpPx,
   formatBal = defaultFormatBal,
   formatCompactUsd = defaultFormatCompactUsd,
@@ -150,6 +164,7 @@ export function PerpChartHudPanel({
 }) {
   const st = useWalletState(['perp', 'lang']);
   const isEn = typeof isEnProp === 'boolean' ? isEnProp : Boolean(st && st.lang === 'en');
+  const interval = intervalProp || (st && st.perp && st.perp.chartInterval) || '15m';
   const list = Array.isArray(candles) ? candles : [];
 
   if (!Number.isInteger(selectedIdx) || selectedIdx < 0 || selectedIdx >= list.length) {
@@ -184,7 +199,7 @@ export function PerpChartHudPanel({
     : '--';
 
   const rows = [
-    { k: 'time', label: isEn ? 'Time' : '时间', val: formatPerpCandleTime(c.t) || `#${selectedIdx + 1}` },
+    { k: 'time', label: isEn ? 'Time' : '时间', val: formatPerpCandleTime(c.t, interval) || `#${selectedIdx + 1}` },
     { k: 'open', label: isEn ? 'Open' : '开盘', val: formatPerpPx(c.o) },
     { k: 'high', label: isEn ? 'High' : '最高', val: formatPerpPx(c.h) },
     { k: 'low', label: isEn ? 'Low' : '最低', val: formatPerpPx(c.l) },
@@ -213,6 +228,76 @@ export function PerpChartHudPanel({
           </span>
         </div>
       ))}
+    </div>
+  );
+}
+
+export function PerpIntervalsSheetPanel() {
+  const st = useWalletState(['perp', 'lang']);
+  const { tr } = useI18n();
+  const activeIv = (st && st.perp && st.perp.chartInterval) || '15m';
+  const rawPinned = (st && st.perp && Array.isArray(st.perp.pinnedIntervals)) ? st.perp.pinnedIntervals : PERP_DEFAULT_PINNED;
+  const pinned = rawPinned.filter((x) => PERP_ALL_INTERVALS.includes(x)).slice(0, 5);
+  const pinnedList = pinned.length ? pinned : PERP_DEFAULT_PINNED;
+  const pinnedSet = new Set(pinnedList);
+  const editing = Boolean(st && st.perp && st.perp.editingIntervals);
+  const labelOf = (iv) => tr(`perp.iv${iv}`, PERP_IV_ZH_MAP[iv] || iv);
+
+  return (
+    <div class="flex flex-col gap-3">
+      <div class="flex flex-col gap-2">
+        <div class="flex items-center justify-between">
+          <span class="meta-key" style={{ fontSize: '12px', fontWeight: 600 }} data-i18n="perp.ivPrefsTitle">
+            {tr('perp.ivPrefsTitle', '常用周期')}
+          </span>
+          <button
+            type="button"
+            id="btn-perp-iv-edit"
+            class={`btn-ghost-sm${editing ? ' text-emerald' : ''}`}
+            onClick={() => window.togglePerpIntervalEditMode && window.togglePerpIntervalEditMode()}
+            data-i18n={editing ? 'perp.ivDone' : 'perp.ivEdit'}
+          >
+            {editing ? tr('perp.ivDone', '完成') : tr('perp.ivEdit', '编辑')}
+          </button>
+        </div>
+        <div class="perp-iv-grid">
+          {pinnedList.map((iv) => (
+            <button
+              key={`pin-${iv}`}
+              type="button"
+              class={`perp-iv-tile${!editing && activeIv === iv ? ' active' : ''}${editing ? ' is-pinned' : ''}`}
+              data-iv-pick={iv}
+              onClick={() => window.handlePerpIntervalPick && window.handlePerpIntervalPick(iv)}
+            >
+              <span>{labelOf(iv)}</span>
+              {editing ? <span class="perp-iv-badge">×</span> : null}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-2">
+        <span class="meta-key" style={{ fontSize: '12px', fontWeight: 600 }} data-i18n="perp.ivAllTitle">
+          {tr('perp.ivAllTitle', '全部周期')}
+        </span>
+        <div class="perp-iv-grid">
+          {PERP_ALL_INTERVALS.map((iv) => {
+            const isPinned = pinnedSet.has(iv);
+            return (
+              <button
+                key={`all-${iv}`}
+                type="button"
+                class={`perp-iv-tile${!editing && activeIv === iv ? ' active' : ''}${editing && isPinned ? ' is-pinned' : ''}`}
+                data-iv-pick={iv}
+                onClick={() => window.handlePerpIntervalPick && window.handlePerpIntervalPick(iv)}
+              >
+                <span>{labelOf(iv)}</span>
+                {editing ? <span class="perp-iv-badge">{isPinned ? '✓' : '+'}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

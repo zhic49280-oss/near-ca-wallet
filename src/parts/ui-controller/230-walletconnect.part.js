@@ -54,7 +54,7 @@
       let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
         updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-        await loadScriptOnce('walletconnect.umd.min.js?v=6.97', WC_TIMEOUT_MS);
+        await loadScriptOnce('walletconnect.umd.min.js?v=6.98', WC_TIMEOUT_MS);
         sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       }
       if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -788,7 +788,7 @@
     const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
     if (existing) return existing;
     if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
-      await loadScriptOnce('src/jsqr-lazy.js?v=6.97').catch(() => false);
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.98').catch(() => false);
       return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     }
     return null;

@@ -474,15 +474,13 @@ test('Arbitrum ERC-20 gasLimit no longer inflated to 600k, zero priority fee pre
       assert.equal(parsedTx.gasLimit, 78000n, 'Successful estimate (65k) must scale to 78k (+20%), NOT inflate to 600,000n');
       assert.equal(parsedTx.maxPriorityFeePerGas, 0n, 'Arbitrum 0n maxPriorityFeePerGas must not be replaced by maxFee/4');
 
-      // Null balances must display '--' instead of '0.00 USDC' / '0.00000 ETH'
+      // Simplified Arbitrum deposit sheet: no ETH balance row / yellow notice; null USDC shows '--', and ETH pre-check remains active
       const prevDoc = globalThis.document;
       const usdcAvail = createMockDomElement('perp-arb-usdc-avail');
-      const ethAvail = createMockDomElement('perp-arb-eth-avail');
       const errEl = createMockDomElement('perp-arb-error');
       const btn = createMockDomElement('btn-perp-arb-deposit');
       const domMap = new Map([
         ['perp-arb-usdc-avail', usdcAvail],
-        ['perp-arb-eth-avail', ethAvail],
         ['perp-arb-error', errEl],
         ['btn-perp-arb-deposit', btn]
       ]);
@@ -494,31 +492,127 @@ test('Arbitrum ERC-20 gasLimit no longer inflated to 600k, zero priority fee pre
         w.nativeBalances.arb = null;
         uiController.setPerpFundingTab('arbitrum');
         assert.equal(usdcAvail.textContent, '--');
-        assert.equal(ethAvail.textContent, '--');
-        assert.equal(ethAvail.classList.contains('text-rose'), false);
 
-        w.nativeBalances.arb = 0.00005;
+        state.setWalletErc20Balance(w, 'arb', hlPerps.HL_ARB_USDC_ADDRESS, 25.5);
         uiController.setPerpFundingTab('arbitrum');
-        assert.equal(ethAvail.textContent, '0.00005 ETH');
-        assert.equal(ethAvail.classList.contains('text-rose'), true);
+        assert.equal(usdcAvail.textContent, '25.50 USDC');
       } finally {
         globalThis.document = prevDoc;
       }
 
-      // Copy clarity: mentions ETH not ARB, zero Gas jargon
+      const sheetsSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/app/sheets/ToolsAndChainSheets.jsx'), 'utf8');
+      assert.equal(sheetsSrc.includes('perp-arb-eth-avail'), false);
+      assert.equal(sheetsSrc.includes('perp.arbBridgeNotice'), false);
+      assert.equal(state.i18nDict.zh['perp.arbEthBalLabel'], undefined);
+      assert.equal(state.i18nDict.en['perp.arbEthBalLabel'], undefined);
+      assert.equal(state.i18nDict.zh['perp.arbBridgeNotice'], undefined);
+      assert.equal(state.i18nDict.en['perp.arbBridgeNotice'], undefined);
+
+      // Copy clarity: mentions ETH not ARB when fee is actually insufficient, zero Gas jargon
       const lowFeeState = uiController.evaluatePerpArbDepositState({ amount: 10, arbUsdc: 20, arbEth: 0.00005 });
       assert.equal(lowFeeState.disabled, true);
       assert.match(lowFeeState.error, /ETH/);
       assert.equal(/\bgas\b/i.test(lowFeeState.error), false);
       assert.equal(/\bgas\b/i.test(lowFeeState.text), false);
-      assert.equal(/\bgas\b/i.test(state.i18nDict.zh['perp.arbEthBalLabel']), false);
-      assert.equal(/\bgas\b/i.test(state.i18nDict.en['perp.arbEthBalLabel']), false);
-      assert.ok(state.i18nDict.zh['perp.arbBridgeNotice'].includes('ETH') && state.i18nDict.zh['perp.arbBridgeNotice'].includes('ARB'));
-      assert.ok(state.i18nDict.en['perp.arbBridgeNotice'].includes('ETH') && state.i18nDict.en['perp.arbBridgeNotice'].includes('ARB'));
     });
   } finally {
     if (prevEthers === undefined) delete globalThis.ethers;
     else globalThis.ethers = prevEthers;
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('Perp chart supports all 14 Hyperliquid intervals, More sheet & pinned prefs persistence, and 4-digit year timestamps', async () => {
+  const prevPerp = { ...state.perp };
+  const prevLang = state.lang;
+  const prevDoc = globalThis.document;
+  const prevFetch = globalThis.fetch;
+  try {
+    await withMockedStorage({}, async (storage) => {
+      state.initState();
+      state.lang = 'zh';
+      const expected14 = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '8h', '12h', '1d', '3d', '1w', '1M'];
+      assert.deepEqual(hlPerps.HL_CANDLE_INTERVALS, expected14);
+      assert.equal(hlPerps.getHlCandleIntervalMs('1m'), 60_000);
+      assert.equal(hlPerps.getHlCandleIntervalMs('1M'), 2_592_000_000);
+      assert.equal(hlPerps.isSupportedHlCandleInterval('1s'), false);
+      assert.equal(hlPerps.isSupportedHlCandleInterval('3M'), false);
+
+      for (const iv of expected14) {
+        assert.ok(typeof state.i18nDict.zh[`perp.iv${iv}`] === 'string' && state.i18nDict.zh[`perp.iv${iv}`].length > 0, `zh missing perp.iv${iv}`);
+        assert.ok(typeof state.i18nDict.en[`perp.iv${iv}`] === 'string' && state.i18nDict.en[`perp.iv${iv}`].length > 0, `en missing perp.iv${iv}`);
+      }
+
+      // 1. Selecting custom interval '1M' (month) vs '1m' (minute) preserves exact case, updates #btn-perp-iv-more & persists
+      const moreBtn = createMockDomElement('btn-perp-iv-more');
+      const toastEl = createMockDomElement('toast');
+      const domMap = new Map([['btn-perp-iv-more', moreBtn], ['toast', toastEl]]);
+      globalThis.document = {
+        getElementById: (id) => domMap.get(id) || null,
+        querySelectorAll: () => []
+      };
+
+      await withMockedFetch(async () => jsonResponse([]), async () => {
+        uiController.setPerpChartInterval('1M');
+        assert.equal(state.perp.chartInterval, '1M');
+        assert.equal(moreBtn.classList.contains('active'), true);
+        assert.equal(moreBtn.textContent, '1月 ▾');
+
+        uiController.setPerpChartInterval('1m');
+        assert.equal(state.perp.chartInterval, '1m');
+        assert.equal(moreBtn.textContent, '1分 ▾');
+      });
+
+      const savedPrefs = JSON.parse(storage.getItem('near_ca_perp_intervals_v1') || '{}');
+      assert.equal(savedPrefs.active, '1m');
+      assert.deepEqual(savedPrefs.pinned, ['5m', '15m', '1h', '4h', '1d']);
+
+      // Edit pinned intervals: max 5 guard, unpin + pin '30m', then restore via loadPerpIntervalPrefs
+      uiController.togglePerpIntervalEditMode();
+      assert.equal(state.perp.editingIntervals, true);
+      uiController.handlePerpIntervalPick('30m'); // already 5 pinned -> blocked with toast
+      assert.equal(state.perp.pinnedIntervals.length, 5);
+      uiController.handlePerpIntervalPick('4h'); // unpin 4h -> 4 left
+      assert.equal(state.perp.pinnedIntervals.includes('4h'), false);
+      uiController.handlePerpIntervalPick('30m'); // pin 30m -> 5 pinned
+      assert.equal(state.perp.pinnedIntervals.includes('30m'), true);
+      uiController.togglePerpIntervalEditMode();
+      assert.equal(state.perp.editingIntervals, false);
+
+      state.perp.pinnedIntervals = ['5m'];
+      state.perp.chartInterval = '15m';
+      const restored = uiController.loadPerpIntervalPrefs();
+      assert.equal(restored.active, '1m');
+      assert.equal(restored.pinned.includes('30m'), true);
+
+      // 2. 4-digit year formatting in detail HUD, SVG crosshair & cross-year X-axis ticks
+      const tsNov2026 = new Date(2026, 10, 28, 15, 5).getTime();
+      const tsDec2025 = new Date(2025, 11, 31, 23, 45).getTime();
+      assert.equal(uiController.formatPerpCandleTime(tsNov2026, '15m'), '2026/11/28 15:05');
+      assert.equal(uiController.formatPerpCandleTime(tsNov2026, '1d'), '2026/11/28');
+      assert.equal(uiController.formatPerpCandleTime(tsNov2026, '1M'), '2026/11/28');
+
+      const curYrTs = new Date(new Date().getFullYear(), 4, 10, 9, 30).getTime();
+      assert.equal(uiController.formatPerpAxisTime(curYrTs, '15m', false), '05/10 09:30');
+      assert.equal(uiController.formatPerpAxisTime(tsDec2025, '15m', true), '2025/12/31 23:45');
+      assert.equal(uiController.formatPerpAxisTime(tsDec2025, '1w', false), '2025/12/31');
+
+      state.perp.chartInterval = '15m';
+      state.perp.chartVisibleCount = 20;
+      state.perp.chartOffsetFromEnd = 0;
+      const crossYearSeries = [
+        { t: tsDec2025, o: 90000, h: 90500, l: 89500, c: 90200, v: 100 },
+        { t: tsNov2026, o: 90200, h: 91000, l: 90100, c: 90800, v: 120 }
+      ];
+      const svgCrossYear = uiController.renderPerpCandleSvg(crossYearSeries, { markPx: 90800 }, 1);
+      assert.ok(svgCrossYear.includes('2025/12/31 23:45'), 'Cross-year X axis must display 4-digit year');
+      assert.ok(svgCrossYear.includes('2026/11/28 15:05'), 'Selected crosshair pill must display 4-digit year');
+      assert.ok(svgCrossYear.includes('width="86"'), 'Selected crosshair pill must widen cleanly to fit YYYY/MM/DD HH:mm');
+    });
+  } finally {
+    Object.assign(state.perp, prevPerp);
+    state.lang = prevLang;
+    globalThis.document = prevDoc;
     globalThis.fetch = prevFetch;
   }
 });

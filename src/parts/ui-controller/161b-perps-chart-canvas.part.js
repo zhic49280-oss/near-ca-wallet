@@ -173,6 +173,14 @@
 
     const lastC = fullList[fullList.length - 1];
     const livePx = (market && Number(market.markPx)) || (lastC ? lastC.c : 0);
+    const curIv = (st && st.perp && st.perp.chartInterval) || '15m';
+    const curYr = new Date().getFullYear();
+    const visFirst = fullList[visStart];
+    const visLast = fullList[Math.max(visStart, visEnd - 1)];
+    const firstYr = visFirst && Number.isFinite(visFirst.t) ? new Date(visFirst.t).getFullYear() : curYr;
+    const lastYr = visLast && Number.isFinite(visLast.t) ? new Date(visLast.t).getFullYear() : curYr;
+    const showAxisYr = (typeof PERP_DATE_ONLY_INTERVALS !== 'undefined' && PERP_DATE_ONLY_INTERVALS.has(curIv))
+      || firstYr !== lastYr || firstYr !== curYr || lastYr !== curYr;
     const baseKey = [
       fullList.length,
       fullList[0] && fullList[0].t,
@@ -184,6 +192,8 @@
       lastC && lastC.v,
       startFloat.toFixed(3),
       visCount.toFixed(3),
+      curIv,
+      showAxisYr ? 1 : 0,
       Number.isFinite(livePx) ? livePx : '',
       bmpW,
       bmpH
@@ -223,7 +233,9 @@
         baseCtx.moveTo(tx, candleTop);
         baseCtx.lineTo(tx, volBottom);
         baseCtx.stroke();
-        const lbl = formatPerpCandleTime(fullList[idx].t);
+        const lbl = typeof formatPerpAxisTime === 'function'
+          ? formatPerpAxisTime(fullList[idx].t, curIv, showAxisYr)
+          : formatPerpCandleTime(fullList[idx].t, curIv);
         if (lbl) {
           baseCtx.fillStyle = 'rgba(148,163,184,0.75)';
           baseCtx.textAlign = k === 0 ? 'left' : (k === 2 ? 'right' : 'center');
@@ -377,7 +389,10 @@
       ctx.fill();
       ctx.stroke();
 
-      const xPillW = 58;
+      const chTimeStr = formatPerpCandleTime(selC.t, curIv) || `#${selectedIdx + 1}`;
+      ctx.font = '600 7.8px ui-monospace, monospace';
+      const measuredTimeW = typeof ctx.measureText === 'function' ? Math.ceil(ctx.measureText(chTimeStr).width) : chTimeStr.length * 4.9;
+      const xPillW = Math.max(58, measuredTimeW + 10);
       const xPillX = Math.max(plotL, Math.min(plotR - xPillW, cx - xPillW / 2));
       drawCanvasRoundedRect(ctx, xPillX, volBottom + 2, xPillW, 14, 3);
       ctx.fillStyle = '#0f172a';
@@ -386,10 +401,9 @@
       ctx.lineWidth = 0.75;
       ctx.stroke();
       ctx.fillStyle = '#f8fafc';
-      ctx.font = '600 7.8px ui-monospace, monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'alphabetic';
-      ctx.fillText(formatPerpCandleTime(selC.t) || `#${selectedIdx + 1}`, xPillX + xPillW / 2, volBottom + 12);
+      ctx.fillText(chTimeStr, xPillX + xPillW / 2, volBottom + 12);
 
       const yPillY = Math.max(candleTop, Math.min(candleBottom - 14, cy - 7));
       drawCanvasRoundedRect(ctx, 292, yPillY, 62, 14, 3);

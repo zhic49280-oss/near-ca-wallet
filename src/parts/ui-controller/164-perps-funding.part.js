@@ -324,19 +324,10 @@
     if ($('perp-wd-dest-addr')) $('perp-wd-dest-addr').textContent = hlAddr ? shortenAddr(hlAddr, 8, 6) : '--';
 
     const arbUsdcRaw = st.getWalletErc20Balance ? st.getWalletErc20Balance(wallet, 'arb', hl.HL_ARB_USDC_ADDRESS) : null;
-    const arbEthRaw = wallet.nativeBalances ? wallet.nativeBalances.arb : null;
     const arbUsdcKnown = arbUsdcRaw !== null && arbUsdcRaw !== undefined && Number.isFinite(Number(arbUsdcRaw));
-    const arbEthKnown = arbEthRaw !== null && arbEthRaw !== undefined && Number.isFinite(Number(arbEthRaw));
     const arbUsdc = arbUsdcKnown ? Number(arbUsdcRaw) : 0;
-    const arbEth = arbEthKnown ? Number(contracts.resolveWalletChainBalance(wallet, 'arb') || 0) : 0;
-    const minEthFee = hl ? hl.HL_ARB_MIN_ETH_GAS : 0.0002;
     const usdcAvailEl = $('perp-arb-usdc-avail');
     if (usdcAvailEl) usdcAvailEl.textContent = arbUsdcKnown ? `${arbUsdc.toFixed(2)} USDC` : '--';
-    const ethAvailEl = $('perp-arb-eth-avail');
-    if (ethAvailEl) {
-      ethAvailEl.textContent = arbEthKnown ? `${arbEth.toFixed(5)} ETH` : '--';
-      if (ethAvailEl.classList) ethAvailEl.classList.toggle('text-rose', arbEthKnown && arbEth < minEthFee);
-    }
 
     const acct = st.perp.account;
     const spotUsd = acct ? Number(acct.spotUsdc || 0) : 0;

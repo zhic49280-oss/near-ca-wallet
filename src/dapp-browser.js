@@ -367,6 +367,62 @@
   if (window.__NEXUS_INJECTED__) return;
   window.__NEXUS_INJECTED__ = true;
 
+  // Guard slow raw.githubusercontent.com manifest fetches so near-connect falls back to jsDelivr quickly
+  try {
+    if (typeof window.fetch === 'function' && typeof AbortController === 'function') {
+      var _origWindowFetch = window.fetch;
+      window.fetch = function (input, init) {
+        var reqUrl = '';
+        try {
+          reqUrl = typeof input === 'string' ? input : (input && typeof input.url === 'string' ? input.url : '');
+        } catch (_) {}
+        var lowerUrl = String(reqUrl || '').toLowerCase();
+        var isNearManifestSlowUrl = lowerUrl.indexOf('raw.githubusercontent.com/hot-dao/near-selector/') !== -1 &&
+          lowerUrl.indexOf('manifest.json') !== -1;
+        if (!isNearManifestSlowUrl) {
+          return _origWindowFetch.apply(this, arguments);
+        }
+        var ctrl = new AbortController();
+        var callerSignal = init && init.signal;
+        var onCallerAbort = null;
+        if (callerSignal) {
+          if (callerSignal.aborted) {
+            try { ctrl.abort(); } catch (_) {}
+          } else if (typeof callerSignal.addEventListener === 'function') {
+            onCallerAbort = function () {
+              try { ctrl.abort(); } catch (_) {}
+            };
+            try { callerSignal.addEventListener('abort', onCallerAbort, { once: true }); } catch (_) {}
+          }
+        }
+        var timerId = setTimeout(function () {
+          try { ctrl.abort(new Error('Manifest fetch timeout')); } catch (_) {
+            try { ctrl.abort(); } catch (__) {}
+          }
+        }, 4000);
+        var nextInit = Object.assign({}, init || {}, { signal: ctrl.signal });
+        var detachCaller = function () {
+          clearTimeout(timerId);
+          if (callerSignal && onCallerAbort && typeof callerSignal.removeEventListener === 'function') {
+            try { callerSignal.removeEventListener('abort', onCallerAbort); } catch (_) {}
+          }
+        };
+        try {
+          return Promise.resolve(_origWindowFetch.call(this, input, nextInit)).then(function (res) {
+            detachCaller();
+            return res;
+          }, function (err) {
+            detachCaller();
+            throw err;
+          });
+        } catch (syncErr) {
+          detachCaller();
+          return Promise.reject(syncErr);
+        }
+      };
+    }
+  } catch (_) {}
+
   var CFG = ${serializedCfg};
   try {
     var pageOrigin = (window.location && window.location.origin) || '';
@@ -1029,7 +1085,16 @@
     }
   } catch (_) {}
 
-  // -------------------- NEAR Provider & Auto-Connect Seeds --------------------
+  // -------------------- NEAR Provider, near-connect & Auto-Connect Seeds --------------------
+  function hasAvailableNativeBridge() {
+    return Boolean(
+      (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.nexusBridge) ||
+      (window.NexusAndroidWebMessage && typeof window.NexusAndroidWebMessage.postMessage === 'function') ||
+      (window.NexusAndroidBridge && (typeof window.NexusAndroidBridge.postMessageSecure === 'function' || typeof window.NexusAndroidBridge.postMessage === 'function')) ||
+      (window.__NEXUS_TEST_BRIDGE__ && typeof window.__NEXUS_TEST_BRIDGE__.postMessage === 'function')
+    );
+  }
+
   var nearProvider = {
     isNexusWallet: true,
     accountId: CFG.nearAccountId || '',
@@ -1038,6 +1103,33 @@
     removeListener: function (ev, fn) { nearEmitter.removeListener(ev, fn); return this; },
     isSignedIn: function () { return Boolean(nearProvider.accountId); },
     getAccountId: function () { return nearProvider.accountId || ''; },
+    getAccounts: function (opts) {
+      if (nearProvider.accountId) {
+        return Promise.resolve([{
+          accountId: nearProvider.accountId,
+          publicKey: nearProvider.publicKey || ''
+        }]);
+      }
+      if (!hasAvailableNativeBridge()) return Promise.resolve([]);
+      return sendBridgeRequest('near', 'getAccounts', [opts || {}]).then(function (list) {
+        var normalized = Array.isArray(list) ? list.filter(function (item) {
+          return item && item.accountId;
+        }).map(function (item) {
+          return {
+            accountId: String(item.accountId),
+            publicKey: String(item.publicKey || '')
+          };
+        }) : [];
+        if (normalized.length > 0) {
+          nearProvider.accountId = normalized[0].accountId;
+          nearProvider.publicKey = normalized[0].publicKey || nearProvider.publicKey || '';
+          syncNearStandardAccounts(nearProvider.accountId, nearProvider.publicKey, true);
+        }
+        return normalized;
+      }).catch(function () {
+        return [];
+      });
+    },
     account: function () {
       return {
         accountId: nearProvider.accountId,
@@ -1060,9 +1152,14 @@
         nearProvider.publicKey = '';
         syncNearStandardAccounts('', '', true);
         try {
-          if (typeof window.localStorage !== 'undefined' && window.localStorage && window.localStorage.getItem('@near-wallet-selector:selectedWalletId') === JSON.stringify('nexus-wallet')) {
-            window.localStorage.removeItem('@near-wallet-selector:selectedWalletId');
-            window.localStorage.removeItem('@near-wallet-selector:recentlySignedInWallets');
+          if (typeof window.localStorage !== 'undefined' && window.localStorage) {
+            if (window.localStorage.getItem('@near-wallet-selector:selectedWalletId') === JSON.stringify('nexus-wallet')) {
+              window.localStorage.removeItem('@near-wallet-selector:selectedWalletId');
+              window.localStorage.removeItem('@near-wallet-selector:recentlySignedInWallets');
+            }
+            if (window.localStorage.getItem('selected-wallet') === 'nexus-wallet') {
+              window.localStorage.removeItem('selected-wallet');
+            }
           }
         } catch (_) {}
         nearEmitter.emit('accountsChanged', []);
@@ -1095,6 +1192,85 @@
     if (!window.sender) window.sender = nearProvider;
   } catch (_) {}
 
+  var nearConnectWallet = {
+    manifest: {
+      id: 'nexus-wallet',
+      name: CFG.walletName,
+      icon: CFG.walletIcon,
+      website: 'https://nexuswallet.app',
+      version: '1.0.0',
+      type: 'injected',
+      executor: '',
+      permissions: { storage: true },
+      features: {
+        signMessage: true,
+        signTransaction: false,
+        signAndSendTransaction: true,
+        signAndSendTransactions: true,
+        signInWithoutAddKey: true,
+        signInAndSignMessage: true,
+        signInWithFunctionCallKey: false,
+        signDelegateActions: false,
+        mainnet: true,
+        testnet: false
+      }
+    },
+    getAccounts: function (opts) {
+      return nearProvider.getAccounts(opts);
+    },
+    signIn: function (opts) {
+      return nearProvider.requestSignIn(opts || {}).then(function (res) {
+        var acct = (res && res.accountId) || nearProvider.accountId || '';
+        var pk = (res && res.publicKey) || nearProvider.publicKey || '';
+        return acct ? [{ accountId: acct, publicKey: pk }] : [];
+      });
+    },
+    signOut: function () {
+      return nearProvider.signOut();
+    },
+    signInAndSignMessage: function (opts) {
+      var params = opts || {};
+      var signInOpts = {};
+      if (params.network !== undefined) signInOpts.network = params.network;
+      if (params.addFunctionCallKey !== undefined) signInOpts.addFunctionCallKey = params.addFunctionCallKey;
+      return nearConnectWallet.signIn(signInOpts).then(function (accounts) {
+        var first = Array.isArray(accounts) && accounts[0] ? accounts[0] : null;
+        if (!first || !first.accountId) return [];
+        var msgParams = params.messageParams || (params.message !== undefined ? params : {});
+        return nearProvider.signMessage(msgParams).then(function (signedMessage) {
+          return [{
+            accountId: first.accountId,
+            publicKey: first.publicKey || '',
+            signedMessage: signedMessage
+          }];
+        });
+      });
+    },
+    signMessage: function (inp) {
+      return nearProvider.signMessage(inp);
+    },
+    signAndSendTransaction: function (tx) {
+      return nearProvider.signAndSendTransaction(tx);
+    },
+    signAndSendTransactions: function (inp) {
+      return nearProvider.signAndSendTransactions(inp);
+    }
+  };
+
+  function announceNearConnectWallet() {
+    if (typeof CustomEvent === 'function' && typeof window.dispatchEvent === 'function') {
+      try {
+        window.dispatchEvent(new CustomEvent('near-wallet-injected', { detail: nearConnectWallet }));
+      } catch (_) {}
+    }
+  }
+  try {
+    if (typeof window.addEventListener === 'function') {
+      window.addEventListener('near-selector-ready', announceNearConnectWallet);
+    }
+    announceNearConnectWallet();
+  } catch (_) {}
+
   try {
     if (typeof window.localStorage !== 'undefined' && window.localStorage) {
       if (CFG.nearAccountId) {
@@ -1104,9 +1280,17 @@
         if (!window.localStorage.getItem('@near-wallet-selector:recentlySignedInWallets')) {
           window.localStorage.setItem('@near-wallet-selector:recentlySignedInWallets', JSON.stringify(['nexus-wallet']));
         }
-      } else if (window.localStorage.getItem('@near-wallet-selector:selectedWalletId') === JSON.stringify('nexus-wallet')) {
-        window.localStorage.removeItem('@near-wallet-selector:selectedWalletId');
-        window.localStorage.removeItem('@near-wallet-selector:recentlySignedInWallets');
+        if (!window.localStorage.getItem('selected-wallet')) {
+          window.localStorage.setItem('selected-wallet', 'nexus-wallet');
+        }
+      } else {
+        if (window.localStorage.getItem('@near-wallet-selector:selectedWalletId') === JSON.stringify('nexus-wallet')) {
+          window.localStorage.removeItem('@near-wallet-selector:selectedWalletId');
+          window.localStorage.removeItem('@near-wallet-selector:recentlySignedInWallets');
+        }
+        if (window.localStorage.getItem('selected-wallet') === 'nexus-wallet') {
+          window.localStorage.removeItem('selected-wallet');
+        }
       }
       if (CFG.solanaPublicKey) {
         if (!window.localStorage.getItem('walletName')) {
@@ -1169,9 +1353,14 @@
         if (!nextNear) {
           nearProvider.publicKey = '';
           try {
-            if (typeof window.localStorage !== 'undefined' && window.localStorage && window.localStorage.getItem('@near-wallet-selector:selectedWalletId') === JSON.stringify('nexus-wallet')) {
-              window.localStorage.removeItem('@near-wallet-selector:selectedWalletId');
-              window.localStorage.removeItem('@near-wallet-selector:recentlySignedInWallets');
+            if (typeof window.localStorage !== 'undefined' && window.localStorage) {
+              if (window.localStorage.getItem('@near-wallet-selector:selectedWalletId') === JSON.stringify('nexus-wallet')) {
+                window.localStorage.removeItem('@near-wallet-selector:selectedWalletId');
+                window.localStorage.removeItem('@near-wallet-selector:recentlySignedInWallets');
+              }
+              if (window.localStorage.getItem('selected-wallet') === 'nexus-wallet') {
+                window.localStorage.removeItem('selected-wallet');
+              }
             }
           } catch (_) {}
         }
@@ -1887,6 +2076,18 @@
         return '';
       }
       return creds.accountId || '';
+    }
+
+    if (method === 'getAccounts') {
+      const origin = normalizeOriginLabel(req, ctx);
+      const isConn = Boolean(ctx && typeof ctx.isOriginConnected === 'function' && ctx.isOriginConnected(origin, 'near'));
+      const isDisconnected = Boolean(ctx && typeof ctx.isOriginDisconnected === 'function' && ctx.isOriginDisconnected(origin, 'near'));
+      if (!isConn && (!(ctx && ctx.autoConnectOrigin) || isDisconnected)) {
+        return [];
+      }
+      return creds.accountId
+        ? [{ accountId: creds.accountId, publicKey: creds.publicKeyStr || '' }]
+        : [];
     }
 
     if (method === 'requestSignIn') {

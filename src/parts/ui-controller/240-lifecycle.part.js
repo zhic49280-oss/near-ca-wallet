@@ -315,6 +315,7 @@
   function bootstrapApp() {
     const st = getState();
     st.initState();
+    if (typeof loadPerpIntervalPrefs === 'function') loadPerpIntervalPrefs();
     initDelegatedEventListeners();
     initHomePullToRefresh();
     initAppSecurityLifecycle();
@@ -539,6 +540,8 @@
     renderPerpOrderbook,
     updatePerpFundingCountdown,
     renderPerpCandleSvg,
+    formatPerpCandleTime,
+    formatPerpAxisTime,
     inspectPerpCandle,
     clearPerpCandleInspection,
     loadOlderPerpCandlesAsync,
@@ -581,6 +584,11 @@
     executePerpBatchAction,
     cancelPerpOrderUI,
     setPerpChartInterval,
+    openPerpIntervalSheet,
+    togglePerpIntervalEditMode,
+    handlePerpIntervalPick,
+    loadPerpIntervalPrefs,
+    savePerpIntervalPrefs,
     setPerpMarketFilter,
     openPerpFundingSheet,
     setPerpFundingTab,
@@ -810,6 +818,8 @@
     renderPerpOrderbook,
     updatePerpFundingCountdown,
     renderPerpCandleSvg,
+    formatPerpCandleTime,
+    formatPerpAxisTime,
     inspectPerpCandle,
     clearPerpCandleInspection,
     loadOlderPerpCandlesAsync,
@@ -852,6 +862,11 @@
     executePerpBatchAction,
     cancelPerpOrderUI,
     setPerpChartInterval,
+    openPerpIntervalSheet,
+    togglePerpIntervalEditMode,
+    handlePerpIntervalPick,
+    loadPerpIntervalPrefs,
+    savePerpIntervalPrefs,
     setPerpMarketFilter,
     openPerpFundingSheet,
     setPerpFundingTab,

@@ -2662,3 +2662,275 @@ test('v6.97: Mobile WalletConnect URI unwrapping, init/pair timeouts, Relayer re
   assert.ok(fs.statSync(path.join(ROOT_DIR, 'src/parts/ui-controller/229-walletconnect-core.part.js')).size <= 51200, '229-walletconnect-core.part.js must stay <= 50KB soft cap');
   assert.ok(fs.statSync(path.join(ROOT_DIR, 'src/parts/ui-controller/231-qr-scanner.part.js')).size <= 51200, '231-qr-scanner.part.js must stay <= 50KB soft cap');
 });
+
+test('v6.98 NEAR Connect (@hot-labs/near-connect), manifest 4s fallback guard & iOS/Android subframe policy', async () => {
+  const vm = require('node:vm');
+  const dappBrowser = require('../src/dapp-browser.js');
+  const derived = await cryptoEngine.deriveAllChainKeysAsync(TEST_MNEMONIC);
+  const wallet = {
+    id: 'w_v698_nc',
+    name: 'Nexus Wallet',
+    mnemonic: TEST_MNEMONIC,
+    ...derived,
+    nearNamedAccount: 'alice.near'
+  };
+  await chainContracts.ensureWalletSigningKeysAsync(wallet);
+
+  function createInjectedHarness({ origin, nearAccountId = '', nearPublicKey = '', initialStorage = {}, onBridge }) {
+    const store = new Map(Object.entries(initialStorage));
+    const listeners = new Map();
+    const dispatched = [];
+    const fetchCalls = [];
+    const timers4s = [];
+
+    function MockEvent(type) {
+      this.type = type;
+    }
+    function MockCustomEvent(type, init = {}) {
+      this.type = type;
+      this.detail = init.detail;
+    }
+
+    const win = {
+      location: { origin, href: `${origin}/` },
+      localStorage: {
+        getItem(k) { return store.has(k) ? store.get(k) : null; },
+        setItem(k, v) { store.set(k, String(v)); },
+        removeItem(k) { store.delete(k); }
+      },
+      addEventListener(ev, fn) {
+        if (!listeners.has(ev)) listeners.set(ev, []);
+        listeners.get(ev).push(fn);
+      },
+      dispatchEvent(ev) {
+        dispatched.push(ev);
+        for (const fn of (listeners.get(ev.type) || []).slice()) fn(ev);
+        return true;
+      },
+      fetch(input, init) {
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
+        const call = { url, init, aborted: false };
+        if (init && init.signal && typeof init.signal.addEventListener === 'function') {
+          init.signal.addEventListener('abort', () => { call.aborted = true; });
+        }
+        fetchCalls.push(call);
+        if (url.includes('raw.githubusercontent.com/hot-dao/near-selector/')) {
+          return new Promise((_, reject) => {
+            if (init && init.signal) {
+              init.signal.addEventListener('abort', () => reject(new Error('Aborted by 4s guard')));
+            }
+          });
+        }
+        return Promise.resolve(jsonResponse({ wallets: [] }));
+      },
+      __NEXUS_TEST_BRIDGE__: onBridge ? {
+        postMessage(serialized) {
+          const req = JSON.parse(serialized);
+          queueMicrotask(async () => {
+            try {
+              const res = await onBridge(req);
+              win.__nexusOnBridgeResponse(req.id, res, null);
+            } catch (err) {
+              win.__nexusOnBridgeResponse(req.id, null, { code: (err && err.code) || 4001, message: (err && err.message) || 'Rejected' });
+            }
+          });
+        }
+      } : undefined
+    };
+
+    let timerSeq = 1;
+    const ctx = vm.createContext({
+      window: win,
+      navigator: { wallets: [] },
+      document: { title: 'Test DApp' },
+      CustomEvent: MockCustomEvent,
+      Event: MockEvent,
+      AbortController,
+      Promise,
+      Object,
+      String,
+      Number,
+      Array,
+      Error,
+      JSON,
+      Uint8Array,
+      Buffer,
+      TextEncoder,
+      parseInt,
+      btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
+      atob: (s) => Buffer.from(s, 'base64').toString('binary'),
+      setTimeout: (fn, ms) => {
+        if (ms === 4000) {
+          const id = timerSeq++;
+          timers4s.push({ id, fn, cleared: false });
+          return id;
+        }
+        return globalThis.setTimeout(fn, ms);
+      },
+      clearTimeout: (id) => {
+        const rec = timers4s.find((t) => t.id === id);
+        if (rec) {
+          rec.cleared = true;
+          return;
+        }
+        globalThis.clearTimeout(id);
+      }
+    });
+    ctx.self = ctx.window;
+
+    const script = dappBrowser.buildInjectedProviderScript({
+      authorizedOrigin: origin,
+      evmAddress: '0x1111111111111111111111111111111111111111',
+      chainIdHex: '0x1',
+      nearAccountId,
+      nearPublicKey
+    });
+    vm.runInContext(script, ctx);
+
+    return { ctx, win, store, dispatched, fetchCalls, timers4s, MockEvent };
+  }
+
+  const toHost = (v) => JSON.parse(JSON.stringify(v));
+
+  // 1. Authorized .near origin: near-selector-ready sync dispatch, pre-seed without overwrite, okxwallet preserved, 4s fetch timeout
+  const hAuth = createInjectedHarness({
+    origin: 'https://app.rhea.finance',
+    nearAccountId: 'alice.near',
+    nearPublicKey: wallet.nearPublicKey
+  });
+  assert.equal(hAuth.store.get('selected-wallet'), 'nexus-wallet');
+  assert.equal(hAuth.win.okxwallet, hAuth.win.ethereum, 'okxwallet alias must remain intact');
+  assert.ok(hAuth.dispatched.some((ev) => ev.type === 'near-wallet-injected' && ev.detail?.manifest?.id === 'nexus-wallet'));
+
+  const syncInjected = [];
+  hAuth.win.addEventListener('near-wallet-injected', (ev) => syncInjected.push(ev.detail));
+  hAuth.win.dispatchEvent(new hAuth.MockEvent('near-selector-ready'));
+  assert.equal(syncInjected.length, 1, 'near-selector-ready must synchronously dispatch near-wallet-injected');
+  const injectedWallet = syncInjected[0];
+  assert.equal(injectedWallet.manifest.features.signInAndSignMessage, true);
+  assert.deepEqual(toHost(await injectedWallet.getAccounts()), [{ accountId: 'alice.near', publicKey: wallet.nearPublicKey }]);
+
+  // Respect existing user choice in localStorage['selected-wallet']
+  const hExistingChoice = createInjectedHarness({
+    origin: 'https://app.rhea.finance',
+    nearAccountId: 'alice.near',
+    nearPublicKey: wallet.nearPublicKey,
+    initialStorage: { 'selected-wallet': 'meteor-wallet' }
+  });
+  assert.equal(hExistingChoice.store.get('selected-wallet'), 'meteor-wallet', 'Must not overwrite existing selected-wallet');
+
+  // Verify raw.githubusercontent.com/hot-dao/near-selector/ manifest fetch gets 4000ms abort guard, while jsDelivr passes untouched
+  const slowFetchPromise = hAuth.win.fetch('https://raw.githubusercontent.com/hot-dao/near-selector/refs/heads/main/repository/manifest.json');
+  assert.equal(hAuth.timers4s.length, 1, 'Must schedule 4000ms abort timer for slow raw.githubusercontent manifest');
+  assert.ok(hAuth.fetchCalls[0].init && hAuth.fetchCalls[0].init.signal);
+  hAuth.timers4s[0].fn();
+  await assert.rejects(() => slowFetchPromise, /Aborted/);
+  assert.equal(hAuth.fetchCalls[0].aborted, true, '4000ms timer must abort slow manifest fetch');
+
+  const fastRes = await hAuth.win.fetch('https://cdn.jsdelivr.net/gh/azbang/hot-connector/repository/manifest.json');
+  assert.equal(fastRes.status, 200);
+  assert.equal(hAuth.timers4s.length, 1, 'jsDelivr fallback must not attach raw.githubusercontent abort timer');
+
+  // 2. Unauthorized origin: selected-wallet cleanup, getAccounts isolation, signIn array vs requestSignIn object, signInAndSignMessage, signOut
+  const connected = new Set();
+  const disconnected = new Set();
+  const rpcCtx = {
+    wallet,
+    contracts: chainContracts,
+    crypto: cryptoEngine,
+    authorizedOrigin: 'https://near.com',
+    autoConnectOrigin: false,
+    isOriginConnected: (origin, ns) => connected.has(`${origin}|${ns}`),
+    isOriginDisconnected: (origin, ns) => disconnected.has(`${origin}|${ns}`),
+    markOriginConnected: (origin, ns) => { disconnected.delete(`${origin}|${ns}`); connected.add(`${origin}|${ns}`); },
+    markOriginDisconnected: (origin, ns) => { connected.delete(`${origin}|${ns}`); disconnected.add(`${origin}|${ns}`); },
+    requestApprovalAsync: async () => true,
+    requestBiometricAuthAsync: async () => true
+  };
+
+  const hUnauth = createInjectedHarness({
+    origin: 'https://near.com',
+    nearAccountId: '',
+    nearPublicKey: '',
+    initialStorage: { 'selected-wallet': 'nexus-wallet' },
+    onBridge: (req) => dappBrowser.handleDAppRpcRequest(req, rpcCtx)
+  });
+  assert.equal(hUnauth.store.has('selected-wallet'), false, 'Stale nexus-wallet selected-wallet must be cleared when unauthorized');
+
+  const hOtherStale = createInjectedHarness({
+    origin: 'https://near.com',
+    nearAccountId: '',
+    nearPublicKey: '',
+    initialStorage: { 'selected-wallet': 'other-wallet' }
+  });
+  assert.equal(hOtherStale.store.get('selected-wallet'), 'other-wallet', 'Unauthorized init must not remove other wallet selection');
+
+  let ncWallet = null;
+  hUnauth.win.addEventListener('near-wallet-injected', (ev) => { ncWallet = ev.detail; });
+  hUnauth.win.dispatchEvent(new hUnauth.MockEvent('near-selector-ready'));
+  assert.ok(ncWallet);
+
+  assert.deepEqual(toHost(await ncWallet.getAccounts()), [], 'Unauthorized getAccounts must return []');
+  assert.deepEqual(
+    await dappBrowser.handleDAppRpcRequest({ id: 'g0', namespace: 'near', method: 'getAccounts', origin: 'https://near.com' }, rpcCtx),
+    [],
+    'handleNearRequest getAccounts must return [] before authorization'
+  );
+
+  // Fresh nearConnectWallet.signIn() must return [{ accountId, publicKey }] array
+  const freshNcAccounts = await ncWallet.signIn({});
+  assert.ok(Array.isArray(freshNcAccounts) && freshNcAccounts.length === 1, 'nearConnectWallet.signIn must return [{ accountId, publicKey }] array');
+  assert.equal(freshNcAccounts[0].accountId, 'alice.near');
+  assert.equal(freshNcAccounts[0].publicKey, wallet.nearPublicKey);
+  assert.deepEqual(toHost(await ncWallet.getAccounts()), [{ accountId: 'alice.near', publicKey: wallet.nearPublicKey }]);
+  assert.deepEqual(
+    await dappBrowser.handleDAppRpcRequest({ id: 'g1', namespace: 'near', method: 'getAccounts', origin: 'https://near.com' }, rpcCtx),
+    [{ accountId: 'alice.near', publicKey: wallet.nearPublicKey }]
+  );
+
+  // Legacy window.near.requestSignIn() must still return a single object
+  const rawSignInObj = await hUnauth.win.near.requestSignIn({});
+  assert.equal(Array.isArray(rawSignInObj), false, 'window.near.requestSignIn must keep returning a single object');
+  assert.equal(rawSignInObj.accountId, 'alice.near');
+
+  const signInAndMsg = await ncWallet.signInAndSignMessage({
+    messageParams: {
+      message: 'Login near.com',
+      recipient: 'near.com',
+      nonce: new Uint8Array(32).fill(9)
+    }
+  });
+  assert.ok(Array.isArray(signInAndMsg) && signInAndMsg.length === 1);
+  assert.equal(signInAndMsg[0].accountId, 'alice.near');
+  assert.equal(cryptoEngine.base64ToBytes(signInAndMsg[0].signedMessage.signature).length, 64);
+
+  hUnauth.store.set('selected-wallet', 'nexus-wallet');
+  await ncWallet.signOut();
+  assert.equal(hUnauth.store.has('selected-wallet'), false, 'signOut must clear nexus-wallet selected-wallet');
+  assert.deepEqual(toHost(await ncWallet.getAccounts()), [], 'getAccounts must return [] after signOut');
+  assert.deepEqual(
+    await dappBrowser.handleDAppRpcRequest({ id: 'g2', namespace: 'near', method: 'getAccounts', origin: 'https://near.com' }, rpcCtx),
+    [],
+    'handleNearRequest getAccounts must return [] after signOut'
+  );
+
+  // 3. Native iOS/Android subframe rules (allow about/blob/data only in non-main frames, strict main frame & bridge)
+  const swiftSrc = fs.readFileSync(path.join(ROOT_DIR, 'ios/App/App/NativeDAppBrowserPlugin.swift'), 'utf8');
+  assert.ok(
+    swiftSrc.includes('isAllowedSubframeUrl') &&
+    swiftSrc.includes('!target.isMainFrame') &&
+    swiftSrc.includes('scheme == "about" || scheme == "blob" || scheme == "data"') &&
+    swiftSrc.includes('message.frameInfo.isMainFrame'),
+    'iOS DApp plugin must allow about/blob/data only for non-main frames and keep main-frame/bridge checks strict'
+  );
+  const javaSrc = fs.readFileSync(path.join(ROOT_DIR, 'android/app/src/main/java/io/nexus/wallet/NativeDAppBrowserPlugin.java'), 'utf8');
+  assert.ok(
+    javaSrc.includes('isAllowedSubframeUrl') &&
+    javaSrc.includes('!request.isForMainFrame()') &&
+    javaSrc.includes('"about".equals(scheme) || "blob".equals(scheme) || "data".equals(scheme)') &&
+    javaSrc.includes('!isMainFrame') &&
+    javaSrc.includes('WEB_MESSAGE_LISTENER') &&
+    javaSrc.includes('addDocumentStartJavaScript'),
+    'Android DApp plugin must allow about/blob/data only for non-main frames and preserve strict main-frame & origin guards'
+  );
+});

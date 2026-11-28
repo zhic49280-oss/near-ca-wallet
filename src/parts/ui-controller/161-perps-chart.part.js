@@ -15,19 +15,41 @@
     return getPerpChartWindow(candles).list;
   }
 
-  function formatPerpCandleTime(ts) {
+  const PERP_DATE_ONLY_INTERVALS = new Set(['1d', '3d', '1w', '1M']);
+
+  function formatPerpCandleTime(ts, interval = null) {
     if (!Number.isFinite(ts) || ts <= 1e9) return '';
     const d = new Date(ts);
+    const yyyy = String(d.getFullYear());
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
+    if (interval && PERP_DATE_ONLY_INTERVALS.has(String(interval))) {
+      return `${yyyy}/${mm}/${dd}`;
+    }
     const hh = String(d.getHours()).padStart(2, '0');
     const mi = String(d.getMinutes()).padStart(2, '0');
-    return `${mm}/${dd} ${hh}:${mi}`;
+    return `${yyyy}/${mm}/${dd} ${hh}:${mi}`;
+  }
+
+  function formatPerpAxisTime(ts, interval = null, showYear = false) {
+    if (!Number.isFinite(ts) || ts <= 1e9) return '';
+    const d = new Date(ts);
+    const yyyy = String(d.getFullYear());
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    if (interval && PERP_DATE_ONLY_INTERVALS.has(String(interval))) {
+      return `${yyyy}/${mm}/${dd}`;
+    }
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return showYear ? `${yyyy}/${mm}/${dd} ${hh}:${mi}` : `${mm}/${dd} ${hh}:${mi}`;
   }
 
   function renderPerpCandleDetailBar(candles, selectedIdx = null) {
     const el = $('perp-candle-detail');
     if (!el) return;
+    const st = getState();
+    const curIv = (st && st.perp && st.perp.chartInterval) || '15m';
     const list = getVisiblePerpCandles(candles);
     const isInspecting = Number.isInteger(selectedIdx) && selectedIdx >= 0 && selectedIdx < list.length;
     const dockSide = isInspecting && selectedIdx < list.length / 2 ? 'right' : 'left';
@@ -39,7 +61,8 @@
         candles: list,
         selectedIdx: isInspecting ? selectedIdx : null,
         dockSide,
-        isEn: getState().lang === 'en',
+        isEn: st.lang === 'en',
+        interval: curIv,
         formatPerpPx,
         formatBal,
         formatCompactUsd,
@@ -69,7 +92,7 @@
     const volQty = Number.isFinite(Number(c.v)) && Number(c.v) > 0 ? formatBal(c.v, 2) : '--';
     const turnover = Number.isFinite(Number(c.v)) && Number(c.v) > 0 && Number.isFinite(close) && close > 0 ? formatCompactUsd(Number(c.v) * close) : '--';
     const rows = [
-      [t('时间', 'Time'), formatPerpCandleTime(c.t) || `#${selectedIdx + 1}`, ''],
+      [t('时间', 'Time'), formatPerpCandleTime(c.t, curIv) || `#${selectedIdx + 1}`, ''],
       [t('开盘', 'Open'), formatPerpPx(c.o), ''],
       [t('最高', 'High'), formatPerpPx(c.h), ''],
       [t('最低', 'Low'), formatPerpPx(c.l), ''],
@@ -194,13 +217,17 @@
     dot.setAttribute('cx', cx);
     dot.setAttribute('cy', cy);
 
-    const xPillW = 58;
+    const stCh = getState();
+    const chIv = (stCh && stCh.perp && stCh.perp.chartInterval) || '15m';
+    const chTimeText = formatPerpCandleTime(selC.t, chIv) || `#${selectedIdx + 1}`;
+    const xPillW = chTimeText.length > 11 ? 86 : 58;
     const xPillX = Math.max(plotL, Math.min(plotR - xPillW, cxNum - xPillW / 2));
     xPillBg.setAttribute('x', xPillX.toFixed(1));
     xPillBg.setAttribute('y', String(volBottom + 2));
+    xPillBg.setAttribute('width', String(xPillW));
     xPillTxt.setAttribute('x', (xPillX + xPillW / 2).toFixed(1));
     xPillTxt.setAttribute('y', String(volBottom + 12));
-    xPillTxt.textContent = formatPerpCandleTime(selC.t) || `#${selectedIdx + 1}`;
+    xPillTxt.textContent = chTimeText;
 
     const yPillY = Math.max(candleTop, Math.min(candleBottom - 14, cyNum - 7));
     yPillBg.setAttribute('y', yPillY.toFixed(1));
@@ -377,13 +404,21 @@
       return `<line x1="${plotL}" y1="${y.toFixed(1)}" x2="${bufPlotR.toFixed(1)}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="2 3" stroke-width="0.7" />`;
     }).join('');
 
-    // Vertical Dashed Time Grid Lines + Bottom Time Labels
+    // Vertical Dashed Time Grid Lines + Bottom Time Labels (show year on >=1d or cross-year/historical window)
+    const stSvg = getState();
+    const svgIv = (stSvg && stSvg.perp && stSvg.perp.chartInterval) || '15m';
+    const curYr = new Date().getFullYear();
+    const visFirst = bufList[0];
+    const visLast = bufList[bufList.length - 1];
+    const firstYr = visFirst && Number.isFinite(visFirst.t) ? new Date(visFirst.t).getFullYear() : curYr;
+    const lastYr = visLast && Number.isFinite(visLast.t) ? new Date(visLast.t).getFullYear() : curYr;
+    const showAxisYr = PERP_DATE_ONLY_INTERVALS.has(svgIv) || firstYr !== lastYr || firstYr !== curYr || lastYr !== curYr;
     let timeGridSvg = '';
     if (reqOverscan > 0) {
       const tickStep = Math.max(8, Math.round(list.length / 3));
       for (let idx = tickStep; idx < bufList.length; idx += tickStep) {
         const x = plotL + idx * step + step / 2;
-        const lbl = formatPerpCandleTime(bufList[idx].t);
+        const lbl = formatPerpAxisTime(bufList[idx].t, svgIv, showAxisYr);
         const labelEl = lbl
           ? `<text x="${x.toFixed(1)}" y="209" text-anchor="middle" fill="rgba(148,163,184,0.75)" font-size="8.0" font-family="ui-monospace, monospace">${escapeHtml(lbl)}</text>`
           : '';
@@ -396,7 +431,7 @@
         if (seenT.has(idx) || !list[idx]) return '';
         seenT.add(idx);
         const x = plotL + idx * step + step / 2;
-        const lbl = formatPerpCandleTime(list[idx].t);
+        const lbl = formatPerpAxisTime(list[idx].t, svgIv, showAxisYr);
         const anchor = idx >= list.length - 2 ? 'end' : (idx <= 2 ? 'start' : 'middle');
         const labelEl = lbl
           ? `<text x="${x.toFixed(1)}" y="209" text-anchor="${anchor}" fill="rgba(148,163,184,0.75)" font-size="8.0" font-family="ui-monospace, monospace">${escapeHtml(lbl)}</text>`
@@ -467,10 +502,10 @@
     const cx = plotL + chIdx * step + step / 2;
     const cy = yOf(selC.c);
     const chDisplay = hasSel ? 'inline' : 'none';
-    const xPillW = 58;
+    const chTimeStr = formatPerpCandleTime(selC.t, svgIv) || `#${chIdx + 1}`;
+    const xPillW = chTimeStr.length > 11 ? 86 : 58;
     const xPillX = Math.max(plotL, Math.min(plotR - xPillW, cx - xPillW / 2));
     const yPillY = Math.max(candleTop, Math.min(candleBottom - 14, cy - 7));
-    const chTimeStr = formatPerpCandleTime(selC.t) || `#${chIdx + 1}`;
     const chPxStr = formatPerpPx(selC.c);
     const crosshairSvg = reqOverscan > 0
       ? ''

@@ -7,7 +7,7 @@ import { WcProposalPanel, WcSessionsPanel } from '../components/WalletConnectPan
 import { ContactsPanel } from '../components/ContactsPanel.jsx';
 import { WalletListPanel, BackupSecretsPanel, WalletAddressesPanel } from '../components/WalletManagerPanels.jsx';
 import { NearKeysPanel, SolRentPanel, NearStoragePanel } from '../components/HubToolsPanels.jsx';
-import { PerpMarketsSheetPanel, PerpFundingInfoPanel } from '../components/PerpDetailPanels.jsx';
+import { PerpMarketsSheetPanel, PerpFundingInfoPanel, PerpIntervalsSheetPanel } from '../components/PerpDetailPanels.jsx';
 import { EarnStakeSheetPanel } from '../components/EarnStakeSheetPanel.jsx';
 import { DAppBookmarksPanel, DAppApprovePanel } from '../components/DAppBrowserPanels.jsx';
 
@@ -464,10 +464,6 @@ export function ToolsAndChainSheets() {
                   <span id="perp-arb-usdc-avail" class="meta-val text-emerald">--</span>
                 </div>
                 <div class="meta-row">
-                  <span class="meta-key" data-i18n="perp.arbEthBalLabel">{tr('perp.arbEthBalLabel', 'Arbitrum 手续费余额 (ETH)')}</span>
-                  <span id="perp-arb-eth-avail" class="meta-val">--</span>
-                </div>
-                <div class="meta-row">
                   <span class="meta-key" data-i18n="perp.arbMinLabel">{tr('perp.arbMinLabel', '最低充值')}</span>
                   <span class="meta-val" data-i18n="perp.arbMinVal">{tr('perp.arbMinVal', '5 USDC')}</span>
                 </div>
@@ -480,7 +476,6 @@ export function ToolsAndChainSheets() {
                 <input id="perp-arb-amount" type="number" step="any" min="5" class="amount-input-lg" placeholder="5.00" onInput={() => callWin('evaluatePerpArbDepositUI')} />
               </div>
               <div id="perp-arb-error" class="swap-error-banner hidden" />
-              <div style={{ fontSize: '11px', color: '#fbbf24', lineHeight: 1.45, background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.22)', borderRadius: '8px', padding: '6px 8px' }} data-i18n="perp.arbBridgeNotice">{tr('perp.arbBridgeNotice', 'Arbitrum 网络使用 ETH 支付手续费（非 ARB），充值最低 5 USDC（低于将无法找回），约 1~2 分钟到账。')}</div>
               <button type="button" id="btn-perp-arb-deposit" class="btn-primary" onClick={() => callWin('executePerpArbBridgeDepositUI')} data-i18n="perp.arbDepositBtn">{tr('perp.arbDepositBtn', '确认 Arbitrum 充值')}</button>
             </div>
           </div>
@@ -648,6 +643,18 @@ export function ToolsAndChainSheets() {
             <button type="button" class="btn-secondary flex-1" onClick={() => callWin('submitPerpPositionTpSlUI', true)} data-i18n="perp.tpslClearBtn">{tr('perp.tpslClearBtn', '清除止盈止损')}</button>
             <button type="button" id="btn-perp-tpsl-save" class="btn-primary flex-1" onClick={() => callWin('submitPerpPositionTpSlUI', false)} data-i18n="perp.tpslSaveBtn">{tr('perp.tpslSaveBtn', '确认提交止盈止损')}</button>
           </div>
+        </div>
+      </div>
+
+      {/* ==================== Sheet: Perp K-line Intervals Selector ==================== */}
+      <div id="sheet-perp-intervals" class="bottom-sheet" aria-hidden="true">
+        <div class="sheet-handle" />
+        <div class="sheet-header">
+          <h3 class="sheet-title" data-i18n="perp.ivSheetTitle">{tr('perp.ivSheetTitle', '选择周期')}</h3>
+          <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">{tr('common.close', '关闭')}</button>
+        </div>
+        <div id="perp-intervals-sheet-body" class="sheet-body">
+          <PerpIntervalsSheetPanel />
         </div>
       </div>
     </Fragment>

@@ -2,6 +2,131 @@
 
   let _perpQuoteTimer = null;
   const PERP_FAV_STORAGE_KEY = 'near_ca_perp_favorites_v1';
+  const PERP_INTERVALS_STORAGE_KEY = 'near_ca_perp_intervals_v1';
+  const HL_VALID_INTERVALS = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '8h', '12h', '1d', '3d', '1w', '1M'];
+  const DEFAULT_PINNED_INTERVALS = ['5m', '15m', '1h', '4h', '1d'];
+  let _perpIntervalPrefsLoaded = false;
+
+  function sanitizePinnedIntervals(list) {
+    const clean = [];
+    const seen = new Set();
+    if (Array.isArray(list)) {
+      for (let i = 0; i < list.length; i++) {
+        const iv = String(list[i] || '');
+        if (HL_VALID_INTERVALS.includes(iv) && !seen.has(iv)) {
+          seen.add(iv);
+          clean.push(iv);
+          if (clean.length >= 5) break;
+        }
+      }
+    }
+    return clean.length > 0 ? clean : [...DEFAULT_PINNED_INTERVALS];
+  }
+
+  function loadPerpIntervalPrefs() {
+    const st = getState();
+    _perpIntervalPrefsLoaded = true;
+    try {
+      if (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function') {
+        const raw = localStorage.getItem(PERP_INTERVALS_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            st.perp.pinnedIntervals = sanitizePinnedIntervals(parsed.pinned);
+            const active = String(parsed.active || '');
+            if (HL_VALID_INTERVALS.includes(active)) {
+              st.perp.chartInterval = active;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    st.perp.pinnedIntervals = sanitizePinnedIntervals(st.perp.pinnedIntervals);
+    if (!HL_VALID_INTERVALS.includes(String(st.perp.chartInterval || ''))) {
+      st.perp.chartInterval = '15m';
+    }
+    return {
+      pinned: st.perp.pinnedIntervals,
+      active: st.perp.chartInterval
+    };
+  }
+
+  function savePerpIntervalPrefs() {
+    const st = getState();
+    const pinned = sanitizePinnedIntervals(st.perp.pinnedIntervals);
+    const active = HL_VALID_INTERVALS.includes(String(st.perp.chartInterval || ''))
+      ? String(st.perp.chartInterval)
+      : '15m';
+    st.perp.pinnedIntervals = pinned;
+    st.perp.chartInterval = active;
+    try {
+      if (typeof localStorage !== 'undefined' && typeof localStorage.setItem === 'function') {
+        localStorage.setItem(PERP_INTERVALS_STORAGE_KEY, JSON.stringify({ pinned, active }));
+      }
+    } catch (_) {}
+    return { pinned, active };
+  }
+
+  function getPerpIntervalLabel(iv) {
+    const clean = String(iv || '15m');
+    const zhFallback = {
+      '1m': '1分', '3m': '3分', '5m': '5分', '15m': '15分', '30m': '30分',
+      '1h': '1时', '2h': '2时', '4h': '4时', '8h': '8时', '12h': '12时',
+      '1d': '1日', '3d': '3日', '1w': '1周', '1M': '1月'
+    };
+    const st = getState();
+    const dict = st && st.i18nDict && st.i18nDict[st.lang === 'en' ? 'en' : 'zh'];
+    const key = `perp.iv${clean}`;
+    if (dict && typeof dict[key] === 'string') return dict[key];
+    return st && st.lang === 'en' ? clean : (zhFallback[clean] || clean);
+  }
+
+  function openPerpIntervalSheet() {
+    const st = getState();
+    if (!_perpIntervalPrefsLoaded) loadPerpIntervalPrefs();
+    st.perp.editingIntervals = false;
+    if (typeof st.emitStateTopic === 'function') st.emitStateTopic('perp');
+    openSheet('sheet-perp-intervals');
+  }
+
+  function togglePerpIntervalEditMode() {
+    const st = getState();
+    st.perp.editingIntervals = !st.perp.editingIntervals;
+    if (!st.perp.editingIntervals) {
+      savePerpIntervalPrefs();
+    }
+    if (typeof st.emitStateTopic === 'function') st.emitStateTopic('perp');
+  }
+
+  function handlePerpIntervalPick(interval) {
+    const st = getState();
+    const iv = String(interval || '');
+    if (!HL_VALID_INTERVALS.includes(iv)) return;
+    if (st.perp.editingIntervals) {
+      const pinned = [...sanitizePinnedIntervals(st.perp.pinnedIntervals)];
+      const idx = pinned.indexOf(iv);
+      if (idx >= 0) {
+        if (pinned.length <= 1) {
+          showToast(t('至少保留 1 个常用周期', 'Keep at least 1 pinned interval'));
+          return;
+        }
+        pinned.splice(idx, 1);
+      } else {
+        if (pinned.length >= 5) {
+          showToast(t('最多保留 5 个常用周期', 'Up to 5 pinned intervals'));
+          return;
+        }
+        pinned.push(iv);
+      }
+      st.perp.pinnedIntervals = pinned;
+      savePerpIntervalPrefs();
+      if (typeof st.emitStateTopic === 'function') st.emitStateTopic('perp');
+      if (typeof renderPerpView === 'function') renderPerpView();
+      return;
+    }
+    if (typeof setPerpChartInterval === 'function') setPerpChartInterval(iv);
+    closeAllSheets();
+  }
 
   function getPerpFavoriteCoins() {
     const st = getState();

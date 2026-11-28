@@ -1001,8 +1001,12 @@ test('v6.28 Perp Order Ticket Cleanup: remove redundant 0 Gas row while keeping 
   }
 
   const sheetsHtml = fs.readFileSync(path.join(ROOT_DIR, 'src', 'app', 'sheets', 'ToolsAndChainSheets.jsx'), 'utf8');
-  assert.ok(sheetsHtml.includes('perp-arb-eth-avail'), 'Arbitrum deposit sheet must keep perp-arb-eth-avail');
-  assert.ok(sheetsHtml.includes('perp.arbEthBalLabel'), 'Arbitrum deposit sheet must keep perp.arbEthBalLabel');
+  assert.ok(sheetsHtml.includes('perp-arb-usdc-avail'), 'Arbitrum deposit sheet must keep perp-arb-usdc-avail');
+  assert.ok(sheetsHtml.includes('perp-arb-error'), 'Arbitrum deposit sheet must keep perp-arb-error');
+  assert.ok(sheetsHtml.includes('perp.arbMinVal'), 'Arbitrum deposit sheet must keep perp.arbMinVal');
+  assert.equal(sheetsHtml.includes('perp-arb-eth-avail'), false, 'Arbitrum deposit sheet must omit redundant perp-arb-eth-avail row');
+  assert.equal(sheetsHtml.includes('perp.arbEthBalLabel'), false, 'Arbitrum deposit sheet must omit perp.arbEthBalLabel');
+  assert.equal(sheetsHtml.includes('perp.arbBridgeNotice'), false, 'Arbitrum deposit sheet must omit yellow perp.arbBridgeNotice box');
 
   const styleCss = fs.readFileSync(path.join(ROOT_DIR, 'style.css'), 'utf8');
   assert.ok(!styleCss.includes('.perp-meta-cell-full'), 'style.css must remove unused .perp-meta-cell-full rule');

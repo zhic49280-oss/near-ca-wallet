@@ -98,17 +98,23 @@
 
   function setPerpChartInterval(interval) {
     const st = getState();
-    const iv = ['5m', '15m', '1h', '4h', '1d'].includes(String(interval)) ? String(interval) : '15m';
+    const valid = (typeof HL_VALID_INTERVALS !== 'undefined' && Array.isArray(HL_VALID_INTERVALS))
+      ? HL_VALID_INTERVALS
+      : ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '8h', '12h', '1d', '3d', '1w', '1M'];
+    const raw = String(interval || '');
+    const iv = valid.includes(raw) ? raw : '15m';
     st.perp.chartInterval = iv;
     st.perp.showChart = true;
     st.perp.inspectedCandleIdx = null;
     st.perp.chartOffsetFromEnd = 0;
     if (typeof stopPerpChartMotion === 'function') stopPerpChartMotion();
+    if (typeof savePerpIntervalPrefs === 'function') savePerpIntervalPrefs();
     const coin = st.perp.selectedCoin || 'BTC';
     if (typeof st.getCachedPerpCandles === 'function') {
       st.perp.candles = st.getCachedPerpCandles(coin, iv) || [];
     }
     resubscribePerpCandleWs(iv);
+    if (typeof st.emitStateTopic === 'function') st.emitStateTopic('perp');
     renderPerpView();
     refreshPerpOrderbookAndCandlesAsync().catch(() => {});
   }
