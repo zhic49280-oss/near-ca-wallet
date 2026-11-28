@@ -941,7 +941,10 @@ test.describe('Real-Browser 375px Preact E2E Suite (10 Real-Click Journeys)', { 
     await cdp.clickReal('.bottom-nav .nav-item[data-tab="perp"]');
     await cdp.waitFor(`document.querySelectorAll('#perp-overview-list .perp-overview-row').length >= 10`, 4000, 'perp overview rows loaded');
     await cdp.clickReal('#perp-overview-list .perp-overview-row');
-    await cdp.waitFor(`document.querySelectorAll('#perp-chart-svg svg rect.perp-candle-hit').length >= 10`, 4000, 'perp candles rendered');
+    await cdp.waitFor(`(() => {
+      const el = document.getElementById('perp-chart-svg');
+      return Boolean(el && el.querySelector('canvas.perp-chart-canvas') && Number(el.dataset.candleCount || 0) >= 10);
+    })()`, 4000, 'perp candles rendered');
 
     const chartRect = await cdp.evalJs(`(() => {
       const el = document.getElementById('perp-chart-svg');
@@ -974,12 +977,20 @@ test.describe('Real-Browser 375px Preact E2E Suite (10 Real-Click Journeys)', { 
     });
 
     await cdp.waitFor(`(() => {
-      const ch = document.getElementById('perp-chart-crosshair');
+      const host = document.getElementById('perp-chart-svg');
       const det = document.getElementById('perp-candle-detail');
-      const chVisible = Boolean(ch && ch.style.display !== 'none' && ch.getAttribute('display') !== 'none');
+      const chVisible = Boolean(host && host.querySelector('canvas.perp-chart-canvas') && host.dataset.selectedIdx !== undefined && host.dataset.selectedIdx !== '');
       const hasOhlc = Boolean(det && !det.classList.contains('hidden') && det.classList.contains('is-inspecting') && /开盘|Open|95,?000/i.test(det.textContent || ''));
       return chVisible && hasOhlc;
     })()`, 3000, 'crosshair and OHLC detail visible after real touch tap');
+
+    // Tapping outside the K-line chart immediately closes the candle detail HUD & crosshair
+    await cdp.clickReal('#perp-mark-px');
+    await cdp.waitFor(`(() => {
+      const host = document.getElementById('perp-chart-svg');
+      const det = document.getElementById('perp-candle-detail');
+      return Boolean(det && det.classList.contains('hidden') && !det.classList.contains('is-inspecting') && host && (host.dataset.selectedIdx || '') === '');
+    })()`, 2000, 'tapping outside K-line chart closes detail HUD immediately');
 
     const noOverflow = await cdp.evalJs(`document.documentElement.scrollWidth <= 375`);
     assert.equal(noOverflow, true, 'Perps K-line view must have zero horizontal overflow after touch tap');

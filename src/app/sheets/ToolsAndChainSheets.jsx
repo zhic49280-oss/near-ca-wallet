@@ -150,11 +150,14 @@ export function ToolsAndChainSheets() {
           <button type="button" class="btn-ghost-sm" onClick={() => callWin('closeAllSheets')} data-i18n="common.close">{tr('common.close', '关闭')}</button>
         </div>
         <div class="sheet-body">
-          <div class="flex gap-2">
-            <input id="wc-uri-input" type="text" class="input-field mono flex-1" data-i18n-placeholder="sheet.wcUriPlaceholder" placeholder={tr('sheet.wcUriPlaceholder', '粘贴 wc: 配对链接')} />
-            <button type="button" class="btn-ghost-sm" onClick={() => callWin('openQrScannerSheet', 'wc')} data-i18n="common.scan">{tr('common.scan', '扫码')}</button>
-            <button type="button" class="btn-ghost-sm" onClick={() => callWin('pasteToWcUri')} data-i18n="common.paste">{tr('common.paste', '粘贴')}</button>
-            <button type="button" id="btn-wc-pair" class="btn-primary" style={{ width: 'auto', padding: '10px 14px' }} onClick={() => callWin('pairWalletConnectUri')} data-i18n="sheet.wcPairBtn">{tr('sheet.wcPairBtn', '配对连接')}</button>
+          <div class="flex flex-col gap-2">
+            <div class="flex gap-2 items-center">
+              <input id="wc-uri-input" type="text" class="input-field mono flex-1" style={{ minWidth: 0 }} data-i18n-placeholder="sheet.wcUriPlaceholder" placeholder={tr('sheet.wcUriPlaceholder', '粘贴 wc: 配对链接')} />
+              <button type="button" class="btn-ghost-sm" style={{ flexShrink: 0, whiteSpace: 'nowrap' }} onClick={() => callWin('openQrScannerSheet', 'wc')} data-i18n="common.scan">{tr('common.scan', '扫码')}</button>
+              <button type="button" class="btn-ghost-sm" style={{ flexShrink: 0, whiteSpace: 'nowrap' }} onClick={() => callWin('pasteToWcUri')} data-i18n="common.paste">{tr('common.paste', '粘贴')}</button>
+            </div>
+            <button type="button" id="btn-wc-pair" class="btn-primary" style={{ width: '100%', padding: '10px 14px' }} onClick={() => callWin('pairWalletConnectUri')} data-i18n="sheet.wcPairBtn">{tr('sheet.wcPairBtn', '配对连接')}</button>
+            <div id="wc-pair-hint" class="hidden" style={{ fontSize: '11.5px', lineHeight: 1.4, color: 'var(--text-secondary)' }} />
           </div>
 
           <button type="button" id="wc-advanced-toggle-btn" class="btn-ghost-sm" style={{ alignSelf: 'flex-start' }} onClick={() => callWin('toggleWcAdvancedSettings')} data-i18n="wc.advancedToggle">{tr('wc.advancedToggle', '高级配置: Project ID ▾')}</button>
@@ -461,7 +464,7 @@ export function ToolsAndChainSheets() {
                   <span id="perp-arb-usdc-avail" class="meta-val text-emerald">--</span>
                 </div>
                 <div class="meta-row">
-                  <span class="meta-key" data-i18n="perp.arbEthBalLabel">{tr('perp.arbEthBalLabel', 'Arbitrum ETH (Gas)')}</span>
+                  <span class="meta-key" data-i18n="perp.arbEthBalLabel">{tr('perp.arbEthBalLabel', 'Arbitrum 手续费余额 (ETH)')}</span>
                   <span id="perp-arb-eth-avail" class="meta-val">--</span>
                 </div>
                 <div class="meta-row">
@@ -477,7 +480,7 @@ export function ToolsAndChainSheets() {
                 <input id="perp-arb-amount" type="number" step="any" min="5" class="amount-input-lg" placeholder="5.00" onInput={() => callWin('evaluatePerpArbDepositUI')} />
               </div>
               <div id="perp-arb-error" class="swap-error-banner hidden" />
-              <div style={{ fontSize: '11px', color: '#fbbf24', lineHeight: 1.45, background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.22)', borderRadius: '8px', padding: '6px 8px' }} data-i18n="perp.arbBridgeNotice">{tr('perp.arbBridgeNotice', 'Arbitrum 跨链充值最低 5 USDC（低于 5 USDC 将无法找回），链上确认约需 1~2 分钟。')}</div>
+              <div style={{ fontSize: '11px', color: '#fbbf24', lineHeight: 1.45, background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.22)', borderRadius: '8px', padding: '6px 8px' }} data-i18n="perp.arbBridgeNotice">{tr('perp.arbBridgeNotice', 'Arbitrum 网络使用 ETH 支付手续费（非 ARB），充值最低 5 USDC（低于将无法找回），约 1~2 分钟到账。')}</div>
               <button type="button" id="btn-perp-arb-deposit" class="btn-primary" onClick={() => callWin('executePerpArbBridgeDepositUI')} data-i18n="perp.arbDepositBtn">{tr('perp.arbDepositBtn', '确认 Arbitrum 充值')}</button>
             </div>
           </div>

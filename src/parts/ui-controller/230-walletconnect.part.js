@@ -1,34 +1,22 @@
-  // ==================== WalletConnect v2 Sheet ====================
+  // ==================== WalletConnect v2 Init, Pairing & Signing ====================
 
-  const DEFAULT_WC_PROJECT_ID = 'a1e691683a26f67375ef31ee654a1f49';
   let _wcInitPromise = null;
   let _wcInitProjectId = '';
+  let _wcApprovingProposal = false;
+  let _wcApprovingRequest = false;
 
-  function updateWcStatusPill(text, ok = false) {
-    const pill = $('wc-status-pill');
-    if (!pill) return;
-    pill.textContent = text;
-    pill.classList.toggle('active', Boolean(ok));
-  }
-
-  async function teardownWcClient(client) {
-    if (!client) return;
-    try {
-      const listeners = client._nexusListeners;
-      if (listeners) {
-        const offFn = typeof client.off === 'function'
-          ? client.off.bind(client)
-          : (typeof client.removeListener === 'function' ? client.removeListener.bind(client) : null);
-        if (offFn) {
-          if (listeners.proposal) offFn('session_proposal', listeners.proposal);
-          if (listeners.request) offFn('session_request', listeners.request);
-          if (listeners.delete) offFn('session_delete', listeners.delete);
-        }
-      }
-      if (client.core && client.core.relayer && typeof client.core.relayer.transportClose === 'function') {
-        await client.core.relayer.transportClose().catch(() => {});
-      }
-    } catch (_) {}
+  function formatWcError(err, fbZh, fbEn) {
+    const raw = String((err && err.message) || err || '');
+    if (/already exists|pairing already exists/i.test(raw)) {
+      return t('该配对链接已使用或已过期，请刷新二维码重试', 'Pairing link already used or expired. Refresh the QR code and retry.');
+    }
+    if (/expired|ttl/i.test(raw)) {
+      return t('配对链接或请求已过期，请刷新二维码重试', 'Pairing link or request expired. Refresh the QR code and retry.');
+    }
+    if (/timed out|timeout|websocket|relayer|transport|socket/i.test(raw)) {
+      return t('连接通道超时或不稳定，请检查网络后重试', 'Connection timed out or unstable. Check your network and retry.');
+    }
+    return toUserFriendlyError(err, fbZh, fbEn);
   }
 
   async function ensureWcReady() {
@@ -40,8 +28,16 @@
       return null;
     }
     if (st.wc.client && st.wc.initProjectId === projectId) {
-      updateWcStatusPill(t('已就绪', 'Ready'), true);
-      return st.wc.client;
+      try {
+        await ensureWcRelayerConnected(st.wc.client, 6000);
+        updateWcStatusPill(t('已就绪', 'Ready'), true);
+        return st.wc.client;
+      } catch (_) {
+        const deadClient = st.wc.client;
+        st.wc.client = null;
+        st.wc.initProjectId = '';
+        await teardownWcClient(deadClient);
+      }
     }
     if (st.wc.client && st.wc.initProjectId !== projectId) {
       const prevClient = st.wc.client;
@@ -58,7 +54,7 @@
       let sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       if ((!sdk || !sdk.Core || !sdk.Web3Wallet) && typeof document !== 'undefined') {
         updateWcStatusPill(t('加载组件...', 'Loading...'), false);
-        await loadScriptOnce('walletconnect.umd.min.js?v=6.96');
+        await loadScriptOnce('walletconnect.umd.min.js?v=6.97', WC_TIMEOUT_MS);
         sdk = (typeof window !== 'undefined' && window.PearlWalletConnect) || (typeof globalThis !== 'undefined' && globalThis.PearlWalletConnect);
       }
       if (!sdk || !sdk.Core || !sdk.Web3Wallet) {
@@ -66,37 +62,37 @@
       }
       updateWcStatusPill(t('连接中...', 'Connecting...'), false);
       const core = new sdk.Core({ projectId });
-      const client = await sdk.Web3Wallet.init({
-        core,
-        metadata: {
-          name: 'NEAR Chain Abstraction Wallet',
-          description: 'NEAR Account-Centric Chain Abstraction Self-Custody Wallet',
-          url: (typeof location !== 'undefined' && location.origin) || 'https://near.org',
-          icons: []
-        }
-      });
+      let client;
+      try {
+        client = await withTimeout(
+          sdk.Web3Wallet.init({ core, metadata: resolveWcMetadata() }),
+          WC_TIMEOUT_MS,
+          t('连接服务初始化超时，请检查网络后重试', 'Connection service timed out. Check network and retry.')
+        );
+      } catch (err) {
+        await teardownWcClient({ core });
+        updateWcStatusPill(t('连接超时', 'Init timeout'), false);
+        throw err;
+      }
 
       const _wcRequestQueue = [];
       const onSessionProposal = (proposal) => {
+        clearWcProposalWaitTimer();
+        setWcPairHint('');
         st.wc.pendingProposal = proposal;
         renderWcCards();
         openSheet('sheet-walletconnect');
       };
       const onSessionRequest = (event) => {
-        if (st.wc.pendingRequest) {
-          _wcRequestQueue.push(event);
-        } else {
-          st.wc.pendingRequest = event;
-        }
+        if (st.wc.pendingRequest) _wcRequestQueue.push(event);
+        else st.wc.pendingRequest = event;
         renderWcCards();
         openSheet('sheet-walletconnect');
       };
       const drainTopicRequests = (topic) => {
         if (!topic) return;
         for (let i = _wcRequestQueue.length - 1; i >= 0; i--) {
-          if (_wcRequestQueue[i] && _wcRequestQueue[i].topic === topic) {
-            _wcRequestQueue.splice(i, 1);
-          }
+          if (_wcRequestQueue[i] && _wcRequestQueue[i].topic === topic) _wcRequestQueue.splice(i, 1);
         }
         if (st.wc.pendingRequest && st.wc.pendingRequest.topic === topic) {
           st.wc.pendingRequest = _wcRequestQueue.shift() || null;
@@ -133,6 +129,14 @@
         request: onSessionRequest,
         delete: onSessionDelete
       };
+      if (client.core && client.core.relayer && typeof client.core.relayer.on === 'function') {
+        const onRelayerDisconnect = () => updateWcStatusPill(t('连接断开', 'Disconnected'), false);
+        const onRelayerConnect = () => updateWcStatusPill(t('已就绪', 'Ready'), true);
+        client.core.relayer.on('relayer_disconnect', onRelayerDisconnect);
+        client.core.relayer.on('relayer_connect', onRelayerConnect);
+        client._nexusListeners.relayerDisconnect = onRelayerDisconnect;
+        client._nexusListeners.relayerConnect = onRelayerConnect;
+      }
       client.on('session_delete', onSessionDelete);
 
       st.wc.client = client;
@@ -162,245 +166,6 @@
     return _wcInitPromise;
   }
 
-  function formatWcMethodLabel(method) {
-    const m = String(method || '').trim();
-    const map = {
-      eth_sendTransaction: t('发送交易', 'Send Transaction'),
-      personal_sign: t('消息签名', 'Sign Message'),
-      eth_sign: t('消息签名', 'Sign Message'),
-      eth_signTypedData: t('结构化数据签名', 'Sign Typed Data'),
-      eth_signTypedData_v3: t('结构化数据签名', 'Sign Typed Data'),
-      eth_signTypedData_v4: t('结构化数据签名', 'Sign Typed Data'),
-      wallet_switchEthereumChain: t('切换网络', 'Switch Network'),
-      wallet_addEthereumChain: t('添加网络', 'Add Network'),
-      solana_signTransaction: t('Solana 交易签名', 'Sign Solana Transaction'),
-      solana_signAllTransactions: t('Solana 批量签名', 'Sign Solana Transactions'),
-      solana_signAndSendTransaction: t('发送 Solana 交易', 'Send Solana Transaction'),
-      solana_signMessage: t('Solana 消息签名', 'Sign Solana Message'),
-      near_signAndSendTransaction: t('发送 NEAR 交易', 'Send NEAR Transaction'),
-      near_signAndSendTransactions: t('批量发送 NEAR 交易', 'Send NEAR Transactions'),
-      near_signMessage: t('NEAR 消息签名', 'Sign NEAR Message')
-    };
-    return map[m] || m || '--';
-  }
-
-  function summarizeWcStructuredPayload(method, reqParams) {
-    const m = String(method || '').trim();
-    const list = Array.isArray(reqParams) ? reqParams : (reqParams ? [reqParams] : []);
-    if (m.startsWith('eth_signTypedData')) {
-      const isEvmAddr = (v) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v.trim());
-      const typedArg = (list[1] !== undefined && !isEvmAddr(list[1])) ? list[1] : list[0];
-      const rawTyped = typeof typedArg === 'string' ? JSON.parse(typedArg) : (typedArg || {});
-      const domain = rawTyped.domain || {};
-      const msg = rawTyped.message || {};
-      const lines = [];
-      if (domain.name || domain.version) {
-        lines.push(`${t('应用', 'Domain')}: ${domain.name || '--'}${domain.version ? ` v${domain.version}` : ''}`);
-      }
-      if (rawTyped.primaryType) {
-        lines.push(`${t('类型', 'Type')}: ${rawTyped.primaryType}`);
-      }
-      if (domain.verifyingContract) {
-        lines.push(`${t('合约', 'Contract')}: ${shortenAddr(domain.verifyingContract, 10, 8)}`);
-      }
-      const msgEntries = Object.entries(msg).slice(0, 6);
-      for (const [k, v] of msgEntries) {
-        const valStr = (v && typeof v === 'object') ? JSON.stringify(v).slice(0, 80) : String(v);
-        lines.push(`${k}: ${valStr.slice(0, 80)}`);
-      }
-      return lines.join('\n') || formatWcMethodLabel(m);
-    }
-    if (m === 'wallet_switchEthereumChain' || m === 'wallet_addEthereumChain') {
-      const arg = list[0] || {};
-      return `${t('目标网络', 'Target Chain')}: ${arg.chainName ? `${arg.chainName} (${arg.chainId || '--'})` : (arg.chainId || '--')}`;
-    }
-    if (m.startsWith('solana_')) {
-      const arg = list[0] || {};
-      if (m === 'solana_signMessage') {
-        const rawMsg = arg.message || list[0] || '';
-        return `${t('网络', 'Chain')}: Solana\n${t('消息', 'Message')}: ${String(rawMsg).slice(0, 300)}`;
-      }
-      if (m === 'solana_signAllTransactions') {
-        const count = Array.isArray(arg.transactions) ? arg.transactions.length : list.length;
-        return `${t('网络', 'Chain')}: Solana\n${t('交易数量', 'Transactions')}: ${count}`;
-      }
-      return `${t('网络', 'Chain')}: Solana\n${t('操作', 'Action')}: ${formatWcMethodLabel(m)}`;
-    }
-    if (m.startsWith('near_')) {
-      const arg = list[0] || {};
-      if (m === 'near_signMessage') {
-        return `${t('接收方', 'Recipient')}: ${arg.recipient || '--'}\n${t('消息', 'Message')}: ${String(arg.message || '').slice(0, 300)}`;
-      }
-      if (m === 'near_signAndSendTransactions') {
-        const txs = Array.isArray(arg.transactions) ? arg.transactions : list;
-        return `${t('网络', 'Chain')}: NEAR\n${t('批量交易数', 'Transactions')}: ${txs.length}`;
-      }
-      const actions = Array.isArray(arg.actions) ? arg.actions : [];
-      return `${t('接收方', 'Receiver')}: ${arg.receiverId || '--'}\n${t('操作数', 'Actions')}: ${actions.length}`;
-    }
-    return `${t('请求类型', 'Method')}: ${formatWcMethodLabel(m)}`;
-  }
-
-  function syncWcRiskBanner(rCard, methodEl, riskText) {
-    let el = $('wc-request-risk-banner');
-    if (!el && riskText && typeof document !== 'undefined' && typeof document.createElement === 'function' && typeof rCard.insertBefore === 'function') {
-      el = document.createElement('div');
-      el.id = 'wc-request-risk-banner';
-      el.className = 'wc-risk-banner hidden';
-      el.setAttribute('role', 'alert');
-      const pEl = $('wc-request-payload');
-      if (pEl && pEl.parentNode === rCard) rCard.insertBefore(el, pEl);
-      else if (typeof rCard.appendChild === 'function') rCard.appendChild(el);
-    }
-    if (el) {
-      el.textContent = riskText || '';
-      el.classList.toggle('hidden', !riskText);
-    }
-    rCard.classList.toggle('is-high-risk', Boolean(riskText));
-    if (methodEl) {
-      methodEl.classList.toggle('text-rose', Boolean(riskText));
-      methodEl.classList.toggle('text-emerald', !riskText);
-    }
-  }
-
-  function renderWcCards() {
-    const st = getState();
-    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
-    const pCard = $('wc-proposal-card');
-    const p = st.wc.pendingProposal;
-    if (pCard) {
-      if (!p) {
-        pCard.classList.add('hidden');
-        if (fw && typeof fw.mountWcProposalPanel === 'function') {
-          fw.mountWcProposalPanel(pCard, { proposal: null, approving: _wcApprovingProposal, isEn: st.lang === 'en' });
-        }
-      } else if (fw && typeof fw.mountWcProposalPanel === 'function') {
-        fw.mountWcProposalPanel(pCard, {
-          proposal: p,
-          approving: _wcApprovingProposal,
-          isEn: st.lang === 'en',
-          onApprove: approveWcProposal,
-          onReject: rejectWcProposal
-        });
-        pCard.classList.remove('hidden');
-      }
-    }
-
-    const rCard = $('wc-request-card');
-    const ev = st.wc.pendingRequest;
-    if (rCard) {
-      const methodEl = $('wc-request-method');
-      if (!ev) {
-        rCard.classList.add('hidden');
-        syncWcRiskBanner(rCard, methodEl, '');
-      } else {
-        const req = (ev.params && ev.params.request) || {};
-        const sess = ev.topic && st.wc.client && typeof st.wc.client.session?.get === 'function'
-          ? st.wc.client.session.get(ev.topic)
-          : null;
-        const peerMeta = sess && sess.peer && sess.peer.metadata ? sess.peer.metadata : null;
-        const chainIdLabel = ev.params?.chainId || 'eip155:1';
-        const dappLabel = peerMeta ? `${peerMeta.name || 'DApp'} (${chainIdLabel})` : chainIdLabel;
-        if (methodEl) methodEl.textContent = formatWcMethodLabel(req.method);
-        if ($('wc-request-dapp')) $('wc-request-dapp').textContent = dappLabel;
-
-        let riskBannerText = '';
-        let preview = '';
-        try {
-          if (req.method === 'personal_sign' && Array.isArray(req.params) && req.params.length > 0) {
-            const p0 = String(req.params[0] || '');
-            const p1 = String(req.params[1] || '');
-            const msgParam = (/^0x[0-9a-fA-F]{40}$/.test(p0) && p1) ? p1 : p0;
-            if (/^0x[0-9a-fA-F]+$/.test(msgParam) && msgParam.length > 2) {
-              const pairs = msgParam.slice(2).match(/.{2}/g) || [];
-              preview = new TextDecoder().decode(new Uint8Array(pairs.map((h) => parseInt(h, 16))));
-            } else {
-              preview = msgParam;
-            }
-          } else if (req.method === 'eth_sign') {
-            riskBannerText = t(
-              '⚠️ 高危盲签 (eth_sign)：签名原始摘要可能盗取您的全部资产，仅在完全信任该应用时继续。',
-              '⚠️ High-risk blind sign (eth_sign): signing raw digests can drain your assets. Continue only if you fully trust this DApp.'
-            );
-            const p0 = Array.isArray(req.params) ? String(req.params[0] || '') : '';
-            const p1 = Array.isArray(req.params) ? String(req.params[1] || '') : '';
-            const rawHex = (/^0x[0-9a-fA-F]{40}$/.test(p0) && p1) ? p1 : p0;
-            preview = `${t('原始摘要', 'Raw Digest')}: ${rawHex || '--'}`;
-          } else if (req.method === 'eth_sendTransaction' && Array.isArray(req.params) && req.params[0]) {
-            const tx = req.params[0];
-            const weiBig = parseHexBigInt(tx.value);
-            const contractsMod = getContracts();
-            const ethStr = (contractsMod && typeof contractsMod.fromBaseUnits === 'function')
-              ? contractsMod.fromBaseUnits(weiBig.toString(), 18)
-              : ((typeof window !== 'undefined' && window.ethers && typeof window.ethers.formatEther === 'function')
-                ? window.ethers.formatEther(weiBig)
-                : '0');
-            const cidNum = Number(String(chainIdLabel).split(':')[1] || 1);
-            const chainEntry = contractsMod && contractsMod.EVM_CHAINS
-              ? Object.values(contractsMod.EVM_CHAINS).find((c) => c && c.chainId === cidNum)
-              : null;
-            const nativeSym = (chainEntry && chainEntry.symbol) || 'ETH';
-            const dataHex = String(tx.data || '');
-            const dataLower = dataHex.toLowerCase();
-            let decodedApproval = '';
-            if (dataLower.startsWith('0x095ea7b3') && dataHex.length >= 138) {
-              const spender = `0x${dataHex.slice(34, 74)}`;
-              const amountBig = BigInt(`0x${dataHex.slice(74, 138)}`);
-              if (amountBig >= (1n << 255n)) {
-                riskBannerText = t(
-                  '⚠️ 高危无限代币授权：授权对象可转走您钱包中的全部该代币。',
-                  '⚠️ High-risk unlimited token approval: spender can transfer all of this token from your wallet.'
-                );
-                decodedApproval = `\n⚠️ ${t('授权操作', 'Approval')}: ERC-20 approve\n${t('授权对象', 'Spender')}: ${spender}\n${t('授权额度', 'Allowance')}: ${t('无限授权 (Unlimited)', 'Unlimited Approval')}`;
-              } else if (amountBig === 0n) {
-                decodedApproval = `\n${t('撤权操作', 'Revoke Approval')}: ERC-20 approve (0)\n${t('撤权对象', 'Spender')}: ${spender}`;
-              } else {
-                decodedApproval = `\n${t('授权操作', 'Approval')}: ERC-20 approve\n${t('授权对象', 'Spender')}: ${spender}\n${t('授权额度', 'Allowance')}: ${amountBig.toString()}`;
-              }
-            } else if (dataLower.startsWith('0xa22cb465') && dataHex.length >= 138) {
-              const operator = `0x${dataHex.slice(34, 74)}`;
-              const approved = BigInt(`0x${dataHex.slice(74, 138)}`) !== 0n;
-              if (approved) {
-                riskBannerText = t(
-                  '⚠️ 高危 NFT 全部资产授权：授权对象可转移该合集下的全部 NFT。',
-                  '⚠️ High-risk NFT full approval: operator can transfer all NFTs in this collection.'
-                );
-                decodedApproval = `\n⚠️ ${t('授权操作', 'Approval')}: NFT setApprovalForAll\n${t('授权对象', 'Operator')}: ${operator}\n${t('授权状态', 'Approved')}: ${t('开启 (全部资产)', 'Enabled (All)')}`;
-              } else {
-                decodedApproval = `\n${t('撤权操作', 'Revoke Approval')}: NFT setApprovalForAll\n${t('撤权对象', 'Operator')}: ${operator}\n${t('授权状态', 'Approved')}: ${t('已撤销 (安全)', 'Revoked')}`;
-              }
-            }
-            preview = `${t('收款地址', 'To')}: ${tx.to || '--'}\n${t('金额', 'Value')}: ${ethStr} ${nativeSym}${decodedApproval}\n${t('数据', 'Data')}: ${tx.data && tx.data !== '0x' ? `${String(tx.data).slice(0, 42)}...` : t('无', 'None')}`;
-          } else {
-            preview = summarizeWcStructuredPayload(req.method, req.params);
-          }
-        } catch (_) {
-          preview = formatWcMethodLabel(req.method);
-        }
-
-        if ($('wc-request-payload')) $('wc-request-payload').textContent = preview;
-        syncWcRiskBanner(rCard, methodEl, riskBannerText);
-        if (typeof document !== 'undefined') {
-          const rejectBtnEl = $('btn-wc-request-reject') || document.querySelector('#wc-request-card .btn-secondary');
-          const approveBtnEl = $('btn-wc-request-approve') || document.querySelector('#wc-request-card .btn-primary');
-          if (rejectBtnEl) rejectBtnEl.disabled = Boolean(_wcApprovingRequest);
-          if (approveBtnEl) approveBtnEl.disabled = Boolean(_wcApprovingRequest);
-        }
-        rCard.classList.remove('hidden');
-      }
-    }
-  }
-
-  function renderWcSessions() {
-    const st = getState();
-    const listEl = $('wc-sessions-list');
-    if (!listEl) return;
-    const sessions = getActiveWalletWcSessions();
-    const fw = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
-    if (!fw || typeof fw.mountWcSessionsPanel !== 'function') return;
-    fw.mountWcSessionsPanel(listEl, { sessions, isEn: st.lang === 'en' });
-  }
-
   function toggleWcAdvancedSettings() {
     $('wc-advanced-drawer')?.classList.toggle('hidden');
   }
@@ -411,6 +176,7 @@
     st.wc.projectId = activePid;
     if ($('wc-project-id-input')) $('wc-project-id-input').value = activePid === DEFAULT_WC_PROJECT_ID ? '' : activePid;
     if ($('wc-uri-input')) $('wc-uri-input').value = '';
+    setWcPairHint('');
     const advDrawer = $('wc-advanced-drawer');
     if (advDrawer) advDrawer.classList.add('hidden');
     renderWcCards();
@@ -418,38 +184,46 @@
     openSheet('sheet-walletconnect');
     try {
       await ensureWcReady();
-    } catch (_) {
+    } catch (e) {
       updateWcStatusPill(t('初始化失败', 'Init error'), false);
+      setWcPairHint(formatWcError(e, '连接初始化失败，请重试', 'Init failed. Please retry.'), 'error');
     }
   }
 
   async function saveWalletConnectProjectId() {
     const st = getState();
     const val = ($('wc-project-id-input')?.value || '').trim();
-    if (!val) {
-      st.wc.projectId = DEFAULT_WC_PROJECT_ID;
-      if (typeof localStorage !== 'undefined') localStorage.removeItem('near_ca_wc_project_id');
-      try {
-        await ensureWcReady();
-        $('wc-advanced-drawer')?.classList.add('hidden');
-        showToast(t('✅ 已恢复内置默认 Project ID', '✅ Restored built-in Project ID'));
-      } catch (e) {
-        showToast(toUserFriendlyError(e, '连接失败', 'Connection failed'));
-      }
-      return;
-    }
-    if (val.length < 16) {
+    const saveBtn = typeof document !== 'undefined' ? document.querySelector('#wc-advanced-drawer .btn-secondary') : null;
+    const prevTxt = saveBtn ? saveBtn.textContent : '';
+    if (val && val.length < 16) {
       showToast(t('请输入有效的 Project ID', 'Enter a valid Project ID'));
       return;
     }
-    st.wc.projectId = val;
-    if (typeof localStorage !== 'undefined') localStorage.setItem('near_ca_wc_project_id', val);
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = t('连接中...', 'Saving...');
+    }
     try {
-      await ensureWcReady();
-      $('wc-advanced-drawer')?.classList.add('hidden');
-      showToast(t('✅ WalletConnect 已就绪', '✅ WalletConnect ready'));
+      if (!val) {
+        st.wc.projectId = DEFAULT_WC_PROJECT_ID;
+        if (typeof localStorage !== 'undefined') localStorage.removeItem('near_ca_wc_project_id');
+        await withTimeout(ensureWcReady(), 15000, t('连接超时，请重试', 'Connection timed out. Please retry.'));
+        $('wc-advanced-drawer')?.classList.add('hidden');
+        showToast(t('✅ 已恢复内置默认 Project ID', '✅ Restored built-in Project ID'));
+      } else {
+        st.wc.projectId = val;
+        if (typeof localStorage !== 'undefined') localStorage.setItem('near_ca_wc_project_id', val);
+        await withTimeout(ensureWcReady(), 15000, t('连接超时，请重试', 'Connection timed out. Please retry.'));
+        $('wc-advanced-drawer')?.classList.add('hidden');
+        showToast(t('✅ WalletConnect 已就绪', '✅ WalletConnect ready'));
+      }
     } catch (e) {
-      showToast(toUserFriendlyError(e, '连接失败', 'Connection failed'));
+      showToast(formatWcError(e, '连接失败', 'Connection failed'));
+    } finally {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        if (prevTxt) saveBtn.textContent = prevTxt;
+      }
     }
   }
 
@@ -462,28 +236,52 @@
     }
   }
 
-  async function pairWalletConnectUri() {
+  async function pairWalletConnectUri(overrideUri) {
     const st = getState();
-    const uri = ($('wc-uri-input')?.value || '').trim();
-    if (!/^wc:/i.test(uri)) {
-      showToast(t('请输入有效的 wc: 链接', 'Paste a valid wc: URI'));
-      return;
+    const rawInput = overrideUri !== undefined ? String(overrideUri || '') : ($('wc-uri-input')?.value || '');
+    const uri = extractWcPairingUri(rawInput);
+    if (!uri) {
+      const msg = t('请输入有效的 wc: 链接', 'Paste a valid wc: URI');
+      setWcPairHint(msg, 'error');
+      showToast(msg);
+      return false;
     }
-    if (!st.wc.projectId) {
-      st.wc.projectId = DEFAULT_WC_PROJECT_ID;
+    if (isLegacyWcV1Uri(uri)) {
+      const msg = t('不支持旧版配对链接，请刷新 DApp 页面重新生成二维码', 'Unsupported legacy pairing link. Refresh the DApp and generate a new QR code.');
+      setWcPairHint(msg, 'error');
+      showToast(msg);
+      return false;
     }
+    if ($('wc-uri-input')) $('wc-uri-input').value = uri;
+    if (!st.wc.projectId) st.wc.projectId = DEFAULT_WC_PROJECT_ID;
+    clearWcProposalWaitTimer();
     const btn = $('btn-wc-pair');
     const prevTxt = btn ? btn.textContent : '';
     if (btn) {
       btn.disabled = true;
       btn.textContent = t('连接中...', 'Pairing...');
     }
+    setWcPairHint(t('正在连接配对通道...', 'Connecting pairing channel...'), 'pending');
     try {
-      const client = await ensureWcReady();
-      await client.core.pairing.pair({ uri });
+      const client = await withTimeout(ensureWcReady(), 15000, t('连接服务初始化超时，请重试', 'Connection service timed out. Please retry.'));
+      if (!client) throw new Error(t('WalletConnect 服务未就绪', 'WalletConnect service unavailable'));
+      await withTimeout(
+        client.core.pairing.pair({ uri }),
+        WC_TIMEOUT_MS,
+        t('配对请求超时，请检查网络或刷新二维码重试', 'Pairing request timed out. Check network or refresh QR code.')
+      );
+      if (!st.wc.pendingProposal) {
+        startWcProposalWaitTimer();
+        setWcPairHint(t('已发起配对，正在等待 DApp 授权请求...', 'Pairing sent, waiting for DApp approval request...'), 'pending');
+      }
       showToast(t('已发起配对，等待 DApp 请求...', 'Pairing sent...'));
+      return true;
     } catch (e) {
-      showToast(toUserFriendlyError(e, '配对失败', 'Pairing failed'));
+      clearWcProposalWaitTimer();
+      const msg = formatWcError(e, '配对失败，请刷新二维码重试', 'Pairing failed. Refresh QR code and retry.');
+      setWcPairHint(msg, 'error');
+      showToast(msg);
+      return false;
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -492,7 +290,34 @@
     }
   }
 
-  let _wcApprovingProposal = false;
+  async function handleIncomingWcDeepLink(rawUri, opts = {}) {
+    const uri = extractWcPairingUri(rawUri);
+    if (!uri) return false;
+    const st = getState();
+    if (opts && opts.fromNativeDAppBrowser) {
+      if (st && st.wc) st.wc._returnToDAppOnProposalDone = true;
+      if (typeof setNativeBrowserOverlayVisible === 'function') {
+        await setNativeBrowserOverlayVisible(false).catch(() => {});
+      }
+    }
+    renderWcCards();
+    renderWcSessions();
+    openSheet('sheet-walletconnect');
+    if ($('wc-uri-input')) $('wc-uri-input').value = uri;
+    return pairWalletConnectUri(uri);
+  }
+
+  function returnToDAppOverlayIfPending() {
+    const st = getState();
+    if (!st || !st.wc || !st.wc._returnToDAppOnProposalDone) return;
+    st.wc._returnToDAppOnProposalDone = false;
+    if (typeof _dappSession !== 'undefined' && _dappSession && _dappSession.nativeOpen && !st.wc.pendingRequest) {
+      if (typeof closeAllSheets === 'function') closeAllSheets();
+      if (typeof setNativeBrowserOverlayVisible === 'function') {
+        setNativeBrowserOverlayVisible(true).catch(() => {});
+      }
+    }
+  }
 
   async function approveWcProposal() {
     if (_wcApprovingProposal) return;
@@ -502,12 +327,16 @@
     const client = st.wc.client;
     const wallet = st.getActiveWallet();
     if (!p || !client || !wallet) return;
+    clearWcProposalWaitTimer();
+    setWcPairHint('');
     _wcApprovingProposal = true;
     const fwLoading = (typeof window !== 'undefined' && window.NearCAFramework) || (typeof globalThis !== 'undefined' && globalThis.NearCAFramework);
     if (fwLoading && typeof fwLoading.mountWcProposalPanel === 'function') {
       renderWcCards();
     }
-    const approveBtn = typeof document !== 'undefined' ? document.querySelector('#wc-proposal-card .btn-primary') : null;
+    const approveBtn = (!fwLoading || typeof fwLoading.mountWcProposalPanel !== 'function') && typeof document !== 'undefined'
+      ? document.querySelector('#wc-proposal-card .btn-primary')
+      : null;
     const prevBtnTxt = approveBtn ? approveBtn.textContent : '';
     if (approveBtn) {
       approveBtn.disabled = true;
@@ -516,31 +345,70 @@
     try {
       if (!(await verifySecurityAuthAsync(wallet, t('授权 WalletConnect 连接', 'Authorize WalletConnect')))) return;
       await contracts.ensureWalletSigningKeysAsync(wallet);
-      const supportedChainIds = new Set(Object.values(contracts.EVM_CHAINS || {}).map((c) => `eip155:${c.chainId}`));
-      const chainsSet = new Set(['eip155:1', 'eip155:8453', 'eip155:56', 'eip155:42161'].filter((c) => supportedChainIds.size === 0 || supportedChainIds.has(c)));
       const reqNs = (p.params && p.params.requiredNamespaces) || {};
       const optNs = (p.params && p.params.optionalNamespaces) || {};
-      [reqNs, optNs].forEach((ns) => {
-        if (ns.eip155 && Array.isArray(ns.eip155.chains)) {
-          ns.eip155.chains.forEach((c) => {
-            if (supportedChainIds.size === 0 || supportedChainIds.has(c)) chainsSet.add(c);
-          });
-        }
-      });
-      const chains = Array.from(chainsSet);
-      const evmSender = (typeof contracts.resolveWalletEvmSender === 'function' ? contracts.resolveWalletEvmSender(wallet) : '')
-        || wallet.mpcEvmAddress || wallet.evmAddress;
-      const approvedSess = await client.approveSession({
-        id: p.id,
-        namespaces: {
-          eip155: {
-            chains,
-            accounts: chains.map((c) => `${c}:${evmSender}`),
-            methods: ['eth_sendTransaction', 'personal_sign', 'eth_signTypedData', 'eth_signTypedData_v3', 'eth_signTypedData_v4', 'wallet_switchEthereumChain'],
-            events: ['chainChanged', 'accountsChanged']
+      const namespaces = {};
+
+      const wantsEvm = Boolean(reqNs.eip155 || optNs.eip155 || (!reqNs.solana && !reqNs.near && !optNs.solana && !optNs.near));
+      if (wantsEvm) {
+        const supportedChainIds = new Set(Object.values(contracts.EVM_CHAINS || {}).map((c) => `eip155:${c.chainId}`));
+        const chainsSet = new Set(['eip155:1', 'eip155:8453', 'eip155:56', 'eip155:42161'].filter((c) => supportedChainIds.size === 0 || supportedChainIds.has(c)));
+        [reqNs, optNs].forEach((ns) => {
+          if (ns.eip155 && Array.isArray(ns.eip155.chains)) {
+            ns.eip155.chains.forEach((c) => {
+              if (supportedChainIds.size === 0 || supportedChainIds.has(c)) chainsSet.add(c);
+            });
           }
-        }
-      });
+        });
+        const chains = Array.from(chainsSet);
+        const evmSender = (typeof contracts.resolveWalletEvmSender === 'function' ? contracts.resolveWalletEvmSender(wallet) : '')
+          || wallet.mpcEvmAddress || wallet.evmAddress;
+        if (!evmSender) throw new Error(t('EVM 钱包地址不可用', 'EVM address unavailable'));
+        namespaces.eip155 = {
+          chains,
+          accounts: chains.map((c) => `${c}:${evmSender}`),
+          methods: ['eth_sendTransaction', 'personal_sign', 'eth_sign', 'eth_signTypedData', 'eth_signTypedData_v3', 'eth_signTypedData_v4', 'wallet_switchEthereumChain', 'wallet_addEthereumChain'],
+          events: ['chainChanged', 'accountsChanged']
+        };
+      }
+
+      if ((reqNs.solana || optNs.solana) && wallet.solAddress) {
+        const solSet = new Set();
+        [reqNs, optNs].forEach((ns) => {
+          if (ns.solana && Array.isArray(ns.solana.chains)) ns.solana.chains.forEach((c) => solSet.add(c));
+        });
+        const solChains = solSet.size > 0 ? Array.from(solSet) : ['solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'];
+        namespaces.solana = {
+          chains: solChains,
+          accounts: solChains.map((c) => `${c}:${wallet.solAddress}`),
+          methods: ['solana_signTransaction', 'solana_signAllTransactions', 'solana_signAndSendTransaction', 'solana_signMessage'],
+          events: []
+        };
+      }
+
+      const nearCreds = typeof contracts.getWalletNearSignerCredentials === 'function'
+        ? contracts.getWalletNearSignerCredentials(wallet)
+        : { accountId: wallet.nearNamedAccount || wallet.nearAddress || '' };
+      const nearAcct = String(nearCreds.accountId || wallet.nearNamedAccount || wallet.nearAddress || '').trim();
+      if ((reqNs.near || optNs.near) && nearAcct) {
+        const nearSet = new Set();
+        [reqNs, optNs].forEach((ns) => {
+          if (ns.near && Array.isArray(ns.near.chains)) ns.near.chains.forEach((c) => nearSet.add(c));
+        });
+        const nearChains = nearSet.size > 0 ? Array.from(nearSet) : ['near:mainnet'];
+        namespaces.near = {
+          chains: nearChains,
+          accounts: nearChains.map((c) => `${c}:${nearAcct}`),
+          methods: ['near_signAndSendTransaction', 'near_signAndSendTransactions', 'near_signMessage'],
+          events: []
+        };
+      }
+
+      const approvedSess = await withTimeout(
+        client.approveSession({ id: p.id, namespaces }),
+        WC_TIMEOUT_MS,
+        t('批准连接超时，请重试', 'Session approval timed out. Please retry.')
+      );
       if (approvedSess && approvedSess.topic) {
         syncWcSessionWalletsCache();
         _wcSessionWallets[approvedSess.topic] = wallet.id;
@@ -551,8 +419,9 @@
       renderWcSessions();
       renderHeaderAndHero();
       showToast(t('✅ 已批准 DApp 连接', '✅ DApp approved'));
+      returnToDAppOverlayIfPending();
     } catch (e) {
-      showToast(toUserFriendlyError(e, '批准失败', 'Approve failed'));
+      showToast(formatWcError(e, '批准失败', 'Approve failed'));
     } finally {
       _wcApprovingProposal = false;
       if (fwLoading && typeof fwLoading.mountWcProposalPanel === 'function' && st.wc.pendingProposal) {
@@ -567,6 +436,8 @@
 
   async function rejectWcProposal() {
     if (_wcApprovingProposal) return;
+    clearWcProposalWaitTimer();
+    setWcPairHint('');
     const st = getState();
     const p = st.wc.pendingProposal;
     if (p && st.wc.client) {
@@ -574,6 +445,7 @@
     }
     st.wc.pendingProposal = null;
     renderWcCards();
+    returnToDAppOverlayIfPending();
   }
 
   function parseHexBigInt(val) {
@@ -584,152 +456,6 @@
     } catch (_) {
       return 0n;
     }
-  }
-
-  const WC_SESSION_WALLETS_STORAGE_KEY = 'near_ca_wc_session_wallets_v1';
-  let _wcApprovingRequest = false;
-
-  function loadPersistedWcSessionWallets() {
-    try {
-      if (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function') {
-        const raw = localStorage.getItem(WC_SESSION_WALLETS_STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            const out = {};
-            for (const [topic, wid] of Object.entries(parsed)) {
-              if (topic && wid) out[String(topic)] = String(wid);
-            }
-            return out;
-          }
-        }
-      }
-    } catch (_) {}
-    return {};
-  }
-
-  const _wcSessionWallets = loadPersistedWcSessionWallets();
-  let _lastWcStorageRef = typeof localStorage !== 'undefined' ? localStorage : null;
-  let _lastWcStorageRaw = (typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function')
-    ? (localStorage.getItem(WC_SESSION_WALLETS_STORAGE_KEY) || '')
-    : '';
-
-  function syncWcSessionWalletsCache() {
-    if (typeof localStorage === 'undefined' || typeof localStorage.getItem !== 'function') return _wcSessionWallets;
-    const raw = localStorage.getItem(WC_SESSION_WALLETS_STORAGE_KEY) || '';
-    if (localStorage !== _lastWcStorageRef || raw !== _lastWcStorageRaw) {
-      _lastWcStorageRef = localStorage;
-      _lastWcStorageRaw = raw;
-      for (const k of Object.keys(_wcSessionWallets)) delete _wcSessionWallets[k];
-      Object.assign(_wcSessionWallets, loadPersistedWcSessionWallets());
-    }
-    return _wcSessionWallets;
-  }
-
-  function savePersistedWcSessionWallets() {
-    try {
-      if (typeof localStorage !== 'undefined' && typeof localStorage.setItem === 'function') {
-        const serialized = JSON.stringify(_wcSessionWallets);
-        localStorage.setItem(WC_SESSION_WALLETS_STORAGE_KEY, serialized);
-        _lastWcStorageRef = localStorage;
-        _lastWcStorageRaw = serialized;
-      }
-    } catch (_) {}
-  }
-
-  function getWcWalletEvmLower(wallet) {
-    if (!wallet) return '';
-    const contracts = typeof getContracts === 'function' ? getContracts() : null;
-    const addr = (contracts && typeof contracts.resolveWalletEvmSender === 'function'
-      ? contracts.resolveWalletEvmSender(wallet)
-      : '') || wallet.mpcEvmAddress || wallet.evmAddress || '';
-    return String(addr).trim().toLowerCase();
-  }
-
-  function doesWcSessionBelongToWallet(session, wallet) {
-    if (!session || !wallet) return false;
-    syncWcSessionWalletsCache();
-    const topic = session.topic ? String(session.topic) : '';
-    const mappedWalletId = topic ? _wcSessionWallets[topic] : '';
-    if (mappedWalletId) {
-      return mappedWalletId === String(wallet.id);
-    }
-    const walletEvm = getWcWalletEvmLower(wallet);
-    const sessAccounts = session.namespaces && session.namespaces.eip155 && Array.isArray(session.namespaces.eip155.accounts)
-      ? session.namespaces.eip155.accounts.map((a) => String(a).split(':')[2]?.toLowerCase()).filter(Boolean)
-      : [];
-    if (walletEvm && sessAccounts.length > 0) {
-      return sessAccounts.includes(walletEvm);
-    }
-    return false;
-  }
-
-  function getActiveWalletWcSessions(walletOverride) {
-    const st = getState();
-    const wallet = walletOverride || (st && typeof st.getActiveWallet === 'function' ? st.getActiveWallet() : null);
-    const client = st && st.wc ? st.wc.client : null;
-    if (!client || typeof client.getActiveSessions !== 'function' || !wallet) return [];
-    const allSessions = Object.values(client.getActiveSessions() || {});
-    return allSessions.filter((s) => doesWcSessionBelongToWallet(s, wallet));
-  }
-
-  async function cleanupWalletConnectForDeletedWalletAsync(wallet, deletedActive = false) {
-    if (!wallet || !wallet.id) return;
-    const wid = String(wallet.id);
-    const st = getState();
-    const client = st && st.wc ? st.wc.client : null;
-    syncWcSessionWalletsCache();
-
-    const topicsToDisconnect = new Set();
-    for (const [topic, ownerId] of Object.entries(_wcSessionWallets)) {
-      if (String(ownerId) === wid) topicsToDisconnect.add(topic);
-    }
-    if (client && typeof client.getActiveSessions === 'function') {
-      for (const sess of Object.values(client.getActiveSessions() || {})) {
-        if (sess && sess.topic && doesWcSessionBelongToWallet(sess, wallet)) {
-          topicsToDisconnect.add(sess.topic);
-        }
-      }
-    }
-
-    for (const topic of topicsToDisconnect) {
-      delete _wcSessionWallets[topic];
-    }
-    savePersistedWcSessionWallets();
-
-    if (st && st.wc) {
-      if (deletedActive && st.wc.pendingProposal) {
-        const pendingP = st.wc.pendingProposal;
-        st.wc.pendingProposal = null;
-        if (client && typeof client.rejectSession === 'function') {
-          await client.rejectSession({ id: pendingP.id, reason: { code: 5000, message: 'Wallet removed' } }).catch(() => {});
-        }
-      }
-      if (client) {
-        for (const topic of topicsToDisconnect) {
-          if (typeof client._nexusDrainTopicRequests === 'function') {
-            client._nexusDrainTopicRequests(topic);
-          } else if (st.wc.pendingRequest && st.wc.pendingRequest.topic === topic) {
-            st.wc.pendingRequest = null;
-          }
-        }
-      } else if (st.wc.pendingRequest && topicsToDisconnect.has(st.wc.pendingRequest.topic)) {
-        st.wc.pendingRequest = null;
-      }
-    }
-
-    if (client && typeof client.disconnectSession === 'function' && topicsToDisconnect.size > 0) {
-      const disconnectTasks = Array.from(topicsToDisconnect).map((topic) =>
-        client.disconnectSession({ topic, reason: { code: 6000, message: 'Wallet removed' } }).catch(() => {})
-      );
-      await Promise.race([
-        Promise.allSettled(disconnectTasks),
-        new Promise((resolve) => setTimeout(resolve, 400))
-      ]);
-    }
-
-    renderWcCards();
-    renderWcSessions();
   }
 
   async function approveWcRequest() {
@@ -747,17 +473,24 @@
     const sess = reqTopic && client.session && typeof client.session.get === 'function'
       ? client.session.get(reqTopic)
       : null;
-    const activeEvm = ((typeof contracts.resolveWalletEvmSender === 'function' ? contracts.resolveWalletEvmSender(wallet) : '') || wallet.mpcEvmAddress || wallet.evmAddress || '').toLowerCase();
-    const sessAccounts = sess && sess.namespaces && sess.namespaces.eip155 && Array.isArray(sess.namespaces.eip155.accounts)
-      ? sess.namespaces.eip155.accounts.map((a) => String(a).split(':')[2]?.toLowerCase()).filter(Boolean)
-      : [];
+    const chainNs = String((ev.params && ev.params.chainId) || 'eip155:1').split(':')[0].toLowerCase();
+    const activeEvm = getWcWalletEvmLower(wallet);
+    const activeSol = String(wallet.solAddress || '').trim();
+    const nearCreds = contracts.getWalletNearSignerCredentials ? contracts.getWalletNearSignerCredentials(wallet) : {};
+    const activeNear = String(nearCreds.accountId || wallet.nearNamedAccount || wallet.nearAddress || '').trim().toLowerCase();
+    const evmAccounts = getWcSessionNsAddrs(sess, 'eip155', true);
+    const solAccounts = getWcSessionNsAddrs(sess, 'solana', false);
+    const nearAccounts = getWcSessionNsAddrs(sess, 'near', true);
     const boundWalletId = _wcSessionWallets[reqTopic];
-    if ((boundWalletId && boundWalletId !== wallet.id) || (sessAccounts.length > 0 && activeEvm && !sessAccounts.includes(activeEvm))) {
+    const nsMismatch = (chainNs === 'eip155' && evmAccounts.length > 0 && activeEvm && !evmAccounts.includes(activeEvm))
+      || (chainNs === 'solana' && solAccounts.length > 0 && activeSol && !solAccounts.includes(activeSol))
+      || (chainNs === 'near' && nearAccounts.length > 0 && activeNear && !nearAccounts.includes(activeNear));
+    if ((boundWalletId && boundWalletId !== wallet.id) || nsMismatch) {
       showToast(t('当前钱包与该 DApp 会话绑定的账户不一致，请切换回原钱包或断开重连', 'Active wallet does not match this DApp session account. Switch back or reconnect.'));
-      await client.respondSessionRequest({
+      await withTimeout(client.respondSessionRequest({
         topic: ev.topic,
         response: { id: ev.id, jsonrpc: '2.0', error: { code: 4100, message: 'Active wallet account mismatch' } }
-      }).catch(() => {});
+      }), WC_TIMEOUT_MS, 'Timeout').catch(() => {});
       if (typeof client._nexusShiftNextRequest === 'function') client._nexusShiftNextRequest();
       else { st.wc.pendingRequest = null; renderWcCards(); }
       return;
@@ -780,14 +513,12 @@
         return;
       }
       await contracts.ensureWalletSigningKeysAsync(wallet);
-      const ethersLib = await ensureEthersLoaded();
-      if (!ethersLib) throw new Error(t('EVM 签名库不可用', 'EVM signer unavailable'));
       const { topic, id, params } = ev;
       const method = params.request.method;
       const reqParams = params.request.params || [];
       let result;
 
-      const signDigestViaMpc = async (digestHex) => {
+      const signDigestViaMpc = async (ethersLib, digestHex) => {
         const digestBytes = crypto.hexToBytes(String(digestHex).replace(/^0x/i, ''));
         const mpcRes = await contracts.requestNearMpcChainSignature({
           wallet,
@@ -813,11 +544,12 @@
       };
 
       if (method === 'personal_sign' || method === 'eth_sign') {
-        const isEvmAddr = (v) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v.trim());
+        const ethersLib = await ensureEthersLoaded();
+        if (!ethersLib) throw new Error(t('EVM 签名库不可用', 'EVM signer unavailable'));
         let msgRaw = method === 'personal_sign' ? reqParams[0] : reqParams[1];
-        if (method === 'personal_sign' && isEvmAddr(reqParams[0]) && reqParams[1] !== undefined && !isEvmAddr(reqParams[1])) {
+        if (method === 'personal_sign' && isEvmAddrHex(reqParams[0]) && reqParams[1] !== undefined && !isEvmAddrHex(reqParams[1])) {
           msgRaw = reqParams[1];
-        } else if (method === 'eth_sign' && isEvmAddr(reqParams[1]) && reqParams[0] !== undefined && !isEvmAddr(reqParams[0])) {
+        } else if (method === 'eth_sign' && isEvmAddrHex(reqParams[1]) && reqParams[0] !== undefined && !isEvmAddrHex(reqParams[0])) {
           msgRaw = reqParams[0];
         }
         if (method === 'eth_sign') {
@@ -838,14 +570,13 @@
           }
         }
         const msgBytes = (typeof msgRaw === 'string' && msgRaw.startsWith('0x')) ? ethersLib.getBytes(msgRaw) : String(msgRaw);
-        if (wallet.evmPrivateKey) {
-          result = await new ethersLib.Wallet(wallet.evmPrivateKey).signMessage(msgBytes);
-        } else {
-          result = await signDigestViaMpc(ethersLib.hashMessage(msgBytes));
-        }
+        result = wallet.evmPrivateKey
+          ? await new ethersLib.Wallet(wallet.evmPrivateKey).signMessage(msgBytes)
+          : await signDigestViaMpc(ethersLib, ethersLib.hashMessage(msgBytes));
       } else if (method.startsWith('eth_signTypedData')) {
-        const isEvmAddr = (v) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v.trim());
-        const typedArg = (reqParams[1] !== undefined && !isEvmAddr(reqParams[1])) ? reqParams[1] : reqParams[0];
+        const ethersLib = await ensureEthersLoaded();
+        if (!ethersLib) throw new Error(t('EVM 签名库不可用', 'EVM signer unavailable'));
+        const typedArg = (reqParams[1] !== undefined && !isEvmAddrHex(reqParams[1])) ? reqParams[1] : reqParams[0];
         const rawTyped = typeof typedArg === 'string' ? JSON.parse(typedArg) : (typedArg || {});
         const cleanTypes = { ...(rawTyped.types || {}) };
         delete cleanTypes.EIP712Domain;
@@ -861,7 +592,7 @@
         } else if (wallet.evmPrivateKey) {
           result = await new ethersLib.Wallet(wallet.evmPrivateKey).signTypedData(rawTyped.domain || {}, cleanTypes, rawTyped.message || {});
         } else {
-          result = await signDigestViaMpc(ethersLib.TypedDataEncoder.hash(rawTyped.domain || {}, cleanTypes, rawTyped.message || {}));
+          result = await signDigestViaMpc(ethersLib, ethersLib.TypedDataEncoder.hash(rawTyped.domain || {}, cleanTypes, rawTyped.message || {}));
         }
       } else if (method === 'eth_sendTransaction') {
         const txReq = reqParams[0] || {};
@@ -869,10 +600,7 @@
         const cfg = Object.entries(contracts.EVM_CHAINS).find(([, c]) => c.chainId === cid);
         if (!cfg) throw new Error(t(`不支持的网络 chainId: ${cid}`, `Unsupported chainId: ${cid}`));
         const valWei = parseHexBigInt(txReq.value);
-        const valNativeStr = (typeof contracts.fromBaseUnits === 'function')
-          ? contracts.fromBaseUnits(valWei.toString(), 18)
-          : '0';
-        const valNative = Number(valNativeStr);
+        const valNative = Number(typeof contracts.fromBaseUnits === 'function' ? contracts.fromBaseUnits(valWei.toString(), 18) : '0');
         const gasRaw = txReq.gasLimit || txReq.gas;
         const gasBig = gasRaw ? parseHexBigInt(gasRaw) : 0n;
         const reqGasLimit = gasBig > 0n ? gasBig.toString() : null;
@@ -886,41 +614,15 @@
             allowZeroAmount: true
           });
         }
-        if (wallet.evmPrivateKey && typeof contracts.sendEvmSignedTransaction === 'function') {
-          const txRes = await contracts.sendEvmSignedTransaction({
-            chainKey: cfg[0],
-            privateKey: wallet.evmPrivateKey,
-            to: txReq.to || null,
-            data: txReq.data || '0x',
-            value: valWei.toString(),
-            gasLimit: reqGasLimit
-          });
-          result = txRes.txHash;
-        } else {
-          const txRes = await contracts.sendEvmMpcSignedTransaction({
-            wallet,
-            chainKey: cfg[0],
-            to: txReq.to || null,
-            data: txReq.data || '0x',
-            value: valWei.toString(),
-            gasLimit: reqGasLimit,
-            path: 'ethereum-1'
-          });
-          result = txRes.txHash;
-        }
+        const txRes = (wallet.evmPrivateKey && typeof contracts.sendEvmSignedTransaction === 'function')
+          ? await contracts.sendEvmSignedTransaction({ chainKey: cfg[0], privateKey: wallet.evmPrivateKey, to: txReq.to || null, data: txReq.data || '0x', value: valWei.toString(), gasLimit: reqGasLimit })
+          : await contracts.sendEvmMpcSignedTransaction({ wallet, chainKey: cfg[0], to: txReq.to || null, data: txReq.data || '0x', value: valWei.toString(), gasLimit: reqGasLimit, path: 'ethereum-1' });
+        result = txRes.txHash;
         if (result && typeof recordWalletActivity === 'function') {
           const sym = (cfg[1] && cfg[1].symbol) || 'ETH';
-          recordWalletActivity(wallet, {
-            type: 'send',
-            symbol: sym,
-            chain: cfg[0],
-            amount: valNative,
-            to: txReq.to || '',
-            txHash: result,
-            title: `WalletConnect · ${sym}`
-          });
+          recordWalletActivity(wallet, { type: 'send', symbol: sym, chain: cfg[0], amount: valNative, to: txReq.to || '', txHash: result, title: `WalletConnect · ${sym}` });
         }
-      } else if (method === 'wallet_switchEthereumChain') {
+      } else if (method === 'wallet_switchEthereumChain' || method === 'wallet_addEthereumChain') {
         const targetHex = (reqParams[0] && reqParams[0].chainId) || '';
         const targetCid = Number(targetHex);
         const supported = Object.values(contracts.EVM_CHAINS || {}).some((c) => c && c.chainId === targetCid);
@@ -930,24 +632,107 @@
           throw err;
         }
         result = null;
+      } else if (method === 'solana_signMessage') {
+        const arg0 = (Array.isArray(reqParams) ? reqParams[0] : reqParams) || {};
+        const msgStr = String(arg0.message || '');
+        const msgBytes = (/^[1-9A-HJ-NP-Za-km-z]{8,}$/.test(msgStr) && typeof contracts.base58Decode === 'function')
+          ? (() => { try { return contracts.base58Decode(msgStr); } catch (_) { return new TextEncoder().encode(msgStr); } })()
+          : new TextEncoder().encode(msgStr);
+        let sigBytes;
+        if (wallet.solPrivateSeedHex && typeof crypto.ed25519SignAsync === 'function') {
+          sigBytes = await crypto.ed25519SignAsync(msgBytes, wallet.solPrivateSeedHex);
+        } else if (typeof contracts.requestNearMpcChainSignature === 'function') {
+          const mpcRes = await contracts.requestNearMpcChainSignature({ wallet, payloadBytes: msgBytes, path: 'solana-1', domainId: 1 });
+          const sigArr = mpcRes && mpcRes.mpcSignature && mpcRes.mpcSignature.signature;
+          if (!Array.isArray(sigArr) || sigArr.length !== 64) throw new Error(t('Solana 签名失败', 'Solana signing failed'));
+          sigBytes = Uint8Array.from(sigArr, (b) => Number(b) & 0xff);
+        } else {
+          throw new Error(t('Solana 签名引擎不可用', 'Solana signer unavailable'));
+        }
+        result = { signature: contracts.base58Encode(sigBytes) };
+      } else if (method === 'solana_signTransaction' || method === 'solana_signAndSendTransaction') {
+        const arg0 = (Array.isArray(reqParams) ? reqParams[0] : reqParams) || {};
+        const b64Tx = String(arg0.transaction || arg0.transactionBase64 || '');
+        if (!b64Tx) throw new Error(t('缺少 Solana 交易数据', 'Missing Solana transaction'));
+        if (method === 'solana_signAndSendTransaction') {
+          const sent = await contracts.signAndBroadcastSolanaBase64Tx(b64Tx, wallet.solPrivateSeedHex || null, wallet, 'solana-1');
+          result = { signature: sent.txHash };
+        } else {
+          const signed = await contracts.signSolanaBase64Tx(b64Tx, wallet.solPrivateSeedHex || null, wallet, 'solana-1');
+          const sigOff = (signed.txBytes[0] < 0x80 ? 1 : 2) + (signed.slotIndex || 0) * 64;
+          result = { signature: contracts.base58Encode(signed.txBytes.slice(sigOff, sigOff + 64)), transaction: signed.signedBase64 };
+        }
+      } else if (method === 'solana_signAllTransactions') {
+        const arg0 = (Array.isArray(reqParams) ? reqParams[0] : reqParams) || {};
+        const txs = Array.isArray(arg0.transactions) ? arg0.transactions : (Array.isArray(reqParams) ? reqParams : []);
+        const signedList = [];
+        for (const b64Tx of txs) {
+          const signed = await contracts.signSolanaBase64Tx(String(b64Tx || ''), wallet.solPrivateSeedHex || null, wallet, 'solana-1');
+          signedList.push(signed.signedBase64);
+        }
+        result = { transactions: signedList };
+      } else if (method === 'near_signMessage') {
+        const arg0 = (Array.isArray(reqParams) ? reqParams[0] : reqParams) || {};
+        const nCreds = contracts.getWalletNearSignerCredentials(wallet);
+        const nonceRaw = arg0.nonce;
+        const nonceBytes = typeof nonceRaw === 'string'
+          ? crypto.base64ToBytes(nonceRaw)
+          : (nonceRaw instanceof Uint8Array ? nonceRaw : (Array.isArray(nonceRaw) ? Uint8Array.from(nonceRaw) : new Uint8Array(32)));
+        const sigRes = await crypto.signNep413IntentMessageAsync({
+          message: String(arg0.message || ''),
+          recipient: String(arg0.recipient || ''),
+          nonceBytes,
+          callbackUrl: arg0.callbackUrl || '',
+          nearPrivateSeedHex: wallet.nearPrivateSeedHex || wallet.nearPrivateKeyHex,
+          nearPublicKey: nCreds.publicKeyStr
+        });
+        let sigOut = sigRes.signature || '';
+        if (sigOut.startsWith('ed25519:') && typeof crypto.base58Decode === 'function' && typeof crypto.bytesToBase64 === 'function') {
+          try { sigOut = crypto.bytesToBase64(crypto.base58Decode(sigOut.slice(8))); } catch (_) {}
+        }
+        result = { ...sigRes, accountId: nCreds.accountId || '', publicKey: sigRes.publicKey || nCreds.publicKeyStr || '', signature: sigOut };
+      } else if (method === 'near_signAndSendTransaction' || method === 'near_signAndSendTransactions') {
+        const arg0 = (Array.isArray(reqParams) ? reqParams[0] : reqParams) || {};
+        const nCreds = contracts.getWalletNearSignerCredentials(wallet);
+        const txs = method === 'near_signAndSendTransaction'
+          ? [arg0]
+          : (Array.isArray(arg0.transactions) ? arg0.transactions : (Array.isArray(reqParams) ? reqParams : []));
+        if (!txs.length) throw new Error(t('缺少 NEAR 交易数据', 'Missing NEAR transactions'));
+        const outcomes = [];
+        for (const txItem of txs) {
+          const batchRes = await contracts.signAndSendNearActionsBatch({
+            accountId: nCreds.accountId,
+            publicKeyStr: nCreds.publicKeyStr,
+            privateKeyStr: nCreds.privateKeyStr,
+            receiverId: String((txItem && txItem.receiverId) || ''),
+            actions: Array.isArray(txItem && txItem.actions) ? txItem.actions : [],
+            wallet
+          });
+          outcomes.push((batchRes && (batchRes.outcome || batchRes.result)) || batchRes);
+        }
+        result = method === 'near_signAndSendTransaction' ? outcomes[0] : outcomes;
       } else {
         throw new Error(t(`不支持的方法: ${method}`, `Unsupported method: ${method}`));
       }
 
-      await client.respondSessionRequest({ topic, response: { id, jsonrpc: '2.0', result } });
+      await withTimeout(
+        client.respondSessionRequest({ topic, response: { id, jsonrpc: '2.0', result } }),
+        WC_TIMEOUT_MS,
+        t('响应签名结果超时，请重试', 'Response timed out. Please retry.')
+      );
       if (typeof client._nexusShiftNextRequest === 'function') client._nexusShiftNextRequest();
       else { st.wc.pendingRequest = null; renderWcCards(); }
       showToast(t('✅ 签名已完成', '✅ Signed'));
     } catch (e) {
       if (client && ev && ev.topic) {
-        await client.respondSessionRequest({
+        await withTimeout(client.respondSessionRequest({
           topic: ev.topic,
           response: { id: ev.id, jsonrpc: '2.0', error: { code: Number(e && e.code) || 4001, message: (e && e.message) || 'Execution failed' } }
-        }).catch(() => {});
+        }), 5000, 'Timeout').catch(() => {});
       }
       if (client && typeof client._nexusShiftNextRequest === 'function') client._nexusShiftNextRequest();
       else { st.wc.pendingRequest = null; renderWcCards(); }
-      showToast(toUserFriendlyError(e, '签名失败', 'Sign failed'));
+      showToast(formatWcError(e, '签名失败', 'Sign failed'));
     } finally {
       _wcApprovingRequest = false;
       if (approveBtn) {
@@ -999,266 +784,12 @@
     showToast(t('已断开 DApp 连接', 'Disconnected'));
   }
 
-  // ==================== QR Code Camera & Image Scanner ====================
-
-  let _qrScanTarget = 'wc';
-  let _qrMediaStream = null;
-  let _qrScanTimer = null;
-  let _qrScanHandling = false;
-  let _qrVisibilityListener = null;
-
-  function stopQrScannerStream() {
-    if (_qrVisibilityListener && typeof document !== 'undefined') {
-      document.removeEventListener('visibilitychange', _qrVisibilityListener);
-      _qrVisibilityListener = null;
-    }
-    if (_qrScanTimer) {
-      clearInterval(_qrScanTimer);
-      _qrScanTimer = null;
-    }
-    if (_qrMediaStream) {
-      try {
-        _qrMediaStream.getTracks().forEach((track) => {
-          try { track.stop(); } catch (_) {}
-        });
-      } catch (_) {}
-      _qrMediaStream = null;
-    }
-    const videoEl = $('qr-scanner-video');
-    if (videoEl) {
-      try { videoEl.srcObject = null; } catch (_) {}
-    }
-  }
-
-  function parseScannedAddressPayload(rawText) {
-    const text = String(rawText || '').trim();
-    if (!text) return { type: 'empty', value: '' };
-    if (/^wc:/i.test(text)) {
-      return { type: 'wc', value: text };
-    }
-    let addr = text;
-    const schemeMatch = addr.match(/^(?:ethereum|solana|bitcoin|pearl|near):(?:pay-)?([^?@]+)/i);
-    if (schemeMatch && schemeMatch[1]) {
-      addr = schemeMatch[1].trim();
-    } else if (addr.includes('?')) {
-      addr = addr.split('?')[0].trim();
-    }
-    return { type: 'address', value: addr };
-  }
-
-  async function handleQrScanResultAsync(rawText) {
-    if (_qrScanHandling) return false;
-    const parsed = parseScannedAddressPayload(rawText);
-    if (!parsed.value) return false;
-    _qrScanHandling = true;
-    try {
-      stopQrScannerStream();
-      if (parsed.type === 'wc') {
-        openSheet('sheet-walletconnect');
-        if ($('wc-uri-input')) $('wc-uri-input').value = parsed.value;
-        await pairWalletConnectUri();
-        return true;
-      }
-      if (_qrScanTarget === 'send') {
-        openSheet('sheet-send');
-        if ($('send-recipient-input')) $('send-recipient-input').value = parsed.value;
-        if (typeof handleSendRecipientInput === 'function') handleSendRecipientInput();
-        showToast(`✅ ${t('已识别收款地址', 'Address scanned')}`);
-        return true;
-      }
-      openSheet('sheet-walletconnect');
-      showToast(t('未检测到 wc: 配对二维码，请扫描 WalletConnect 二维码', 'Not a WalletConnect wc: QR code'));
-      return false;
-    } finally {
-      _qrScanHandling = false;
-    }
-  }
-
   async function ensureJsQrLoaded() {
     const existing = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR);
     if (existing) return existing;
     if (typeof document !== 'undefined' && typeof loadScriptOnce === 'function') {
-      await loadScriptOnce('src/jsqr-lazy.js?v=6.96').catch(() => false);
+      await loadScriptOnce('src/jsqr-lazy.js?v=6.97').catch(() => false);
       return (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
     }
     return null;
   }
-
-  async function openQrScannerSheet(target = 'wc') {
-    _qrScanTarget = target === 'send' ? 'send' : 'wc';
-    _qrScanHandling = false;
-    stopQrScannerStream();
-    openSheet('sheet-qr-scanner');
-    const statusEl = $('qr-scanner-status');
-    const videoEl = $('qr-scanner-video');
-    if (statusEl) {
-      statusEl.textContent = t('正在启动摄像头...', 'Starting camera...');
-    }
-
-    const hasMedia = typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function';
-    if (!hasMedia || !videoEl) {
-      if (statusEl) {
-        statusEl.textContent = t('当前环境不支持摄像头实时扫描，请点击「从相册选图」识别二维码', 'Camera unavailable here. Use "Pick from Album" to scan a QR screenshot.');
-      }
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' } },
-        audio: false
-      });
-      if (!$('sheet-qr-scanner')?.classList?.contains('open')) {
-        stream.getTracks().forEach((tr) => { try { tr.stop(); } catch (_) {} });
-        return;
-      }
-      _qrMediaStream = stream;
-      videoEl.srcObject = stream;
-      await videoEl.play().catch(() => {});
-      if (typeof document !== 'undefined') {
-        _qrVisibilityListener = () => {
-          if (document.hidden) {
-            try { videoEl.pause(); } catch (_) {}
-          } else if (_qrMediaStream) {
-            videoEl.play().catch(() => {});
-          }
-        };
-        document.addEventListener('visibilitychange', _qrVisibilityListener);
-      }
-
-      const DetectorCtor = (typeof window !== 'undefined' && window.BarcodeDetector) || (typeof globalThis !== 'undefined' && globalThis.BarcodeDetector);
-      const getJsQrFn = () => (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
-      if (typeof DetectorCtor !== 'function' && !getJsQrFn()) {
-        await ensureJsQrLoaded();
-      }
-      if (typeof DetectorCtor === 'function') {
-        const detector = new DetectorCtor({ formats: ['qr_code'] });
-        if (statusEl) {
-          statusEl.textContent = t('请将二维码对准取景框内', 'Align the QR code inside the frame');
-        }
-        _qrScanTimer = setInterval(async () => {
-          if (typeof document !== 'undefined' && document.hidden) return;
-          if (!_qrMediaStream || _qrScanHandling || videoEl.readyState < 2) return;
-          try {
-            const codes = await detector.detect(videoEl);
-            const hit = Array.isArray(codes) && codes.find((c) => c && c.rawValue);
-            if (hit && hit.rawValue) {
-              await handleQrScanResultAsync(hit.rawValue);
-            }
-          } catch (_) {}
-        }, 220);
-      } else if (typeof getJsQrFn() === 'function' && typeof document !== 'undefined') {
-        if (statusEl) {
-          statusEl.textContent = t('请将二维码对准取景框内', 'Align the QR code inside the frame');
-        }
-        const canvas = document.createElement('canvas');
-        const ctx2d = canvas.getContext ? canvas.getContext('2d', { willReadFrequently: true }) : null;
-        _qrScanTimer = setInterval(async () => {
-          if (typeof document !== 'undefined' && document.hidden) return;
-          if (!_qrMediaStream || _qrScanHandling || videoEl.readyState < 2 || !ctx2d) return;
-          const w = videoEl.videoWidth || 320;
-          const h = videoEl.videoHeight || 240;
-          if (!w || !h) return;
-          canvas.width = w;
-          canvas.height = h;
-          ctx2d.drawImage(videoEl, 0, 0, w, h);
-          try {
-            const imgData = ctx2d.getImageData(0, 0, w, h);
-            const jsQr = getJsQrFn();
-            const code = jsQr ? jsQr(imgData.data, w, h) : null;
-            if (code && code.data) {
-              await handleQrScanResultAsync(code.data);
-            }
-          } catch (_) {}
-        }, 260);
-      } else if (statusEl) {
-        statusEl.setAttribute('data-i18n-dynamic', '1');
-        statusEl.textContent = t('当前设备暂不支持摄像头扫码，请返回直接粘贴地址或链接', 'Camera QR scanner is unsupported on this device; please go back and paste the address or link');
-      }
-    } catch (_) {
-      if (statusEl) {
-        statusEl.setAttribute('data-i18n-dynamic', '1');
-        statusEl.textContent = t('无法访问摄像头（请检查相机权限），可点击「从相册选图」识别二维码', 'Camera access denied. Use "Pick from Album" to scan QR image.');
-      }
-    }
-  }
-
-  function closeQrScannerSheet() {
-    stopQrScannerStream();
-    if (_qrScanTarget === 'send') {
-      openSheet('sheet-send');
-    } else {
-      openSheet('sheet-walletconnect');
-    }
-  }
-
-  function triggerQrScannerFileInput() {
-    const inp = $('qr-scanner-file-input');
-    if (inp) {
-      inp.value = '';
-      inp.click();
-    }
-  }
-
-  async function handleQrScannerFileSelect(event) {
-    const file = event && event.target && event.target.files && event.target.files[0];
-    if (!file) return;
-    const DetectorCtor = (typeof window !== 'undefined' && window.BarcodeDetector) || (typeof globalThis !== 'undefined' && globalThis.BarcodeDetector);
-    let jsQrFn = (typeof window !== 'undefined' && window.jsQR) || (typeof globalThis !== 'undefined' && globalThis.jsQR) || null;
-    if (typeof DetectorCtor !== 'function' && typeof jsQrFn !== 'function') {
-      jsQrFn = await ensureJsQrLoaded();
-    }
-    if (typeof DetectorCtor !== 'function' && typeof jsQrFn !== 'function') {
-      showToast(t('当前设备不支持图片二维码识别，请直接复制 wc: 链接粘贴', 'Image QR decoding is unsupported on this device; paste the wc: link instead'));
-      return;
-    }
-    try {
-      let source = null;
-      if (typeof createImageBitmap === 'function') {
-        source = await createImageBitmap(file);
-      } else if (typeof Image !== 'undefined' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
-        const objUrl = URL.createObjectURL(file);
-        source = await new Promise((resolve, reject) => {
-          const img = new Image();
-          img.onload = () => {
-            try { URL.revokeObjectURL(objUrl); } catch (_) {}
-            resolve(img);
-          };
-          img.onerror = (err) => {
-            try { URL.revokeObjectURL(objUrl); } catch (_) {}
-            reject(err);
-          };
-          img.src = objUrl;
-        });
-      }
-      if (!source) throw new Error('Image decode unavailable');
-      let rawQr = '';
-      if (typeof DetectorCtor === 'function') {
-        const detector = new DetectorCtor({ formats: ['qr_code'] });
-        const codes = await detector.detect(source);
-        const hit = Array.isArray(codes) && codes.find((c) => c && c.rawValue);
-        if (hit && hit.rawValue) rawQr = hit.rawValue;
-      } else if (typeof jsQrFn === 'function' && typeof document !== 'undefined') {
-        const canvas = document.createElement('canvas');
-        const w = source.width || source.naturalWidth || 400;
-        const h = source.height || source.naturalHeight || 400;
-        canvas.width = w;
-        canvas.height = h;
-        const ctx2d = canvas.getContext && canvas.getContext('2d');
-        if (ctx2d) {
-          ctx2d.drawImage(source, 0, 0, w, h);
-          const imgData = ctx2d.getImageData(0, 0, w, h);
-          const res = jsQrFn(imgData.data, w, h);
-          if (res && res.data) rawQr = res.data;
-        }
-      }
-      if (rawQr) {
-        await handleQrScanResultAsync(rawQr);
-      } else {
-        showToast(t('未在图片中识别到有效二维码', 'No valid QR code found in image'));
-      }
-    } catch (_) {
-      showToast(t('二维码图片识别失败，请重试或直接粘贴链接', 'Failed to decode QR image'));
-    }
-  }
-

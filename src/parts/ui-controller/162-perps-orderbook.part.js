@@ -520,7 +520,11 @@
     if (chartWrap) chartWrap.classList.remove('hidden');
     if (chartSvgEl && !(chartSvgEl.dataset && chartSvgEl.dataset.interacting === '1')) {
       const selIdx = Number.isInteger(st.perp.inspectedCandleIdx) ? st.perp.inspectedCandleIdx : null;
-      chartSvgEl.innerHTML = renderPerpCandleSvg(st.perp.candles, market, selIdx);
+      if (typeof renderPerpChartHost === 'function') {
+        renderPerpChartHost(chartSvgEl, st.perp.candles, market, selIdx);
+      } else {
+        chartSvgEl.innerHTML = renderPerpCandleSvg(st.perp.candles, market, selIdx);
+      }
       bindPerpChartGestures();
       renderPerpCandleDetailBar(st.perp.candles, selIdx);
       if (chartHlEl) chartHlEl.textContent = '';
@@ -794,6 +798,8 @@
 
   function backToPerpOverview() {
     const st = getState();
+    if (typeof stopPerpChartMotion === 'function') stopPerpChartMotion();
+    st.perp.inspectedCandleIdx = null;
     st.perp.subView = 'overview';
     stopPerpLiveFeed();
     renderPerpView();
@@ -821,6 +827,7 @@
     st.perp.inspectedCandleIdx = null;
     st.perp.chartOffsetFromEnd = 0;
     st.perp.chartVisibleCount = 48;
+    if (typeof stopPerpChartMotion === 'function') stopPerpChartMotion();
     st.perp.overviewSearch = '';
     if ($('perp-overview-search')) $('perp-overview-search').value = '';
     if ($('perp-overview-search-clear')) $('perp-overview-search-clear').classList.add('hidden');

@@ -6,6 +6,7 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Message;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -65,6 +66,73 @@ public class NativeDAppBrowserPlugin extends Plugin {
         } catch (Exception ignored) {
         }
         return false;
+    }
+
+    private static String extractWcDeepLink(String rawUrl) {
+        if (rawUrl == null) return null;
+        String raw = rawUrl.trim();
+        if (raw.isEmpty()) return null;
+        String lower = raw.toLowerCase();
+
+        String[] markers = new String[] { "?uri=wc:", "&uri=wc:", "?wc=wc:", "&wc=wc:" };
+        for (String marker : markers) {
+            int idx = lower.indexOf(marker);
+            if (idx >= 0) {
+                String slice = raw.substring(idx + marker.length() - 3);
+                int hashIdx = slice.indexOf('#');
+                if (hashIdx >= 0) slice = slice.substring(0, hashIdx);
+                slice = slice.trim();
+                if (!slice.isEmpty()) return slice;
+            }
+        }
+
+        try {
+            Uri uri = Uri.parse(raw);
+            String scheme = uri.getScheme() != null ? uri.getScheme().toLowerCase() : "";
+            for (String key : new String[] { "uri", "wc" }) {
+                String param = uri.getQueryParameter(key);
+                if (param != null && !param.trim().isEmpty()) {
+                    String candidate = param.trim();
+                    if (!candidate.toLowerCase().startsWith("wc:")) {
+                        candidate = Uri.decode(candidate).trim();
+                    }
+                    if (candidate.toLowerCase().startsWith("wc:")) {
+                        return candidate;
+                    }
+                }
+            }
+            if ("wc".equals(scheme)) {
+                if (lower.startsWith("wc://")) {
+                    String afterSlashes = raw.substring(5);
+                    String afterLower = afterSlashes.toLowerCase();
+                    if (!afterLower.startsWith("wc?") && !afterLower.startsWith("?") && afterSlashes.contains("@")) {
+                        return "wc:" + afterSlashes;
+                    }
+                    return null;
+                }
+                return raw;
+            }
+            if ("nexuswallet".equals(scheme)) {
+                int wcIdx = lower.indexOf("wc:");
+                if (wcIdx >= 0) return raw.substring(wcIdx);
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private boolean dispatchWcDeepLinkIfMatched(final String rawUrl) {
+        final String wcUri = extractWcDeepLink(rawUrl);
+        if (wcUri == null || wcUri.isEmpty()) return false;
+        mainHandler.post(() -> {
+            if (overlayRoot != null) {
+                overlayRoot.setVisibility(View.GONE);
+            }
+            JSObject data = new JSObject();
+            data.put("uri", wcUri);
+            notifyListeners("wcUri", data);
+        });
+        return true;
     }
 
     private static String originString(String rawUrl) {
@@ -243,7 +311,7 @@ public class NativeDAppBrowserPlugin extends Plugin {
             settings.setJavaScriptEnabled(true);
             settings.setDomStorageEnabled(true);
             settings.setDatabaseEnabled(true);
-            settings.setSupportMultipleWindows(false);
+            settings.setSupportMultipleWindows(true);
             wv.addJavascriptInterface(new BridgeJsInterface(), "NexusAndroidBridge");
             wv.setWebChromeClient(new WebChromeClient() {
                 @Override
@@ -253,12 +321,64 @@ public class NativeDAppBrowserPlugin extends Plugin {
                         injectProviderIfAllowed(view, view.getUrl());
                     }
                 }
+
+                @Override
+                public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+                    if (view != null) {
+                        WebView.HitTestResult hit = view.getHitTestResult();
+                        if (hit != null && hit.getExtra() != null) {
+                            String target = hit.getExtra();
+                            if (dispatchWcDeepLinkIfMatched(target)) return false;
+                            if (isAllowedDAppUrl(target)) {
+                                view.loadUrl(target);
+                                return false;
+                            }
+                        }
+                    }
+                    if (resultMsg != null && resultMsg.obj instanceof WebView.WebViewTransport && view != null) {
+                        final WebView tempWebView = new WebView(view.getContext());
+                        tempWebView.setWebViewClient(new WebViewClient() {
+                            @Override
+                            public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest req) {
+                                String u = req != null && req.getUrl() != null ? req.getUrl().toString() : "";
+                                if (!dispatchWcDeepLinkIfMatched(u) && isAllowedDAppUrl(u) && dappWebView != null) {
+                                    dappWebView.loadUrl(u);
+                                }
+                                v.destroy();
+                                return true;
+                            }
+
+                            @SuppressWarnings("deprecation")
+                            @Override
+                            public boolean shouldOverrideUrlLoading(WebView v, String url) {
+                                if (!dispatchWcDeepLinkIfMatched(url) && isAllowedDAppUrl(url) && dappWebView != null) {
+                                    dappWebView.loadUrl(url);
+                                }
+                                v.destroy();
+                                return true;
+                            }
+                        });
+                        WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+                        transport.setWebView(tempWebView);
+                        resultMsg.sendToTarget();
+                        return true;
+                    }
+                    return false;
+                }
             });
             wv.setWebViewClient(new WebViewClient() {
                 @Override
                 public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                     String nextUrl = request != null && request.getUrl() != null ? request.getUrl().toString() : "";
+                    if (dispatchWcDeepLinkIfMatched(nextUrl)) return true;
                     return !isAllowedDAppUrl(nextUrl);
+                }
+
+                @SuppressWarnings("deprecation")
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                    if (dispatchWcDeepLinkIfMatched(url)) return true;
+                    return !isAllowedDAppUrl(url);
                 }
 
                 @Override

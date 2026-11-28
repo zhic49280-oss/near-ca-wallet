@@ -57,8 +57,8 @@
       return { disabled: true, error: msg, text: t('Arbitrum USDC 不足', 'Insufficient Arbitrum USDC') };
     }
     if (eth < minEth) {
-      const msg = t(`Arbitrum ETH Gas 不足 (需 >= ${minEth} ETH，当前 ${eth.toFixed(5)} ETH)`, `Need >= ${minEth} Arbitrum ETH for gas (${eth.toFixed(5)} avail)`);
-      return { disabled: true, error: msg, text: t('Arbitrum ETH Gas 不足', 'Insufficient ETH Gas') };
+      const msg = t(`Arbitrum 网络需使用 ETH 支付手续费 (需 >= ${minEth} ETH，当前 ${eth.toFixed(5)} ETH)`, `Arbitrum requires ETH for network fees (need >= ${minEth} ETH, avail ${eth.toFixed(5)} ETH)`);
+      return { disabled: true, error: msg, text: t('Arbitrum ETH 手续费不足', 'Insufficient ETH for Fee') };
     }
     return { disabled: false, error: '', text: t('确认 Arbitrum 充值', 'Confirm Arbitrum Deposit') };
   }
@@ -323,10 +323,20 @@
     if ($('perp-oc-target-addr')) $('perp-oc-target-addr').textContent = hlAddr ? shortenAddr(hlAddr, 8, 6) : '--';
     if ($('perp-wd-dest-addr')) $('perp-wd-dest-addr').textContent = hlAddr ? shortenAddr(hlAddr, 8, 6) : '--';
 
-    const arbUsdc = Number((st.getWalletErc20Balance && st.getWalletErc20Balance(wallet, 'arb', hl.HL_ARB_USDC_ADDRESS)) || 0);
-    const arbEth = contracts.resolveWalletChainBalance(wallet, 'arb');
-    if ($('perp-arb-usdc-avail')) $('perp-arb-usdc-avail').textContent = `${arbUsdc.toFixed(2)} USDC`;
-    if ($('perp-arb-eth-avail')) $('perp-arb-eth-avail').textContent = `${arbEth.toFixed(5)} ETH`;
+    const arbUsdcRaw = st.getWalletErc20Balance ? st.getWalletErc20Balance(wallet, 'arb', hl.HL_ARB_USDC_ADDRESS) : null;
+    const arbEthRaw = wallet.nativeBalances ? wallet.nativeBalances.arb : null;
+    const arbUsdcKnown = arbUsdcRaw !== null && arbUsdcRaw !== undefined && Number.isFinite(Number(arbUsdcRaw));
+    const arbEthKnown = arbEthRaw !== null && arbEthRaw !== undefined && Number.isFinite(Number(arbEthRaw));
+    const arbUsdc = arbUsdcKnown ? Number(arbUsdcRaw) : 0;
+    const arbEth = arbEthKnown ? Number(contracts.resolveWalletChainBalance(wallet, 'arb') || 0) : 0;
+    const minEthFee = hl ? hl.HL_ARB_MIN_ETH_GAS : 0.0002;
+    const usdcAvailEl = $('perp-arb-usdc-avail');
+    if (usdcAvailEl) usdcAvailEl.textContent = arbUsdcKnown ? `${arbUsdc.toFixed(2)} USDC` : '--';
+    const ethAvailEl = $('perp-arb-eth-avail');
+    if (ethAvailEl) {
+      ethAvailEl.textContent = arbEthKnown ? `${arbEth.toFixed(5)} ETH` : '--';
+      if (ethAvailEl.classList) ethAvailEl.classList.toggle('text-rose', arbEthKnown && arbEth < minEthFee);
+    }
 
     const acct = st.perp.account;
     const spotUsd = acct ? Number(acct.spotUsdc || 0) : 0;
@@ -783,7 +793,7 @@
       receiveLabel: t('预计到账', 'Est. Arrival'),
       receiveAmountText: `${rawAmtStr || amt} USDC`,
       networkPath: 'Arbitrum → Hyperliquid',
-      feeText: t('由 Arbitrum 网络扣除 ETH Gas', 'Arbitrum ETH gas'),
+      feeText: t('由 Arbitrum 链扣除 ETH 网络费', 'Paid in ETH on Arbitrum'),
       confirmLabel: t('确认充值', 'Confirm Deposit'),
       steps: arbSteps
     };

@@ -17,6 +17,8 @@
   const LIVE_TOKENS_STORAGE_KEY = 'near_ca_live_tokens_v1';
   const STAKING_METRICS_STORAGE_KEY = 'near_ca_staking_metrics_v3';
   const PERP_SNAPSHOT_STORAGE_KEY = 'near_ca_perp_snapshot_v1';
+  // Dedicated K-line history cache (compact rows, not in STORAGE_TOPIC_MAP so writes never re-render PerpView)
+  const PERP_CANDLES_STORAGE_KEY = 'near_ca_perp_candles_v1';
   const SWAP_PAIR_STORAGE_KEY = 'near_ca_swap_pair_v1';
   const ACTIVE_SWAP_ORDER_STORAGE_KEY = 'near_ca_active_swap_order_v1';
   const WC_PROJECT_ID_STORAGE_KEY = 'near_ca_wc_project_id';
@@ -93,11 +95,12 @@
       }
     } catch (err) {
       const isQuota = err && (err.name === 'QuotaExceededError' || err.code === 22 || /quota/i.test(String(err.message || '')));
-      if (isQuota && key !== LIVE_TOKENS_STORAGE_KEY && key !== PERP_SNAPSHOT_STORAGE_KEY) {
+      if (isQuota && key !== LIVE_TOKENS_STORAGE_KEY && key !== PERP_SNAPSHOT_STORAGE_KEY && key !== PERP_CANDLES_STORAGE_KEY) {
         try {
           safeStorageRemove(LIVE_TOKENS_STORAGE_KEY);
           safeStorageRemove(STAKING_METRICS_STORAGE_KEY);
           safeStorageRemove(PERP_SNAPSHOT_STORAGE_KEY);
+          safeStorageRemove(PERP_CANDLES_STORAGE_KEY);
           safeStorageRemove('near_ca_near_ft_icons_v1');
           localStorage.setItem(key, val);
           const topic = STORAGE_TOPIC_MAP[key];

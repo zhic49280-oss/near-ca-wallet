@@ -412,8 +412,10 @@
       return;
     }
     st.activeTab = ['wallet', 'swap', 'perp', 'earn', 'hub'].includes(tab) ? tab : 'wallet';
-    if (st.activeTab !== 'perp' && typeof stopPerpLiveFeed === 'function') {
-      stopPerpLiveFeed();
+    if (st.activeTab !== 'perp') {
+      if (st.perp) st.perp.inspectedCandleIdx = null;
+      if (typeof stopPerpChartMotion === 'function') stopPerpChartMotion();
+      if (typeof stopPerpLiveFeed === 'function') stopPerpLiveFeed();
     }
     if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
       try { window.scrollTo(0, 0); } catch (_) {}

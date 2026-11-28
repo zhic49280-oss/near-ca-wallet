@@ -1523,13 +1523,20 @@ test('v6.32: built-in WalletConnect Project ID & QR scanner URI/address parsing'
   }
 });
 
-test('v6.33: DAPP_CATALOG uses live near.com & updated ecosystem URLs without dead/legacy domains', () => {
+test('v6.33: DAPP_CATALOG uses live near.com & updated ecosystem URLs without duplicate Rhea or legacy domains', () => {
   const dappBrowserMod = require('../src/dapp-browser.js');
   const urls = dappBrowserMod.DAPP_CATALOG.map((d) => d.url);
   const intentsEntry = dappBrowserMod.DAPP_CATALOG.find((d) => d.id === 'intents');
   assert.equal(intentsEntry && intentsEntry.url, 'https://near.com');
-  const burrowEntry = dappBrowserMod.DAPP_CATALOG.find((d) => d.id === 'burrow');
-  assert.equal(burrowEntry && burrowEntry.url, 'https://app.rhea.finance/lending');
+  const rheaEntries = dappBrowserMod.DAPP_CATALOG.filter((d) => d.id === 'rhea' || /rhea\.finance/i.test(d.url));
+  assert.equal(rheaEntries.length, 1, 'DAPP_CATALOG must have exactly one unified Rhea Finance entry');
+  assert.equal(rheaEntries[0].id, 'rhea');
+  assert.equal(rheaEntries[0].name, 'Rhea Finance');
+  assert.equal(rheaEntries[0].url, 'https://app.rhea.finance');
+  assert.equal(/burrow|\(/i.test(rheaEntries[0].name), false, 'Rhea name must not contain parenthetical legacy names');
+  assert.equal(dappBrowserMod.DAPP_CATALOG.some((d) => d.id === 'burrow'), false, 'Duplicate burrow entry must be removed');
+  const origins = urls.map((u) => new URL(u).origin);
+  assert.equal(new Set(origins).size, dappBrowserMod.DAPP_CATALOG.length, 'DAPP_CATALOG must not contain duplicate origins');
   for (const legacy of ['app.near-intents.org', 'app.burrow.finance', 'app.kamino.finance', 'pancakeswap.finance']) {
     assert.equal(urls.some((u) => u.includes(legacy)), false, `DAPP_CATALOG must not contain legacy URL: ${legacy}`);
   }
@@ -2441,4 +2448,217 @@ test('v6.94: Solana signTransaction Uint8Array, multi-hop Stage1->2 guards (120/
     globalThis.Capacitor = prevCap;
     globalThis.confirm = prevConfirm;
   }
+});
+
+test('v6.97: Mobile WalletConnect URI unwrapping, init/pair timeouts, Relayer recovery, multi-chain namespaces & native Deep Link wiring', async () => {
+  const vm = require('node:vm');
+  const buildParts = require('../scripts/build-parts.js');
+
+  // 1. URI unwrapping & QR payload parsing
+  assert.equal(
+    uiController.extractWcPairingUri('wc://wc?uri=wc%3Aabc123%402%3Frelay-protocol%3Dirn%26symKey%3Dxyz'),
+    'wc:abc123@2?relay-protocol=irn&symKey=xyz'
+  );
+  assert.equal(
+    uiController.extractWcPairingUri('nexuswallet://wc?uri=wc:def456@2?relay-protocol=irn&symKey=abc'),
+    'wc:def456@2?relay-protocol=irn&symKey=abc'
+  );
+  assert.equal(
+    uiController.extractWcPairingUri('https://metamask.app.link/wc?uri=wc%3Aghi789%402%3Frelay-protocol%3Dirn%26symKey%3D123'),
+    'wc:ghi789@2?relay-protocol=irn&symKey=123'
+  );
+  assert.equal(uiController.extractWcPairingUri('wc://wc?uri='), '');
+  assert.deepEqual(
+    uiController.parseScannedAddressPayload('wc://wc?uri=wc%3Ascan111%402%3Frelay-protocol%3Dirn%26symKey%3Daaa'),
+    { type: 'wc', value: 'wc:scan111@2?relay-protocol=irn&symKey=aaa' }
+  );
+
+  // 2. resolveWcMetadata never leaks capacitor://localhost or https://localhost
+  const prevLoc = globalThis.location;
+  try {
+    globalThis.location = { origin: 'capacitor://localhost' };
+    const capMeta = uiController.resolveWcMetadata();
+    assert.equal(capMeta.url, 'https://near.org');
+    assert.ok(Array.isArray(capMeta.icons) && capMeta.icons[0].startsWith('https://'));
+
+    globalThis.location = { origin: 'https://localhost' };
+    const andMeta = uiController.resolveWcMetadata();
+    assert.equal(andMeta.url, 'https://near.org');
+
+    globalThis.location = { origin: 'https://wallet.example.com' };
+    const pubMeta = uiController.resolveWcMetadata();
+    assert.equal(pubMeta.url, 'https://wallet.example.com');
+  } finally {
+    globalThis.location = prevLoc;
+  }
+
+  // 3. loadScriptOnce reuses pending <script> tag and times out cleanly without leaving stale cache
+  const prevDoc = globalThis.document;
+  const prevWin = globalThis.window;
+  const prevCap = globalThis.Capacitor;
+  const domMap = new Map();
+  const appendedScripts = [];
+  const getOrMake = (id) => {
+    if (!domMap.has(id)) domMap.set(id, createMockDomElement(id));
+    return domMap.get(id);
+  };
+  globalThis.document = {
+    activeElement: null,
+    documentElement: { lang: 'zh-CN', classList: createMockClassList() },
+    head: {
+      appendChild: (el) => { el.parentNode = globalThis.document.head; appendedScripts.push(el); },
+      removeChild: (el) => { el.parentNode = null; }
+    },
+    getElementById: (id) => (id === 'sheet-confirm-dialog' ? null : getOrMake(id)),
+    createElement: (tag) => {
+      const el = createMockDomElement(tag);
+      el.dataset = {};
+      el.listeners = {};
+      el.addEventListener = (ev, fn) => { el.listeners[ev] = fn; };
+      el.removeEventListener = (ev) => { delete el.listeners[ev]; };
+      return el;
+    },
+    querySelector: (sel) => {
+      const m = sel.match(/^script\[src\^="([^"]+)"\]$/);
+      if (m) return appendedScripts.find((s) => s.parentNode && String(s.src || '').startsWith(m[1])) || null;
+      return null;
+    },
+    querySelectorAll: () => []
+  };
+  globalThis.window = {};
+  try {
+    // Assemble fresh uiController in VM to test loadScriptOnce & ensureWcReady init/pair/relayer paths cleanly
+    const assembledUi = buildParts.assemble('ui-controller');
+    const sandbox = {
+      globalThis: null,
+      window: globalThis.window,
+      document: globalThis.document,
+      location: { origin: 'capacitor://localhost', protocol: 'capacitor:' },
+      console,
+      setTimeout,
+      clearTimeout,
+      URLSearchParams,
+      URL,
+      TextEncoder,
+      TextDecoder,
+      Promise,
+      Uint8Array,
+      Set,
+      Map,
+      BigInt,
+      NearCAState: state,
+      NearCACrypto: cryptoEngine,
+      NearCAContracts: chainContracts,
+      NearCAFramework: { mountWcProposalPanel() {}, mountWcSessionsPanel() {}, mountToastBanner() {} }
+    };
+    sandbox.globalThis = sandbox;
+    vm.runInNewContext(assembledUi, sandbox);
+    const uiVm = sandbox.NearCAUI;
+
+    // 3a. Concurrent loadScriptOnce deduplicates DOM script insertion & times out cleanly
+    const pLoad1 = uiVm.loadScriptOnce('https://cdn.example/test-dedup.js?v=1', 1200);
+    const pLoad2 = uiVm.loadScriptOnce('https://cdn.example/test-dedup.js?v=1', 1200);
+    assert.equal(pLoad1, pLoad2);
+    assert.equal(appendedScripts.length, 1, 'loadScriptOnce must not insert duplicate <script> tags');
+    appendedScripts[0].listeners.load();
+    assert.equal(await pLoad1, true);
+
+    const pTimeout = uiVm.loadScriptOnce('https://cdn.example/never-loads.js?v=1', 1000);
+    await assert.rejects(() => pTimeout, /Timed out/i);
+    assert.equal(appendedScripts[1].parentNode, null, 'Timed out <script> must be removed from DOM');
+
+    // 3b. WalletConnect init failure clears _wcInitPromise so subsequent retry succeeds, and Relayer reconnect works
+    let initAttempts = 0;
+    let restartCalled = 0;
+    let pairCalledUri = '';
+    let mockRelayerConnected = false;
+    sandbox.window.PearlWalletConnect = {
+      Core: function Core() {
+        this.relayer = {
+          get connected() { return mockRelayerConnected; },
+          restartTransport: async () => { restartCalled++; mockRelayerConnected = true; },
+          transportClose: async () => {},
+          on: () => {}
+        };
+      },
+      Web3Wallet: {
+        init: async () => {
+          initAttempts++;
+          if (initAttempts === 1) throw new Error('WebSocket handshake failed');
+          mockRelayerConnected = true;
+          return {
+            core: {
+              relayer: {
+                get connected() { return mockRelayerConnected; },
+                restartTransport: async () => { restartCalled++; mockRelayerConnected = true; },
+                transportClose: async () => {},
+                on: () => {}
+              },
+              pairing: {
+                pair: async ({ uri }) => { pairCalledUri = uri; }
+              }
+            },
+            on: () => {},
+            off: () => {},
+            getActiveSessions: () => ({})
+          };
+        }
+      }
+    };
+    state.wc.client = null;
+    state.wc.initProjectId = '';
+    await uiVm.openWalletConnectSheet();
+    assert.equal(initAttempts, 1);
+
+    // Retry via pairWalletConnectUri with wrapped wc://wc?uri=... must recover cleanly
+    getOrMake('wc-uri-input').value = 'wc://wc?uri=wc%3Aretry99%402%3Frelay-protocol%3Dirn%26symKey%3Dabc';
+    const pairedOk = await uiVm.pairWalletConnectUri();
+    assert.equal(pairedOk, true);
+    assert.equal(initAttempts, 2, 'Failed _wcInitPromise must not deadlock subsequent retry');
+    assert.equal(pairCalledUri, 'wc:retry99@2?relay-protocol=irn&symKey=abc');
+    assert.equal(getOrMake('btn-wc-pair').disabled, false, 'Pair button must be re-enabled after pairing');
+
+    // Relayer disconnect recovery
+    mockRelayerConnected = false;
+    const recOk = await uiVm.reconnectWcRelayerIfNeeded();
+    assert.equal(recOk, true);
+    assert.equal(restartCalled, 1, 'Disconnected relayer must trigger restartTransport');
+
+    // Legacy v1 URI rejected gracefully without calling pair
+    pairCalledUri = '';
+    getOrMake('wc-uri-input').value = 'wc:legacy@1?bridge=https://bridge.walletconnect.org&key=123';
+    const v1Ok = await uiVm.pairWalletConnectUri();
+    assert.equal(v1Ok, false);
+    assert.equal(pairCalledUri, '', 'Legacy WC v1 URI must be rejected before calling pair()');
+  } finally {
+    globalThis.document = prevDoc;
+    globalThis.window = prevWin;
+    globalThis.Capacitor = prevCap;
+    state.wc.client = null;
+    state.wc.initProjectId = '';
+    state.wc.pendingProposal = null;
+    state.wc.pendingRequest = null;
+  }
+
+  // 4. Native shell Deep Link & WC interception checks + Preact WalletConnectPanel multi-chain rendering
+  const swiftSrc = fs.readFileSync(path.join(ROOT_DIR, 'ios/App/App/NativeDAppBrowserPlugin.swift'), 'utf8');
+  assert.ok(swiftSrc.includes('extractWcDeepLink') && swiftSrc.includes('notifyListeners("wcUri"'), 'iOS DApp plugin must intercept wc: links and emit wcUri');
+  const plistSrc = fs.readFileSync(path.join(ROOT_DIR, 'ios/App/App/Info.plist'), 'utf8');
+  assert.ok(plistSrc.includes('CFBundleURLTypes') && plistSrc.includes('<string>wc</string>') && plistSrc.includes('<string>nexuswallet</string>'), 'Info.plist must declare wc and nexuswallet schemes');
+
+  const javaSrc = fs.readFileSync(path.join(ROOT_DIR, 'android/app/src/main/java/io/nexus/wallet/NativeDAppBrowserPlugin.java'), 'utf8');
+  assert.ok(javaSrc.includes('extractWcDeepLink') && javaSrc.includes('notifyListeners("wcUri"') && javaSrc.includes('onCreateWindow'), 'Android DApp plugin must intercept wc: links across navigation and window.open');
+  const manifestSrc = fs.readFileSync(path.join(ROOT_DIR, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+  assert.ok(manifestSrc.includes('android:scheme="wc"') && manifestSrc.includes('android:scheme="nexuswallet"'), 'AndroidManifest.xml must declare wc and nexuswallet intent-filter');
+
+  const dappPartSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/235-dapp-browser.part.js'), 'utf8');
+  assert.ok(dappPartSrc.includes("addListener('wcUri'") && dappPartSrc.includes('_launchingDApp'), '235-dapp-browser must listen for wcUri and guard launchDAppUrl');
+  const lifePartSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/parts/ui-controller/240-lifecycle.part.js'), 'utf8');
+  assert.ok(lifePartSrc.includes("'appUrlOpen'") && lifePartSrc.includes('getLaunchUrl') && lifePartSrc.includes('reconnectWcRelayerIfNeeded'), '240-lifecycle must bind appUrlOpen/getLaunchUrl and relayer resume');
+
+  const wcPanelSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/app/components/WalletConnectPanel.jsx'), 'utf8');
+  assert.ok(wcPanelSrc.includes("'solana'") && wcPanelSrc.includes("'near'"), 'WalletConnectPanel.jsx must display Solana and NEAR namespaces');
+  assert.ok(fs.statSync(path.join(ROOT_DIR, 'src/parts/ui-controller/230-walletconnect.part.js')).size <= 51200, '230-walletconnect.part.js must stay <= 50KB soft cap');
+  assert.ok(fs.statSync(path.join(ROOT_DIR, 'src/parts/ui-controller/229-walletconnect-core.part.js')).size <= 51200, '229-walletconnect-core.part.js must stay <= 50KB soft cap');
+  assert.ok(fs.statSync(path.join(ROOT_DIR, 'src/parts/ui-controller/231-qr-scanner.part.js')).size <= 51200, '231-qr-scanner.part.js must stay <= 50KB soft cap');
 });

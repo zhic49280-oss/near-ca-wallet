@@ -25,27 +25,6 @@
     return `${mm}/${dd} ${hh}:${mi}`;
   }
 
-  function formatPerpCandleCountdown(interval, nowMs = Date.now()) {
-    const map = {
-      '1m': 60000,
-      '5m': 300000,
-      '15m': 900000,
-      '30m': 1800000,
-      '1h': 3600000,
-      '4h': 14400000,
-      '1d': 86400000
-    };
-    const ivMs = map[String(interval || '15m')] || 900000;
-    const remSec = Math.max(0, Math.floor((ivMs - (nowMs % ivMs)) / 1000));
-    const hh = Math.floor(remSec / 3600);
-    const mm = Math.floor((remSec % 3600) / 60);
-    const ss = remSec % 60;
-    if (hh > 0) {
-      return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
-    }
-    return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
-  }
-
   function renderPerpCandleDetailBar(candles, selectedIdx = null) {
     const el = $('perp-candle-detail');
     if (!el) return;
@@ -237,7 +216,8 @@
   let _lastTapHandledAt = 0;
 
   function inspectPerpCandle(idx, fromTouch = false) {
-    if (_lastLongPressAt && (Date.now() - _lastLongPressAt) < 350) {
+    // Long-press / drag guards only swallow the browser's synthetic click, never a fresh touch tap
+    if (!fromTouch && _lastLongPressAt && (Date.now() - _lastLongPressAt) < 350) {
       return;
     }
     if (!fromTouch && _lastTapHandledAt && (Date.now() - _lastTapHandledAt) < 450) {
@@ -257,11 +237,75 @@
     const market = getSelectedPerpMarket();
     const chartSvgEl = $('perp-chart-svg');
     if (chartSvgEl) {
-      if (!updatePerpCrosshairOverlay(chartSvgEl, st.perp.candles, st.perp.inspectedCandleIdx)) {
+      const useCanvas = typeof canUsePerpChartCanvas === 'function'
+        && canUsePerpChartCanvas()
+        && typeof drawPerpCandleCanvas === 'function'
+        && typeof chartSvgEl.querySelector === 'function'
+        && Boolean(chartSvgEl.querySelector('canvas.perp-chart-canvas'));
+      if (useCanvas) {
+        drawPerpCandleCanvas(chartSvgEl, st.perp.candles, market, st.perp.inspectedCandleIdx, { skipResize: true });
+        if (chartSvgEl.dataset) chartSvgEl.dataset.chartSig = '';
+      } else if (!updatePerpCrosshairOverlay(chartSvgEl, st.perp.candles, st.perp.inspectedCandleIdx)) {
         chartSvgEl.innerHTML = renderPerpCandleSvg(st.perp.candles, market, st.perp.inspectedCandleIdx);
+        if (chartSvgEl.dataset) chartSvgEl.dataset.chartSig = '';
       }
     }
     renderPerpCandleDetailBar(st.perp.candles, st.perp.inspectedCandleIdx);
+  }
+
+  function isInsidePerpChartHost(host, target) {
+    if (!host || !target) return false;
+    if (target === host) return true;
+    if (typeof host.contains === 'function') {
+      try { if (host.contains(target)) return true; } catch (_) {}
+    }
+    let cur = target.parentNode;
+    while (cur) {
+      if (cur === host) return true;
+      cur = cur.parentNode;
+    }
+    return false;
+  }
+
+  function clearPerpCandleInspection() {
+    const st = getState();
+    if (!st || !st.perp || st.perp.inspectedCandleIdx === null || st.perp.inspectedCandleIdx === undefined) {
+      return false;
+    }
+    st.perp.inspectedCandleIdx = null;
+    const chartSvgEl = $('perp-chart-svg');
+    if (chartSvgEl) {
+      const useCanvas = typeof canUsePerpChartCanvas === 'function'
+        && canUsePerpChartCanvas()
+        && typeof drawPerpCandleCanvas === 'function'
+        && typeof chartSvgEl.querySelector === 'function'
+        && Boolean(chartSvgEl.querySelector('canvas.perp-chart-canvas'));
+      if (useCanvas) {
+        drawPerpCandleCanvas(chartSvgEl, st.perp.candles, getSelectedPerpMarket(), null, { skipResize: true });
+        if (chartSvgEl.dataset) chartSvgEl.dataset.chartSig = '';
+      } else if (!updatePerpCrosshairOverlay(chartSvgEl, st.perp.candles, null)) {
+        chartSvgEl.innerHTML = renderPerpCandleSvg(st.perp.candles, getSelectedPerpMarket(), null);
+        if (chartSvgEl.dataset) chartSvgEl.dataset.chartSig = '';
+      }
+    }
+    renderPerpCandleDetailBar(st.perp.candles, null);
+    return true;
+  }
+
+  function bindPerpChartOutsideDismiss() {
+    if (typeof document === 'undefined' || !document || typeof document.addEventListener !== 'function') return;
+    if (document.__perpOutsideDismissBound) return;
+    document.__perpOutsideDismissBound = true;
+    const dismissIfOutside = (e) => {
+      const st = getState();
+      if (!st || !st.perp || st.perp.inspectedCandleIdx === null || st.perp.inspectedCandleIdx === undefined) return;
+      const host = $('perp-chart-svg');
+      if (isInsidePerpChartHost(host, e && e.target)) return;
+      clearPerpCandleInspection();
+    };
+    document.addEventListener('touchstart', dismissIfOutside, { capture: true, passive: true });
+    document.addEventListener('mousedown', dismissIfOutside, { capture: true });
+    document.addEventListener('click', dismissIfOutside, { capture: true });
   }
 
   function renderPerpCandleSvg(candles, market = null, selectedIdx = null, renderOpts = null) {
@@ -407,21 +451,13 @@
       ? `<text x="${(loX - 4).toFixed(1)}" y="${Math.min(candleBottom - 2, loY + 3).toFixed(1)}" text-anchor="end" fill="#e2e8f0" font-size="8.5" font-weight="600" font-family="ui-monospace, monospace">${escapeHtml(formatPerpPx(minLow))} →</text>`
       : `<text x="${(loX + 4).toFixed(1)}" y="${Math.min(candleBottom - 2, loY + 3).toFixed(1)}" text-anchor="start" fill="#e2e8f0" font-size="8.5" font-weight="600" font-family="ui-monospace, monospace">← ${escapeHtml(formatPerpPx(minLow))}</text>`;
 
-    // Separator between candle and volume zones + Live Mark Price & Countdown Pill
+    // Separator between candle and volume zones + lightweight live mark price dashed line
+    // (no right-side price/countdown pill: it covered the newest candles; price is already shown in header & orderbook)
     let markSvg = `<line x1="${plotL}" y1="${volTop - 4}" x2="${bufPlotR.toFixed(1)}" y2="${volTop - 4}" stroke="rgba(255,255,255,0.06)" stroke-width="0.8" />`;
     const livePx = (market && Number(market.markPx)) || bufList[bufList.length - 1].c;
     if (Number.isFinite(livePx) && livePx > 0) {
       const ym = yOf(livePx);
       markSvg += `<line x1="${plotL}" y1="${ym.toFixed(1)}" x2="${bufPlotR.toFixed(1)}" y2="${ym.toFixed(1)}" stroke="#00ec97" stroke-dasharray="3 2" stroke-width="0.95" stroke-opacity="0.85" />`;
-      if (reqOverscan === 0) {
-        const pillH = 22;
-        const pillY = Math.max(candleTop, Math.min(candleBottom - pillH, ym - pillH / 2));
-        const stChart = getState();
-        const countdownStr = formatPerpCandleCountdown(stChart && stChart.perp && stChart.perp.chartInterval, Date.now());
-        markSvg += `<rect x="290" y="${pillY.toFixed(1)}" width="64" height="${pillH}" rx="3" fill="rgba(6,10,20,0.92)" stroke="rgba(0,236,151,0.78)" stroke-width="0.75" />` +
-          `<text x="322" y="${(pillY + 9.5).toFixed(1)}" text-anchor="middle" fill="#00ec97" font-size="8.0" font-weight="700" font-family="ui-monospace, monospace">${escapeHtml(formatPerpPx(livePx))}</text>` +
-          `<text x="322" y="${(pillY + 18.5).toFixed(1)}" text-anchor="middle" fill="rgba(226,232,240,0.85)" font-size="7.1" font-weight="600" font-family="ui-monospace, monospace">${escapeHtml(countdownStr)}</text>`;
-      }
     }
 
     // Active Crosshair Overlay (always present so scrub updates coordinates without rebuilding SVG)
@@ -464,8 +500,16 @@
     return `<svg viewBox="0 0 ${vbW} ${H}" preserveAspectRatio="xMidYMin meet" class="perp-chart-svg"${svgStyleAttr}>${legendSvg}${gridSvg}${timeGridSvg}${candleSvg}${maSvg}${hiPin}${loPin}${markSvg}${crosshairSvg}${hitTargetsSvg}</svg>`;
   }
 
+  function stopPerpChartMotion() {
+    const host = $('perp-chart-svg');
+    if (host && typeof host._stopPerpMotion === 'function') {
+      host._stopPerpMotion();
+    }
+  }
+
   function bindPerpChartGestures() {
     if (typeof document === 'undefined') return;
+    bindPerpChartOutsideDismiss();
     const host = $('perp-chart-svg');
     if (!host || (host.dataset && host.dataset.gesturesBound === '1') || typeof host.addEventListener !== 'function') return;
     if (host.dataset) host.dataset.gesturesBound = '1';
@@ -481,22 +525,20 @@
         : Date.now()
     );
 
-    let cachedRect = { width: 320, left: 0 };
+    let cachedRect = { width: 0, height: 0, left: 0 };
     const refreshHostRect = () => {
       if (typeof host.getBoundingClientRect !== 'function') return cachedRect;
       const r = host.getBoundingClientRect();
       if (r && r.width > 0) {
-        cachedRect = { width: r.width, left: Number(r.left) || 0 };
+        cachedRect = {
+          width: r.width,
+          height: Number(r.height) || Math.round(r.width * (216 / 360)),
+          left: Number(r.left) || 0
+        };
       }
       return cachedRect;
     };
     refreshHostRect();
-    if (typeof ResizeObserver === 'function') {
-      try {
-        const ro = new ResizeObserver(() => { refreshHostRect(); });
-        ro.observe(host);
-      } catch (_) {}
-    }
 
     const PAN_OVERSCAN_CANDLES = 24;
     const PAN_REDRAW_THROTTLE_MS = 90;
@@ -512,6 +554,7 @@
     let startOffset = 0;
     let startPinchDist = 0;
     let startVisibleCount = 48;
+    let floatVisibleCount = Number((getState().perp && getState().perp.chartVisibleCount) || 48);
     let activeTouchId = null;
     let touchStartTime = 0;
     let maxTouchMoveDist = 0;
@@ -542,14 +585,49 @@
     let mouseStartX = 0;
     let mouseStartOffset = 0;
 
+    const useCanvasMode = () => (
+      typeof canUsePerpChartCanvas === 'function'
+      && canUsePerpChartCanvas()
+      && typeof drawPerpCandleCanvas === 'function'
+    );
+
+    if (typeof ResizeObserver === 'function') {
+      try {
+        const ro = new ResizeObserver(() => {
+          refreshHostRect();
+          if (useCanvasMode() && host.querySelector('canvas.perp-chart-canvas')) {
+            const stR = getState();
+            if (stR && stR.perp) {
+              const isInteracting = Boolean(host.dataset && host.dataset.interacting === '1');
+              if (!isInteracting) {
+                const syncOff = Number(stR.perp.chartOffsetFromEnd || 0);
+                const syncVis = Math.max(20, Math.min(140, Math.round(Number(stR.perp.chartVisibleCount || 48))));
+                renderedOffset = syncOff;
+                floatOffset = syncOff;
+                floatVisibleCount = syncVis;
+              }
+              drawPerpCandleCanvas(host, stR.perp.candles, getSelectedPerpMarket(), stR.perp.inspectedCandleIdx, {
+                floatOffset,
+                floatVisibleCount,
+                cachedRect
+              });
+              if (!isInteracting && host.dataset) host.dataset.chartSig = '';
+            }
+          }
+        });
+        ro.observe(host);
+      } catch (_) {}
+    }
+
     const getPxPerCandle = (st) => {
       const width = cachedRect.width || 320;
       const plotPx = Math.max(60, width * (348 / 360));
-      const visCount = Math.max(20, Math.min(140, Math.round(Number((st && st.perp && st.perp.chartVisibleCount) || 48))));
+      const visCount = Math.max(20, Math.min(140, Number(floatVisibleCount || (st && st.perp && st.perp.chartVisibleCount) || 48)));
       return plotPx / visCount;
     };
 
     const setChartPanTransform = (px) => {
+      if (useCanvasMode()) return;
       const target = (host.firstElementChild && host.firstElementChild.style) ? host.firstElementChild : host;
       if (!target || !target.style) return;
       if (!px || Math.abs(px) < 0.05) {
@@ -562,6 +640,7 @@
     };
 
     const schedulePanTransform = (px) => {
+      if (useCanvasMode()) return;
       pendingPanPx = px;
       if (typeof requestAnimationFrame !== 'function') {
         setChartPanTransform(pendingPanPx);
@@ -603,6 +682,28 @@
       if (!st || !st.perp) return;
       const market = getSelectedPerpMarket();
       const selIdx = st.perp.inspectedCandleIdx;
+
+      if (useCanvasMode()) {
+        drawPerpCandleCanvas(host, st.perp.candles, market, selIdx, {
+          floatOffset,
+          floatVisibleCount,
+          cachedRect,
+          skipResize: true
+        });
+        if (host.dataset) host.dataset.chartSig = '';
+        renderedOffset = interactive ? floatOffset : Number(st.perp.chartOffsetFromEnd || 0);
+        if (!interactive) {
+          floatOffset = renderedOffset;
+          floatVisibleCount = Number(st.perp.chartVisibleCount || 48);
+        }
+        lastRedrawAt = nowMs();
+        if (lastDetailIdx !== selIdx) {
+          lastDetailIdx = selIdx;
+          renderPerpCandleDetailBar(st.perp.candles, selIdx);
+        }
+        return;
+      }
+
       const win = getPerpChartWindow(st.perp.candles);
       const useOverscan = interactive && win.fullList.length > win.list.length;
       host.innerHTML = renderPerpCandleSvg(
@@ -611,6 +712,7 @@
         selIdx,
         useOverscan ? { interactive: true, overscan: PAN_OVERSCAN_CANDLES } : (interactive ? { interactive: true } : null)
       );
+      if (host.dataset) host.dataset.chartSig = '';
       renderedOffset = Number(st.perp.chartOffsetFromEnd || 0);
       renderedIsOverscan = Boolean(useOverscan);
       if (useOverscan) {
@@ -655,6 +757,14 @@
       });
     };
 
+    const maybeBackfillOlderCandles = (total, visCount, offsetVal) => {
+      const winEnd = total - Math.round(offsetVal);
+      const winStart = winEnd - Math.round(visCount);
+      if (total >= visCount && winStart <= 12 && typeof loadOlderPerpCandlesAsync === 'function') {
+        loadOlderPerpCandlesAsync().catch(() => {});
+      }
+    };
+
     const applyContinuousOffset = (nextFloatOffset, interactive = true) => {
       const st = getState();
       const total = Array.isArray(st.perp && st.perp.candles) ? st.perp.candles.length : 0;
@@ -663,7 +773,6 @@
       const clamped = Math.max(0, Math.min(maxOff, nextFloatOffset));
       floatOffset = clamped;
       const targetInt = Math.round(clamped);
-      const pxPerCandle = getPxPerCandle(st);
 
       if (st.perp.inspectedCandleIdx !== null && st.perp.inspectedCandleIdx !== undefined) {
         st.perp.inspectedCandleIdx = null;
@@ -671,13 +780,20 @@
         renderPerpCandleDetailBar(st.perp.candles, null);
       }
 
-      const visualShiftPx = (floatOffset - renderedOffset) * pxPerCandle;
-      schedulePanTransform(visualShiftPx);
-
       if (targetInt !== st.perp.chartOffsetFromEnd) {
         st.perp.chartOffsetFromEnd = targetInt;
         panBoundaryCrossed = true;
       }
+      maybeBackfillOlderCandles(total, visCount, clamped);
+
+      if (useCanvasMode()) {
+        scheduleChartRedraw(interactive);
+        return { clamped, hitBound: clamped !== nextFloatOffset, maxOff };
+      }
+
+      const pxPerCandle = getPxPerCandle(st);
+      const visualShiftPx = (floatOffset - renderedOffset) * pxPerCandle;
+      schedulePanTransform(visualShiftPx);
 
       if (targetInt !== renderedOffset) {
         const deltaFromRendered = floatOffset - renderedOffset;
@@ -725,6 +841,7 @@
     const settlePanToInteger = () => {
       stopPanInertia();
       clearRedrawThrottle();
+      if (host.dataset) host.dataset.interacting = '';
       const st = getState();
       const total = Array.isArray(st.perp && st.perp.candles) ? st.perp.candles.length : 0;
       const visCount = Math.max(20, Math.min(140, Math.round(Number((st.perp && st.perp.chartVisibleCount) || 48))));
@@ -732,6 +849,8 @@
       const finalOff = Math.max(0, Math.min(maxOff, Math.round(floatOffset)));
       st.perp.chartOffsetFromEnd = finalOff;
       floatOffset = finalOff;
+      floatVisibleCount = visCount;
+      maybeBackfillOlderCandles(total, visCount, finalOff);
       scheduleChartRedraw(false);
     };
 
@@ -741,6 +860,7 @@
         settlePanToInteger();
         return;
       }
+      if (host.dataset) host.dataset.interacting = '1';
       let vx = Math.max(-INERTIA_MAX_V, Math.min(INERTIA_MAX_V, initialV));
       let prevTs = nowMs();
       const step = () => {
@@ -775,7 +895,14 @@
     const scheduleCrosshairUpdate = () => {
       const applyOverlay = () => {
         const st = getState();
-        if (!updatePerpCrosshairOverlay(host, st.perp.candles, st.perp.inspectedCandleIdx)) {
+        if (useCanvasMode()) {
+          drawPerpCandleCanvas(host, st.perp.candles, getSelectedPerpMarket(), st.perp.inspectedCandleIdx, {
+            floatOffset,
+            floatVisibleCount,
+            cachedRect,
+            skipResize: true
+          });
+        } else if (!updatePerpCrosshairOverlay(host, st.perp.candles, st.perp.inspectedCandleIdx)) {
           const market = getSelectedPerpMarket();
           host.innerHTML = renderPerpCandleSvg(st.perp.candles, market, st.perp.inspectedCandleIdx);
           renderedOffset = Number(st.perp.chartOffsetFromEnd || 0);
@@ -803,9 +930,37 @@
       pendingRedrawInteractive = false;
     };
 
+    const stopAndSyncFromState = () => {
+      stopPanInertia();
+      clearRedrawThrottle();
+      cancelScheduledRedraw();
+      if (scrubRafId && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(scrubRafId);
+        scrubRafId = 0;
+      }
+      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      mode = null;
+      mouseDown = false;
+      mouseDragged = false;
+      activeTouchId = null;
+      panBoundaryCrossed = false;
+      if (host.dataset) host.dataset.interacting = '';
+      if (host.style) host.style.cursor = 'grab';
+      const stSync = getState();
+      const curOff = Number((stSync && stSync.perp && stSync.perp.chartOffsetFromEnd) || 0);
+      const curVis = Math.max(20, Math.min(140, Math.round(Number((stSync && stSync.perp && stSync.perp.chartVisibleCount) || 48))));
+      renderedOffset = curOff;
+      floatOffset = curOff;
+      floatVisibleCount = curVis;
+      resetPanTransform();
+    };
+    host._stopPerpMotion = stopAndSyncFromState;
+
     const syncOffsetFromState = (wasCoasting) => {
       const st = getState();
       const curStateOff = Number((st.perp && st.perp.chartOffsetFromEnd) || 0);
+      const curVis = Math.max(20, Math.min(140, Math.round(Number((st.perp && st.perp.chartVisibleCount) || 48))));
+      floatVisibleCount = curVis;
       if (!wasCoasting || Math.abs(Math.round(floatOffset) - curStateOff) > 1) {
         renderedOffset = curStateOff;
         floatOffset = curStateOff;
@@ -823,6 +978,12 @@
       return touches[0];
     };
 
+    const preventWebKitZoom = (e) => {
+      if (e && e.cancelable) e.preventDefault();
+    };
+    host.addEventListener('gesturestart', preventWebKitZoom, { passive: false });
+    host.addEventListener('gesturechange', preventWebKitZoom, { passive: false });
+
     host.addEventListener('touchstart', (e) => {
       if (!e.touches) return;
       if (host.dataset) host.dataset.interacting = '1';
@@ -830,7 +991,7 @@
       stopPanInertia();
       clearRedrawThrottle();
       cancelScheduledRedraw();
-      refreshHostRect();
+      if (!cachedRect.width) refreshHostRect();
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
       const st = getState();
       syncOffsetFromState(wasCoasting);
@@ -842,6 +1003,7 @@
           e.touches[0].clientY - e.touches[1].clientY
         );
         startVisibleCount = Math.max(20, Math.min(140, Math.round(Number(st.perp.chartVisibleCount || 48))));
+        floatVisibleCount = startVisibleCount;
         return;
       }
       if (e.touches.length === 1) {
@@ -881,11 +1043,21 @@
           e.touches[0].clientY - e.touches[1].clientY
         );
         const scale = startPinchDist / Math.max(10, dist);
-        const prevVisibleCount = Math.max(20, Math.min(140, Math.round(Number(st.perp.chartVisibleCount || 48))));
-        const nextVisibleCount = Math.max(20, Math.min(140, Math.round(startVisibleCount * scale)));
-        if (nextVisibleCount !== prevVisibleCount) {
-          st.perp.chartVisibleCount = nextVisibleCount;
-          scheduleChartRedraw(false);
+        if (useCanvasMode()) {
+          const nextFloatVis = Math.max(20, Math.min(140, startVisibleCount * scale));
+          if (Math.abs(nextFloatVis - floatVisibleCount) >= 0.08) {
+            floatVisibleCount = nextFloatVis;
+            st.perp.chartVisibleCount = Math.round(nextFloatVis);
+            scheduleChartRedraw(true);
+          }
+        } else {
+          const prevVisibleCount = Math.max(20, Math.min(140, Math.round(Number(st.perp.chartVisibleCount || 48))));
+          const nextVisibleCount = Math.max(20, Math.min(140, Math.round(startVisibleCount * scale)));
+          if (nextVisibleCount !== prevVisibleCount) {
+            st.perp.chartVisibleCount = nextVisibleCount;
+            floatVisibleCount = nextVisibleCount;
+            scheduleChartRedraw(false);
+          }
         }
         return;
       }
@@ -899,22 +1071,20 @@
         const dy = curY - startY;
         const moveDist = Math.hypot(dx, dy);
         if (moveDist > maxTouchMoveDist) maxTouchMoveDist = moveDist;
-        if (!mode) {
-          if (longPressTimer && (Math.abs(dx) > 6 || Math.abs(dy) > 7)) {
-            clearTimeout(longPressTimer);
-            longPressTimer = null;
-          }
-          if (Math.abs(dx) > 7 && Math.abs(dx) > Math.abs(dy) * 1.1) {
+        // Unified 6px gesture deadzone: immediately lock pan or yield to native vertical scroll
+        if (!mode && moveDist >= 6) {
+          if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+          if (Math.abs(dx) >= Math.abs(dy)) {
             mode = 'pan';
             panOriginX = curX;
             startOffset = floatOffset;
             lastMoveX = curX;
             lastMoveAt = nowMs();
             panVelocityPxPerMs = 0;
-            if (!renderedIsOverscan) {
+            if (!useCanvasMode() && !renderedIsOverscan) {
               scheduleChartRedraw(true);
             }
-          } else if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) {
+          } else if (Math.abs(dy) > Math.abs(dx)) {
             mode = 'scroll';
             return;
           }
@@ -941,9 +1111,19 @@
         if (mode === 'pinch') mode = 'pinch-end';
         return;
       }
-      if (host.dataset) host.dataset.interacting = '';
       activeTouchId = null;
+      if (mode === 'pinch' || mode === 'pinch-end') {
+        const stP = getState();
+        const roundedVis = Math.max(20, Math.min(140, Math.round(floatVisibleCount || (stP.perp && stP.perp.chartVisibleCount) || 48)));
+        if (stP && stP.perp) stP.perp.chartVisibleCount = roundedVis;
+        floatVisibleCount = roundedVis;
+        mode = null;
+        panBoundaryCrossed = false;
+        settlePanToInteger();
+        return;
+      }
       if (mode === 'scrub') {
+        if (host.dataset) host.dataset.interacting = '';
         _lastLongPressAt = Date.now();
         mode = null;
         panBoundaryCrossed = false;
@@ -961,6 +1141,7 @@
         }
         return;
       }
+      if (host.dataset) host.dataset.interacting = '';
       if (mode === null && maxTouchMoveDist <= 8 && (nowMs() - touchStartTime) < 260) {
         const tapTouch = (e && e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0] : null;
         const tapX = tapTouch ? tapTouch.clientX : startX;
@@ -975,13 +1156,14 @@
 
     const onTouchCancel = () => {
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
-      if (host.dataset) host.dataset.interacting = '';
       activeTouchId = null;
       const wasPan = mode === 'pan';
       mode = null;
       panBoundaryCrossed = false;
       if (wasPan) {
         settlePanToInteger();
+      } else if (host.dataset) {
+        host.dataset.interacting = '';
       }
     };
 
@@ -990,11 +1172,12 @@
 
     host.addEventListener('mousedown', (e) => {
       if (!e || (e.button !== undefined && e.button !== 0)) return;
+      if (host.dataset) host.dataset.interacting = '1';
       const wasCoasting = Boolean(inertiaRafId);
       stopPanInertia();
       clearRedrawThrottle();
       cancelScheduledRedraw();
-      refreshHostRect();
+      if (!cachedRect.width) refreshHostRect();
       syncOffsetFromState(wasCoasting);
       mouseDown = true;
       mouseDragged = false;
@@ -1039,9 +1222,22 @@
           } else {
             settlePanToInteger();
           }
+        } else if (host.dataset) {
+          host.dataset.interacting = '';
         }
       });
     }
+
+    host.addEventListener('click', (e) => {
+      if (!e) return;
+      if (e.target && typeof e.target.closest === 'function' && e.target.closest('[data-action="inspect-perp-candle"]')) {
+        return;
+      }
+      const idx = clientXToCandleIdx(e.clientX);
+      if (idx !== null) {
+        inspectPerpCandle(idx, false);
+      }
+    });
 
     host.addEventListener('wheel', (e) => {
       if (!e || typeof e.deltaY !== 'number') return;
@@ -1054,6 +1250,7 @@
       if (next !== cur) {
         e.preventDefault();
         st.perp.chartVisibleCount = next;
+        floatVisibleCount = next;
         scheduleChartRedraw(false);
       }
     }, { passive: false });

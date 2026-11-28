@@ -870,29 +870,47 @@
     };
   }
 
-  async function fetchHlCandles(coin, interval = '15m', count = 180) {
+  const HL_CANDLE_INTERVAL_MS = { '5m': 300_000, '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000 };
+
+  function getHlCandleIntervalMs(interval) {
+    return HL_CANDLE_INTERVAL_MS[String(interval)] || 900_000;
+  }
+
+  function normalizeHlCandleRow(c) {
+    return {
+      t: Number(c.t),
+      o: Number(c.o),
+      h: Number(c.h),
+      l: Number(c.l),
+      c: Number(c.c),
+      v: Number(c.v)
+    };
+  }
+
+  // Range fetch used for incremental tail refresh and older-history backfill (closed candles are immutable).
+  async function fetchHlCandlesRange(coin, interval = '15m', startTime = 0, endTime = Date.now()) {
     const clean = String(coin || '').trim();
     if (!clean) return [];
-    const iv = ['5m', '15m', '1h', '4h', '1d'].includes(String(interval)) ? String(interval) : '15m';
-    const intervalMsMap = { '5m': 300_000, '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000 };
-    const endTime = Date.now();
-    const intervalMs = intervalMsMap[iv] || 900_000;
-    const startTime = endTime - intervalMs * Math.max(12, Number(count) || 180);
+    const iv = HL_CANDLE_INTERVAL_MS[String(interval)] ? String(interval) : '15m';
+    const end = Number.isFinite(Number(endTime)) && Number(endTime) > 0 ? Math.floor(Number(endTime)) : Date.now();
+    const start = Math.max(0, Math.floor(Number(startTime) || 0));
+    if (start >= end) return [];
     const raw = await postHlInfo({
       type: 'candleSnapshot',
-      req: { coin: clean, interval: iv, startTime, endTime }
+      req: { coin: clean, interval: iv, startTime: start, endTime: end }
     });
     if (!Array.isArray(raw)) return [];
     return raw
-      .map((c) => ({
-        t: Number(c.t),
-        o: Number(c.o),
-        h: Number(c.h),
-        l: Number(c.l),
-        c: Number(c.c),
-        v: Number(c.v)
-      }))
-      .filter((c) => Number.isFinite(c.c) && c.c > 0);
+      .map(normalizeHlCandleRow)
+      .filter((c) => Number.isFinite(c.t) && Number.isFinite(c.c) && c.c > 0)
+      .sort((a, b) => a.t - b.t);
+  }
+
+  async function fetchHlCandles(coin, interval = '15m', count = 180) {
+    const iv = HL_CANDLE_INTERVAL_MS[String(interval)] ? String(interval) : '15m';
+    const endTime = Date.now();
+    const startTime = endTime - getHlCandleIntervalMs(iv) * Math.max(12, Number(count) || 180);
+    return fetchHlCandlesRange(coin, iv, startTime, endTime);
   }
 
   // ==================== Exchange Actions ====================
@@ -1386,8 +1404,8 @@
     if (!Number.isFinite(ethBal) || ethBal < HL_ARB_MIN_ETH_GAS) {
       throw new Error(
         t(
-          `Arbitrum ETH Gas 不足 (当前可用: ${Math.max(0, ethBal || 0).toFixed(5)} ETH，需 >= ${HL_ARB_MIN_ETH_GAS} ETH)`,
-          `Insufficient Arbitrum ETH for gas (available: ${Math.max(0, ethBal || 0).toFixed(5)} ETH, need >= ${HL_ARB_MIN_ETH_GAS} ETH)`
+          `Arbitrum 网络需使用 ETH 支付手续费 (当前可用: ${Math.max(0, ethBal || 0).toFixed(5)} ETH，需 >= ${HL_ARB_MIN_ETH_GAS} ETH)`,
+          `Insufficient Arbitrum ETH for network fee (available: ${Math.max(0, ethBal || 0).toFixed(5)} ETH, need >= ${HL_ARB_MIN_ETH_GAS} ETH)`
         )
       );
     }
@@ -1516,6 +1534,8 @@
     fetchHlAccountState,
     fetchHlOrderbook,
     fetchHlCandles,
+    fetchHlCandlesRange,
+    getHlCandleIntervalMs,
     updateHlLeverage,
     placeHlPerpOrder,
     cancelHlOrder,

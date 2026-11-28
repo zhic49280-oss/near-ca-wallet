@@ -16,49 +16,96 @@
   }
 
   const _lazyScriptCache = {};
-  function loadScriptOnce(src) {
+  function loadScriptOnce(src, timeoutMs = 12000) {
     if (typeof document === 'undefined') return Promise.resolve(false);
     if (_lazyScriptCache[src]) return _lazyScriptCache[src];
-    _lazyScriptCache[src] = new Promise((resolve, reject) => {
-      const baseSrc = String(src || '').split('?')[0];
-      const existing = document.querySelector(`script[src^="${baseSrc}"]`);
-      if (existing) {
-        if (existing.dataset && existing.dataset.loaded === '1') {
-          resolve(true);
-          return;
-        }
-        // Check globals in case static script already evaluated
-        if (
-          (baseSrc.includes('ethers') && window.ethers) ||
-          (baseSrc.includes('qrcode') && window.QRCode) ||
-          (baseSrc.includes('mining-pro') && window.NearCAMining) ||
-          (baseSrc.includes('walletconnect') && window.PearlWalletConnect)
-        ) {
-          resolve(true);
-          return;
-        }
+    const baseSrc = String(src || '').split('?')[0];
+    const existing = typeof document.querySelector === 'function' ? document.querySelector(`script[src^="${baseSrc}"]`) : null;
+    if (existing) {
+      if (existing.dataset && existing.dataset.loaded === '1') {
+        return Promise.resolve(true);
       }
-      const s = document.createElement('script');
-      s.src = src;
-      s.async = true;
-      s.onload = () => {
-        s.dataset.loaded = '1';
+      // Check globals in case static script already evaluated
+      if (
+        (baseSrc.includes('ethers') && window.ethers) ||
+        (baseSrc.includes('qrcode') && window.QRCode) ||
+        (baseSrc.includes('mining-pro') && window.NearCAMining) ||
+        (baseSrc.includes('walletconnect') && window.PearlWalletConnect) ||
+        (baseSrc.includes('jsqr-lazy') && window.jsQR)
+      ) {
+        if (existing.dataset) existing.dataset.loaded = '1';
+        return Promise.resolve(true);
+      }
+    }
+    const promise = new Promise((resolve, reject) => {
+      const targetScript = existing || document.createElement('script');
+      let settled = false;
+      let timer = null;
+      const cleanup = () => {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        if (typeof targetScript.removeEventListener === 'function') {
+          targetScript.removeEventListener('load', handleLoadSuccess);
+          targetScript.removeEventListener('error', handleLoadError);
+        }
+      };
+      const removeInjectedTag = () => {
+        if (!existing && targetScript.parentNode && typeof targetScript.parentNode.removeChild === 'function') {
+          try { targetScript.parentNode.removeChild(targetScript); } catch (_) {}
+        }
+      };
+      const handleLoadSuccess = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (targetScript.dataset) targetScript.dataset.loaded = '1';
         resolve(true);
       };
-      s.onerror = () => {
+      const handleLoadError = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
         delete _lazyScriptCache[src];
+        removeInjectedTag();
         reject(new Error(`Failed to load ${src}`));
       };
-      (document.head || document.body || document.documentElement).appendChild(s);
+      timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        delete _lazyScriptCache[src];
+        removeInjectedTag();
+        reject(new Error(`Timed out loading ${src}`));
+      }, Math.max(1000, Number(timeoutMs) || 12000));
+      if (timer && typeof timer.unref === 'function') timer.unref();
+
+      if (typeof targetScript.addEventListener === 'function') {
+        targetScript.addEventListener('load', handleLoadSuccess, { once: true });
+        targetScript.addEventListener('error', handleLoadError, { once: true });
+      } else {
+        const prevLoad = targetScript.onload;
+        const prevErr = targetScript.onerror;
+        targetScript.onload = () => { try { prevLoad && prevLoad(); } catch (_) {} handleLoadSuccess(); };
+        targetScript.onerror = () => { try { prevErr && prevErr(); } catch (_) {} handleLoadError(); };
+      }
+
+      if (!existing) {
+        targetScript.src = src;
+        targetScript.async = true;
+        (document.head || document.body || document.documentElement).appendChild(targetScript);
+      }
     });
-    return _lazyScriptCache[src];
+    _lazyScriptCache[src] = promise;
+    return promise;
   }
 
   async function ensureEthersLoaded() {
     const existing = (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('ethers.umd.min.js?v=6.96');
+      await loadScriptOnce('ethers.umd.min.js?v=6.97');
       return (typeof window !== 'undefined' && window.ethers) || (typeof globalThis !== 'undefined' && globalThis.ethers) || null;
     }
     return safeRequire('../ethers.umd.min.js');
@@ -68,7 +115,7 @@
     const existing = (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode);
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('qrcode.min.js?v=6.96').catch(() => false);
+      await loadScriptOnce('qrcode.min.js?v=6.97').catch(() => false);
       return (typeof window !== 'undefined' && window.QRCode) || (typeof globalThis !== 'undefined' && globalThis.QRCode) || null;
     }
     return null;
@@ -78,7 +125,7 @@
     const existing = getMining();
     if (existing) return existing;
     if (typeof document !== 'undefined') {
-      await loadScriptOnce('src/mining-pro.js?v=6.96').catch(() => false);
+      await loadScriptOnce('src/mining-pro.js?v=6.97').catch(() => false);
       return getMining();
     }
     return null;

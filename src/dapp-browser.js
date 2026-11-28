@@ -41,20 +41,10 @@
       name: 'Rhea Finance',
       url: 'https://app.rhea.finance',
       chain: 'NEAR',
-      category: 'dex',
+      category: 'defi',
       badge: 'NEAR',
-      descZh: 'NEAR 生态核心去中心化交易所与流动性枢纽',
-      descEn: 'Leading NEAR DEX & liquidity hub'
-    },
-    {
-      id: 'burrow',
-      name: 'Rhea Lending (Burrow)',
-      url: 'https://app.rhea.finance/lending',
-      chain: 'NEAR',
-      category: 'lend',
-      badge: 'NEAR',
-      descZh: 'NEAR 原生去中心化借贷与生息市场',
-      descEn: 'Native NEAR money market & lending protocol'
+      descZh: 'NEAR 生态一站式去中心化交易、流动性与借贷平台',
+      descEn: 'All-in-one NEAR DEX, liquidity & lending hub'
     },
     {
       id: 'linear',

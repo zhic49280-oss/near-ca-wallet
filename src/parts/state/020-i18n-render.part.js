@@ -591,6 +591,124 @@
     } catch (_) {}
   }
 
+  // ===== Perp K-line history cache: L1 in-memory LRU + L2 dedicated compact storage key =====
+  const PERP_CANDLE_MEM_MAX_KEYS = 24;
+  const PERP_CANDLE_MEM_MAX_BARS = 1000;
+  const PERP_CANDLE_DISK_MAX_KEYS = 15;
+  const PERP_CANDLE_DISK_MAX_BARS = 240;
+  const PERP_CANDLE_TTL_MS = 24 * 3600_000;
+  const _perpCandleMem = new Map();
+  const _perpCandleDirty = new Set();
+  let _perpCandleDiskTimer = null;
+  let _perpCandleDiskDueAt = 0;
+  let _perpCandleFlushHookBound = false;
+
+  function perpCandleKey(coin, interval) {
+    return `${String(coin || '')}|${String(interval || '15m')}`;
+  }
+
+  function mergePerpCandles(base, incoming, maxBars = PERP_CANDLE_MEM_MAX_BARS) {
+    const byT = new Map();
+    const push = (list) => {
+      if (!Array.isArray(list)) return;
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        if (!c) continue;
+        const tNum = Number(c.t);
+        const close = Number(c.c);
+        if (!Number.isFinite(tNum) || !Number.isFinite(close) || close <= 0) continue;
+        byT.set(tNum, c);
+      }
+    };
+    push(base);
+    push(incoming);
+    const out = Array.from(byT.values()).sort((a, b) => Number(a.t) - Number(b.t));
+    const cap = Math.max(2, Number(maxBars) || PERP_CANDLE_MEM_MAX_BARS);
+    return out.length > cap ? out.slice(out.length - cap) : out;
+  }
+
+  function readPerpCandleDisk() {
+    try {
+      const raw = safeStorageGet(PERP_CANDLES_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function flushPerpCandleDisk() {
+    if (_perpCandleDiskTimer) {
+      clearTimeout(_perpCandleDiskTimer);
+      _perpCandleDiskTimer = null;
+    }
+    _perpCandleDiskDueAt = 0;
+    if (_perpCandleDirty.size === 0) return true;
+    try {
+      const disk = readPerpCandleDisk();
+      _perpCandleDirty.forEach((key) => {
+        const entry = _perpCandleMem.get(key);
+        if (!entry || !Array.isArray(entry.candles) || entry.candles.length === 0) return;
+        disk[key] = {
+          u: entry.updatedAt,
+          d: entry.candles.slice(-PERP_CANDLE_DISK_MAX_BARS).map((c) => [
+            Number(c.t), Number(c.o), Number(c.h), Number(c.l), Number(c.c), Number.isFinite(Number(c.v)) ? Number(c.v) : 0
+          ])
+        };
+      });
+      _perpCandleDirty.clear();
+      const trimmed = Object.entries(disk)
+        .filter(([, v]) => v && Array.isArray(v.d))
+        .sort((a, b) => Number(b[1].u || 0) - Number(a[1].u || 0))
+        .slice(0, PERP_CANDLE_DISK_MAX_KEYS);
+      return safeStorageSet(PERP_CANDLES_STORAGE_KEY, JSON.stringify(Object.fromEntries(trimmed)));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function schedulePerpCandleDiskFlush(delayMs = 400) {
+    const hasWindow = typeof window !== 'undefined' && window && typeof setTimeout === 'function';
+    if (!hasWindow) {
+      flushPerpCandleDisk();
+      return;
+    }
+    if (!_perpCandleFlushHookBound && typeof window.addEventListener === 'function') {
+      _perpCandleFlushHookBound = true;
+      try { window.addEventListener('pagehide', () => { flushPerpCandleDisk(); }); } catch (_) {}
+    }
+    const dueAt = Date.now() + delayMs;
+    if (_perpCandleDiskTimer && _perpCandleDiskDueAt && _perpCandleDiskDueAt <= dueAt) return;
+    if (_perpCandleDiskTimer) clearTimeout(_perpCandleDiskTimer);
+    _perpCandleDiskDueAt = dueAt;
+    _perpCandleDiskTimer = setTimeout(() => {
+      _perpCandleDiskTimer = null;
+      flushPerpCandleDisk();
+    }, delayMs);
+    if (_perpCandleDiskTimer && typeof _perpCandleDiskTimer.unref === 'function') _perpCandleDiskTimer.unref();
+  }
+
+  // opts.merge: merge with cached history (incremental tail / backfill); opts.lazy: realtime tick (slow disk flush)
+  function putCachedPerpCandles(coin, interval, candles, opts = {}) {
+    if (!coin || !Array.isArray(candles) || candles.length === 0) return null;
+    const key = perpCandleKey(coin, interval);
+    const prev = opts.merge ? getCachedPerpCandles(coin, interval) : null;
+    const list = mergePerpCandles(prev || [], candles);
+    if (list.length === 0) return null;
+    _perpCandleMem.delete(key);
+    _perpCandleMem.set(key, { updatedAt: Date.now(), candles: list });
+    while (_perpCandleMem.size > PERP_CANDLE_MEM_MAX_KEYS) {
+      const oldestKey = _perpCandleMem.keys().next().value;
+      _perpCandleMem.delete(oldestKey);
+    }
+    _perpCandleDirty.add(key);
+    schedulePerpCandleDiskFlush(opts.lazy ? 10_000 : 400);
+    return list;
+  }
+
+  let _perpSnapshotObSavedAt = 0;
+
   function saveCachedPerpSnapshot({
     markets,
     account,
@@ -602,6 +720,17 @@
     orderbookCoin
   } = {}) {
     try {
+      if (Array.isArray(candles) && candles.length > 0 && candleCoin) {
+        putCachedPerpCandles(candleCoin, String(candleInterval || state.perp.chartInterval || '15m'), candles);
+      }
+      const hasMarkets = Array.isArray(markets) && markets.length > 0;
+      const addrKey = String(accountAddr || (account && account.user) || '').trim().toLowerCase();
+      const hasAccount = Boolean(account && typeof account === 'object' && addrKey);
+      // Orderbook-only snapshots are throttled: they are a cold-start hint, not live data.
+      const hasOrderbook = Boolean(orderbook && typeof orderbook === 'object' && orderbookCoin)
+        && (hasMarkets || hasAccount || (Date.now() - _perpSnapshotObSavedAt) >= 15_000);
+      if (!hasMarkets && !hasAccount && !hasOrderbook) return true;
+
       let existing = {};
       const raw = safeStorageGet(PERP_SNAPSHOT_STORAGE_KEY);
       if (raw) {
@@ -610,8 +739,10 @@
           if (parsed && typeof parsed === 'object') existing = parsed;
         } catch (_) {}
       }
+      // Legacy candle slots now live in PERP_CANDLES_STORAGE_KEY
+      if (existing.candlesCache) delete existing.candlesCache;
 
-      if (Array.isArray(markets) && markets.length > 0) {
+      if (hasMarkets) {
         existing.marketsUpdatedAt = Date.now();
         existing.markets = markets.slice(0, 350).map((m) => ({
           index: Number(m.index),
@@ -634,8 +765,7 @@
         }));
       }
 
-      const addrKey = String(accountAddr || (account && account.user) || '').trim().toLowerCase();
-      if (account && typeof account === 'object' && addrKey) {
+      if (hasAccount) {
         const byAddr = (existing.accountsByAddr && typeof existing.accountsByAddr === 'object') ? { ...existing.accountsByAddr } : {};
         byAddr[addrKey] = {
           updatedAt: Date.now(),
@@ -650,18 +780,8 @@
         existing.accountsByAddr = Object.fromEntries(sortedAddrs);
       }
 
-      if (Array.isArray(candles) && candles.length > 0 && candleCoin) {
-        const cIv = String(candleInterval || state.perp.chartInterval || '15m');
-        const cKey = `${String(candleCoin)}|${cIv}`;
-        const cMap = (existing.candlesCache && typeof existing.candlesCache === 'object') ? { ...existing.candlesCache } : {};
-        cMap[cKey] = { updatedAt: Date.now(), candles: candles.slice(-64) };
-        const sortedCandles = Object.entries(cMap)
-          .sort((a, b) => Number(b[1] && b[1].updatedAt || 0) - Number(a[1] && a[1].updatedAt || 0))
-          .slice(0, 6);
-        existing.candlesCache = Object.fromEntries(sortedCandles);
-      }
-
-      if (orderbook && typeof orderbook === 'object' && orderbookCoin) {
+      if (hasOrderbook) {
+        _perpSnapshotObSavedAt = Date.now();
         existing.orderbook = {
           updatedAt: Date.now(),
           coin: String(orderbookCoin),
@@ -709,11 +829,9 @@
 
       const curCoin = String(state.perp.selectedCoin || 'BTC');
       const curIv = String(state.perp.chartInterval || '15m');
-      if ((!Array.isArray(state.perp.candles) || state.perp.candles.length === 0) && parsed.candlesCache && typeof parsed.candlesCache === 'object') {
-        const cEntry = parsed.candlesCache[`${curCoin}|${curIv}`];
-        if (cEntry && Array.isArray(cEntry.candles) && (!cEntry.updatedAt || (now - Number(cEntry.updatedAt) <= 24 * 3600_000))) {
-          state.perp.candles = cEntry.candles;
-        }
+      if ((!Array.isArray(state.perp.candles) || state.perp.candles.length === 0)) {
+        const cachedCandles = getCachedPerpCandles(curCoin, curIv);
+        if (cachedCandles) state.perp.candles = cachedCandles;
       }
 
       if (!state.perp.orderbook && parsed.orderbook && parsed.orderbook.coin === curCoin && parsed.orderbook.ob) {
@@ -729,13 +847,35 @@
   }
 
   function getCachedPerpCandles(coin, interval = '15m') {
+    if (!coin) return null;
+    const key = perpCandleKey(coin, interval || '15m');
+    const now = Date.now();
+    const mem = _perpCandleMem.get(key);
+    if (mem && Array.isArray(mem.candles) && mem.candles.length > 0) {
+      if (now - Number(mem.updatedAt || 0) <= PERP_CANDLE_TTL_MS) return mem.candles;
+      _perpCandleMem.delete(key);
+    }
     try {
+      const disk = readPerpCandleDisk();
+      const entry = disk[key];
+      if (entry && Array.isArray(entry.d) && entry.d.length > 0 && (now - Number(entry.u || 0) <= PERP_CANDLE_TTL_MS)) {
+        const list = mergePerpCandles([], entry.d.map((r) => ({
+          t: Number(r[0]), o: Number(r[1]), h: Number(r[2]), l: Number(r[3]), c: Number(r[4]), v: Number(r[5])
+        })));
+        if (list.length > 0) {
+          _perpCandleMem.set(key, { updatedAt: Number(entry.u) || now, candles: list });
+          return list;
+        }
+      }
+    } catch (_) {}
+    try {
+      // Legacy fallback: older builds kept 64-bar slots inside the perp snapshot
       const raw = safeStorageGet(PERP_SNAPSHOT_STORAGE_KEY);
-      if (!raw || !coin) return null;
+      if (!raw) return null;
       const parsed = JSON.parse(raw);
-      const entry = parsed && parsed.candlesCache && parsed.candlesCache[`${String(coin)}|${String(interval || '15m')}`];
+      const entry = parsed && parsed.candlesCache && parsed.candlesCache[key];
       if (!entry || !Array.isArray(entry.candles) || entry.candles.length === 0) return null;
-      if (entry.updatedAt && (Date.now() - Number(entry.updatedAt) > 24 * 3600_000)) return null;
+      if (entry.updatedAt && (now - Number(entry.updatedAt) > PERP_CANDLE_TTL_MS)) return null;
       return entry.candles;
     } catch (_) {
       return null;
@@ -790,6 +930,10 @@
   state.saveCachedPerpSnapshot = saveCachedPerpSnapshot;
   state.loadCachedPerpSnapshot = loadCachedPerpSnapshot;
   state.getCachedPerpCandles = getCachedPerpCandles;
+  state.putCachedPerpCandles = putCachedPerpCandles;
+  state.mergePerpCandles = mergePerpCandles;
+  state.flushPerpCandleDisk = flushPerpCandleDisk;
+  state.PERP_CANDLES_STORAGE_KEY = PERP_CANDLES_STORAGE_KEY;
   state.toggleFavoriteTokenId = toggleFavoriteTokenId;
   state.normalizeWalletRecord = normalizeWalletRecord;
   state.recomputeWalletMpcAddresses = recomputeWalletMpcAddresses;

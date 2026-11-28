@@ -65,6 +65,7 @@
   };
   let _lastDAppStorageRef = typeof localStorage !== 'undefined' ? localStorage : null;
   let _dappBridgeQueue = Promise.resolve();
+  let _launchingDApp = false;
 
   function syncDAppStorageSetsIfChanged() {
     if (typeof localStorage === 'undefined') return;
@@ -624,6 +625,15 @@
         _dappSession.pendingApproval.resolve(false);
       }
     });
+    const onNativeWcUri = (ev) => {
+      const rawUri = typeof ev === 'string' ? ev : ((ev && (ev.uri || ev.url)) || '');
+      if (!rawUri) return;
+      if (typeof handleIncomingWcDeepLink === 'function') {
+        handleIncomingWcDeepLink(rawUri, { fromNativeDAppBrowser: true }).catch(() => {});
+      }
+    };
+    plugin.addListener('wcUri', onNativeWcUri);
+    plugin.addListener('deepLink', onNativeWcUri);
   }
 
   const _dappNearCheckCooldown = new Map();
@@ -717,77 +727,88 @@
       showToast(t('仅支持安全的 https:// DApp 网址', 'Only valid https:// DApp URLs are allowed'));
       return;
     }
-
-    ensureDAppBridgeListeners();
-    if (wallet && !wallet.nearNamedAccount) {
-      await hydrateNearNamedAccountForDAppAsync(wallet, contracts, st, 3500).catch(() => {});
-    }
-    if (wallet && contracts && typeof contracts.ensureWalletSigningKeysAsync === 'function') {
-      await contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {});
-    }
-
-    let originUrl = '';
+    if (_launchingDApp) return;
+    _launchingDApp = true;
     try {
-      originUrl = new URL(safeUrl).origin;
-      const isCatalogOrigin = Array.isArray(browserMod.DAPP_CATALOG) && browserMod.DAPP_CATALOG.some((d) => {
-        try { return new URL(d.url).origin === originUrl; } catch (_) { return false; }
-      });
-      if (originUrl && isCatalogOrigin) {
-        const autoNamespaces = wallet && wallet.nearNamedAccount ? ['evm', 'solana', 'near'] : ['evm', 'solana'];
-        autoNamespaces.forEach((ns) => {
-          if (!isDAppOriginDisconnected(originUrl, ns)) {
-            markDAppOriginConnected(originUrl, ns);
-          }
-        });
+      ensureDAppBridgeListeners();
+      if (wallet && !wallet.nearNamedAccount) {
+        await hydrateNearNamedAccountForDAppAsync(wallet, contracts, st, 3500).catch(() => {});
       }
-    } catch (_) {}
+      if (wallet && contracts && typeof contracts.ensureWalletSigningKeysAsync === 'function') {
+        await Promise.race([
+          contracts.ensureWalletSigningKeysAsync(wallet).catch(() => {}),
+          new Promise((resolve) => {
+            const tm = setTimeout(resolve, 5000);
+            if (tm && typeof tm.unref === 'function') tm.unref();
+          })
+        ]);
+      }
 
-    const evmCfg = (contracts && contracts.EVM_CHAINS && contracts.EVM_CHAINS[_dappSession.activeEvmChainKey]) || { chainId: 1 };
-    const evmAddress = wallet && contracts && contracts.resolveWalletEvmSender
-      ? contracts.resolveWalletEvmSender(wallet)
-      : (wallet && wallet.evmAddress) || '';
-    const nearCreds = wallet && contracts && contracts.getWalletNearSignerCredentials
-      ? contracts.getWalletNearSignerCredentials(wallet)
-      : { accountId: (wallet && (wallet.nearNamedAccount || wallet.nearAddress)) || '', publicKeyStr: '' };
-
-    const evmConnected = Boolean(originUrl && isDAppOriginConnected(originUrl, 'evm'));
-    const solConnected = Boolean(originUrl && isDAppOriginConnected(originUrl, 'solana'));
-    const nearConnected = Boolean(originUrl && isDAppOriginConnected(originUrl, 'near'));
-
-    const injectedScript = browserMod.buildInjectedProviderScript({
-      authorizedOrigin: originUrl,
-      evmAddress: evmConnected ? evmAddress : '',
-      chainIdHex: `0x${Number(evmCfg.chainId || 1).toString(16)}`,
-      solanaPublicKey: solConnected ? ((wallet && wallet.solAddress) || '') : '',
-      nearAccountId: nearConnected ? (nearCreds.accountId || '') : '',
-      nearPublicKey: nearConnected ? (nearCreds.publicKeyStr || '') : '',
-      walletName: 'Nexus Wallet'
-    });
-
-    const plugin = getNativeDAppPlugin();
-    if (plugin && typeof plugin.openUrl === 'function') {
-      closeAllSheets();
-      _dappSession.nativeOpen = true;
-      _dappSession.currentUrl = safeUrl;
-      _dappSession.currentOrigin = originUrl;
+      let originUrl = '';
       try {
-        await plugin.openUrl({
-          url: safeUrl,
-          injectedScript
+        originUrl = new URL(safeUrl).origin;
+        const isCatalogOrigin = Array.isArray(browserMod.DAPP_CATALOG) && browserMod.DAPP_CATALOG.some((d) => {
+          try { return new URL(d.url).origin === originUrl; } catch (_) { return false; }
         });
-      } catch (e) {
-        _dappSession.nativeOpen = false;
-        _dappSession.currentUrl = '';
-        _dappSession.currentOrigin = '';
-        showToast(toUserFriendlyError(e, '无法打开 DApp 浏览器', 'Failed to open DApp browser'));
-      }
-      return;
-    }
+        if (originUrl && isCatalogOrigin) {
+          const autoNamespaces = wallet && wallet.nearNamedAccount ? ['evm', 'solana', 'near'] : ['evm', 'solana'];
+          autoNamespaces.forEach((ns) => {
+            if (!isDAppOriginDisconnected(originUrl, ns)) {
+              markDAppOriginConnected(originUrl, ns);
+            }
+          });
+        }
+      } catch (_) {}
 
-    // Web PWA fallback when running outside native Capacitor shell
-    if (typeof window !== 'undefined' && typeof window.open === 'function') {
-      window.open(safeUrl, '_blank', 'noopener,noreferrer');
-      showToast(t('已在新窗口打开（原生 App 内可自动注入多链钱包）', 'Opened in new tab (native App enables full wallet injection)'));
+      const evmCfg = (contracts && contracts.EVM_CHAINS && contracts.EVM_CHAINS[_dappSession.activeEvmChainKey]) || { chainId: 1 };
+      const evmAddress = wallet && contracts && contracts.resolveWalletEvmSender
+        ? contracts.resolveWalletEvmSender(wallet)
+        : (wallet && wallet.evmAddress) || '';
+      const nearCreds = wallet && contracts && contracts.getWalletNearSignerCredentials
+        ? contracts.getWalletNearSignerCredentials(wallet)
+        : { accountId: (wallet && (wallet.nearNamedAccount || wallet.nearAddress)) || '', publicKeyStr: '' };
+
+      const evmConnected = Boolean(originUrl && isDAppOriginConnected(originUrl, 'evm'));
+      const solConnected = Boolean(originUrl && isDAppOriginConnected(originUrl, 'solana'));
+      const nearConnected = Boolean(originUrl && isDAppOriginConnected(originUrl, 'near'));
+
+      const injectedScript = browserMod.buildInjectedProviderScript({
+        authorizedOrigin: originUrl,
+        evmAddress: evmConnected ? evmAddress : '',
+        chainIdHex: `0x${Number(evmCfg.chainId || 1).toString(16)}`,
+        solanaPublicKey: solConnected ? ((wallet && wallet.solAddress) || '') : '',
+        nearAccountId: nearConnected ? (nearCreds.accountId || '') : '',
+        nearPublicKey: nearConnected ? (nearCreds.publicKeyStr || '') : '',
+        walletName: 'Nexus Wallet'
+      });
+
+      const plugin = getNativeDAppPlugin();
+      if (plugin && typeof plugin.openUrl === 'function') {
+        closeAllSheets();
+        _dappSession.nativeOpen = true;
+        _dappSession.currentUrl = safeUrl;
+        _dappSession.currentOrigin = originUrl;
+        try {
+          await plugin.openUrl({
+            url: safeUrl,
+            injectedScript
+          });
+        } catch (e) {
+          _dappSession.nativeOpen = false;
+          _dappSession.currentUrl = '';
+          _dappSession.currentOrigin = '';
+          showToast(toUserFriendlyError(e, '无法打开 DApp 浏览器', 'Failed to open DApp browser'));
+        }
+        return;
+      }
+
+      // Web PWA fallback when running outside native Capacitor shell
+      if (typeof window !== 'undefined' && typeof window.open === 'function') {
+        window.open(safeUrl, '_blank', 'noopener,noreferrer');
+        showToast(t('已在新窗口打开（原生 App 内可自动注入多链钱包）', 'Opened in new tab (native App enables full wallet injection)'));
+      }
+    } finally {
+      _launchingDApp = false;
     }
   }
 

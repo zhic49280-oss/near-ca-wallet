@@ -47,6 +47,69 @@ public class NativeDAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin, WKNavigationD
         return false
     }
 
+    private func extractWcDeepLink(_ url: URL?) -> String? {
+        guard let url = url else { return nil }
+        let raw = url.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.isEmpty { return nil }
+        let lower = raw.lowercased()
+        let scheme = (url.scheme ?? "").lowercased()
+
+        // Preserve full query parameters when DApp embeds an unencoded ?uri=wc:...&symKey=...
+        for marker in ["?uri=wc:", "&uri=wc:", "?wc=wc:", "&wc=wc:"] {
+            if let r = lower.range(of: marker) {
+                let wcStart = raw.index(r.lowerBound, offsetBy: marker.count - 3)
+                let slice = String(raw[wcStart...])
+                let beforeHash = slice.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? slice
+                let trimmed = beforeHash.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    return trimmed
+                }
+            }
+        }
+
+        if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let items = comps.queryItems {
+            for item in items {
+                let key = item.name.lowercased()
+                if (key == "uri" || key == "wc"), let val = item.value {
+                    let trimmed = val.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let candidate = trimmed.lowercased().hasPrefix("wc:")
+                        ? trimmed
+                        : (trimmed.removingPercentEncoding ?? trimmed).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if candidate.lowercased().hasPrefix("wc:") {
+                        return candidate
+                    }
+                }
+            }
+        }
+
+        if scheme == "wc" {
+            if lower.hasPrefix("wc://") {
+                let afterSlashes = String(raw.dropFirst(5))
+                if !afterSlashes.lowercased().hasPrefix("wc?") && !afterSlashes.hasPrefix("?") && afterSlashes.contains("@") {
+                    return "wc:\(afterSlashes)"
+                }
+                return nil
+            }
+            return raw
+        }
+
+        if scheme == "nexuswallet", let range = lower.range(of: "wc:") {
+            return String(raw[range.lowerBound...])
+        }
+
+        return nil
+    }
+
+    private func dispatchWcDeepLinkIfMatched(_ url: URL?) -> Bool {
+        guard let wcUri = extractWcDeepLink(url) else { return false }
+        DispatchQueue.main.async {
+            self.overlayView?.isHidden = true
+            self.notifyListeners("wcUri", data: ["uri": wcUri])
+        }
+        return true
+    }
+
     private func originString(for url: URL?) -> String? {
         guard let url = url,
               let scheme = url.scheme?.lowercased(),
@@ -316,14 +379,22 @@ public class NativeDAppBrowserPlugin: CAPPlugin, CAPBridgedPlugin, WKNavigationD
 
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if navigationAction.targetFrame == nil,
-           let url = navigationAction.request.url,
-           isAllowedDAppUrl(url) {
-            webView.load(navigationAction.request)
+           let url = navigationAction.request.url {
+            if dispatchWcDeepLinkIfMatched(url) {
+                return nil
+            }
+            if isAllowedDAppUrl(url) {
+                webView.load(navigationAction.request)
+            }
         }
         return nil
     }
 
     public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if dispatchWcDeepLinkIfMatched(navigationAction.request.url) {
+            decisionHandler(.cancel)
+            return
+        }
         if isAllowedDAppUrl(navigationAction.request.url) {
             decisionHandler(.allow)
         } else {

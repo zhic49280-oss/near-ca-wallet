@@ -1,4 +1,6 @@
   let _perpObCandlesSeq = 0;
+  let _perpBackfillKeyInFlight = '';
+  const _perpBackfillExhausted = new Set();
 
   async function refreshPerpOrderbookAndCandlesAsync() {
     const st = getState();
@@ -7,28 +9,91 @@
     const reqSeq = ++_perpObCandlesSeq;
     const coin = st.perp.selectedCoin || 'BTC';
     const iv = st.perp.chartInterval || '15m';
+    const cached = typeof st.getCachedPerpCandles === 'function' ? st.getCachedPerpCandles(coin, iv) : null;
+    if ((!Array.isArray(st.perp.candles) || st.perp.candles.length === 0) && Array.isArray(cached) && cached.length > 0) {
+      st.perp.candles = cached;
+    }
+
+    const ivMs = typeof hl.getHlCandleIntervalMs === 'function' ? hl.getHlCandleIntervalMs(iv) : 900_000;
+    const newestT = Array.isArray(cached) && cached.length > 0 ? Number(cached[cached.length - 1].t || 0) : 0;
+    const now = Date.now();
+    const missedBars = newestT > 0 ? Math.ceil((now - newestT) / ivMs) : 999;
+    const useIncremental = Boolean(
+      Array.isArray(cached) && cached.length >= 20 && newestT > 0 && missedBars >= 0 && missedBars <= 180
+      && typeof hl.fetchHlCandlesRange === 'function'
+    );
+
     const tasks = [hl.fetchHlOrderbook(coin).catch(() => null)];
-    if (st.perp.showChart) tasks.push(hl.fetchHlCandles(coin, iv, 180).catch(() => null));
-    const [ob, candles] = await Promise.all(tasks);
+    if (st.perp.showChart) {
+      tasks.push(
+        (useIncremental
+          ? hl.fetchHlCandlesRange(coin, iv, Math.max(0, newestT - ivMs * 2), now)
+          : hl.fetchHlCandles(coin, iv, 200)
+        ).catch(() => null)
+      );
+    }
+    const [ob, incomingCandles] = await Promise.all(tasks);
     if (reqSeq !== _perpObCandlesSeq || st.perp.selectedCoin !== coin) return;
     const ivStillCurrent = (st.perp.chartInterval || '15m') === iv;
     if (ob) {
       st.perp.orderbook = ob;
       _perpLastL2BookTs = Date.now();
     }
-    if (Array.isArray(candles) && ivStillCurrent && (candles.length > 0 || !Array.isArray(st.perp.candles) || st.perp.candles.length === 0)) {
-      st.perp.candles = candles;
+    if (Array.isArray(incomingCandles) && ivStillCurrent) {
+      if (incomingCandles.length > 0) {
+        const stored = typeof st.putCachedPerpCandles === 'function'
+          ? st.putCachedPerpCandles(coin, iv, incomingCandles, { merge: useIncremental })
+          : incomingCandles;
+        st.perp.candles = stored || incomingCandles;
+      } else if ((!Array.isArray(st.perp.candles) || st.perp.candles.length === 0) && Array.isArray(cached)) {
+        st.perp.candles = cached;
+      }
     }
     if (typeof st.saveCachedPerpSnapshot === 'function') {
       st.saveCachedPerpSnapshot({
-        candles: Array.isArray(candles) && candles.length > 0 ? candles : undefined,
-        candleCoin: coin,
-        candleInterval: iv,
         orderbook: ob || undefined,
         orderbookCoin: coin
       });
     }
     renderPerpView();
+  }
+
+  async function loadOlderPerpCandlesAsync() {
+    const st = getState();
+    const hl = getHyperliquid();
+    if (!hl || !st || !st.perp || typeof hl.fetchHlCandlesRange !== 'function') return;
+    const coin = st.perp.selectedCoin || 'BTC';
+    const iv = st.perp.chartInterval || '15m';
+    const key = `${coin}|${iv}`;
+    if (_perpBackfillExhausted.has(key) || _perpBackfillKeyInFlight === key) return;
+    const list = Array.isArray(st.perp.candles) ? st.perp.candles : [];
+    if (list.length < 2) return;
+    const oldestT = Number(list[0] && list[0].t || 0);
+    if (!Number.isFinite(oldestT) || oldestT <= 0) return;
+    _perpBackfillKeyInFlight = key;
+    try {
+      const ivMs = typeof hl.getHlCandleIntervalMs === 'function' ? hl.getHlCandleIntervalMs(iv) : 900_000;
+      const older = await hl.fetchHlCandlesRange(coin, iv, Math.max(0, oldestT - 180 * ivMs), oldestT - 1).catch(() => null);
+      const latestSt = getState();
+      if (!latestSt || !latestSt.perp || latestSt.perp.selectedCoin !== coin || (latestSt.perp.chartInterval || '15m') !== iv) return;
+      if (!Array.isArray(older)) return;
+      if (older.length === 0 || Number(older[0].t) >= oldestT) {
+        _perpBackfillExhausted.add(key);
+        return;
+      }
+      const merged = typeof latestSt.putCachedPerpCandles === 'function'
+        ? latestSt.putCachedPerpCandles(coin, iv, older, { merge: true })
+        : (typeof latestSt.mergePerpCandles === 'function' ? latestSt.mergePerpCandles(older, latestSt.perp.candles) : [...older, ...latestSt.perp.candles]);
+      if (Array.isArray(merged) && merged.length > list.length) {
+        latestSt.perp.candles = merged;
+        const host = $('perp-chart-svg');
+        if (host && !(host.dataset && host.dataset.interacting === '1') && typeof renderPerpChartHost === 'function') {
+          renderPerpChartHost(host, merged, getSelectedPerpMarket(), latestSt.perp.inspectedCandleIdx);
+        }
+      }
+    } finally {
+      if (_perpBackfillKeyInFlight === key) _perpBackfillKeyInFlight = '';
+    }
   }
 
   function setPerpChartInterval(interval) {
@@ -38,26 +103,67 @@
     st.perp.showChart = true;
     st.perp.inspectedCandleIdx = null;
     st.perp.chartOffsetFromEnd = 0;
+    if (typeof stopPerpChartMotion === 'function') stopPerpChartMotion();
     const coin = st.perp.selectedCoin || 'BTC';
     if (typeof st.getCachedPerpCandles === 'function') {
       st.perp.candles = st.getCachedPerpCandles(coin, iv) || [];
     }
+    resubscribePerpCandleWs(iv);
     renderPerpView();
     refreshPerpOrderbookAndCandlesAsync().catch(() => {});
   }
 
   let _perpWs = null;
   let _perpWsCoin = '';
+  let _perpWsInterval = '';
   let _perpWsPingTimer = null;
   let _perpWsReconnectTimer = null;
   let _perpWsAttempt = 0;
   let _perpObRafId = 0;
+  let _perpCandleRafId = 0;
   let _perpPollTimer = null;
   let _perpObFallbackTimer = null;
   let _perpObFallbackInFlight = false;
   let _perpLastL2BookTs = 0;
   let _perpFundingTickTimer = null;
   let _perpTradeActionBusy = false;
+
+  function resubscribePerpCandleWs(nextIv) {
+    const st = getState();
+    const coin = (st && st.perp && st.perp.selectedCoin) || '';
+    const iv = String(nextIv || (st && st.perp && st.perp.chartInterval) || '15m');
+    if (!_perpWs || _perpWs.readyState !== 1 || !coin || _perpWsCoin !== coin || _perpWsInterval === iv) return;
+    try {
+      if (_perpWsInterval) {
+        _perpWs.send(JSON.stringify({ method: 'unsubscribe', subscription: { type: 'candle', coin, interval: _perpWsInterval } }));
+      }
+      _perpWsInterval = iv;
+      _perpWs.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'candle', coin, interval: iv } }));
+    } catch (_) {}
+  }
+
+  function schedulePerpCandleLiveRedraw() {
+    const apply = () => {
+      const s = getState();
+      const host = $('perp-chart-svg');
+      if (!host || !s || !s.perp || (host.dataset && host.dataset.interacting === '1')) return;
+      const selIdx = Number.isInteger(s.perp.inspectedCandleIdx) ? s.perp.inspectedCandleIdx : null;
+      if (typeof renderPerpChartHost === 'function') {
+        renderPerpChartHost(host, s.perp.candles, getSelectedPerpMarket(), selIdx);
+      } else {
+        host.innerHTML = renderPerpCandleSvg(s.perp.candles, getSelectedPerpMarket(), selIdx);
+      }
+      if (selIdx !== null && typeof renderPerpCandleDetailBar === 'function') {
+        renderPerpCandleDetailBar(s.perp.candles, selIdx);
+      }
+    };
+    if (typeof requestAnimationFrame !== 'function') { apply(); return; }
+    if (_perpCandleRafId) return;
+    _perpCandleRafId = requestAnimationFrame(() => {
+      _perpCandleRafId = 0;
+      apply();
+    });
+  }
   let _perpMidsRenderTimer = null;
   let _perpMidsRenderTs = 0;
   let _perpMidsRafId = 0;
@@ -89,6 +195,10 @@
       cancelAnimationFrame(_perpObRafId);
       _perpObRafId = 0;
     }
+    if (_perpCandleRafId && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(_perpCandleRafId);
+      _perpCandleRafId = 0;
+    }
     if (_perpMidsRenderTimer) {
       clearTimeout(_perpMidsRenderTimer);
       _perpMidsRenderTimer = null;
@@ -101,6 +211,7 @@
       const prev = _perpWs;
       _perpWs = null;
       _perpWsCoin = '';
+      _perpWsInterval = '';
       try { prev.onclose = null; prev.close(); } catch (_) {}
     }
   }
@@ -199,13 +310,17 @@
         const ws = new WebSocket('wss://api.hyperliquid.xyz/ws');
         _perpWs = ws;
         _perpWsCoin = coin;
+        _perpWsInterval = (curSt.perp && curSt.perp.chartInterval) || '15m';
         ws.onopen = () => {
           if (_perpWs !== ws) return;
           _perpWsAttempt = 0;
           try {
+            const iv = (getState().perp && getState().perp.chartInterval) || _perpWsInterval || '15m';
+            _perpWsInterval = iv;
             ws.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'l2Book', coin } }));
             ws.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'allMids' } }));
             ws.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'trades', coin } }));
+            ws.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'candle', coin, interval: iv } }));
             if (hlAddr) {
               ws.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'webData2', user: hlAddr } }));
             }
@@ -255,6 +370,35 @@
               if (m && last?.coin === s.perp.selectedCoin && px > 0 && Number.isFinite(px)) {
                 m.markPx = px;
                 scheduleThrottledAllMidsRender();
+              }
+            } else if (msg?.channel === 'candle' && msg.data) {
+              const rawBars = Array.isArray(msg.data) ? msg.data : [msg.data];
+              const curIv = s.perp.chartInterval || '15m';
+              const updates = [];
+              for (let i = 0; i < rawBars.length; i++) {
+                const d = rawBars[i];
+                if (!d) continue;
+                if (d.s && d.s !== s.perp.selectedCoin) continue;
+                if (d.i && d.i !== curIv) continue;
+                const bar = { t: Number(d.t), o: Number(d.o), h: Number(d.h), l: Number(d.l), c: Number(d.c), v: Number(d.v) };
+                if (Number.isFinite(bar.t) && Number.isFinite(bar.c) && bar.c > 0) updates.push(bar);
+              }
+              if (updates.length > 0 && Array.isArray(s.perp.candles)) {
+                const list = s.perp.candles;
+                for (let i = 0; i < updates.length; i++) {
+                  const bar = updates[i];
+                  const last = list.length ? list[list.length - 1] : null;
+                  if (last && Number(last.t) === bar.t) {
+                    list[list.length - 1] = bar;
+                  } else if (!last || bar.t > Number(last.t)) {
+                    list.push(bar);
+                    if (list.length > 1000) list.shift();
+                  }
+                }
+                if (typeof s.putCachedPerpCandles === 'function') {
+                  s.putCachedPerpCandles(s.perp.selectedCoin, curIv, updates, { merge: true, lazy: true });
+                }
+                schedulePerpCandleLiveRedraw();
               }
             } else if (msg && msg.channel === 'webData2' && msg.data) {
               const curW = s.getActiveWallet();
@@ -371,7 +515,6 @@
       if (!isPerpTradeActive()) return;
       if (typeof updatePerpFundingCountdown === 'function') updatePerpFundingCountdown();
       if (!_perpWs || _perpWs.readyState !== 1) {
-        refreshPerpOrderbookAndCandlesAsync().catch(() => {});
         refreshPerpDataAsync(false).catch(() => {});
       }
     }, 4500));
@@ -496,6 +639,7 @@
     st.perp.inspectedCandleIdx = null;
     st.perp.chartOffsetFromEnd = 0;
     st.perp.chartVisibleCount = 48;
+    if (typeof stopPerpChartMotion === 'function') stopPerpChartMotion();
     st.perp.marketSearch = '';
     if ($('perp-market-search')) $('perp-market-search').value = '';
     if ($('perp-market-search-clear')) $('perp-market-search-clear').classList.add('hidden');

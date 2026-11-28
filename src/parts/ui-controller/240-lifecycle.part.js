@@ -2,8 +2,63 @@
 
   let _delegatedListenersBound = false;
   let _foregroundResumeBound = false;
+  let _deepLinkListenersBound = false;
+  let _pendingWcDeepLink = '';
   let _langRenderBound = false;
   let _capAppBackgrounded = false;
+
+  function flushPendingWcDeepLink() {
+    if (!_pendingWcDeepLink) return false;
+    if (typeof isAppLocked === 'function' && isAppLocked()) return false;
+    const st = getState();
+    if (!st || !st.getActiveWallet()) return false;
+    const rawUrl = _pendingWcDeepLink;
+    _pendingWcDeepLink = '';
+    if (typeof handleIncomingWcDeepLink === 'function') {
+      handleIncomingWcDeepLink(rawUrl, {}).catch(() => {});
+      return true;
+    }
+    return false;
+  }
+
+  function handleIncomingAppUrl(rawUrl) {
+    const clean = String(rawUrl || '').trim();
+    if (!clean) return false;
+    const wcUri = typeof extractWcPairingUri === 'function' ? extractWcPairingUri(clean) : (/^wc:/i.test(clean) ? clean : '');
+    if (!wcUri) return false;
+    const st = getState();
+    if ((typeof isAppLocked === 'function' && isAppLocked()) || !st || !st.getActiveWallet()) {
+      _pendingWcDeepLink = clean;
+      return true;
+    }
+    _pendingWcDeepLink = '';
+    if (typeof handleIncomingWcDeepLink === 'function') {
+      handleIncomingWcDeepLink(clean, {}).catch(() => {});
+      return true;
+    }
+    return false;
+  }
+
+  function initDeepLinkListeners() {
+    if (_deepLinkListenersBound || typeof window === 'undefined') return;
+    const capApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+    if (!capApp) return;
+    _deepLinkListenersBound = true;
+    if (typeof capApp.addListener === 'function') {
+      try {
+        capApp.addListener('appUrlOpen', (data) => {
+          if (data && data.url) handleIncomingAppUrl(data.url);
+        });
+      } catch (_) {}
+    }
+    if (typeof capApp.getLaunchUrl === 'function') {
+      Promise.resolve(capApp.getLaunchUrl())
+        .then((res) => {
+          if (res && res.url) handleIncomingAppUrl(res.url);
+        })
+        .catch(() => {});
+    }
+  }
 
   function setCapAppBackgrounded(bg) {
     _capAppBackgrounded = Boolean(bg);
@@ -45,12 +100,20 @@
     if (typeof resumePerpOneClickDepositPolling === 'function') {
       resumePerpOneClickDepositPolling();
     }
+    const wcSheetOpen = Boolean($('sheet-walletconnect')?.classList?.contains('open'));
+    if ((st.wc && st.wc.client) || wcSheetOpen) {
+      if (typeof reconnectWcRelayerIfNeeded === 'function') {
+        reconnectWcRelayerIfNeeded().catch(() => {});
+      }
+    }
+    flushPendingWcDeepLink();
     if (immediateBalanceSync && typeof resumeAutoPriceAndBalanceSyncOnActive === 'function') {
       resumeAutoPriceAndBalanceSyncOnActive();
     }
   }
 
   function initForegroundResumeSync() {
+    initDeepLinkListeners();
     if (_foregroundResumeBound) return;
     _foregroundResumeBound = true;
     const onResume = () => {
@@ -365,6 +428,7 @@
   const NearCAUI = {
     bootstrapApp,
     initHomePullToRefresh,
+    loadScriptOnce,
     ensureEthersLoaded,
     ensureQrcodeLoaded,
     ensureMiningProLoaded,
@@ -476,6 +540,8 @@
     updatePerpFundingCountdown,
     renderPerpCandleSvg,
     inspectPerpCandle,
+    clearPerpCandleInspection,
+    loadOlderPerpCandlesAsync,
     clearPerpOverviewSearch,
     clearPerpMarketSearch,
     renderPerpMarketsSheet,
@@ -484,6 +550,7 @@
     evaluatePerpOrderState,
     evaluatePerpOrderUI,
     refreshPerpDataAsync,
+    refreshPerpOrderbookAndCandlesAsync,
     openPerpMarketsSheet,
     selectPerpMarket,
     backToPerpOverview,
@@ -548,6 +615,14 @@
     openMiningProSheet,
     runMiningDeepQuery,
     openWalletConnectSheet,
+    saveWalletConnectProjectId,
+    pasteToWcUri,
+    pairWalletConnectUri,
+    approveWcProposal,
+    rejectWcProposal,
+    approveWcRequest,
+    rejectWcRequest,
+    disconnectWcSession,
     openQrScannerSheet,
     closeQrScannerSheet,
     triggerQrScannerFileInput,
@@ -595,7 +670,12 @@
     openSheet,
     closeAllSheets,
     showConfirmDialogAsync,
-    dismissConfirmDialog
+    dismissConfirmDialog,
+    extractWcPairingUri,
+    handleIncomingWcDeepLink,
+    reconnectWcRelayerIfNeeded,
+    handleIncomingAppUrl,
+    resolveWcMetadata
   };
 
   const globalHandlers = {
@@ -731,6 +811,8 @@
     updatePerpFundingCountdown,
     renderPerpCandleSvg,
     inspectPerpCandle,
+    clearPerpCandleInspection,
+    loadOlderPerpCandlesAsync,
     clearPerpOverviewSearch,
     clearPerpMarketSearch,
     renderPerpMarketsSheet,
@@ -739,6 +821,7 @@
     evaluatePerpOrderState,
     evaluatePerpOrderUI,
     refreshPerpDataAsync,
+    refreshPerpOrderbookAndCandlesAsync,
     openPerpMarketsSheet,
     selectPerpMarket,
     backToPerpOverview,
@@ -821,12 +904,6 @@
     deleteContactById,
     pickContactAddress,
     openWalletConnectSheet,
-    openQrScannerSheet,
-    closeQrScannerSheet,
-    triggerQrScannerFileInput,
-    handleQrScannerFileSelect,
-    parseScannedAddressPayload,
-    handleQrScanResultAsync,
     saveWalletConnectProjectId,
     pasteToWcUri,
     pairWalletConnectUri,
@@ -835,6 +912,12 @@
     approveWcRequest,
     rejectWcRequest,
     disconnectWcSession,
+    openQrScannerSheet,
+    closeQrScannerSheet,
+    triggerQrScannerFileInput,
+    handleQrScannerFileSelect,
+    parseScannedAddressPayload,
+    handleQrScanResultAsync,
     toggleTokenPickerMoreChains,
     openDAppBrowserSheet,
     openDAppFromInput,
@@ -850,7 +933,12 @@
     openSheet,
     closeAllSheets,
     showConfirmDialogAsync,
-    dismissConfirmDialog
+    dismissConfirmDialog,
+    extractWcPairingUri,
+    handleIncomingWcDeepLink,
+    reconnectWcRelayerIfNeeded,
+    handleIncomingAppUrl,
+    resolveWcMetadata
   };
 
   if (root) {

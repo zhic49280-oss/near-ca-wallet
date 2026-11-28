@@ -558,7 +558,9 @@
         const resolvedGasLimit = est !== null ? ((est * 125n) / 100n) : getEvmFallbackGasLimit(chainKey, Boolean(txData && txData !== '0x'));
         const useEip1559 = Boolean(feeData.maxFeePerGas);
         const maxFee = feeData.maxFeePerGas || 1000000000n;
-        const prioFeeRaw = feeData.maxPriorityFeePerGas || (maxFee / 4n) || 1000000n;
+        const prioFeeRaw = (feeData.maxPriorityFeePerGas !== null && feeData.maxPriorityFeePerGas !== undefined)
+          ? BigInt(feeData.maxPriorityFeePerGas)
+          : ((maxFee / 4n) || 1000000n);
         const prioFee = prioFeeRaw > maxFee ? maxFee : prioFeeRaw;
         return useEip1559
           ? {
@@ -790,8 +792,13 @@
             })
       ]);
       const baseGasLimit = (!approvalToken && gasLimit) ? BigInt(gasLimit) : getEvmFallbackGasLimit(chainKey, Boolean(data && data !== '0x'));
+      // Use the node estimate (+20%) whenever available; the high fallback is only for failed estimates.
+      // Never inflate a successful estimate up to the swap fallback (e.g. Arbitrum 600k), which inflates the native-fee pre-check.
       const estLimit = est !== null ? ((est * 120n) / 100n) : baseGasLimit;
-      const resolvedGasLimit = explicitTransferGas ? baseGasLimit : (estLimit > baseGasLimit ? estLimit : baseGasLimit);
+      const callerFloor = (!approvalToken && gasLimit) ? BigInt(gasLimit) : 0n;
+      const resolvedGasLimit = explicitTransferGas
+        ? baseGasLimit
+        : (est !== null ? (estLimit > callerFloor ? estLimit : callerFloor) : baseGasLimit);
 
       const txReq = {
         chainId: cfg.chainId,
@@ -806,7 +813,9 @@
         txReq.gasPrice = BigInt(gasPriceWei);
       } else if (feeData.maxFeePerGas) {
         const maxFee = feeData.maxFeePerGas;
-        const prioRaw = feeData.maxPriorityFeePerGas || (maxFee / 4n) || 1000000n;
+        const prioRaw = (feeData.maxPriorityFeePerGas !== null && feeData.maxPriorityFeePerGas !== undefined)
+          ? BigInt(feeData.maxPriorityFeePerGas)
+          : ((maxFee / 4n) || 1000000n);
         txReq.type = 2;
         txReq.maxFeePerGas = maxFee;
         txReq.maxPriorityFeePerGas = prioRaw > maxFee ? maxFee : prioRaw;
